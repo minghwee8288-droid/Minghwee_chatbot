@@ -272,6 +272,126 @@ def fallback_name(phone: str) -> str:
     return f"WhatsApp Lead {phone}".strip()
 
 
+# --- Which lead, and named how ---------------------------------------------
+#
+# These two used to live in the ticket node. The collector now raises the lead
+# as soon as it has a name, so both nodes need them and neither owns them.
+
+# §19 — which services raise a lead, and into which table. Disputes, case
+# enquiries, suppliers, partners and general questions never do.
+EMPLOYER_LEAD_SERVICES = {
+    "new_hiring",
+    "fee_enquiry",
+    "salary_enquiry",
+    "direct_hiring",
+    "replacement",
+    "renewal",
+    "home_leave",
+    "passport_renewal",
+}
+CANDIDATE_LEAD_SERVICES = {"candidate_new_hiring", "transfer"}
+
+
+def kind_for(service_type: str | None, contact_type: str | None) -> str | None:
+    """Which lead table this enquiry belongs in, per §19 — or None."""
+    if service_type in CANDIDATE_LEAD_SERVICES:
+        return CANDIDATE
+    if service_type not in EMPLOYER_LEAD_SERVICES:
+        return None
+    # §19 keys off the service, but a supplier or partner asking about fees is
+    # not an employer lead — §15 and §16 say they never produce one.
+    if (contact_type or "").strip() in {"supplier", "partner"}:
+        return None
+    return EMPLOYER
+
+
+def best_name(customer_name: str | None, collected: dict[str, Any] | None) -> str:
+    """The best name we have. leads.full_name is NOT NULL.
+
+    A name the client actually gave beats the WhatsApp push name, which is
+    whatever they set on their own profile — but the push name is a reasonable
+    fallback, and far better than no lead at all.
+    """
+    for key in ("full_name", "helper_name", "candidate_name", "employer_name"):
+        value = str((collected or {}).get(key) or "").strip()
+        if value and value.lower() != UNANSWERED:
+            return value[:200]
+    # §23.7 handles the rest: an empty name becomes "WhatsApp Lead {phone}".
+    return str(customer_name or "").strip()[:200]
+
+
+def has_real_name(collected: dict[str, Any] | None) -> bool:
+    """Whether the client has actually told us their name.
+
+    The push name is not enough to open a lead on: it is whatever they set on
+    their own WhatsApp profile, and half of them are emoji or a shop name.
+    """
+    return bool(best_name(None, collected))
+
+
+# --- Update ----------------------------------------------------------------
+
+# Never rewritten once the row exists: phone is the key we found it by, and
+# source/temperature are §0 defaults that sales owns from the moment they see
+# the lead.
+_IMMUTABLE_ON_UPDATE = ("phone", "source", "temperature")
+
+
+async def update_from_collected(
+    *,
+    kind: str,
+    lead_id: str,
+    customer_name: str | None = None,
+    collected: dict[str, Any] | None = None,
+    service_type: str | None = None,
+    summary: str = "",
+    owner_profile_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Fill in a lead this conversation opened earlier.
+
+    §1B still holds for every lead we did not create: a row from a previous
+    enquiry is whatever sales has since made of it, and nothing here touches
+    it. This exists only because the lead is now written as soon as the client
+    gives their name — so the requirements gathered afterwards have to reach
+    the row they belong to.
+
+    Never raises: a lead that misses its requirements is worse than one that
+    has them, but both beat a client left without a reply.
+    """
+    if kind not in TABLE_FOR or not lead_id:
+        return None
+
+    payload = _fields(
+        kind,
+        name=best_name(customer_name, collected),
+        phone="",
+        collected=collected or {},
+        service_type=service_type,
+        summary=summary,
+    )
+    for key in _IMMUTABLE_ON_UPDATE:
+        payload.pop(key, None)
+    if not payload.get("full_name"):
+        payload.pop("full_name", None)
+    # The collector opens the lead before an agent has been picked, so the owner
+    # is only known now. Without this every chatbot lead sits unassigned.
+    if owner_profile_id:
+        payload["owner_profile_id"] = owner_profile_id
+    if not payload:
+        return None
+
+    try:
+        rows = await db.update(TABLE_FOR[kind], payload, id=lead_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not update lead %s on %s", lead_id, TABLE_FOR[kind])
+        return None
+
+    logger.info(
+        "Updated %s lead %s with %s", kind, lead_id, ", ".join(sorted(payload))
+    )
+    return rows[0] if rows else None
+
+
 # --- Summary (§21) ---------------------------------------------------------
 
 SUMMARY_SYSTEM = """You write the one-line summary a sales agent reads first when \

@@ -251,6 +251,12 @@ _PURE_THANKS_SENTENCE = re.compile(
     r"(?:(?:noted|got\s+it|got\s+that|understood|sure|okay|ok|alright|great|perfect)"
     r"\b[\s,!.\-]*)?"
     r"(?:many\s+)?thank(?:s|\s*you)\b(?:\s+(?:so|very)\s+much)?(?:\s+again)?"
+    # The client's own name, which the voice guide asks for: "Thanks Ping pong."
+    # was thanking them twice in four messages and neither guard saw it, because
+    # a name is not one of the endings listed below. Bounded at two words and
+    # barred from swallowing 'for', so "Thanks for the permit photo which shows
+    # a March expiry" still falls through to the whitelist and is left alone.
+    r"(?:\s+(?!for\b)[A-Za-z][\w'\-]*){0,2}"
     r"(?:\s+for\s+(?:"
     r"contacting|reaching\s+out|getting\s+in\s+touch|messaging|writing|sharing|waiting|"
     r"letting\s+me\s+know|that|this|"

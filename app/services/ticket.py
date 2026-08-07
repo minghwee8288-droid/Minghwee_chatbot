@@ -78,19 +78,25 @@ def _case_id() -> Field:
 
 
 SERVICE_FIELDS: dict[str, list[Field]] = {
-    # §2 — employer lead flow
+    # §2 — employer lead flow.
+    #
+    # Ordered identity first, then requirements, which is a deviation from the
+    # §22 listing. The lead is opened as soon as the client gives their name, so
+    # the questions that make them contactable come before the ones that qualify
+    # them: a client who stops answering after two messages still leaves a lead
+    # sales can ring, rather than a care type attached to nobody.
     "new_hiring": [
         Field("full_name", "name", "May I know your name?"),
+        _EMAIL,
         Field("requirement", "type of care", "What kind of care are you looking for?"),
         Field("preferred_nationality", "nationality preference", "Do you have a preferred nationality?"),
-        _EMAIL,
     ],
     # §3 — candidate lead flow. Separate from new_hiring: a job seeker is never
-    # asked an employer's questions.
+    # asked an employer's questions. Same identity-first ordering.
     "candidate_new_hiring": [
         Field("full_name", "name", "May I know your name?"),
-        Field("nationality", "nationality", "Which country are you from?"),
         _EMAIL,
+        Field("nationality", "nationality", "Which country are you from?"),
     ],
     # §6 — collects nothing at all.
     "direct_hiring": [],

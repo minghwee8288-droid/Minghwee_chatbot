@@ -100,6 +100,47 @@ def _lead_kind(state: ConversationState, service_type: str | None) -> str | None
     return lead_service.EMPLOYER
 
 
+async def _finish_lead(
+    state: ConversationState,
+    service_type: str | None,
+    captured: dict[str, Any],
+    agent_id: str | None,
+) -> dict[str, Any] | None:
+    """Write the requirements onto the lead the collector opened.
+
+    Only ever touches a row this conversation created. Anything matched from an
+    earlier enquiry is left exactly as sales left it (§1B).
+    """
+    lead_id = state.get("created_lead_id")
+    if not lead_id:
+        return None
+
+    kind = state.get("lead_kind") or lead_service.EMPLOYER
+    summary = ""
+    if kind == lead_service.EMPLOYER:  # leads_candidate has no summary column
+        summary = await lead_service.write_summary(
+            history=state.get("history_text", ""),
+            latest=state.get("incoming_text", ""),
+            collected=captured,
+            service_type=service_type,
+        )
+    updated = await lead_service.update_from_collected(
+        kind=kind,
+        lead_id=lead_id,
+        customer_name=state.get("customer_name"),
+        collected=captured,
+        service_type=service_type,
+        summary=summary,
+        owner_profile_id=agent_id,
+    )
+    return {
+        "id": lead_id,
+        "lead_number": state.get("created_lead_number"),
+        "lead_kind": kind,
+        **(updated or {}),
+    }
+
+
 async def _maybe_create_lead(
     state: ConversationState,
     service_type: str | None,
@@ -178,7 +219,13 @@ async def ticket_creator(state: ConversationState) -> dict[str, Any]:
             len(allowed),
         )
 
-    captured.setdefault("contact_type", state.get("contact_type"))
+    # 'unknown' is truthy, so the plain value was winning over what the turn
+    # actually worked out — a ticket read 'contact_type: unknown' after the
+    # classifier had called them an employer four messages running.
+    contact_type = (state.get("contact_type") or "").strip()
+    if contact_type in {"", "unknown"}:
+        contact_type = (state.get("detected_contact_type") or "").strip() or "unknown"
+    captured.setdefault("contact_type", contact_type)
     captured.setdefault("whatsapp_number", state.get("phone"))
     if state.get("customer_name"):
         captured.setdefault("whatsapp_name", state["customer_name"])
@@ -191,10 +238,26 @@ async def ticket_creator(state: ConversationState) -> dict[str, Any]:
         captured.update(_media_summary(state.get("media_items") or []))
         captured.setdefault("client_message", (state.get("incoming_text") or "")[:2000])
 
-    # A lead first, so the ticket can point at it. Only for contacts we do not
-    # already hold a master record for — an existing employer does not become a
-    # lead again every time they message.
-    lead = await _maybe_create_lead(state, service_type, captured, agent_id)
+    # A lead first, so the ticket can point at it. Normally the collector has
+    # already opened it on the client's name and this only fills in what was
+    # gathered afterwards; the create path still runs for flows that complete
+    # without ever asking for a name (direct hiring, a bare fee enquiry).
+    lead = await _finish_lead(state, service_type, captured, agent_id)
+    if lead is None:
+        lead = await _maybe_create_lead(state, service_type, captured, agent_id)
+
+    # cb_tickets.created_lead_id is a foreign key to `leads` alone, and there is
+    # no second column for the candidate table. Passing a leads_candidate id
+    # violates the constraint and Postgres rejects the whole insert, so the
+    # candidate keeps her lead but the agent gets no work item at all — which is
+    # what happened to LC-2026-0001. The number goes into captured_info instead,
+    # where the agent opening the ticket can still find her lead.
+    created_lead_id = None
+    if lead:
+        if lead.get("lead_kind") == lead_service.EMPLOYER:
+            created_lead_id = lead.get("id")
+        elif lead.get("lead_number"):
+            captured.setdefault("lead_number", lead["lead_number"])
 
     ticket = await ticket_service.create(
         conversation=conversation_ref(state),
@@ -202,7 +265,7 @@ async def ticket_creator(state: ConversationState) -> dict[str, Any]:
         captured_info=captured,
         assigned_agent_id=agent_id,
         assignment_rule=rule,
-        created_lead_id=(lead or {}).get("id"),
+        created_lead_id=created_lead_id,
     )
 
     update: dict[str, Any] = {

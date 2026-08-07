@@ -548,6 +548,10 @@ async def _process_locked(phone: str, messages: list[IncomingMessage]) -> None:
         "matched_lead_id": (open_lead or {}).get("id"),
         "matched_lead_number": (open_lead or {}).get("lead_number"),
         "lead_kind": (open_lead or {}).get("lead_kind"),
+        # The row itself, so the collector can reuse what this number already
+        # told us. Without it the prompt says "do not start their details
+        # again" while the collector asks for all of them from scratch.
+        "matched_lead": open_lead,
         "salesperson_profile_id": None,
         "incoming_text": combined,
         "history_text": message_service.format_history(history),

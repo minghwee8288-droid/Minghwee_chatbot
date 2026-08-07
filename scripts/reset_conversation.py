@@ -2,6 +2,7 @@
 
     python scripts/reset_conversation.py +917970027379
     python scripts/reset_conversation.py +917970027379 --keep-history
+    python scripts/reset_conversation.py +917970027379 --wipe-lead
 
 By default this is a full clean slate: stored messages, tickets and handovers
 for that conversation are deleted, bot_status goes back to 'bot_active' and a
@@ -16,6 +17,17 @@ up the previous enquiry as if nothing had happened.
 ``--keep-history`` resets only the routing state and leaves the transcript
 alone, for when you want to test how the bot resumes an existing thread.
 
+``--wipe-lead`` additionally deletes this number's ``leads_candidate`` row.
+That table is keyed by phone and has no conversation_id, so the ordinary wipe
+above cannot reach it — and §1B makes a lead permanent, so without this the
+second test run is always a returning client and the first-contact flow cannot
+be tested twice. Left off by default.
+
+``leads`` is NEVER touched, with or without the flag. The employer lead table
+holds real sales pipeline the team works from, and a test number colliding with
+it is not a reason to delete a row nobody can get back. If an employer lead is
+genuinely in the way, delete it by hand knowing what it is.
+
 TEST NUMBERS ONLY — this deletes rows the WhatsApp portal also owns.
 """
 
@@ -29,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db.supabase import db  # noqa: E402
 from app.services import conversation as conversation_service  # noqa: E402
+from app.services import lead as lead_service  # noqa: E402
 from app.utils import normalize_phone  # noqa: E402
 
 # Deleted child-first: cb_handovers and cb_tickets reference the conversation,
@@ -43,9 +56,27 @@ async def _count(table: str, conversation_id: int) -> int:
     return len(result.data or [])
 
 
+async def _wipe_candidate_lead(phone: str) -> None:
+    """Delete this number's leads_candidate row, if it has one.
+
+    Deliberately narrow: find_by_phone is asked for the candidate table by name,
+    so an employer lead on the same number is found by nothing here and cannot
+    be deleted by accident.
+    """
+    lead = await lead_service.find_by_phone(phone, lead_service.CANDIDATE)
+    if not lead:
+        print("  no leads_candidate row for this number")
+        return
+    await db.execute(
+        db.table(lead_service.CANDIDATE_TABLE).delete().eq("id", lead["id"])
+    )
+    print(f"  cleared leads_candidate ({lead.get('lead_number')} — {lead.get('full_name')})")
+
+
 async def main() -> None:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     keep_history = "--keep-history" in sys.argv
+    wipe_lead = "--wipe-lead" in sys.argv
     if not args:
         print(__doc__)
         return
@@ -68,6 +99,9 @@ async def main() -> None:
             deleted = await _count(table, cid)
             await db.execute(db.table(table).delete().eq("conversation_id", cid))
             print(f"  cleared {table} ({deleted} row(s))")
+
+    if wipe_lead:
+        await _wipe_candidate_lead(phone)
 
     await conversation_service.update(
         cid,

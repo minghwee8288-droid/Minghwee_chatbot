@@ -34,6 +34,7 @@ from app.graph.prompts.templates import (
     HANDOVER_CLOSER_INSTRUCTION,
 )
 from app.graph.state import RESET_KEY, ConversationState
+from app.services import lead as lead_service
 from app.services import ticket as ticket_service
 from app.utils import redact_nric
 
@@ -59,8 +60,57 @@ ENQUIRY_SERVICES = {"fee_enquiry", "salary_enquiry"}
 # §0: phone, source, tenant, branch, temperature, status and lead_number are all
 # known before the conversation starts and are never asked. The transfer flow's
 # only phone question is which number to use, which is a different thing.
+#
+# Beyond those, anything this number already told us is on its lead row. §1B
+# makes that row permanent — one phone, one lead, never updated — so a returning
+# client was being asked their name, nationality and email again every time,
+# while the prompt sat above the question saying "they have spoken to us before,
+# so do not start their details again". The prompt cannot win that: the field is
+# chosen in code before the model is called.
+
+# leads.preferred_nationality / leads_candidate.nationality store the code
+# nationality_code() produced. Reading it back as 'MM' would put that in the
+# ticket and in the reply, so it is turned back into words.
+_NATIONALITY_NAMES = {
+    "PH": "Philippines",
+    "ID": "Indonesia",
+    "MM": "Myanmar",
+    "none": "no preference",
+}
+
+# lead column -> the collector field key it answers.
+_LEAD_FIELD_SOURCES = (
+    ("full_name", "full_name"),
+    ("full_name", "helper_name"),
+    ("email", "email"),
+    ("nationality", "nationality"),
+    ("preferred_nationality", "preferred_nationality"),
+    ("requirement", "requirement"),
+    ("salary_expectation", "salary_expectation"),
+)
+
+
 def _known_fields(state: ConversationState) -> dict[str, str]:
-    return {}
+    lead = state.get("matched_lead")
+    if not isinstance(lead, dict):
+        return {}
+
+    known: dict[str, str] = {}
+    for column, field_key in _LEAD_FIELD_SOURCES:
+        value = str(lead.get(column) or "").strip()
+        # 'not provided' is what the collector records for a field the client
+        # would not answer. Reusing it would make the refusal permanent.
+        if not value or value.lower() == UNANSWERED:
+            continue
+        if column in {"nationality", "preferred_nationality"}:
+            value = _NATIONALITY_NAMES.get(value, value)
+        # §23.7 — a client who would not give a name got "WhatsApp Lead +65...".
+        # That is a placeholder, not something to tell them we already know.
+        if field_key in {"full_name", "helper_name"} and value.lower().startswith("whatsapp lead"):
+            continue
+        known.setdefault(field_key, value[:300])
+    return known
+
 
 FALLBACK_QUESTION = "Sorry, could you tell me a bit more about what you need?"
 FALLBACK_CLOSING = "Noted, thanks for the details. Let me pull this together and come back to you shortly."
@@ -86,6 +136,32 @@ _NO_PREFERENCE = re.compile(
 # persistence, it is a machine that cannot hear.
 MAX_ASKS_PER_FIELD = 3
 UNANSWERED = "not provided"
+
+# Fields that must name the work, not the enquiry.
+_CARE_TYPE_FIELDS = {"requirement", "care_type"}
+
+# Words that describe wanting a helper rather than what the helper is for.
+# "I want to hire a helper" is entirely made of these; "helper for my elderly
+# mother" is not, and neither is "cooking and cleaning".
+_CARE_TYPE_FILLER = re.compile(
+    r"\b(i|we|my|our|me|us|a|an|the|to|for|of|in|is|am|are|and|"
+    r"want(?:ed|ing|s)?|need(?:ed|ing|s)?|look(?:ing)?|hire|hiring|get(?:ting)?|"
+    r"find(?:ing)?|new|another|one|first|time|please|kindly|"
+    r"helper|helpers|maid|maids|domestic|worker|mdw|fdw|house\s*help|"
+    r"service|services|enquiry|enquire|interested)\b",
+    re.IGNORECASE,
+)
+
+
+def _states_a_care_type(text: str) -> bool:
+    """Whether a requirement value says anything beyond 'I want a helper'.
+
+    Deliberately a subtractive test rather than a list of care types: the
+    agency's own vocabulary keeps growing, and a whitelist would silently drop
+    'post-natal' or 'stroke recovery' the first time someone said it.
+    """
+    remainder = _CARE_TYPE_FILLER.sub(" ", text or "")
+    return bool(re.sub(r"[^a-z0-9]+", "", remainder.lower()))
 
 
 def service_label(service_type: str | None) -> str:
@@ -134,8 +210,91 @@ async def _extract(
                 key,
             )
             continue
+        # "I want to hire a helper" is the enquiry, not the answer to what kind
+        # of care they need. Taken as one, the question is never asked and sales
+        # opens a lead whose requirement reads "hire a helper".
+        if key in _CARE_TYPE_FIELDS and not _states_a_care_type(text):
+            logger.info(
+                "Conversation %s: ignoring '%s' for '%s' — it restates the enquiry "
+                "rather than naming a care type",
+                state.get("conversation_id"),
+                text[:40],
+                key,
+            )
+            continue
+        # An address with no '@' is not one. The client saying "no email" was
+        # being recorded as "no preference", which reads on the ticket as though
+        # they gave one. Dropping it lets the max_asks rule record it honestly
+        # as 'not provided'.
+        if key == "email" and "@" not in text:
+            logger.info(
+                "Conversation %s: ignoring '%s' for 'email' — not an address",
+                state.get("conversation_id"),
+                text[:40],
+            )
+            continue
         cleaned[key] = redact_nric(text, context=f"captured:{key}")[:300]
     return cleaned
+
+
+async def _open_lead_early(
+    state: ConversationState, service_type: str | None, collected: dict[str, Any]
+) -> dict[str, Any]:
+    """Create the lead as soon as the client has given a usable name.
+
+    Returns the state keys to carry, or {} when there is nothing to open —
+    the service raises no lead, we have no name yet, or this number already
+    has a row (§1B: one phone, one lead, ever).
+    """
+    if state.get("created_lead_id") or state.get("matched_lead_id"):
+        return {}
+
+    contact_type = (state.get("contact_type") or "unknown").strip()
+    if contact_type == "unknown":
+        contact_type = (state.get("detected_contact_type") or "").strip()
+    kind = lead_service.kind_for(service_type, contact_type)
+    if not kind or not lead_service.has_real_name(collected):
+        return {}
+
+    # No summary yet — it costs an LLM call and the requirements it would
+    # summarise have not been asked for. It is written on the update instead.
+    lead = await lead_service.create_if_absent(
+        kind=kind,
+        name=lead_service.best_name(state.get("customer_name"), collected),
+        phone=state.get("phone") or "",
+        collected=collected,
+        service_type=service_type,
+    )
+    if not lead:
+        return {}
+
+    if lead.get("lead_existed"):
+        # Someone else's row, or one from a previous enquiry. §1B says leave it
+        # alone, so it is recorded as matched rather than created.
+        logger.info(
+            "Conversation %s: %s already has lead %s — not opening another",
+            state.get("conversation_id"),
+            state.get("phone"),
+            lead.get("lead_number"),
+        )
+        return {
+            "matched_lead_id": lead.get("id"),
+            "matched_lead_number": lead.get("lead_number"),
+            "lead_kind": kind,
+        }
+
+    logger.info(
+        "Conversation %s: opened %s lead %s on the client's name, before the rest "
+        "of the questions",
+        state.get("conversation_id"),
+        kind,
+        lead.get("lead_number"),
+    )
+    return {
+        "created_lead_id": lead.get("id"),
+        "created_lead_number": lead.get("lead_number"),
+        "lead_kind": kind,
+    }
 
 
 async def info_collector(state: ConversationState) -> dict[str, Any]:
@@ -227,6 +386,13 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
 
     missing = ticket_service.missing_fields(service_type, collected)
 
+    # The lead is opened the moment the client has given a name, not at the end
+    # of collection. A client who answers two questions and then stops used to
+    # leave nothing behind at all — no lead, no ticket, no record that anyone
+    # had enquired. The requirements gathered afterwards are written onto this
+    # same row by the ticket node when collection completes.
+    lead_fields = await _open_lead_early(state, service_type, collected)
+
     carry: dict[str, Any] = dict(extracted)
     counts: dict[str, Any] = {}
     if switched:
@@ -264,6 +430,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             len(missing),
         )
         return {
+            **lead_fields,
             "collected_info": carry,
             # The resolved service, so the ticket and lead use the flow that
             # actually ran rather than the raw classification.
@@ -302,6 +469,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         ticket_service.summarize(service_type, collected),
     )
     return {
+        **lead_fields,
         "collected_info": carry,
         "service_type": service_type,
         "collected_service": service_type,

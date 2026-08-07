@@ -151,6 +151,15 @@ class ConversationState(TypedDict, total=False):
     matched_lead_id: str | None
     matched_lead_number: str | None
     lead_kind: str | None
+    # The whole lead row, so the collector can fill in what we were told last
+    # time instead of asking for it again. Read per turn, never persisted on
+    # wp_chat_conversations — it has no column for it.
+    matched_lead: dict[str, Any] | None
+    # A lead THIS conversation opened, on the turn the client gave their name.
+    # Kept apart from matched_lead_id because only this one may be written to:
+    # §1B leaves a lead from an earlier enquiry to whoever has worked it since.
+    created_lead_id: str | None
+    created_lead_number: str | None
     # What the classifier thinks this contact is, used only while the database
     # says 'unknown'.
     detected_contact_type: str | None
