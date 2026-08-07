@@ -1,0 +1,303 @@
+"""Ticket creation.
+
+A ticket is the handover packet: everything the bot managed to collect before
+it went silent, so the sales agent opens the thread already knowing what the
+client wants.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+from app.config import settings
+from app.db.supabase import db
+
+logger = logging.getLogger(__name__)
+
+TABLE = "cb_tickets"
+
+
+@dataclass(frozen=True)
+class Field:
+    key: str
+    label: str
+    question: str
+    # Asked at most this many times before it is recorded as unanswered and the
+    # flow moves on. CONVERSATION_FLOWS §23.5: a client who cannot give a case
+    # ID must never be blocked or asked again.
+    max_asks: int = 3
+    # Not needed for the lead. Asked once, dropped without complaint — §23.6,
+    # and email specifically, which plenty of clients do not have.
+    optional: bool = False
+
+
+# --- Fields per service ----------------------------------------------------
+#
+# CONVERSATION_FLOWS §22, verbatim. Nothing outside that list is asked: budget,
+# salary_expectation and summary are captured only if volunteered (§23.4, §23.9),
+# interest_type is inferred from intent and never asked (§23.3), and phone,
+# source, tenant, branch, temperature and status are already known (§0).
+#
+# The question wording is the document's own.
+
+CANDIDATE_HIRING = "candidate_new_hiring"
+
+# Flows a helper drives herself. §5: employers never initiate a transfer.
+CANDIDATE_SERVICES = {CANDIDATE_HIRING, "transfer"}
+
+# Asked once at the end of the two lead-creating flows (§2 step 4, §3). Not in
+# the §22 list because it is not required — plenty of clients have no email.
+_EMAIL = Field(
+    "email",
+    "email address",
+    "Do you have an email I can note down for updates?",
+    max_asks=1,
+    optional=True,
+)
+
+# §5 step 3 read with §0: the number is already known, so the question is
+# whether to use it — never "what is your number".
+_CONTACT_NUMBER = Field(
+    "contact_number",
+    "which number to use",
+    "Is this the best number to reach you on, or would you prefer we use another one?",
+    max_asks=1,
+    optional=True,
+)
+
+# A case ID the client does not have must not block the flow (§23.5).
+def _case_id() -> Field:
+    return Field("case_id", "case ID", "May I have your case ID?", max_asks=1, optional=True)
+
+
+SERVICE_FIELDS: dict[str, list[Field]] = {
+    # §2 — employer lead flow
+    "new_hiring": [
+        Field("full_name", "name", "May I know your name?"),
+        Field("requirement", "type of care", "What kind of care are you looking for?"),
+        Field("preferred_nationality", "nationality preference", "Do you have a preferred nationality?"),
+        _EMAIL,
+    ],
+    # §3 — candidate lead flow. Separate from new_hiring: a job seeker is never
+    # asked an employer's questions.
+    "candidate_new_hiring": [
+        Field("full_name", "name", "May I know your name?"),
+        Field("nationality", "nationality", "Which country are you from?"),
+        _EMAIL,
+    ],
+    # §6 — collects nothing at all.
+    "direct_hiring": [],
+    # §4
+    "replacement": [
+        _case_id(),
+        Field("reason", "reason for the replacement", "What is the reason for the replacement?"),
+        Field("timeline", "timeline", "When would you need the replacement by?"),
+    ],
+    # §5 — candidate flow. Employers never initiate a transfer.
+    "transfer": [
+        Field("reason", "reason for the transfer", "May I know the reason for the transfer?"),
+        Field("helper_name", "name", "May I know your name?"),
+        _CONTACT_NUMBER,
+    ],
+    # §7, §8, §9 — case ID only, nothing else.
+    "renewal": [_case_id()],
+    "home_leave": [_case_id()],
+    "passport_renewal": [_case_id()],
+    # §10, §11 — only ever asked for what the client has not already stated.
+    "fee_enquiry": [
+        Field("nationality", "nationality", "Which nationality are you looking at?"),
+        Field("care_type", "type of care", "What kind of care would this be for?"),
+    ],
+    "salary_enquiry": [
+        Field("nationality", "nationality", "Which nationality are you looking at?"),
+        Field("care_type", "type of care", "What kind of care would this be for?"),
+    ],
+    # §12 — the issue itself comes from what they already said.
+    "dispute_salary": [
+        Field("helper_name", "helper's name", "May I know your helper's name?"),
+    ],
+    # §13 — immediate escalation, nothing collected.
+    "dispute_assault": [],
+    # §18 — the bot cannot open the file, so there is nothing to ask.
+    "media_received": [],
+}
+
+URGENT_SERVICES = {"dispute_assault"}
+
+# Mirrors cb_tkt_service_check. The chatbot recognises two kinds of enquiry the
+# portal's schema predates — a candidate offering herself for placement, and a
+# bare attachment — and inserting either aborts the row: a candidate offer was
+# lost this way, traceback in the log, no work item, client told someone would
+# follow up. The constraint is the portal's and is not ours to widen, so the
+# ticket is filed under the nearest permitted type with the real one recorded in
+# captured_info, where the agent opening it sees it first.
+TICKET_SERVICE_TYPES = {
+    "new_hiring",
+    "direct_hiring",
+    "replacement",
+    "transfer",
+    "renewal",
+    "home_leave",
+    "passport_renewal",
+    "dispute_salary",
+    "dispute_assault",
+    "fee_enquiry",
+    "salary_enquiry",
+}
+
+# §3 files the candidate job-seeking ticket under new_hiring. An attachment
+# belongs to whatever the thread is already about, and falls back to transfer
+# only when the thread has no service yet.
+TICKET_SERVICE_FALLBACK = {
+    CANDIDATE_HIRING: "new_hiring",
+    "candidate_registration": "new_hiring",
+    "media_received": "transfer",
+}
+
+
+def _storable_service(service_type: str, conversation: dict[str, Any]) -> tuple[str, str | None]:
+    """(value to store, true type when it had to be substituted)."""
+    if service_type in TICKET_SERVICE_TYPES:
+        return service_type, None
+    active = conversation.get("service_type")
+    substitute = (
+        active
+        if active in TICKET_SERVICE_TYPES
+        else TICKET_SERVICE_FALLBACK.get(service_type, "transfer")
+    )
+    logger.warning(
+        "cb_tickets does not allow service_type=%r — filing under %r and recording the "
+        "real type in captured_info",
+        service_type,
+        substitute,
+    )
+    return substitute, service_type
+
+
+def resolve_service(service_type: str | None, contact_type: str | None) -> str | None:
+    """Split the two hiring flows by who is asking (§3, and the routing rule).
+
+    A helper who says "I am looking for work" produces intent new_hiring like
+    an employer does. Running her through the employer flow asks her what kind
+    of care *she* is looking for, which is why these are separate services.
+    """
+    if service_type == "new_hiring" and (contact_type or "") == "candidate":
+        return CANDIDATE_HIRING
+    return service_type
+
+
+def fields_for(service_type: str | None) -> list[Field]:
+    return SERVICE_FIELDS.get(service_type or "", [])
+
+
+def missing_fields(service_type: str | None, collected: dict[str, Any]) -> list[Field]:
+    return [
+        field
+        for field in fields_for(service_type)
+        if not str(collected.get(field.key) or "").strip()
+    ]
+
+
+def priority_for(service_type: str | None) -> str:
+    return "urgent" if service_type in URGENT_SERVICES else "normal"
+
+
+async def next_ticket_number() -> str:
+    """CB-YYYY-NNNN, sequential within the calendar year."""
+    year = datetime.now(tz=timezone.utc).year
+    prefix = f"CB-{year}-"
+    try:
+        result = await db.execute(
+            db.table(TABLE)
+            .select("ticket_number")
+            .like("ticket_number", f"{prefix}%")
+            .order("ticket_number", desc=True)
+            .limit(1)
+        )
+        rows = result.data or []
+        if rows:
+            last = str(rows[0]["ticket_number"]).rsplit("-", 1)[-1]
+            return f"{prefix}{int(last) + 1:04d}"
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not read the last ticket number — falling back to a timestamp")
+        return f"{prefix}{datetime.now(tz=timezone.utc).strftime('%m%d%H%M')}"
+    return f"{prefix}0001"
+
+
+async def last_for_conversation(conversation_id: int) -> dict[str, Any] | None:
+    """The client's most recent ticket, for the 'previous enquiry' prompt line."""
+    try:
+        result = await db.execute(
+            db.table(TABLE)
+            .select("service_type, status, created_at")
+            .eq("conversation_id", conversation_id)
+            .order("created_at", desc=True)
+            .limit(1)
+        )
+    except Exception:  # noqa: BLE001 - a missing history line must not break the turn
+        logger.exception("Could not read the last ticket for conversation %s", conversation_id)
+        return None
+    rows = result.data or []
+    return rows[0] if rows else None
+
+
+async def create(
+    *,
+    conversation: dict[str, Any],
+    service_type: str,
+    captured_info: dict[str, Any],
+    assigned_agent_id: str | None,
+    assignment_rule: str | None,
+    created_lead_id: str | None = None,
+) -> dict[str, Any] | None:
+    stored_service, true_service = _storable_service(service_type, conversation)
+    info = dict(captured_info or {})
+    if true_service:
+        # First key, so it heads the agent's view of the ticket.
+        info = {"enquiry_type": true_service, **info}
+
+    payload = {
+        "tenant_id": settings.tenant_id or None,
+        "conversation_id": conversation["id"],
+        "ticket_number": await next_ticket_number(),
+        "service_type": stored_service,
+        "priority": priority_for(service_type),
+        "captured_info": info,
+        "employer_id": conversation.get("matched_employer_id"),
+        "candidate_id": conversation.get("matched_candidate_id"),
+        "supplier_id": conversation.get("matched_supplier_id"),
+        "assigned_agent_id": assigned_agent_id,
+        "assignment_rule": assignment_rule,
+        "status": "open",
+    }
+    if created_lead_id:
+        payload["created_lead_id"] = created_lead_id
+    try:
+        ticket = await db.insert(TABLE, payload)
+    except Exception:  # noqa: BLE001 - a ticket failure must not block the handover
+        logger.exception("Ticket creation failed for conversation %s", conversation["id"])
+        return None
+
+    if ticket:
+        logger.info(
+            "Created ticket %s (%s, %s) on conversation %s",
+            ticket.get("ticket_number"),
+            f"{service_type} as {stored_service}" if true_service else service_type,
+            payload["priority"],
+            conversation["id"],
+        )
+    return ticket
+
+
+def summarize(service_type: str | None, captured: dict[str, Any]) -> str:
+    """Human-readable one-liner for logs and agent-facing notes."""
+    labels = {field.key: field.label for field in fields_for(service_type)}
+    parts = [
+        f"{labels.get(key, key)}: {value}"
+        for key, value in (captured or {}).items()
+        if str(value or "").strip()
+    ]
+    return "; ".join(parts) or "no details captured"
