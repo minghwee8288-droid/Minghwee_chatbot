@@ -137,8 +137,12 @@ _CONTACT_TYPES = {"employer", "candidate", "supplier", "partner"}
 
 # Intents that settle the question on their own, whatever the model reported:
 # nobody asks to renew their helper's work permit except an employer.
+#
+# new_hiring is deliberately NOT here. It is the one intent both sides raise —
+# "I am looking for a maid" and "I am looking for work" both land on it, which
+# is the whole reason resolve_service() splits the two hiring flows. Forcing it
+# to employer would send every job seeker down the employer's questions.
 _CONTACT_BY_INTENT = {
-    "new_hiring": "employer",
     "direct_hiring": "employer",
     "replacement": "employer",
     "transfer": "employer",
@@ -148,6 +152,12 @@ _CONTACT_BY_INTENT = {
     "case_enquiry": "employer",
 }
 
+# Where the model could not tell, but the intent leans one way on balance.
+# Applied only after the model has been given its say.
+_CONTACT_FALLBACK_BY_INTENT = {
+    "new_hiring": "employer",
+}
+
 
 def _detected_contact_type(intent: str, raw: Any) -> str | None:
     """Who the classifier thinks this is, or None while it cannot tell."""
@@ -155,7 +165,13 @@ def _detected_contact_type(intent: str, raw: Any) -> str | None:
     if by_intent:
         return by_intent
     value = str(raw or "").strip().lower()
-    return value if value in _CONTACT_TYPES else None
+    if value in _CONTACT_TYPES:
+        return value
+    # 'unclear' on a hiring enquiry: far more of those are employers, and the
+    # employer flow asks nothing a helper would find strange ("what kind of care
+    # are you looking for") until the contact type has had another turn to firm
+    # up.
+    return _CONTACT_FALLBACK_BY_INTENT.get(intent)
 
 
 async def confirm_harm(message: str) -> bool:
@@ -274,17 +290,33 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
         "intent_reasoning": str(result.get("reasoning") or "")[:300],
     }
 
-    # Only consulted while the database has no record of this number. A matched
-    # employer stays an employer whatever a single message sounds like.
-    if (state.get("contact_type") or "unknown") == "unknown":
+    # Read every time there is no master record behind the stored type, not just
+    # when it says 'unknown'. A type inherited from an old lead is only what this
+    # number asked about last time, and effective_contact_type() weighs the two;
+    # skipping the read here left it nothing to weigh.
+    has_master_record = any(
+        state.get(key)
+        for key in ("matched_employer_id", "matched_candidate_id", "matched_supplier_id")
+    )
+    if not has_master_record:
         detected = _detected_contact_type(intent, result.get("contact_type"))
         if detected:
             update["detected_contact_type"] = detected
-            logger.info(
-                "Conversation %s: unknown number reads as a %s",
-                state.get("conversation_id"),
-                detected,
-            )
+            stored = (state.get("contact_type") or "unknown").strip()
+            if stored not in {"", "unknown", detected}:
+                logger.info(
+                    "Conversation %s reads as a %s this time, not the %s on the row "
+                    "(no master record — that came from an earlier lead)",
+                    state.get("conversation_id"),
+                    detected,
+                    stored,
+                )
+            else:
+                logger.info(
+                    "Conversation %s: unrecognised number reads as a %s",
+                    state.get("conversation_id"),
+                    detected,
+                )
 
     if HUMAN_REQUEST_PATTERNS.search(message):
         # Honour it silently: no announcement, the bot simply steps aside.

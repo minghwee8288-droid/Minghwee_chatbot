@@ -118,6 +118,32 @@ def _merge_dict(current: dict | None, new: dict | None) -> dict:
     return merged
 
 
+def effective_contact_type(state: "ConversationState") -> str:
+    """Who we are talking to, weighing the record against what this message says.
+
+    A contact_type backed by an employers/candidates/profiles row is a master
+    record and always wins — one message that sounds otherwise does not turn an
+    employer into a job seeker.
+
+    A contact_type with no master record behind it came from a previous lead,
+    which is a far softer thing: it says only what that number enquired about
+    last time. Trusting it as absolutely as a master record meant a number that
+    once registered a helper stayed a candidate forever, so an employer writing
+    "I am looking for a maid" had a leads_candidate row opened for them and was
+    asked which country they were from.
+    """
+    stored = (state.get("contact_type") or "").strip().lower()
+    detected = (state.get("detected_contact_type") or "").strip().lower()
+
+    has_master_record = any(
+        state.get(key)
+        for key in ("matched_employer_id", "matched_candidate_id", "matched_supplier_id")
+    )
+    if stored and stored != "unknown" and has_master_record:
+        return stored
+    return detected or stored or "unknown"
+
+
 def conversation_ref(state: "ConversationState") -> dict[str, Any]:
     """The subset of the conversation row the ticket/handover services need."""
     return {

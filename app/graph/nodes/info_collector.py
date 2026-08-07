@@ -33,7 +33,7 @@ from app.graph.prompts.templates import (
     FEE_HANDOVER_INSTRUCTION,
     HANDOVER_CLOSER_INSTRUCTION,
 )
-from app.graph.state import RESET_KEY, ConversationState
+from app.graph.state import RESET_KEY, ConversationState, effective_contact_type
 from app.services import lead as lead_service
 from app.services import ticket as ticket_service
 from app.utils import redact_nric
@@ -249,10 +249,7 @@ async def _open_lead_early(
     if state.get("created_lead_id") or state.get("matched_lead_id"):
         return {}
 
-    contact_type = (state.get("contact_type") or "unknown").strip()
-    if contact_type == "unknown":
-        contact_type = (state.get("detected_contact_type") or "").strip()
-    kind = lead_service.kind_for(service_type, contact_type)
+    kind = lead_service.kind_for(service_type, effective_contact_type(state))
     if not kind or not lead_service.has_real_name(collected):
         return {}
 
@@ -301,9 +298,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # §3 and the routing rule: a helper looking for work produces intent
     # new_hiring exactly as an employer does, and must not be asked an
     # employer's questions.
-    contact_type = (state.get("contact_type") or "unknown").strip()
-    if contact_type == "unknown":
-        contact_type = (state.get("detected_contact_type") or "").strip()
+    contact_type = effective_contact_type(state)
     service_type = ticket_service.resolve_service(state.get("service_type"), contact_type)
     if service_type != state.get("service_type"):
         logger.info(

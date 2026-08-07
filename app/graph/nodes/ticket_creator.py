@@ -10,6 +10,7 @@ from app.graph.state import (
     MEDIA_INTENT,
     ConversationState,
     conversation_ref,
+    effective_contact_type,
 )
 from app.services import assignment as assignment_service
 from app.services import lead as lead_service
@@ -85,19 +86,7 @@ CANDIDATE_LEAD_SERVICES = {ticket_service.CANDIDATE_HIRING, "transfer"}
 
 def _lead_kind(state: ConversationState, service_type: str | None) -> str | None:
     """Which lead table this enquiry belongs in, per §19 — or None."""
-    if service_type in CANDIDATE_LEAD_SERVICES:
-        return lead_service.CANDIDATE
-    if service_type not in EMPLOYER_LEAD_SERVICES:
-        return None
-
-    # §19 keys off the service, but a supplier or partner asking about fees is
-    # not an employer lead — §15 and §16 say they never produce one.
-    contact_type = (state.get("contact_type") or "unknown").strip()
-    if contact_type == "unknown":
-        contact_type = (state.get("detected_contact_type") or "").strip()
-    if contact_type in {"supplier", "partner"}:
-        return None
-    return lead_service.EMPLOYER
+    return lead_service.kind_for(service_type, effective_contact_type(state))
 
 
 async def _finish_lead(
@@ -222,10 +211,7 @@ async def ticket_creator(state: ConversationState) -> dict[str, Any]:
     # 'unknown' is truthy, so the plain value was winning over what the turn
     # actually worked out — a ticket read 'contact_type: unknown' after the
     # classifier had called them an employer four messages running.
-    contact_type = (state.get("contact_type") or "").strip()
-    if contact_type in {"", "unknown"}:
-        contact_type = (state.get("detected_contact_type") or "").strip() or "unknown"
-    captured.setdefault("contact_type", contact_type)
+    captured.setdefault("contact_type", effective_contact_type(state))
     captured.setdefault("whatsapp_number", state.get("phone"))
     if state.get("customer_name"):
         captured.setdefault("whatsapp_name", state["customer_name"])

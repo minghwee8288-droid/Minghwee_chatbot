@@ -113,6 +113,15 @@ async def main() -> None:
         assignment_rule=None,
         last_message_body=None,
         last_bot_reply_at=None,
+        # Identity too, or the next run inherits it. contact_type is only
+        # re-derived while it is unknown, so a number left branded 'candidate'
+        # by an earlier test had every later enquiry — including "I am looking
+        # for a maid" — routed down the candidate flow.
+        contact_type=None,
+        matched_employer_id=None,
+        matched_candidate_id=None,
+        matched_supplier_id=None,
+        matched_case_id=None,
     )
     print("  -> bot_status='bot_active', fresh thread. Send another message to test.")
 
