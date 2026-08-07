@@ -45,6 +45,10 @@ class Field:
 
 CANDIDATE_HIRING = "candidate_new_hiring"
 
+# What the classifier calls a helper offering herself for placement. It is an
+# intent name, not a flow — resolve_service() maps it onto CANDIDATE_HIRING.
+CANDIDATE_REGISTRATION = "candidate_registration"
+
 # Flows a helper drives herself. §5: employers never initiate a transfer.
 CANDIDATE_SERVICES = {CANDIDATE_HIRING, "transfer"}
 
@@ -153,9 +157,13 @@ TICKET_SERVICE_TYPES = {
 # only when the thread has no service yet.
 TICKET_SERVICE_FALLBACK = {
     CANDIDATE_HIRING: "new_hiring",
-    "candidate_registration": "new_hiring",
+    CANDIDATE_REGISTRATION: "new_hiring",
     "media_received": "transfer",
 }
+
+# Contacts who are offering someone *else* for placement. §15/§16: they raise no
+# lead, so they never go down the candidate lead flow.
+_THIRD_PARTY_CONTACTS = {"supplier", "partner"}
 
 
 def _storable_service(service_type: str, conversation: dict[str, Any]) -> tuple[str, str | None]:
@@ -183,8 +191,20 @@ def resolve_service(service_type: str | None, contact_type: str | None) -> str |
     A helper who says "I am looking for work" produces intent new_hiring like
     an employer does. Running her through the employer flow asks her what kind
     of care *she* is looking for, which is why these are separate services.
+
+    "I want job" takes the other route into the same flow: the classifier reads
+    it as candidate_registration, which had no field list of its own. Collection
+    therefore "finished" on her very first message with nothing captured, the
+    thread was ticketed and handed to an agent before she had been asked a single
+    question, and no leads_candidate row was written because the lead rules key
+    off candidate_new_hiring. Both spellings now resolve to the one §3 flow.
     """
-    if service_type == "new_hiring" and (contact_type or "") == "candidate":
+    contact = (contact_type or "").strip()
+    if service_type == "new_hiring" and contact == "candidate":
+        return CANDIDATE_HIRING
+    # A supplier or partner offering another helper keeps the bare registration
+    # service: they raise no lead, so there is nothing to collect from them.
+    if service_type == CANDIDATE_REGISTRATION and contact not in _THIRD_PARTY_CONTACTS:
         return CANDIDATE_HIRING
     return service_type
 

@@ -24,6 +24,7 @@ from app.graph.state import (
     TICKET_ONLY_INTENTS,
     ConversationState,
 )
+from app.services import ticket as ticket_service
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,15 @@ def route_after_intent(state: ConversationState) -> str:
         or intent in DISPUTE_INTENTS
         or intent == CANDIDATE_INTENT
     ):
+        return "info_collector"
+
+    # A collection already in progress keeps going, whatever this message
+    # classified as. The client answering "Philippines" is not a new topic, but
+    # the classifier has nothing to call it and returns 'other' — and where the
+    # in-flight service is a derived one (candidate_new_hiring is a flow, not an
+    # intent name) the classifier cannot promote it back to an intent either, so
+    # the answer would go to the knowledge base and the questions start again.
+    if ticket_service.fields_for(state.get("service_type")):
         return "info_collector"
 
     # Informational, case enquiries and anything unclassified go through the KB.

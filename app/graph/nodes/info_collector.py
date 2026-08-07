@@ -26,6 +26,7 @@ from app.graph.guards import (
 from app.graph.llm import complete, complete_json
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
+    ACKNOWLEDGE_ONLY_INSTRUCTION,
     COLLECTOR_INSTRUCTION,
     EXTRACTION_SYSTEM,
     EXTRACTION_USER,
@@ -63,6 +64,7 @@ def _known_fields(state: ConversationState) -> dict[str, str]:
 
 FALLBACK_QUESTION = "Sorry, could you tell me a bit more about what you need?"
 FALLBACK_CLOSING = "Noted, thanks for the details. Let me pull this together and come back to you shortly."
+FALLBACK_ACKNOWLEDGEMENT = "Got it. Let me look into this and come back to you shortly."
 
 # Values that only mean anything as an answer to a question that was asked.
 #
@@ -274,14 +276,25 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "needs_handover": bool(state.get("needs_handover")),
         }
 
-    instruction_template = (
-        FEE_HANDOVER_INSTRUCTION if service_type in ENQUIRY_SERVICES else HANDOVER_CLOSER_INSTRUCTION
-    )
+    # A service that asks nothing at all (direct hiring, a supplier offering a
+    # helper) has not "got everything it needs" — it never wanted anything. Told
+    # otherwise, the model filled the gap by inventing a question and then went
+    # silent behind the handover, which is what a job seeker saw: asked for her
+    # name and country, then nothing.
+    if not ticket_service.fields_for(service_type):
+        instruction_template = ACKNOWLEDGE_ONLY_INSTRUCTION
+        fallback = FALLBACK_ACKNOWLEDGEMENT
+    elif service_type in ENQUIRY_SERVICES:
+        instruction_template = FEE_HANDOVER_INSTRUCTION
+        fallback = FALLBACK_CLOSING
+    else:
+        instruction_template = HANDOVER_CLOSER_INSTRUCTION
+        fallback = FALLBACK_CLOSING
     instruction = instruction_template.format(
         service_label=label,
         enquiry_label="our fees" if service_type == "fee_enquiry" else "helper salary",
     ) + dropped_note
-    reply = await _write(state, system_prompt_state, instruction, fallback=FALLBACK_CLOSING)
+    reply = await _write(state, system_prompt_state, instruction, fallback=fallback)
     logger.info(
         "Conversation %s finished collection for %s: %s",
         state.get("conversation_id"),

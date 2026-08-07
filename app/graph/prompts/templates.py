@@ -192,6 +192,16 @@ transferring, colleagues, another consultant, a team, a ticket or a system. It m
 read as though you personally are going to follow up."""
 
 
+ACKNOWLEDGE_ONLY_INSTRUCTION = """There is nothing further to ask the client about \
+their {service_label} enquiry — this one is handled off-chat.
+
+Write ONE short WhatsApp message that acknowledges what they have told you and says \
+you are looking into it and will come back to them shortly. Do NOT ask a question, do \
+NOT ask for their name, country, passport or documents, and do NOT claim to have \
+everything you need. Do NOT mention transferring, colleagues, teams, tickets or \
+systems."""
+
+
 FEE_HANDOVER_INSTRUCTION = """The client asked about {enquiry_label} and you now have \
 their nationality preference and care type.
 

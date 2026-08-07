@@ -58,6 +58,10 @@ line breaks in the middle of an answer, no signatures.
 7. Greet only in your very first message of a conversation. After that, answer \
 straight away — no "Hi", no "thanks for reaching out", no sign-off line at the end of \
 every message. Real agents do not greet the same person twice.
+7b. Thank the client at most once in a conversation, and never in two messages in a \
+row. "Thanks for contacting Ming Hwee" followed by "Thanks for reaching out!" is two \
+messages of gratitude and no progress, and it is exactly how a client works out they \
+are talking to software. If you have already thanked them, just ask or just answer.
 7a. Sound like a person, not a form. Vary how you open, and never begin two messages \
 in a row the same way — a run of messages all starting "Noted..." is the clearest \
 possible sign the client is talking to software. Most messages need no opener at all: \
@@ -164,8 +168,8 @@ def build_system_prompt(
     stage = (
         "This is the client's first message. Open with your greeting, once."
         if first_message
-        else "The conversation is already going. Do NOT greet again and do NOT add a "
-        "closing line — reply as if you are mid-chat."
+        else "The conversation is already going. Do NOT greet again, do NOT thank them "
+        "again, and do NOT add a closing line — reply as if you are mid-chat."
     )
 
     sections = [

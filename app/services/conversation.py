@@ -99,11 +99,34 @@ ALLOWED_VALUES: dict[str, set[str]] = {
 }
 
 
+# Flows the chatbot runs that the portal's service_type column predates. Filed
+# under the nearest permitted value rather than dropped: a thread left with a
+# null service_type reads in the portal as an enquiry about nothing, which is
+# what an agent picking up a job seeker saw. The real flow is on the ticket, in
+# captured_info.enquiry_type.
+SERVICE_TYPE_SUBSTITUTES = {
+    "candidate_new_hiring": "new_hiring",
+    "candidate_registration": "new_hiring",
+    "media_received": None,  # not a service — leave the column as it was
+}
+
+
 def _sanitize(fields: dict[str, Any]) -> dict[str, Any]:
     clean: dict[str, Any] = {}
     for key, value in fields.items():
         allowed = ALLOWED_VALUES.get(key)
         if allowed is not None and value is not None and value not in allowed:
+            if key == "service_type" and value in SERVICE_TYPE_SUBSTITUTES:
+                substitute = SERVICE_TYPE_SUBSTITUTES[value]
+                if substitute is None:
+                    continue
+                logger.info(
+                    "Recording service_type=%r as %r — the portal's column has no value for it",
+                    value,
+                    substitute,
+                )
+                clean[key] = substitute
+                continue
             logger.info("Dropping %s=%r — not permitted by the portal's constraint", key, value)
             continue
         clean[key] = value

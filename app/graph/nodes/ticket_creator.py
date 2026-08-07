@@ -108,6 +108,13 @@ async def _maybe_create_lead(
 ) -> dict[str, Any] | None:
     kind = _lead_kind(state, service_type)
     if not kind:
+        # Silence here is why a job seeker was ticketed with no leads_candidate
+        # row and nothing in the log said so. Say which service was rejected.
+        logger.info(
+            "Conversation %s: no lead raised — %r is not a lead-raising service",
+            state.get("conversation_id"),
+            service_type,
+        )
         return None
 
     phone = state.get("phone") or ""
@@ -160,6 +167,16 @@ async def ticket_creator(state: ConversationState) -> dict[str, Any]:
     if dropped:
         logger.info("Dropping fields not part of %s: %s", service_type, dropped)
     captured = {key: value for key, value in collected.items() if key in allowed}
+
+    # A service with questions that produced no answers means collection was
+    # skipped, not completed — the agent gets a work item with nothing on it.
+    if allowed and not captured:
+        logger.warning(
+            "Conversation %s: ticketing %s with none of its %d field(s) captured",
+            state.get("conversation_id"),
+            service_type,
+            len(allowed),
+        )
 
     captured.setdefault("contact_type", state.get("contact_type"))
     captured.setdefault("whatsapp_number", state.get("phone"))

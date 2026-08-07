@@ -230,6 +230,81 @@ _FILLER_PHRASE = re.compile(
 )
 
 
+# Thanking the client twice running is the most obvious tell that nothing is
+# listening, and it takes several shapes the opener guards above all miss:
+#
+#   "Hi! Thanks for contacting Ming Hwee."  -> opener word is "hi", not "thanks"
+#   "Thanks for reaching out!"              -> a clause, not the bare "Thanks,"
+#                                              that _FILLER_PHRASE matches
+#   "Got it, thanks! Let me pull ..."       -> the thanks is not at the front
+#
+# All three went to real clients on the same test number, in pairs.
+_THANKS = re.compile(r"\bthank(?:s|\s*you)\b", re.IGNORECASE)
+
+# A whole opening sentence that is nothing but an acknowledgement. Deliberately
+# strict, and a whitelist rather than a length limit: "Thanks for the permit
+# photo which shows a March expiry" is nine words and cutting it would throw
+# away the only thing the message said.
+_PURE_THANKS_SENTENCE = re.compile(
+    r"^\W*"
+    r"(?:(?:hi+|hey+|hello+|good\s+(?:morning|afternoon|evening|day))(?:\s+there)?\b[\s,!.\-]*)?"
+    r"(?:(?:noted|got\s+it|got\s+that|understood|sure|okay|ok|alright|great|perfect)"
+    r"\b[\s,!.\-]*)?"
+    r"(?:many\s+)?thank(?:s|\s*you)\b(?:\s+(?:so|very)\s+much)?(?:\s+again)?"
+    r"(?:\s+for\s+(?:"
+    r"contacting|reaching\s+out|getting\s+in\s+touch|messaging|writing|sharing|waiting|"
+    r"letting\s+me\s+know|that|this|"
+    r"your\s+(?:message|patience|time|reply|details|note|info(?:rmation)?)|"
+    r"the\s+(?:details|update|info(?:rmation)?)"
+    r")(?:\s+(?:to\s+)?(?:us|me|ming\s+hwee(?:\s+agency)?))?)?"
+    r"[\s,!.\-]*$",
+    re.IGNORECASE,
+)
+
+# "Hi!" punctuated as its own sentence, which puts the thanks in the second one.
+_BARE_GREETING_SENTENCE = re.compile(
+    r"^\W*(?:hi+|hey+|hello+|good\s+(?:morning|afternoon|evening|day))(?:\s+there)?[\s,!.\-]*$",
+    re.IGNORECASE,
+)
+
+# Secondary bound, in case the pattern above ever matches more than intended.
+_MAX_THANKS_SENTENCE_WORDS = 10
+
+
+def thanks_the_client(text: str) -> bool:
+    """Whether a message thanks the client anywhere in it."""
+    return bool(_THANKS.search(text or ""))
+
+
+def strip_repeated_gratitude(reply: str, *previous: str) -> str:
+    """Drop an opening thank-you when a recent message already thanked them.
+
+    Only the first sentence goes, and only when it is short enough to be an
+    acknowledgement rather than content, and there is a real message left
+    behind it. A thank-you further into the reply is left alone — it is part of
+    a sentence that is saying something.
+    """
+    body = (reply or "").strip()
+    if not body or not any(thanks_the_client(line) for line in previous if line):
+        return body
+
+    parts = _SENTENCE_SPLIT.split(body, maxsplit=1)
+    # "Hi! Thanks for your message. Which country are you from?" — the greeting
+    # is its own sentence, so look past it. It goes with the thanks: the
+    # conversation is already running, so it is a repeat greeting either way.
+    if len(parts) == 2 and _BARE_GREETING_SENTENCE.match(parts[0].strip()):
+        parts = _SENTENCE_SPLIT.split(parts[1].strip(), maxsplit=1)
+    if len(parts) != 2:
+        return body
+    opening, rest = parts[0].strip(), parts[1].strip()
+    if not _PURE_THANKS_SENTENCE.match(opening):
+        return body
+    if len(opening.split()) > _MAX_THANKS_SENTENCE_WORDS or len(rest.split()) < 4:
+        return body
+    logger.info("Dropped a second thank-you in a row: %r", opening)
+    return rest[0].upper() + rest[1:]
+
+
 def opener_word(text: str) -> str:
     match = _OPENER.match(text or "")
     return match.group(1).lower() if match else ""
@@ -279,8 +354,12 @@ def strip_repeated_opener(reply: str, *previous: str) -> str:
     matters: the model alternates. Checking only the immediately preceding reply
     lets "Got it." through on every other message, which reads exactly as
     mechanically as saying it every time.
+
+    A repeated thank-you is handled first: it is the same fault, but it hides
+    behind a greeting and spans a whole clause, so the word-level check below
+    never sees it.
     """
-    body = (reply or "").strip()
+    body = strip_repeated_gratitude(reply, *previous)
     first = opener_word(body)
     if not first or first not in _FILLER_OPENERS:
         return body
