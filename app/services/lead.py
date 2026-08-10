@@ -9,7 +9,7 @@ is a human decision, which is what ``leads.converted_employer_id`` is for.
 Every value written to a constrained column goes through a mapping function
 here. The database rejects anything outside its CHECK lists, and the whole
 insert fails on one bad value, so the mapping is deliberate rather than a
-pass-through of whatever the model extracted.
+pass-through of whatever the model extracted .
 """
 
 from __future__ import annotations
