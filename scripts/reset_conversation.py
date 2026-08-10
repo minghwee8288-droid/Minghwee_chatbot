@@ -14,6 +14,14 @@ its memory out of the LangGraph checkpoint alone — every turn rebuilds
 last ticket. A new thread id on its own leaves both in place, so the bot picks
 up the previous enquiry as if nothing had happened.
 
+This also deletes the conversation's old LangGraph checkpoint rows
+(checkpoints / checkpoint_blobs / checkpoint_writes, keyed by thread_id) —
+without it, resetting the conversation row still leaves collected_info,
+asked_field_counts and everything else the checkpointer tracked sitting under
+the abandoned thread id forever. Harmless to the next run, which gets a fresh
+thread id either way, but it is real state from a "deleted" conversation still
+sitting in the database, and it accumulates by one orphaned thread per reset.
+
 ``--keep-history`` resets only the routing state and leaves the transcript
 alone, for when you want to test how the bot resumes an existing thread.
 
@@ -39,6 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.config import settings  # noqa: E402
 from app.db.supabase import db  # noqa: E402
 from app.services import conversation as conversation_service  # noqa: E402
 from app.services import lead as lead_service  # noqa: E402
@@ -48,12 +57,48 @@ from app.utils import normalize_phone  # noqa: E402
 # and cb_handovers rows point at a ticket.
 WIPE_TABLES = ("cb_handovers", "cb_tickets", "wp_chat_messages")
 
+# LangGraph's own tables (app/graph/graph.py's AsyncPostgresSaver.setup()),
+# all keyed by thread_id. Created over a raw psycopg connection, not through
+# the Supabase project — so they are not necessarily in PostgREST's schema
+# cache and db.table(...) is not a reliable way to reach them. This script
+# connects to SUPABASE_DB_URL directly instead, the same DSN the checkpointer
+# itself uses.
+CHECKPOINT_TABLES = ("checkpoints", "checkpoint_blobs", "checkpoint_writes")
+
 
 async def _count(table: str, conversation_id: int) -> int:
     result = await db.execute(
         db.table(table).select("id").eq("conversation_id", conversation_id).limit(1000)
     )
     return len(result.data or [])
+
+
+def _wipe_checkpoints(thread_id: str | None) -> None:
+    """Delete the abandoned thread's rows from LangGraph's checkpoint tables.
+
+    Synchronous on purpose: psycopg's async mode cannot run on Windows'
+    default ProactorEventLoop (see run.py), and a one-off CLI script has no
+    reason to fight that for a handful of DELETEs. A plain blocking connect
+    is instant here — nothing else is running concurrently.
+    """
+    if not thread_id:
+        return
+    if not settings.supabase_db_url:
+        print("  SUPABASE_DB_URL not set — checkpoints are in-memory only, nothing to clear")
+        return
+
+    import psycopg
+
+    try:
+        with psycopg.connect(settings.supabase_db_url, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                total = 0
+                for table in CHECKPOINT_TABLES:
+                    cur.execute(f"DELETE FROM {table} WHERE thread_id = %s", (thread_id,))
+                    total += cur.rowcount
+                print(f"  cleared LangGraph checkpoint for thread {thread_id} ({total} row(s))")
+    except Exception as exc:  # noqa: BLE001 - an uninitialised checkpointer must not block the reset
+        print(f"  could not clear checkpoint rows for thread {thread_id}: {exc}")
 
 
 async def _wipe_candidate_lead(phone: str) -> None:
@@ -88,6 +133,7 @@ async def main() -> None:
         return
 
     cid = conversation["id"]
+    old_thread_id = conversation.get("langgraph_thread_id")
     print(f"conversation {cid} ({phone}) was bot_status={conversation.get('bot_status')!r}")
 
     if keep_history:
@@ -99,6 +145,10 @@ async def main() -> None:
             deleted = await _count(table, cid)
             await db.execute(db.table(table).delete().eq("conversation_id", cid))
             print(f"  cleared {table} ({deleted} row(s))")
+
+    # A fresh thread id is minted below regardless of --keep-history, so the
+    # old thread's checkpoint is abandoned either way — always clear it.
+    _wipe_checkpoints(old_thread_id)
 
     if wipe_lead:
         await _wipe_candidate_lead(phone)

@@ -208,6 +208,15 @@ class ConversationState(TypedDict, total=False):
     rag_best_score: float
     case_summary: dict[str, Any] | None
 
+    # --- Topic-scoped blocking ---
+    # Open tickets on this conversation, keyed by topic — read fresh from
+    # cb_tickets every turn (see open_topics_for_conversation), never
+    # persisted on the checkpoint. A topic with an entry here is off-limits:
+    # the bot acknowledges a message about it instead of answering or
+    # re-collecting, until the ticket closes. Every other topic on the same
+    # conversation is unaffected.
+    blocked_topics: dict[str, dict[str, Any]]
+
     # --- Information collection ---
     collected_info: Annotated[dict[str, Any], _merge_dict]
     # Which service collected_info belongs to, so a switch can clear it.

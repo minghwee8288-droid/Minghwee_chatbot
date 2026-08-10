@@ -145,10 +145,20 @@ class Settings(BaseSettings):
     agent_grace_hours: int = 24
 
     # How long a conversation stays with a human before the bot may pick it up
-    # again. Without this, every handover is permanent: a client who comes back
-    # three months later with a brand-new enquiry gets silence. The clock only
-    # starts after the last human message. 0 disables the return entirely.
+    # again. Only relevant now to a standdown with no agent message behind it —
+    # the bot failing outright (see _fail_over_to_human) — since a real agent
+    # message is governed by agent_pause_minutes instead. The clock starts
+    # after the last bot reply. 0 disables the return entirely.
     human_active_timeout_hours: int = 72
+
+    # A human agent typing on the thread pauses the bot conversation-wide —
+    # the one thing that still does, now that every other trigger is
+    # topic-scoped (see cb_tickets / open_topics_for_conversation). The clock
+    # restarts on every further agent message and the bot resumes on its own
+    # once this many minutes pass with no new one — it does not wait for the
+    # agent to mark anything resolved. 0 disables the auto-resume (permanent
+    # until explicitly resolved, the old behaviour).
+    agent_pause_minutes: int = 10
 
     # The WhatsApp Business app can send greeting and away messages by itself.
     # They arrive as outbound messages the bot did not send, which the agent

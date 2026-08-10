@@ -39,6 +39,9 @@ REASON_SALARY = "salary_enquiry"
 REASON_MEDIA = "media_received"
 # A helper or an agent offering one: intake needs documents and verification.
 REASON_CANDIDATE = "candidate_registration"
+# A short, auto-expiring standdown ended on its own — the agent went quiet for
+# agent_pause_minutes without resolving anything or replying again.
+REASON_AGENT_PAUSE_EXPIRED = "agent_pause_expired"
 
 
 async def _log(
@@ -125,6 +128,56 @@ async def to_human(
     }
 
 
+async def log_escalation(
+    conversation: dict[str, Any],
+    *,
+    reason: str,
+    intent: str | None = None,
+    ticket_id: str | None = None,
+    salesperson_profile_id: str | None = None,
+    assigned_agent_id: str | None = None,
+    assignment_rule: str | None = None,
+    contact_type: str | None = None,
+) -> dict[str, Any]:
+    """Record that a topic was escalated to a human, without silencing the bot.
+
+    This is what a ticket-raising trigger calls now instead of to_human():
+    the ticket this reason is attached to is what a human must act on, not the
+    whole conversation, so bot_status is left exactly as it was — the client
+    keeps talking to the bot about everything else. The only things that stand
+    the bot down conversation-wide are a human actually replying
+    (agent_took_over, a short auto-expiring pause) and the bot failing
+    outright (to_human, via the webhook's failover path).
+    """
+    conversation_id = conversation["id"]
+
+    if not assigned_agent_id:
+        assigned_agent_id, assignment_rule = await assignment_service.resolve_agent(
+            intent=intent,
+            matched_employer_id=conversation.get("matched_employer_id"),
+            salesperson_profile_id=salesperson_profile_id,
+            contact_type=contact_type or conversation.get("contact_type"),
+        )
+
+    await _log(
+        conversation_id,
+        BOT_TO_HUMAN,
+        reason,
+        agent_profile_id=assigned_agent_id,
+        ticket_id=ticket_id,
+    )
+    logger.info(
+        "Topic escalated on conversation %s (reason=%s, rule=%s, agent=%s, ticket=%s) — "
+        "bot stays active on everything else",
+        conversation_id,
+        reason,
+        assignment_rule,
+        assigned_agent_id,
+        ticket_id,
+    )
+    return {"assigned_agent_id": assigned_agent_id, "assignment_rule": assignment_rule}
+
+
 async def agent_took_over(conversation: dict[str, Any], reason: str = REASON_AGENT_TAKEOVER) -> None:
     """A human replied from the WhatsApp Business app — stand the bot down."""
     conversation_id = conversation["id"]
@@ -136,7 +189,14 @@ async def agent_took_over(conversation: dict[str, Any], reason: str = REASON_AGE
 
 
 async def back_to_bot(conversation: dict[str, Any], reason: str = REASON_AGENT_RESOLVED) -> None:
-    """Return a conversation to the bot (used when an agent closes the thread)."""
+    """Return a conversation to the bot (used when an agent closes the thread,
+    or when a standdown with no real agent message behind it — a bot failure —
+    finally times out).
+
+    Mints a fresh langgraph_thread_id: this path is for a handover with no
+    reliable sense of what is still in progress, so a clean slate beats
+    carrying stale collected_info into whatever the client raises next.
+    """
     conversation_id = conversation["id"]
     await conversation_service.update(
         conversation_id,
@@ -145,3 +205,19 @@ async def back_to_bot(conversation: dict[str, Any], reason: str = REASON_AGENT_R
     )
     await _log(conversation_id, HUMAN_TO_BOT, reason)
     logger.info("Handover human->bot on conversation %s (reason=%s)", conversation_id, reason)
+
+
+async def resume_from_pause(
+    conversation: dict[str, Any], reason: str = REASON_AGENT_PAUSE_EXPIRED
+) -> None:
+    """Resume the bot once a short agent-message pause lapses on its own.
+
+    Deliberately does NOT mint a fresh thread_id like back_to_bot() does: the
+    agent may only have said a couple of words before going quiet, mid-way
+    through whatever the bot was collecting, and there is no reason to throw
+    that away just because a human was briefly on the thread too.
+    """
+    conversation_id = conversation["id"]
+    await conversation_service.set_bot_status(conversation_id, conversation_service.BOT_ACTIVE)
+    await _log(conversation_id, HUMAN_TO_BOT, reason)
+    logger.info("Agent pause expired on conversation %s — bot resuming", conversation_id)

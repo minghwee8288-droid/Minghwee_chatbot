@@ -288,6 +288,21 @@ Do NOT mention transferring, colleagues, teams, tickets or systems. If they are 
 helper herself, be warm and reassuring — this matters to her."""
 
 
+BLOCKED_TOPIC_INSTRUCTION = """The client has just said something about {service_label}. The \
+team is already looking into that one specifically and it is not resolved yet.
+
+Write ONE short WhatsApp message that acknowledges what they just said and reassures them you \
+are still on it — close to "Still checking on that for you, I'll have an update soon." Do NOT \
+answer it, do NOT give any figures, dates, decisions or new details about it, and do NOT \
+promise a specific time.
+
+If what they just said is new information — a detail, a correction, a follow-up question — \
+acknowledge that you have noted it rather than treating the message as just a check-in.
+
+Do NOT mention transferring, colleagues, teams, tickets or systems — from where they are \
+sitting you are still the one person helping them with it. Maximum two short sentences."""
+
+
 CASE_INSTRUCTION = """The client is asking about their existing case with us.
 
 Tell them where the case currently stands using only the case details above. Do not \

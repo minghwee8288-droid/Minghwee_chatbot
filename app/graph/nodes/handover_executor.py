@@ -1,7 +1,10 @@
-"""Node 6 — hand the thread to a human and go silent.
+"""Node 6 — escalate a topic to a human without silencing the bot.
 
-Nothing here is visible to the client. The only message that may be produced is
-the single empathetic reply for an assault escalation.
+Every trigger that reaches this node is topic-scoped: it logs the escalation
+and finalises the ticket's agent assignment, but leaves bot_status alone, so
+the bot keeps answering everything else on the conversation. The only message
+this node itself may produce is the single empathetic reply for a first
+assault report.
 """
 
 from __future__ import annotations
@@ -87,7 +90,7 @@ async def handover_executor(state: ConversationState) -> dict[str, Any]:
         or (handover_service.REASON_TICKET if state.get("ticket_id") or update.get("ticket_id") else handover_service.REASON_CONFUSED)
     )
 
-    result = await handover_service.to_human(
+    result = await handover_service.log_escalation(
         conversation_ref(state),
         reason=reason,
         intent=intent,

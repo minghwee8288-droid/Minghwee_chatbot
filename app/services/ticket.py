@@ -161,10 +161,24 @@ TICKET_SERVICE_TYPES = {
 # §3 files the candidate job-seeking ticket under new_hiring. An attachment
 # belongs to whatever the thread is already about, and falls back to transfer
 # only when the thread has no service yet.
+#
+# The four informational intents below are not services at all — they are
+# what a "couldn't answer this, raising a ticket" escalation carries as its
+# topic now that every escalation gets a ticket (so there is something to
+# block a follow-up against). A client explicitly asking for a human files
+# under whatever bare intent the message itself classified as, for the same
+# reason (see ticket_creator's handling of REASON_CLIENT_REQUESTED) — bare
+# intents not listed here still fall through to the "transfer" default below.
+# The real value survives in captured_info.topic_key/enquiry_type regardless
+# of what the portal's column ends up holding.
 TICKET_SERVICE_FALLBACK = {
     CANDIDATE_HIRING: "new_hiring",
     CANDIDATE_REGISTRATION: "new_hiring",
     "media_received": "transfer",
+    "general_question": "transfer",
+    "process_question": "transfer",
+    "document_question": "transfer",
+    "case_enquiry": "transfer",
 }
 
 # Contacts who are offering someone *else* for placement. §15/§16: they raise no
@@ -213,6 +227,19 @@ def resolve_service(service_type: str | None, contact_type: str | None) -> str |
     if service_type == CANDIDATE_REGISTRATION and contact not in _THIRD_PARTY_CONTACTS:
         return CANDIDATE_HIRING
     return service_type
+
+
+def topic_key_for(service_type: str | None, contact_type: str | None, intent: str | None) -> str | None:
+    """Which blocked-topic bucket a turn's classification falls into.
+
+    Mirrors exactly what create() stores as captured_info['topic_key'] for a
+    ticket raised from the same classification (resolve_service applied first,
+    same as the collector does), so a later turn can look itself up in the
+    open-tickets map from open_topics_for_conversation() and get acknowledged
+    instead of re-answered or re-escalated.
+    """
+    resolved = resolve_service(service_type, contact_type)
+    return resolved or intent
 
 
 def fields_for(service_type: str | None) -> list[Field]:
@@ -270,6 +297,67 @@ async def last_for_conversation(conversation_id: int) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
+async def open_topics_for_conversation(conversation_id: int) -> dict[str, dict[str, Any]]:
+    """Open tickets on this conversation, keyed by the topic they block.
+
+    A topic with an entry here is off-limits to the bot until the ticket
+    closes (status leaves 'open') — the routing check in the graph computes
+    the same key fresh each turn via topic_key_for() and looks itself up here.
+    Fails open (nothing blocked) on a lookup error: a DB hiccup should not be
+    able to silently mute the bot on every topic at once.
+    """
+    try:
+        result = await db.execute(
+            db.table(TABLE)
+            .select("id, ticket_number, service_type, status, captured_info, created_at")
+            .eq("conversation_id", conversation_id)
+            .eq("status", "open")
+            .order("created_at")
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not read open tickets for conversation %s", conversation_id)
+        return {}
+
+    topics: dict[str, dict[str, Any]] = {}
+    for row in result.data or []:
+        info = row.get("captured_info") or {}
+        key = info.get("topic_key") or row.get("service_type")
+        if key:
+            topics[key] = row
+    return topics
+
+
+# How many follow-ups are kept on a ticket. An agent needs the recent gist of
+# what the client has said since — not an unbounded transcript growing on a
+# JSONB column forever.
+_MAX_FOLLOW_UPS = 10
+
+
+async def add_follow_up(ticket_id: str | None, message: str) -> None:
+    """Record a message that arrived on a topic after its ticket was raised.
+
+    Without this, anything the client says while a topic is parked — a chase,
+    a correction, a new detail — never reaches the agent opening the ticket;
+    it only ever reached the transcript. Never raises: called from the reply
+    path, where a logging failure must not cost the client their reply.
+    """
+    if not ticket_id or not (message or "").strip():
+        return
+    try:
+        row = await db.select_one(TABLE, "captured_info", id=ticket_id)
+        if row is None:
+            return
+        info = dict(row.get("captured_info") or {})
+        follow_ups = list(info.get("follow_ups") or [])
+        follow_ups.append(
+            {"at": datetime.now(tz=timezone.utc).isoformat(), "message": message.strip()[:500]}
+        )
+        info["follow_ups"] = follow_ups[-_MAX_FOLLOW_UPS:]
+        await db.update(TABLE, {"captured_info": info}, id=ticket_id)
+    except Exception:  # noqa: BLE001 - a logging failure must not cost the client their reply
+        logger.exception("Could not record a follow-up on ticket %s", ticket_id)
+
+
 async def create(
     *,
     conversation: dict[str, Any],
@@ -281,6 +369,11 @@ async def create(
 ) -> dict[str, Any] | None:
     stored_service, true_service = _storable_service(service_type, conversation)
     info = dict(captured_info or {})
+    # The key a follow-up on this exact topic is matched against later — see
+    # topic_key_for(). Always the value passed in here, never the (possibly
+    # substituted) stored value, so a topic the portal's schema does not know
+    # can still be blocked and resolved correctly.
+    info.setdefault("topic_key", service_type)
     if true_service:
         # First key, so it heads the agent's view of the ticket.
         info = {"enquiry_type": true_service, **info}

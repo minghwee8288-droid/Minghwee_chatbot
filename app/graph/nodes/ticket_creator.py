@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from app.graph.state import (
+    AGENCY_INFO_INTENT,
     LEAD_CONTACT_TYPES,
     MEDIA_INTENT,
     ConversationState,
@@ -13,6 +14,7 @@ from app.graph.state import (
     effective_contact_type,
 )
 from app.services import assignment as assignment_service
+from app.services import handover as handover_service
 from app.services import lead as lead_service
 from app.services import ticket as ticket_service
 
@@ -26,6 +28,13 @@ REASON_BY_SERVICE = {
     "dispute_assault": "dispute_escalation",
     MEDIA_INTENT: "media_received",
 }
+
+# Intents that never justify a ticket on their own — a degenerate reply on a
+# "hi" or an unclassifiable message is not a work item for a human. Anything
+# else response_generator marks needs_handover on (weak retrieval, a
+# malformed reply) becomes one, using the intent as its topic since these
+# never resolve a service_type in the first place.
+_NO_TICKET_INTENTS = {"greeting", "smalltalk", "other", AGENCY_INFO_INTENT}
 
 
 def _media_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -177,6 +186,29 @@ async def _maybe_create_lead(
 
 async def ticket_creator(state: ConversationState) -> dict[str, Any]:
     service_type = state.get("service_type")
+    if not service_type and state.get("needs_handover"):
+        # response_generator can decide a question needs a human (weak
+        # retrieval, a malformed reply) without ever resolving a service_type
+        # — the informational intents never had one. Without this fallback
+        # that escalation raised no ticket at all: nothing to assign, nothing
+        # for a follow-up to block against, no record beyond the
+        # cb_handovers log line.
+        intent = state.get("intent")
+        if intent and (
+            intent not in _NO_TICKET_INTENTS
+            or state.get("handover_reason") == handover_service.REASON_CLIENT_REQUESTED
+        ):
+            # An explicit "let me speak to someone" always gets a ticket, even
+            # when the message itself classifies as small talk — it is a
+            # deliberate signal, not a side effect. The bare intent is what
+            # gets stored as the topic (never a separate bucket) because
+            # topic_key_for() has no visibility into handover_reason and can
+            # only fall back to intent when there is no service_type — the
+            # two must compute the same key, or a repeat "can I speak to
+            # someone" is never recognised as the same open topic and raises
+            # a second ticket instead of getting acknowledged.
+            service_type = intent
+
     if not service_type or state.get("ticket_id"):
         return {}
 
@@ -218,11 +250,15 @@ async def ticket_creator(state: ConversationState) -> dict[str, Any]:
     if state.get("intent_reasoning"):
         captured.setdefault("bot_note", state["intent_reasoning"])
 
-    # A media ticket has no collected fields at all — the attachment details are
-    # the whole point of it.
+    # A service with no fields of its own (media, direct hiring, assault, an
+    # unanswerable question) has nothing else to show the agent — the
+    # client's own words are the whole ticket.
+    if not allowed:
+        captured.setdefault("client_message", (state.get("incoming_text") or "")[:2000])
+
+    # A media ticket also needs what the attachment actually was.
     if service_type == MEDIA_INTENT:
         captured.update(_media_summary(state.get("media_items") or []))
-        captured.setdefault("client_message", (state.get("incoming_text") or "")[:2000])
 
     # A lead first, so the ticket can point at it. Normally the collector has
     # already opened it on the client's name and this only fills in what was

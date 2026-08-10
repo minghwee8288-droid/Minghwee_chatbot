@@ -2,9 +2,12 @@
 
 WhatsApp assistant for **Ming Hwee Employment Agency** (Singapore, MOM Licence 12C6072).
 It sits on Thomas's existing WhatsApp Business number via Whapi, answers common
-enquiries from the knowledge base, collects the basics for each service request, and
-hands the thread to a human sales agent **silently** — same thread, no announcement,
-no sign that a bot was ever involved.
+enquiries from the knowledge base, and collects the basics for each service request.
+When it hits something a human must handle, it raises a ticket for that one topic and
+keeps talking to the client about everything else — silently, same thread, no
+announcement that anyone or anything else is involved. The bot only stands the whole
+conversation down when an agent actually replies on the thread, or when it fails
+outright.
 
 This is **Project 2** of three. It shares one Supabase database with the RAG pipeline
 (Project 1) and the Ming Hwee OS platform (Project 3). It **reads** `cb_knowledge_base`,
@@ -22,19 +25,26 @@ WhatsApp ──► Whapi ──► POST /webhook/whapi
                     ┌─────────┴──────────┐
               from_me = true        from_me = false
                     │                     │
-          agent detector          store message + identify contact
-     (bot_status = human_active)          │
-                                    debounce 3s
-                                          │
-                                LangGraph conversation engine
-                                          │
-        ┌─────────────────────────────────┼──────────────────────────┐
+          agent detector          maybe_return_to_bot (pause lapsed?)
+     (bot_status = human_active,   store message + identify contact
+      auto-resumes after                    │
+      AGENT_PAUSE_MINUTES)            debounce 3s
+                                             │
+                                   LangGraph conversation engine
+                                             │
+        ┌────────────────────────────────────┼─────────────────────────────┐
    intent_classifier ──► rag_retriever ──► response_generator ──► reply
-        │                                              │
+        │        │                                        │
+        │        └──► blocked_topic_responder (topic already ticketed — reply)
+        │                                                  │
         ├──► info_collector ──► ticket_creator ──► handover_executor
-        │                                              │
-        └──► handover_executor (dispute_assault, immediate)
+        │                                                  │
+        └──► handover_executor (dispute_assault, first report only)
 ```
+
+`ticket_creator`/`handover_executor` log the escalation and finalise agent assignment,
+but leave `bot_status` untouched — the ticket blocks only its own topic
+(`blocked_topics`, read fresh from `cb_tickets` every turn), not the conversation.
 
 | Layer | Module |
 |---|---|
@@ -197,7 +207,16 @@ overrides the classifier — safety never depends on model confidence.
 [app/services/ticket.py](app/services/ticket.py). The collector asks one question per
 message, in the agency's voice, and never re-asks something already answered.
 
-**Handover triggers**
+**Escalation is topic-scoped, not conversation-wide.** Every trigger below raises a
+`cb_tickets` row and logs a `cb_handovers` entry, but leaves `bot_status` alone — the bot
+keeps answering everything else on the conversation. The ticket's `captured_info.topic_key`
+(mirrored by `ticket_service.topic_key_for()`) is what a follow-up on that exact topic is
+matched against: while the ticket is `open`, a message that resolves to the same topic is
+routed to `blocked_topic_responder` instead of being answered, re-collected, or escalated
+again — a short, varied acknowledgement, with anything new the client says appended to
+the ticket (`ticket_service.add_follow_up`) so the agent opening it sees the whole
+picture. The topic unblocks the moment the ticket leaves `status = 'open'`, with no sync
+step: `open_topics_for_conversation()` is read fresh from `cb_tickets` every turn.
 
 | Trigger | Reason logged | Reply sent first |
 |---|---|---|
@@ -206,8 +225,12 @@ message, in the agency's voice, and never re-asks something already answered.
 | Assault / violence | `dispute_escalation` | one empathetic message + 999 advice |
 | Salary or leave dispute | `dispute_escalation` | acknowledgement |
 | Nothing relevant in the KB | `bot_confused` | "let me check with the team" |
-| Client asks for a person | `client_requested` | none |
-| Graph or Whapi failure | `bot_confused` | none |
+| Client asks for a person | `client_requested` | none — that topic goes quiet, the rest of the conversation does not |
+| Media / candidate registration | `media_received` / `candidate_registration` | brief acknowledgement |
+
+A repeat message on an already-open topic is never re-escalated: `route_after_intent`
+checks `blocked_topics` before anything else, so whatever the classifier makes of it, a
+parked topic stays parked.
 
 **Assignment** ([app/services/assignment.py](app/services/assignment.py)), in priority
 order: admin escalation for assault → the employer's existing `salesperson_profile_id`
@@ -215,8 +238,34 @@ order: admin escalation for assault → the employer's existing `salesperson_pro
 `wp_chat_users.id` and written to `wp_chat_conversations.assigned_user_id` so the portal
 shows the assignment.
 
-**Safety overrides silence.** The bot staying quiet on a human-handled thread is the
-rule that keeps handovers invisible — but it cannot apply to someone reporting harm.
+**Only two things stand the bot down conversation-wide**, since every ticket-raising
+trigger above is topic-scoped: a human agent actually replying on the thread, and the bot
+failing outright (an unhandled graph exception, or Whapi refusing the send).
+
+**A human agent replying pauses the bot, not permanently.** Whapi echoes every outbound
+message on the number back as a webhook; whichever ones are not the bot's own send (id
+cache + `is_bot`) and not a WhatsApp Business auto-reply (matched by config, or
+structurally — the same text sent verbatim to several different clients) are a real
+agent, and `agent_took_over()` sets `bot_status = human_active`. The bot resumes on its
+own once `AGENT_PAUSE_MINUTES` (default 10) pass with no further agent message — the
+clock restarts on every one — logged as `agent_pause_expired`. It also resumes
+immediately if the agent marks the thread resolved in the portal (`agent_resolved`).
+Resuming never mints a fresh `langgraph_thread_id`: the agent may only have said a couple
+of words before going quiet mid-collection, and there is no reason to discard that.
+Resumption is checked only when a new inbound message arrives — nothing fires on a timer,
+so the bot never replies proactively to something that was already said during the
+pause; it answers only the next genuinely new message. Set `AGENT_PAUSE_MINUTES=0` to
+make an agent reply a permanent handover, the old behaviour.
+
+**The bot failing outright** (`_fail_over_to_human` in
+[app/api/webhook.py](app/api/webhook.py)) is the one case with no agent message behind
+it, so it falls back to the much longer `HUMAN_ACTIVE_TIMEOUT_HOURS` (default 72h,
+reason `agent_idle`) measured from the bot's own last reply, since there is no agent
+timestamp to measure from instead. Set it to 0 to make that standdown permanent.
+
+**Safety overrides silence.** The above two standdowns are the rule that keeps handovers
+invisible — but that cannot apply to someone reporting harm on a thread the bot has been
+told to leave alone entirely (blocked by `BOT_ALLOWED_NUMBERS` or `AGENT_GRACE_HOURS`).
 Otherwise a client messaging at 2am about an assault, on a thread an agent touched
 yesterday, gets no reply, no ticket and nobody paged until morning. When a stood-down
 thread receives a message matching the harm signals **and** a separate verification
@@ -227,17 +276,11 @@ belongs to the agent and there is no fight over it when they arrive.
 The only stand-down an emergency cannot override is `BOT_ALLOWED_NUMBERS`: a number that
 is not being tested is never messaged, for any reason.
 
-**Coming back to the bot.** A handover is not permanent — otherwise a client whose
-enquiry closed in March would get silence when they message again in June. On the next
-inbound message the bot takes the thread back if either the agent marked it resolved in
-the portal (`agent_resolved`), or nobody has spoken for `HUMAN_ACTIVE_TIMEOUT_HOURS`
-(`agent_idle`, default 72h). Both are logged to `cb_handovers` with
-`direction = 'human_to_bot'`. Set the timeout to 0 to make handovers permanent.
-
-Two `cb_handovers.reason` values exist beyond the brief's list: `agent_takeover` (an
+Three `cb_handovers.reason` values exist beyond the brief's list: `agent_takeover` (an
 agent replied, which is neither the client asking for a human nor the agent resolving
-anything) and `agent_idle`. Labelling agent takeovers `client_requested`, as the brief's
-vocabulary would force, made the handover log unreadable.
+anything), `agent_idle` and `agent_pause_expired`. Labelling agent takeovers
+`client_requested`, as the brief's vocabulary would force, made the handover log
+unreadable.
 
 ---
 

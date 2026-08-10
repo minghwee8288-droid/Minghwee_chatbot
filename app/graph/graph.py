@@ -10,6 +10,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from app.config import settings
+from app.graph.nodes.blocked_topic_responder import blocked_topic_responder
 from app.graph.nodes.handover_executor import handover_executor
 from app.graph.nodes.info_collector import info_collector
 from app.graph.nodes.intent_classifier import intent_classifier
@@ -21,8 +22,8 @@ from app.graph.state import (
     DISPUTE_INTENTS,
     ENQUIRY_INTENTS,
     SERVICE_INTENTS,
-    TICKET_ONLY_INTENTS,
     ConversationState,
+    effective_contact_type,
 )
 from app.services import ticket as ticket_service
 
@@ -35,15 +36,34 @@ _graph: Any = None
 
 # --- Routing ---------------------------------------------------------------
 
+def _blocked_topic(state: ConversationState) -> str | None:
+    """The key of this turn's topic, if a ticket already parked it.
+
+    Computed the same way ticket_creator's topic_key ends up stored (see
+    topic_key_for) — resolve_service applied first, so a candidate's
+    new_hiring flow and an employer's do not collide on the same key, and a
+    ticket raised before the service resolved (weak retrieval, no
+    service_type at all) still matches on intent.
+    """
+    key = ticket_service.topic_key_for(
+        state.get("service_type"), effective_contact_type(state), state.get("intent")
+    )
+    return key if key and key in (state.get("blocked_topics") or {}) else None
+
+
 def route_after_intent(state: ConversationState) -> str:
     intent = state.get("intent") or "other"
 
-    # Assault escalates immediately — no retrieval, no questions.
-    if intent == "dispute_assault":
-        return "handover_executor"
+    # This turn's topic already has a human working it — acknowledge, do not
+    # re-answer, re-collect or re-escalate. Checked first: whatever else the
+    # classifier made of this message, a parked topic is parked.
+    if _blocked_topic(state):
+        return "blocked_topic_responder"
 
-    # The client explicitly asked for a person.
-    if state.get("needs_handover") and state.get("handover_reason") == "client_requested":
+    # Assault escalates immediately — no retrieval, no questions. Topic-scoped
+    # like everything else once a ticket exists (the check above catches a
+    # repeat), but the first report always gets the full safety response.
+    if intent == "dispute_assault":
         return "handover_executor"
 
     if (
@@ -70,9 +90,11 @@ def route_after_intent(state: ConversationState) -> str:
 def route_after_response(state: ConversationState) -> str:
     if not state.get("needs_handover"):
         return END
-    # An attachment or a candidate offer gets its own ticket on the way out, so
-    # the team has a work item rather than just a silent handover.
-    if state.get("intent") in TICKET_ONLY_INTENTS and not state.get("ticket_id"):
+    # Every stand-down now needs a ticket — it is the thing a follow-up on
+    # this topic gets matched and blocked against, and the only record of
+    # what a human still needs to act on now that the bot itself never falls
+    # silent for a whole conversation.
+    if not state.get("ticket_id"):
         return "ticket_creator"
     return "handover_executor"
 
@@ -95,6 +117,7 @@ def build_graph(checkpointer: Any = None):
     builder.add_node("info_collector", info_collector)
     builder.add_node("ticket_creator", ticket_creator)
     builder.add_node("handover_executor", handover_executor)
+    builder.add_node("blocked_topic_responder", blocked_topic_responder)
 
     builder.add_edge(START, "intent_classifier")
     builder.add_conditional_edges(
@@ -104,6 +127,7 @@ def build_graph(checkpointer: Any = None):
             "rag_retriever": "rag_retriever",
             "info_collector": "info_collector",
             "handover_executor": "handover_executor",
+            "blocked_topic_responder": "blocked_topic_responder",
         },
     )
     builder.add_edge("rag_retriever", "response_generator")
@@ -123,6 +147,7 @@ def build_graph(checkpointer: Any = None):
     )
     builder.add_edge("ticket_creator", "handover_executor")
     builder.add_edge("handover_executor", END)
+    builder.add_edge("blocked_topic_responder", END)
 
     return builder.compile(checkpointer=checkpointer)
 

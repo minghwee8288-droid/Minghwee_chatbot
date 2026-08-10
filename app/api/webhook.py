@@ -230,12 +230,26 @@ def _parse_timestamp(value: Any) -> datetime | None:
 
 
 async def maybe_return_to_bot(conversation: dict[str, Any]) -> dict[str, Any]:
-    """Hand a conversation back to the bot when the human is finished with it.
+    """Hand a conversation back to the bot once the pause that silenced it is over.
 
-    Handovers would otherwise be permanent. A client whose enquiry was closed in
-    March and who messages again in June would get silence, because nothing ever
-    clears bot_status. Two triggers: an agent marking the thread resolved in the
-    portal, and a thread going quiet for longer than the timeout.
+    bot_status = human_active now has exactly two causes, and each gets its
+    own recovery:
+
+    1. A real agent message (agent_took_over). last_agent_message_at() finds
+       a timestamp, and the bot resumes on its own after
+       AGENT_PAUSE_MINUTES of no further agent message — it does not wait for
+       anyone to mark anything resolved. An explicit resolve (status ->
+       closed/resolved in the portal) still short-circuits this immediately.
+    2. The bot failing outright, with no agent ever involved
+       (_fail_over_to_human). last_agent_message_at() finds nothing, so this
+       falls back to the long HUMAN_ACTIVE_TIMEOUT_HOURS safety net, measured
+       from the bot's own last reply.
+
+    Either way this only flips bot_status; it does not itself decide whether
+    to answer whatever triggered this call, and it never marks a message
+    "already handled" — the next thing that happens is that same inbound
+    message being processed normally, once (see handle_inbound). Nothing here
+    proactively sends anything on a timer.
     """
     if (conversation.get("bot_status") or "") != conversation_service.HUMAN_ACTIVE:
         return conversation
@@ -247,23 +261,37 @@ async def maybe_return_to_bot(conversation: dict[str, Any]) -> dict[str, Any]:
         await handover_service.back_to_bot(conversation, reason=handover_service.REASON_AGENT_RESOLVED)
         return await conversation_service.get_by_id(conversation_id) or conversation
 
+    last_agent = await message_service.last_agent_message_at(conversation_id)
+    if last_agent is not None:
+        if settings.agent_pause_minutes <= 0:
+            return conversation  # auto-resume disabled — permanent until explicitly resolved
+        idle = max(datetime.now(tz=timezone.utc) - last_agent, timedelta(0))
+        if idle >= timedelta(minutes=settings.agent_pause_minutes):
+            logger.info(
+                "Conversation %s: agent quiet for %.0f min — resuming the bot",
+                conversation_id,
+                idle.total_seconds() / 60,
+            )
+            await handover_service.resume_from_pause(conversation)
+            return await conversation_service.get_by_id(conversation_id) or conversation
+        return conversation
+
+    # No agent message was ever found — this standdown came from the bot
+    # failing outright, not a human being on the thread. Long safety-net
+    # timeout only, so an unresolved bot failure does not sit silent forever.
     if settings.human_active_timeout_hours <= 0:
         return conversation
 
-    # Measure from the last human message, or from the bot's own last reply if a
-    # handover happened and no agent ever picked it up.
-    reference = await message_service.last_agent_message_at(conversation_id)
-    if reference is None:
-        reference = _parse_timestamp(conversation.get("last_bot_reply_at"))
-    if reference is None:
-        reference = _parse_timestamp(conversation.get("updated_at"))
+    reference = _parse_timestamp(conversation.get("last_bot_reply_at")) or _parse_timestamp(
+        conversation.get("updated_at")
+    )
     if reference is None:
         return conversation
 
     idle = max(datetime.now(tz=timezone.utc) - reference, timedelta(0))
     if idle >= timedelta(hours=settings.human_active_timeout_hours):
         logger.info(
-            "Conversation %s idle with a human for %.0fh — returning it to the bot",
+            "Conversation %s idle with no agent ever involved, for %.0fh — returning it to the bot",
             conversation_id,
             idle.total_seconds() / 3600,
         )
@@ -532,6 +560,11 @@ async def _process_locked(phone: str, messages: list[IncomingMessage]) -> None:
         else None
     )
 
+    # Topics a human is already working on this thread — read fresh every
+    # turn (never persisted on the checkpoint) so a ticket closing anywhere
+    # unblocks its topic on the very next message, with no extra sync step.
+    blocked_topics = await ticket_service.open_topics_for_conversation(conversation["id"])
+
     payload = {
         "conversation_id": conversation["id"],
         "phone": phone,
@@ -553,6 +586,7 @@ async def _process_locked(phone: str, messages: list[IncomingMessage]) -> None:
         # again" while the collector asks for all of them from scratch.
         "matched_lead": open_lead,
         "salesperson_profile_id": None,
+        "blocked_topics": blocked_topics,
         "incoming_text": combined,
         "history_text": message_service.format_history(history),
         "media_items": media_items,
