@@ -173,6 +173,7 @@ async def emergency_override(conversation: dict[str, Any], text: str) -> bool:
         },
         assigned_agent_id=agent_id,
         assignment_rule=rule,
+        description=ticket_service.initial_description("dispute_assault", None, text),
     )
     await handover_service._log(
         conversation_id,

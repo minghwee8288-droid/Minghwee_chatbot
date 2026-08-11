@@ -36,24 +36,14 @@ from app.graph.prompts.templates import (
 from app.graph.state import RESET_KEY, ConversationState, effective_contact_type
 from app.services import lead as lead_service
 from app.services import ticket as ticket_service
+# SERVICE_LABELS/service_label live in app.services.ticket now — the SAME_ISSUE
+# merge-candidate check needs them from a services module, which cannot import
+# graph.nodes. Re-exported here so nothing else in the graph package has to
+# change its import.
+from app.services.ticket import SERVICE_LABELS, service_label
 from app.utils import redact_nric
 
 logger = logging.getLogger(__name__)
-
-SERVICE_LABELS = {
-    "new_hiring": "hiring a new helper",
-    "candidate_new_hiring": "finding work as a helper",
-    "direct_hiring": "direct hire processing",
-    "replacement": "replacing their current helper",
-    "transfer": "a helper transfer",
-    "renewal": "a work permit renewal",
-    "home_leave": "home leave for their helper",
-    "passport_renewal": "a passport renewal",
-    "fee_enquiry": "our fees",
-    "salary_enquiry": "helper salary",
-    "dispute_salary": "a salary or leave issue",
-    "candidate_registration": "registering a helper for placement",
-}
 
 ENQUIRY_SERVICES = {"fee_enquiry", "salary_enquiry"}
 
@@ -162,10 +152,6 @@ def _states_a_care_type(text: str) -> bool:
     """
     remainder = _CARE_TYPE_FILLER.sub(" ", text or "")
     return bool(re.sub(r"[^a-z0-9]+", "", remainder.lower()))
-
-
-def service_label(service_type: str | None) -> str:
-    return SERVICE_LABELS.get(service_type or "", "their enquiry")
 
 
 async def _extract(
@@ -328,7 +314,19 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             service_type,
         )
 
-    extracted = await _extract({**dict(state), "collected_info": previous}, service_type, asked)
+    extraction_state = {**dict(state), "collected_info": previous}
+    if switched:
+        # The pre-switch history is entirely about the abandoned service — on
+        # the turn that switches, it is the only thing in state.history_text,
+        # and the extractor has nothing relevant to find, so it grabs the
+        # nearest plausible-looking short answer instead: a real case, this
+        # produced case_id="Mui Hui" (the client's own name, given three turns
+        # earlier while hiring a helper — a completely different enquiry).
+        # No history for the new service exists yet, so none is given, exactly
+        # as a brand-new conversation gets EXTRACTION_USER's own
+        # "(no earlier messages)" fallback.
+        extraction_state["history_text"] = ""
+    extracted = await _extract(extraction_state, service_type, asked)
 
     # Anything we already know goes in before the gap analysis, so it is never
     # asked for and still reaches the ticket.

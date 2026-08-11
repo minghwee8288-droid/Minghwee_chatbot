@@ -239,6 +239,19 @@ async def close_graph() -> None:
 # --- Execution -------------------------------------------------------------
 
 # Per-turn fields are reset on every invocation so nothing leaks between turns.
+#
+# ticket_id/ticket_number belong here now that a single conversation can raise
+# more than one ticket (topic-scoping). Left out, LangGraph's checkpoint keeps
+# whichever value was last written forever — so once ANY ticket existed on the
+# thread, every later escalation for a genuinely different topic saw a "truthy"
+# ticket_id from turns ago and treated it as already handled:
+# ticket_creator's own guard (state.get("ticket_id")) returned {} without ever
+# creating anything, route_after_response skipped ticket_creator entirely, and
+# handover_executor's assault-ticket guard would have skipped raising a NEW
+# assault ticket for a client who had any earlier ticket on the conversation —
+# reported live: a passport_renewal enquiry that completed collection normally
+# but got silently logged against an unrelated new_hiring ticket from earlier
+# in the same conversation, with no ticket ever created for it at all.
 _TURN_RESET: dict[str, Any] = {
     "reply": "",
     "needs_handover": False,
@@ -250,6 +263,8 @@ _TURN_RESET: dict[str, Any] = {
     "rag_best_score": 0.0,
     "case_summary": None,
     "media_items": [],
+    "ticket_id": None,
+    "ticket_number": None,
 }
 
 

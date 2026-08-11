@@ -43,6 +43,30 @@ class Field:
 #
 # The question wording is the document's own.
 
+# Human-readable name for each service, used in prompts and log lines. Owned
+# here rather than by a node module: find_merge_candidate() needs it and
+# services must not import from graph.nodes (that direction is the other way
+# round already — every node imports ticket_service).
+SERVICE_LABELS = {
+    "new_hiring": "hiring a new helper",
+    "candidate_new_hiring": "finding work as a helper",
+    "direct_hiring": "direct hire processing",
+    "replacement": "replacing their current helper",
+    "transfer": "a helper transfer",
+    "renewal": "a work permit renewal",
+    "home_leave": "home leave for their helper",
+    "passport_renewal": "a passport renewal",
+    "fee_enquiry": "our fees",
+    "salary_enquiry": "helper salary",
+    "dispute_salary": "a salary or leave issue",
+    "candidate_registration": "registering a helper for placement",
+}
+
+
+def service_label(service_type: str | None) -> str:
+    return SERVICE_LABELS.get(service_type or "", "their enquiry")
+
+
 CANDIDATE_HIRING = "candidate_new_hiring"
 
 # What the classifier calls a helper offering herself for placement. It is an
@@ -297,21 +321,30 @@ async def last_for_conversation(conversation_id: int) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-async def open_topics_for_conversation(conversation_id: int) -> dict[str, dict[str, Any]]:
-    """Open tickets on this conversation, keyed by the topic they block.
+# Statuses a ticket must be in to still be "live" — eligible to be matched
+# against, blocked on, or merged into. resolved/closed are immutable history:
+# nothing here ever looks at them, so nothing here can ever touch them.
+OPEN_STATUSES = ("open", "in_progress")
 
-    A topic with an entry here is off-limits to the bot until the ticket
-    closes (status leaves 'open') — the routing check in the graph computes
-    the same key fresh each turn via topic_key_for() and looks itself up here.
+
+async def open_topics_for_conversation(conversation_id: int) -> dict[str, dict[str, Any]]:
+    """Live tickets on this conversation, keyed by the topic they block.
+
+    A topic with an entry here is off-limits to the bot until its ticket
+    leaves OPEN_STATUSES — the routing check in the graph computes the same
+    key fresh each turn via topic_key_for() and looks itself up here. The same
+    map doubles as the candidate pool for find_merge_candidate(): every ticket
+    here is live and on this conversation, which is exactly what both callers
+    need, so one read serves both.
     Fails open (nothing blocked) on a lookup error: a DB hiccup should not be
     able to silently mute the bot on every topic at once.
     """
     try:
         result = await db.execute(
             db.table(TABLE)
-            .select("id, ticket_number, service_type, status, captured_info, created_at")
+            .select("id, ticket_number, service_type, description, status, captured_info, created_at")
             .eq("conversation_id", conversation_id)
-            .eq("status", "open")
+            .in_("status", OPEN_STATUSES)
             .order("created_at")
         )
     except Exception:  # noqa: BLE001
@@ -321,10 +354,34 @@ async def open_topics_for_conversation(conversation_id: int) -> dict[str, dict[s
     topics: dict[str, dict[str, Any]] = {}
     for row in result.data or []:
         info = row.get("captured_info") or {}
-        key = info.get("topic_key") or row.get("service_type")
+        key = info.get("topic_key") or primary_service_type(row)
         if key:
             topics[key] = row
     return topics
+
+
+def primary_service_type(row: dict[str, Any] | None) -> str | None:
+    """The service a ticket was originally raised for.
+
+    service_type is stored as an array so one ticket can cover more than one
+    service after a merge; this is always the first element — the portal-safe
+    value _storable_service() chose when the row was created, and the one
+    everything that needs a single hashable key (a topic map, a log line)
+    should read.
+    """
+    values = (row or {}).get("service_type") or []
+    return values[0] if values else None
+
+
+def service_types_label(row: dict[str, Any] | None) -> str:
+    """Every service a ticket covers, in plain words — 'hiring a new helper and our fees'."""
+    values = (row or {}).get("service_type") or []
+    labels = [service_label(v) for v in values]
+    if not labels:
+        return "their enquiry"
+    if len(labels) == 1:
+        return labels[0]
+    return " and ".join(labels)
 
 
 # How many follow-ups are kept on a ticket. An agent needs the recent gist of
@@ -358,6 +415,147 @@ async def add_follow_up(ticket_id: str | None, message: str) -> None:
         logger.exception("Could not record a follow-up on ticket %s", ticket_id)
 
 
+def _timestamped(text: str) -> str:
+    stamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+    return f"[{stamp}] {text.strip()}"[:500]
+
+
+def initial_description(service_type: str | None, reasoning: str | None, message: str | None) -> str:
+    """The first line of a ticket's description — why it was raised.
+
+    Prefers the classifier's own one-line reasoning, already computed for free
+    on every turn, over a second LLM call just to restate it. Falls back to the
+    client's own words when reasoning is missing (e.g. a ticket-only intent
+    that never ran the full classifier reasoning path).
+    """
+    reason = (reasoning or "").strip() or (message or "").strip()
+    label = service_label(service_type)
+    if not reason:
+        return _timestamped(f"Raised for {label}.")
+    return _timestamped(f"{label.capitalize()}: {reason}"[:400])
+
+
+async def append_description(ticket_id: str, text: str) -> None:
+    """Add a dated line to a ticket's description. Never overwrites what is there.
+
+    Read-modify-write on a single text column — fine at this volume (one
+    client, one ticket, turns seconds apart) and simpler than a Postgres
+    string-concat update. Never raises: a missed description line must not
+    cost the client their reply.
+    """
+    if not ticket_id or not (text or "").strip():
+        return
+    try:
+        row = await db.select_one(TABLE, "description", id=ticket_id)
+        if row is None:
+            return
+        existing = (row.get("description") or "").strip()
+        line = _timestamped(text)
+        merged = f"{existing}\n{line}" if existing else line
+        await db.update(TABLE, {"description": merged}, id=ticket_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not append description to ticket %s", ticket_id)
+
+
+async def add_service_type(ticket_id: str, service_type: str | None) -> None:
+    """Add a service type to a ticket's service_type array, if it belongs there.
+
+    Silently does nothing for a value outside the portal's fixed list
+    (candidate_new_hiring, media_received, a bare intent used as a fallback
+    topic) — cb_tkt_service_check only allows the same eleven values a ticket
+    could ever be created under, and the real value is already on record in
+    captured_info.topic_key regardless of what this array holds. The first
+    element is never touched here — it stays whatever the ticket was
+    originally raised for (see primary_service_type()).
+    """
+    if not ticket_id or service_type not in TICKET_SERVICE_TYPES:
+        return
+    try:
+        row = await db.select_one(TABLE, "service_type", id=ticket_id)
+        if row is None:
+            return
+        current = list(row.get("service_type") or [])
+        if service_type in current:
+            return  # already recorded — do not create duplicates
+        await db.update(TABLE, {"service_type": current + [service_type]}, id=ticket_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not add service_type %r to ticket %s", service_type, ticket_id)
+
+
+async def merge_into(ticket_id: str, *, reason: str, service_type: str | None) -> None:
+    """Fold a new message into an existing ticket instead of raising another.
+
+    The two writes are independent and each already fails safely on its own,
+    so a partial failure (description written, service_type array not, or the
+    reverse) still leaves the ticket in a valid, useful state rather than
+    losing both.
+    """
+    await append_description(ticket_id, reason)
+    await add_service_type(ticket_id, service_type)
+
+
+async def find_merge_candidate(
+    open_tickets: dict[str, dict[str, Any]], *, message: str
+) -> dict[str, Any] | None:
+    """Whether a new ticket-worthy message actually continues one already open.
+
+    Only called once the deterministic topic_key check has already found no
+    exact match — this is for the harder case where the topic looks different
+    on the surface (a salary question inside a hiring enquiry, a document
+    request for the same case) but is the same underlying issue a human is
+    already working. Errs toward "no match": a wrong merge buries one client's
+    issue inside an unrelated ticket, silently, where nobody goes looking for
+    it. A missed merge just costs one extra ticket, which is recoverable and
+    visible.
+    """
+    candidates = [t for t in open_tickets.values() if t.get("id")]
+    if not candidates:
+        return None
+
+    from app.graph.llm import complete_json  # here: services must not import graph at module load
+    from app.graph.prompts.templates import SAME_ISSUE_SYSTEM, SAME_ISSUE_USER
+
+    lines = []
+    for index, ticket in enumerate(candidates, start=1):
+        # Every service the ticket already covers, not just the first — a
+        # ticket already merged with fee_enquiry is exactly the kind of
+        # context that should make the LLM more willing to fold a related
+        # follow-up into it rather than raise another.
+        label = service_types_label(ticket)
+        description = (ticket.get("description") or "").strip() or "(no description yet)"
+        lines.append(f"{index}. {label}\n   {description}")
+
+    result = await complete_json(
+        SAME_ISSUE_SYSTEM,
+        SAME_ISSUE_USER.format(tickets="\n".join(lines), message=message),
+        default={},
+    )
+
+    try:
+        index = int(result.get("ticket_index"))
+    except (TypeError, ValueError):
+        return None
+    try:
+        confidence = float(result.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    # A low-confidence "yes" is not enough for something this consequential —
+    # see the module docstring: a wrong merge is worse than an extra ticket.
+    if not (1 <= index <= len(candidates)) or confidence < 0.6:
+        return None
+
+    chosen = candidates[index - 1]
+    logger.info(
+        "Merge candidate: %r continues ticket %s (confidence %.2f): %s",
+        message[:60],
+        chosen.get("ticket_number"),
+        confidence,
+        result.get("reasoning") or "",
+    )
+    return chosen
+
+
 async def create(
     *,
     conversation: dict[str, Any],
@@ -366,6 +564,7 @@ async def create(
     assigned_agent_id: str | None,
     assignment_rule: str | None,
     created_lead_id: str | None = None,
+    description: str = "",
 ) -> dict[str, Any] | None:
     stored_service, true_service = _storable_service(service_type, conversation)
     info = dict(captured_info or {})
@@ -382,7 +581,16 @@ async def create(
         "tenant_id": settings.tenant_id or None,
         "conversation_id": conversation["id"],
         "ticket_number": await next_ticket_number(),
-        "service_type": stored_service,
+        # An array so a later merge can add more services onto this same
+        # ticket. Seeded with just stored_service, never true_service:
+        # _storable_service() only sets true_service when the requested value
+        # falls outside TICKET_SERVICE_TYPES, which is exactly what the
+        # cb_tkt_service_check containment constraint enforces — a value that
+        # needed substituting can never be a member in its own right. The real
+        # requested type is still on record, in captured_info.topic_key /
+        # enquiry_type above, regardless of what this array can hold.
+        "service_type": [stored_service],
+        "description": description or "",
         "priority": priority_for(service_type),
         "captured_info": info,
         "employer_id": conversation.get("matched_employer_id"),

@@ -23,11 +23,11 @@ from app.graph.guards import (
     strip_repeated_opener,
 )
 from app.graph.llm import complete
-from app.graph.nodes.info_collector import service_label
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import BLOCKED_TOPIC_INSTRUCTION
 from app.graph.state import ConversationState, effective_contact_type
 from app.services import ticket as ticket_service
+from app.services.ticket import TICKET_SERVICE_TYPES, service_label
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +48,29 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
 
     if ticket.get("id") and message:
         await ticket_service.add_follow_up(ticket["id"], message)
+        # This exact topic already matched — always the same underlying issue
+        # by definition, so no LLM check is needed here (find_merge_candidate
+        # is only for the harder case where the surface topic differs).
+        #
+        # What to add to the array is NOT state["service_type"]: the "keep the
+        # active service" rule in the classifier deliberately overwrites it
+        # back to the ticket's own topic whenever a fee/salary question or a
+        # follow-up interrupts an in-progress flow, so it never actually
+        # carries what the client just asked about — "how much will this
+        # cost" inside an open new_hiring ticket classifies as
+        # intent=fee_enquiry but service_type stays 'new_hiring'. intent is
+        # what still carries it, and SERVICE_INTENTS | ENQUIRY_INTENTS |
+        # DISPUTE_INTENTS together are exactly TICKET_SERVICE_TYPES, so a
+        # membership check is enough to tell "a trackable service was just
+        # asked about" from "just a question, nothing to add" (e.g.
+        # document_question, which is real and gets logged via
+        # add_follow_up above, but is not one of the eleven the array can
+        # hold).
+        intent = state.get("intent")
+        new_service = intent if intent in TICKET_SERVICE_TYPES else None
+        await ticket_service.merge_into(ticket["id"], reason=message, service_type=new_service)
 
-    label = service_label(ticket.get("service_type") or topic_key)
+    label = ticket_service.service_types_label(ticket) if ticket.get("id") else service_label(topic_key)
     instruction = BLOCKED_TOPIC_INSTRUCTION.format(service_label=label)
     system_prompt = build_system_prompt(dict(state), extra_instructions=instruction)
     user_prompt = (

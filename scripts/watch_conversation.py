@@ -75,8 +75,11 @@ async def show(phone: str | None) -> None:
     if tickets:
         print("\n  tickets")
         for t in tickets:
-            print(f"    {t.get('ticket_number')}  {t.get('service_type')}  "
+            # service_type is an array — a merged ticket can cover more than one.
+            services = ", ".join(t.get("service_type") or [])
+            print(f"    {t.get('ticket_number')}  [{services}]  status={t.get('status')}  "
                   f"priority={t.get('priority')}  rule={t.get('assignment_rule')}")
+            print(f"      description: {t.get('description') or '(none)'}")
             print(f"      captured: {t.get('captured_info')}")
 
     handovers = await db.select_many("cb_handovers", "*", limit=10, conversation_id=cid)

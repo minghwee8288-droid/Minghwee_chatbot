@@ -212,6 +212,33 @@ async def ticket_creator(state: ConversationState) -> dict[str, Any]:
     if not service_type or state.get("ticket_id"):
         return {}
 
+    # This turn's exact topic already has an open ticket — the graph routes
+    # those to blocked_topic_responder before this node ever runs, so getting
+    # here at all means no exact match. What is left is the harder case: a
+    # different-looking topic that might still be the same underlying issue
+    # (a salary question inside a hiring enquiry, a document request for the
+    # same case). blocked_topics is already fetched once per turn for that
+    # routing check, so this reuses it rather than a second DB read.
+    merge_target = await ticket_service.find_merge_candidate(
+        state.get("blocked_topics") or {}, message=state.get("incoming_text") or ""
+    )
+    if merge_target:
+        await ticket_service.merge_into(
+            merge_target["id"], reason=state.get("incoming_text") or "", service_type=service_type
+        )
+        logger.info(
+            "Conversation %s: %s message folded into existing ticket %s instead of a new one",
+            state.get("conversation_id"),
+            service_type,
+            merge_target.get("ticket_number"),
+        )
+        return {
+            "ticket_id": merge_target["id"],
+            "ticket_number": merge_target.get("ticket_number"),
+            "handover_reason": state.get("handover_reason")
+            or REASON_BY_SERVICE.get(service_type, "ticket_raised"),
+        }
+
     intent = state.get("intent")
     agent_id, rule = await assignment_service.resolve_agent(
         intent=intent,
@@ -288,6 +315,9 @@ async def ticket_creator(state: ConversationState) -> dict[str, Any]:
         assigned_agent_id=agent_id,
         assignment_rule=rule,
         created_lead_id=created_lead_id,
+        description=ticket_service.initial_description(
+            service_type, state.get("intent_reasoning"), state.get("incoming_text")
+        ),
     )
 
     update: dict[str, Any] = {

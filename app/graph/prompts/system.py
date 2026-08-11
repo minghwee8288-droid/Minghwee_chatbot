@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.graph.prompts.style import STYLE_BLOCK
+from app.services.ticket import service_types_label
 
 # --- Part A: identity ------------------------------------------------------
 
@@ -94,7 +95,10 @@ def _previous_enquiry(ticket: dict[str, Any] | None) -> str:
     """One line describing the client's last ticket, for returning employers."""
     if not ticket:
         return ""
-    service = ticket.get("service_type") or "enquiry"
+    # service_type is stored as an array (a merged ticket can cover more than
+    # one) — the raw list must never reach the prompt as text, so this always
+    # goes through the label helper rather than reading the column directly.
+    service = service_types_label(ticket)
     # created_at arrives as an ISO timestamp; the date alone is what an agent
     # would mention in chat.
     created = str(ticket.get("created_at") or "").split("T")[0]

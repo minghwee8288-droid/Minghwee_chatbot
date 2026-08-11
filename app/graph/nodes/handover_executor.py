@@ -65,6 +65,9 @@ async def _assault_ticket(state: ConversationState) -> dict[str, Any]:
         },
         assigned_agent_id=agent_id,
         assignment_rule=rule,
+        description=ticket_service.initial_description(
+            "dispute_assault", None, state.get("incoming_text")
+        ),
     )
     return {
         "assigned_agent_id": agent_id,
