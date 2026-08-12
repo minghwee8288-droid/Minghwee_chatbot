@@ -40,6 +40,22 @@ ENQUIRY_INTENTS = {"fee_enquiry", "salary_enquiry"}
 
 DISPUTE_INTENTS = {"dispute_salary", "dispute_assault"}
 
+# Questions whose answer lives in the knowledge base rather than on a ticket.
+#
+# These are the one thing a parked topic must NOT silence. "How much is your
+# agency fee", "what documents do I need" and "how long does it take" are not
+# chasing the case a human is working — they are general questions we can answer
+# from our own material, and answering them costs the agent nothing. Left in the
+# blocked-topic branch they were logged and ignored: three questions in a row,
+# three silences, which is what the client sees as the bot having died.
+KB_QUESTION_INTENTS = {
+    "fee_enquiry",
+    "salary_enquiry",
+    "document_question",
+    "process_question",
+    "general_question",
+}
+
 CASE_INTENT = "case_enquiry"
 
 # An attachment with no question attached: acknowledged, then ticketed and
@@ -230,6 +246,10 @@ class ConversationState(TypedDict, total=False):
     # --- Output ---
     reply: str
     reply_sent: bool
+    # This turn needs no reply at all — an acknowledgement or a sign-off, which
+    # a person reads and does not answer. Set by the classifier, honoured by the
+    # router, and delivered as an empty reply (the webhook sends nothing).
+    suppress_reply: bool
 
     # --- Handover ---
     needs_handover: bool

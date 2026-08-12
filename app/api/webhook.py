@@ -18,6 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, Request, Response, status
 
 from app.config import settings
 from app.graph.graph import run_turn
+from app.graph.guards import near_duplicate, recent_bot_lines
 from app.graph.nodes.handover_executor import ASSAULT_FALLBACK_REPLY
 from app.graph.nodes.intent_classifier import confirm_harm, matches_assault_keywords
 from app.services import assignment as assignment_service
@@ -164,16 +165,23 @@ async def emergency_override(conversation: dict[str, Any], text: str) -> bool:
     ticket = await ticket_service.create(
         conversation=conversation,
         service_type="dispute_assault",
-        captured_info={
-            "contact_type": conversation.get("contact_type"),
-            "whatsapp_number": conversation.get("customer_number"),
-            "whatsapp_name": conversation.get("customer_name"),
-            "client_message": text[:2000],
-            "bot_note": "Raised by the out-of-hours safety override; the thread was with a human.",
-        },
+        captured_info=ticket_service.structure_captured(
+            {
+                "contact_type": conversation.get("contact_type"),
+                "whatsapp_number": conversation.get("customer_number"),
+                "whatsapp_name": conversation.get("customer_name"),
+                "client_message": text[:2000],
+                "bot_note": "Raised by the out-of-hours safety override; the thread was with a human.",
+            },
+            detail_keys=set(),
+        ),
         assigned_agent_id=agent_id,
         assignment_rule=rule,
-        description=ticket_service.initial_description("dispute_assault", None, text),
+        description=ticket_service.initial_description(
+            "dispute_assault",
+            conversation.get("contact_type"),
+            {"client_message": text},
+        ),
     )
     await handover_service._log(
         conversation_id,
@@ -207,6 +215,19 @@ async def may_engage(phone: str, conversation: dict[str, Any] | None) -> tuple[b
 
     if (conversation.get("bot_status") or "") == conversation_service.BOT_ACTIVE:
         return True, "already a bot conversation"
+
+    if (conversation.get("bot_status") or "") == conversation_service.HUMAN_ACTIVE:
+        # The bot stood ITSELF down on this thread, so the resume clock is ours:
+        # maybe_return_to_bot() below applies agent_pause_minutes (10) and hands
+        # the conversation back once the agent has been quiet that long.
+        #
+        # This used to fall through to the agent_grace_hours check underneath,
+        # which sees the agent's message and stands the bot down for 24 hours —
+        # so the 10-minute resume was unreachable and every human reply silenced
+        # the bot for the rest of the day. The grace window is for threads the
+        # bot was never on (below), where the portal owns the conversation and
+        # there is no pause of ours to expire.
+        return True, "bot-managed standdown — the agent-pause rules decide"
 
     if settings.agent_grace_hours > 0:
         last_agent = await message_service.last_agent_message_at(conversation["id"])
@@ -330,6 +351,18 @@ async def handle_inbound(message: IncomingMessage) -> None:
 
     if existing is not None:
         existing = await maybe_return_to_bot(existing)
+        if not conversation_service.bot_should_reply(existing):
+            # Still inside the pause — the agent is mid-conversation. Touch
+            # nothing (the portal owns the thread and is storing the message
+            # from its own webhook), but never stay silent on a report of harm.
+            logger.info(
+                "Conversation %s still with a human — bot quiet until the agent "
+                "has been idle %d min",
+                existing["id"],
+                settings.agent_pause_minutes,
+            )
+            await emergency_override(existing, message.text_for_llm)
+            return
 
     conversation, is_new = await conversation_service.get_or_create(
         phone, message.customer_name, engage=True
@@ -602,6 +635,27 @@ async def _process_locked(phone: str, messages: list[IncomingMessage]) -> None:
 
     reply = (result.get("reply") or "").strip()
     if not reply:
+        return
+
+    # Last line of defence against sending the same thing twice. Each node has
+    # its own repetition check, but none of them can see the case that actually
+    # produced it live: two messages typed seconds apart arrive as two turns
+    # (the second is folded in mid-turn and processed on the next pass), both
+    # retrieve the same records, and both generate the same answer. The client
+    # got an identical salary quote at 3:53 and 3:54 and replied "Why you tell
+    # me twice".
+    #
+    # Statements only. A repeated QUESTION is sent: the collector has its own
+    # rewrite for that, and if it still comes out the same the client has not
+    # answered it yet — going silent there strands the flow, which is worse than
+    # asking twice.
+    if "?" not in reply and any(
+        near_duplicate(reply, line) for line in recent_bot_lines(payload["history_text"], 2)
+    ):
+        logger.info(
+            "Conversation %s: reply repeats our last message — not sending it again",
+            conversation["id"],
+        )
         return
 
     try:

@@ -69,11 +69,13 @@ each one is actually probing and what counts as a failure.
 python scripts/reset_conversation.py +917970027379
 ```
 
-This deletes the thread's messages, tickets and handovers. That is the point:
-the bot rebuilds its memory from `wp_chat_messages` on every turn, so leaving
-the transcript in place means the next test starts mid-way through the previous
-enquiry no matter how many times you reset. Add `--keep-history` only when you
-are deliberately testing how it resumes an existing thread.
+This deletes that one conversation's messages, tickets and handovers — scoped by
+the conversation id behind the number you pass, never the whole table. That is
+the point: the bot rebuilds its memory from the last 20 `wp_chat_messages` on
+every turn and does not care which thread they came from, so leaving the
+transcript means the next test starts mid-way through the previous enquiry no
+matter how many times you reset. Add `--keep-history` only when you are
+deliberately testing how it resumes an existing thread.
 
 **Two things that are expected, not bugs**
 

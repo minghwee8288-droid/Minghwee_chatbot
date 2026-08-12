@@ -18,6 +18,7 @@ from app.config import settings  # noqa: E402
 from app.db.supabase import db  # noqa: E402
 from app.services import assignment  # noqa: E402
 from app.services import lead as lead_service  # noqa: E402
+from app.services import rag  # noqa: E402
 
 OK = "PASS"
 WARN = "WARN"
@@ -67,19 +68,56 @@ async def check_tenant() -> str | None:
 
 
 async def check_knowledge_base() -> None:
-    rows = await safe(db.select_many("cb_knowledge_base", "namespace, is_active", limit=5000))
+    rows = await safe(
+        db.select_many(rag.KB_TABLE, "namespace, chunk_type, is_active", limit=5000)
+    )
     if isinstance(rows, Exception):
-        record(FAIL, "cb_knowledge_base", f"could not read: {rows}")
+        record(FAIL, rag.KB_TABLE, f"could not read: {rows}")
         return
     active = [r for r in rows if r.get("is_active")]
     namespaces: dict[str, int] = {}
+    chunk_types: dict[str, int] = {}
     for row in active:
         key = row.get("namespace") or "(null)"
         namespaces[key] = namespaces.get(key, 0) + 1
+        chunk = row.get("chunk_type") or "(null)"
+        chunk_types[chunk] = chunk_types.get(chunk, 0) + 1
     if not active:
-        record(FAIL, "cb_knowledge_base", "no active rows")
+        record(FAIL, rag.KB_TABLE, "no active rows")
         return
-    record(OK, "cb_knowledge_base", f"{len(active)} active rows {namespaces}")
+    record(OK, rag.KB_TABLE, f"{len(active)} active rows {namespaces}")
+
+    # style_example rows are tone guidance and are excluded from retrieval, so
+    # they are reported apart from the rows that can actually be answered from.
+    evidence = sum(
+        count for chunk, count in chunk_types.items() if chunk not in rag.EXCLUDED_CHUNK_TYPES
+    )
+    record(OK, "chunk types", f"{chunk_types} — {evidence} usable as evidence")
+
+    # The match function ships separately from the table; a missing one is the
+    # difference between "retrieval is cold" and "retrieval cannot run".
+    probe = await safe(
+        db.rpc(
+            rag.KB_MATCH_FUNCTION,
+            {
+                "query_embedding": [0.0] * settings.embedding_dimensions,
+                "match_threshold": 2.0,  # matches nothing; we only want the call to resolve
+                "match_count": 1,
+                "filter_namespace": None,
+                "filter_service_type": None,
+                "filter_contact_type": None,
+                "filter_nationality": None,
+            },
+        )
+    )
+    if isinstance(probe, Exception):
+        record(
+            FAIL,
+            rag.KB_MATCH_FUNCTION,
+            f"not callable ({probe}) — apply scripts/cb_match_knowledge_base_updated.sql",
+        )
+    else:
+        record(OK, rag.KB_MATCH_FUNCTION, "callable")
 
     if settings.rag_namespace and settings.rag_namespace not in namespaces:
         record(

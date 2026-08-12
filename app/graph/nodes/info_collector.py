@@ -27,6 +27,7 @@ from app.graph.llm import complete, complete_json
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
     ACKNOWLEDGE_ONLY_INSTRUCTION,
+    ANSWER_THEN_ASK_INSTRUCTION,
     COLLECTOR_INSTRUCTION,
     EXTRACTION_SYSTEM,
     EXTRACTION_USER,
@@ -85,8 +86,17 @@ def _known_fields(state: ConversationState) -> dict[str, str]:
     if not isinstance(lead, dict):
         return {}
 
+    # leads.full_name is the EMPLOYER's name; leads_candidate.full_name is the
+    # helper's. The same column answers helper_name only on a candidate lead —
+    # mapped unconditionally it filed a replacement ticket reading "Helper:
+    # Vaidik Dubey", which is the employer, and the client was never asked who
+    # the helper actually is.
+    is_candidate_lead = (state.get("lead_kind") or "").strip().lower() == "candidate"
+
     known: dict[str, str] = {}
     for column, field_key in _LEAD_FIELD_SOURCES:
+        if field_key == "helper_name" and not is_candidate_lead:
+            continue
         value = str(lead.get(column) or "").strip()
         # 'not provided' is what the collector records for a field the client
         # would not answer. Reusing it would make the refusal permanent.
@@ -139,6 +149,19 @@ _CARE_TYPE_FILLER = re.compile(
     r"find(?:ing)?|new|another|one|first|time|please|kindly|"
     r"helper|helpers|maid|maids|domestic|worker|mdw|fdw|house\s*help|"
     r"service|services|enquiry|enquire|interested)\b",
+    re.IGNORECASE,
+)
+
+
+# A message that puts a question to us in the middle of a collection flow.
+# Answering it before asking the next thing is the difference between a
+# consultant and a form: live, "How much is your agency fee?" asked during a
+# hiring flow got "Thanks, I'll pull the details together and come back to you"
+# — the question was never even acknowledged, let alone answered.
+_ASKS_SOMETHING = re.compile(
+    r"\?|\b(how\s+(much|long|many|do|does)|what\s+(documents?|do\s+i|is|are)|"
+    r"which\s+documents?|when\s+(can|will|do)|cost|price|fee|fees|charge|"
+    r"salary|levy|deposit|require[ds]?|needed)\b",
     re.IGNORECASE,
 )
 
@@ -395,6 +418,15 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     label = service_label(service_type)
     system_prompt_state = {**dict(state), "collected_info": collected}
 
+    # The client asked something while we were collecting. Retrieval now runs
+    # before this node on every turn, so the records are in state and the answer
+    # can go out with the next question rather than being ignored.
+    answer_first = (
+        ANSWER_THEN_ASK_INSTRUCTION
+        if _ASKS_SOMETHING.search(state.get("incoming_text") or "")
+        else ""
+    )
+
     if missing:
         next_field = missing[0]
         previous = last_bot_line(state.get("history_text", ""))
@@ -402,7 +434,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             service_label=label,
             field_label=next_field.label,
             previous_message=previous or "(this is your first message)",
-        ) + dropped_note
+        ) + dropped_note + answer_first
         if next_field.optional:
             # §2 step 4 / §23.6: asked once, and a no is taken as an answer.
             instruction += (
@@ -412,7 +444,14 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             )
         # If generation degenerates, fall back to the field's own hand-written
         # question from SERVICE_FIELDS — less warm, but always correct.
-        reply = await _write(state, system_prompt_state, instruction, fallback=next_field.question)
+        reply = await _write(
+            state,
+            system_prompt_state,
+            instruction,
+            fallback=next_field.question,
+            # Answering their question and then asking ours does not fit in two.
+            max_sentences=3 if answer_first else 2,
+        )
         counts[next_field.key] = 1
         logger.info(
             "Conversation %s collecting '%s' for %s (attempt %d, %s field(s) outstanding)",
@@ -453,8 +492,14 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     instruction = instruction_template.format(
         service_label=label,
         enquiry_label="our fees" if service_type == "fee_enquiry" else "helper salary",
-    ) + dropped_note
-    reply = await _write(state, system_prompt_state, instruction, fallback=fallback)
+    ) + dropped_note + answer_first
+    reply = await _write(
+        state,
+        system_prompt_state,
+        instruction,
+        fallback=fallback,
+        max_sentences=3 if answer_first else 2,
+    )
     logger.info(
         "Conversation %s finished collection for %s: %s",
         state.get("conversation_id"),
@@ -478,15 +523,22 @@ async def _write(
     prompt_state: dict[str, Any],
     instruction: str,
     fallback: str = "",
+    max_sentences: int = 2,
 ) -> str:
-    system_prompt = build_system_prompt(prompt_state, extra_instructions=instruction)
+    system_prompt = build_system_prompt(
+        prompt_state,
+        # Retrieval runs ahead of this node now, so a question asked mid-flow can
+        # be answered from our own material instead of deferred.
+        rag_context=state.get("rag_context", ""),
+        extra_instructions=instruction,
+    )
     user_prompt = (
         f"Conversation so far:\n{state.get('history_text') or '(this is the first message)'}\n\n"
         f"Client's latest message(s):\n{state.get('incoming_text', '')}\n\n"
         "Your reply:"
     )
     try:
-        reply = await complete(system_prompt, user_prompt, temperature=0.45, max_tokens=200)
+        reply = await complete(system_prompt, user_prompt, temperature=0.45, max_tokens=140)
     except Exception:  # noqa: BLE001
         logger.exception("Collector reply generation failed")
         return FALLBACK_QUESTION
@@ -496,11 +548,19 @@ async def _write(
         logger.error("Discarded malformed collector reply: %r", reply[:200])
         return fallback or FALLBACK_QUESTION
 
-    # The bot must never quote a price. Figures are allowed only when echoing
-    # back what the client said ("Noted, $650 budget") — it was caught inventing
-    # "salaries range from $600 to $800" while asking about budget.
+    # The bot must never INVENT a price. A figure is allowed when it is echoing
+    # what the client said ("Noted, $650 budget") or when it comes out of the
+    # retrieved records — it was caught inventing "salaries range from $600 to
+    # $800" while asking about budget, and that is what this stops. The records
+    # are included now that the collector can answer a fee or salary question
+    # from them; without that, every correct answer it gave would be thrown away
+    # and replaced with the bare question.
     allowed = " ".join(
-        [state.get("incoming_text", ""), state.get("history_text", "")]
+        [
+            state.get("incoming_text", ""),
+            state.get("history_text", ""),
+            state.get("rag_context", ""),
+        ]
         + [str(v) for v in (prompt_state.get("collected_info") or {}).values()]
     )
     invented = ungrounded_figures(reply, allowed)
@@ -509,7 +569,7 @@ async def _write(
         return fallback or FALLBACK_QUESTION
 
     # "Our consultant will share the package details" is a handover announcement.
-    reply = clamp_reply(strip_handover_talk(reply), max_sentences=3)
+    reply = clamp_reply(strip_handover_talk(reply), max_sentences=max_sentences)
     previous = last_bot_line(state.get("history_text", ""))
 
     # Asking the same thing twice in identical words makes the client feel
@@ -533,11 +593,11 @@ async def _write(
             build_system_prompt(prompt_state, extra_instructions=retry_instruction),
             user_prompt,
             temperature=0.6,
-            max_tokens=200,
+            max_tokens=140,
         )
         retry = clamp_reply(
             strip_handover_talk(strip_meta_commentary(retry.strip().strip('"'))),
-            max_sentences=3,
+            max_sentences=2,
         )
         if (
             retry

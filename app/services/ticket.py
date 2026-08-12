@@ -8,6 +8,7 @@ client wants.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -60,6 +61,15 @@ SERVICE_LABELS = {
     "salary_enquiry": "helper salary",
     "dispute_salary": "a salary or leave issue",
     "candidate_registration": "registering a helper for placement",
+    # Not services, but they reach service_label() as topic keys — a ticket
+    # raised for an unanswerable question, and the "Also asked about" line on a
+    # merge. Without them the line read "Also asked about: their enquiry".
+    "document_question": "required documents",
+    "process_question": "how the process works",
+    "general_question": "a general question",
+    "case_enquiry": "their case status",
+    "media_received": "a document they sent",
+    "dispute_assault": "a safety report",
 }
 
 
@@ -109,11 +119,37 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     # the questions that make them contactable come before the ones that qualify
     # them: a client who stops answering after two messages still leaves a lead
     # sales can ring, rather than a care type attached to nobody.
+    #
+    # The list past the §22 minimum is what an agent actually needs before they
+    # can quote or shortlist anybody. With only four questions the bot was
+    # closing an enquiry after two exchanges and handing over a ticket that said
+    # little more than "wants a helper" — the agent then had to start the
+    # conversation over. Everything added here is asked once and let go if it is
+    # not answered, so a client in a hurry is still never blocked.
     "new_hiring": [
         Field("full_name", "name", "May I know your name?"),
         _EMAIL,
         Field("requirement", "type of care", "What kind of care are you looking for?"),
         Field("preferred_nationality", "nationality preference", "Do you have a preferred nationality?"),
+        Field(
+            "household",
+            "household",
+            "Who would she be looking after at home — how many are in the household?",
+            max_asks=2,
+        ),
+        Field(
+            "start_timeline",
+            "start date",
+            "When are you hoping to have someone start?",
+            max_asks=2,
+        ),
+        Field(
+            "budget",
+            "monthly budget",
+            "Do you have a monthly salary budget in mind?",
+            max_asks=1,
+            optional=True,
+        ),
     ],
     # §3 — candidate lead flow. Separate from new_hiring: a job seeker is never
     # asked an employer's questions. Same identity-first ordering.
@@ -121,25 +157,94 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         Field("full_name", "name", "May I know your name?"),
         _EMAIL,
         Field("nationality", "nationality", "Which country are you from?"),
+        Field(
+            "experience",
+            "experience",
+            "How many years of experience do you have as a helper?",
+            max_asks=2,
+        ),
+        Field(
+            "current_location",
+            "where they are now",
+            "Are you currently in Singapore or still overseas?",
+            max_asks=2,
+        ),
+        Field("availability", "availability", "When would you be able to start?", max_asks=2),
     ],
     # §6 — collects nothing at all.
     "direct_hiring": [],
     # §4
     "replacement": [
         _case_id(),
+        Field("helper_name", "helper's name", "May I know your current helper's name?", max_asks=2),
         Field("reason", "reason for the replacement", "What is the reason for the replacement?"),
         Field("timeline", "timeline", "When would you need the replacement by?"),
     ],
     # §5 — candidate flow. Employers never initiate a transfer.
     "transfer": [
-        Field("reason", "reason for the transfer", "May I know the reason for the transfer?"),
         Field("helper_name", "name", "May I know your name?"),
+        Field("reason", "reason for the transfer", "May I know the reason for the transfer?"),
+        Field(
+            "permit_expiry",
+            "work permit expiry",
+            "When does your current work permit expire?",
+            max_asks=2,
+        ),
+        Field(
+            "employer_consent",
+            "current employer's consent",
+            "Has your current employer agreed to the transfer?",
+            max_asks=2,
+        ),
+        Field(
+            "availability",
+            "availability",
+            "When would you be free to start with a new employer?",
+            max_asks=2,
+        ),
         _CONTACT_NUMBER,
     ],
-    # §7, §8, §9 — case ID only, nothing else.
-    "renewal": [_case_id()],
-    "home_leave": [_case_id()],
-    "passport_renewal": [_case_id()],
+    # §7, §8, §9 — a case ID alone identifies the case, but only if the client
+    # has one to hand. These three are the flows where that most often fails
+    # (a helper rarely knows her employer's case reference), which is how a
+    # ticket ended up reading "passport renewal" and nothing else. The helper's
+    # name and the relevant expiry date let an agent find the case either way.
+    "renewal": [
+        _case_id(),
+        Field("helper_name", "helper's name", "May I know your helper's name?", max_asks=2),
+        Field(
+            "permit_expiry",
+            "work permit expiry",
+            "When does her work permit expire?",
+            max_asks=2,
+        ),
+    ],
+    "home_leave": [
+        _case_id(),
+        Field("helper_name", "helper's name", "May I know your helper's name?", max_asks=2),
+        Field(
+            "leave_dates",
+            "travel dates",
+            "When is she planning to travel, and when would she be back?",
+            max_asks=2,
+        ),
+    ],
+    "passport_renewal": [
+        _case_id(),
+        Field("helper_name", "helper's name", "May I know your helper's name?", max_asks=2),
+        Field(
+            "nationality",
+            "nationality",
+            "Which country is her passport from?",
+            max_asks=2,
+        ),
+        Field(
+            "passport_expiry",
+            "passport expiry",
+            "When does her current passport expire?",
+            max_asks=2,
+        ),
+    ],
     # §10, §11 — only ever asked for what the client has not already stated.
     "fee_enquiry": [
         Field("nationality", "nationality", "Which nationality are you looking at?"),
@@ -149,9 +254,23 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         Field("nationality", "nationality", "Which nationality are you looking at?"),
         Field("care_type", "type of care", "What kind of care would this be for?"),
     ],
-    # §12 — the issue itself comes from what they already said.
+    # §12 — the issue itself comes from what they already said, but an agent
+    # picking up a pay complaint needs to know whose pay and for how long
+    # before they can do anything about it.
     "dispute_salary": [
         Field("helper_name", "helper's name", "May I know your helper's name?"),
+        Field(
+            "issue_detail",
+            "what happened",
+            "Can you tell me a bit more about what has happened?",
+            max_asks=2,
+        ),
+        Field(
+            "issue_duration",
+            "how long",
+            "How long has this been going on?",
+            max_asks=2,
+        ),
     ],
     # §13 — immediate escalation, nothing collected.
     "dispute_assault": [],
@@ -354,9 +473,13 @@ async def open_topics_for_conversation(conversation_id: int) -> dict[str, dict[s
     topics: dict[str, dict[str, Any]] = {}
     for row in result.data or []:
         info = row.get("captured_info") or {}
-        key = info.get("topic_key") or primary_service_type(row)
-        if key:
-            topics[key] = row
+        primary = info.get("topic_key") or primary_service_type(row)
+        # also_topics are the ones folded in later (see add_topic_key). They
+        # block exactly as the ticket's own topic does — the whole point of
+        # merging is that one human is now handling all of it.
+        for key in [primary, *(info.get("also_topics") or [])]:
+            if key:
+                topics[key] = row
     return topics
 
 
@@ -415,46 +538,195 @@ async def add_follow_up(ticket_id: str | None, message: str) -> None:
         logger.exception("Could not record a follow-up on ticket %s", ticket_id)
 
 
-def _timestamped(text: str) -> str:
-    stamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
-    return f"[{stamp}] {text.strip()}"[:500]
+# --- Description -----------------------------------------------------------
+#
+# A description is a briefing, not a transcript. It is composed from what we
+# know about the enquiry — never assembled out of raw client messages, which is
+# what produced the eight-line timestamped logs of "Also: 6756453423" that made
+# the column unreadable. Three parts, in this order:
+#
+#   Employer needs help hiring a new helper.     <- one summary sentence
+#   Care type: elderly care                      <- the captured facts, labelled
+#   Case ID: 6756453423
+#   Also asked about: our fees.                  <- anything folded in later
+#
+# Nothing here is timestamped: cb_tickets.created_at/updated_at already carry
+# the times, and wp_chat_messages carries the conversation itself.
+
+# What the ticket is, in one sentence, per service.
+SERVICE_SUMMARIES = {
+    "new_hiring": "needs help hiring a new helper",
+    "candidate_new_hiring": "is looking for work as a helper",
+    "candidate_registration": "is offering a helper for placement",
+    "direct_hiring": "wants us to process a helper they have already chosen",
+    "replacement": "wants to replace their current helper",
+    "transfer": "needs help with a work permit transfer",
+    "renewal": "needs a work permit renewal",
+    "home_leave": "is arranging home leave for their helper",
+    "passport_renewal": "needs help renewing a helper's passport",
+    "fee_enquiry": "is asking about our agency fees",
+    "salary_enquiry": "is asking about helper salary",
+    "dispute_salary": "has raised a salary or leave issue",
+    "dispute_assault": "has reported a safety incident",
+    "media_received": "sent an attachment for us to look at",
+    "case_enquiry": "is asking about their existing case",
+    "document_question": "is asking which documents are needed",
+    "process_question": "is asking how the process works",
+    "general_question": "asked something the bot could not answer",
+}
+
+# Who is asking, in the words an agent would use.
+_CONTACT_NOUNS = {
+    "employer": "Employer",
+    "candidate": "Helper",
+    "supplier": "Agent",
+    "partner": "Partner",
+}
+
+# Labels for the captured values that go on the description. The Field.label
+# wording is written to sit inside a spoken question ("May I have your case
+# ID?"), which reads oddly as a column heading, so the ones an agent scans for
+# get their own heading here and everything else falls back to the field label.
+_DETAIL_LABELS = {
+    "case_id": "Case ID",
+    "full_name": "Name",
+    "helper_name": "Helper",
+    "email": "Email",
+    "contact_number": "Contact number",
+    "nationality": "Nationality",
+    "preferred_nationality": "Preferred nationality",
+    "requirement": "Care type",
+    "care_type": "Care type",
+    "household": "Household",
+    "start_timeline": "Start date",
+    "timeline": "Needed by",
+    "budget": "Budget",
+    "experience": "Experience",
+    "current_location": "Currently in",
+    "availability": "Available from",
+    "permit_expiry": "Work permit expires",
+    "passport_expiry": "Passport expires",
+    "leave_dates": "Travel dates",
+    "employer_consent": "Employer consent",
+    "reason": "Reason",
+    "issue_detail": "Issue",
+    "issue_duration": "Ongoing for",
+    "client_message": "In their words",
+    "lead_number": "Lead",
+    "attachments": "Attachments",
+}
+
+# Recorded by the collector for a field the client would not answer. It belongs
+# in captured_info, where the gap is honest, but not on a briefing line.
+_UNANSWERED = "not provided"
+
+_MAX_DETAIL_VALUE = 120
+_ALSO_PREFIX = "Also asked about:"
 
 
-def initial_description(service_type: str | None, reasoning: str | None, message: str | None) -> str:
-    """The first line of a ticket's description — why it was raised.
+def _one_line(text: str | None) -> str:
+    """Collapse a value to a single short line."""
+    body = re.sub(r"\s+", " ", (text or "").strip())
+    if len(body) <= _MAX_DETAIL_VALUE:
+        return body
+    return body[:_MAX_DETAIL_VALUE].rsplit(" ", 1)[0] + "…"
 
-    Prefers the classifier's own one-line reasoning, already computed for free
-    on every turn, over a second LLM call just to restate it. Falls back to the
-    client's own words when reasoning is missing (e.g. a ticket-only intent
-    that never ran the full classifier reasoning path).
+
+def _detail_label(service_type: str | None, key: str) -> str:
+    if key in _DETAIL_LABELS:
+        return _DETAIL_LABELS[key]
+    for field in fields_for(service_type):
+        if field.key == key:
+            return field.label[:1].upper() + field.label[1:]
+    return key.replace("_", " ")[:1].upper() + key.replace("_", " ")[1:]
+
+
+def summary_line(service_type: str | None, contact_type: str | None) -> str:
+    """'Employer needs help hiring a new helper.' — the top line of a ticket."""
+    who = _CONTACT_NOUNS.get((contact_type or "").strip(), "Client")
+    what = SERVICE_SUMMARIES.get(service_type or "")
+    if not what:
+        what = f"needs help with {service_label(service_type)}"
+    return f"{who} {what}."
+
+
+def compose_description(
+    service_type: str | None,
+    contact_type: str | None,
+    captured: dict[str, Any] | None = None,
+    *,
+    also: list[str] | tuple[str, ...] = (),
+) -> str:
+    """The whole description, built from what we know rather than what was typed.
+
+    ``captured`` is the flat collector bag (not the structured ticket shape), so
+    this can be called before structure_captured() splits it.
     """
-    reason = (reasoning or "").strip() or (message or "").strip()
-    label = service_label(service_type)
-    if not reason:
-        return _timestamped(f"Raised for {label}.")
-    return _timestamped(f"{label.capitalize()}: {reason}"[:400])
+    lines = [summary_line(service_type, contact_type)]
+
+    # In the order the flow asks for them, so the briefing reads the way the
+    # conversation went. Anything captured outside the flow's own fields (a
+    # media summary, the client's own words) follows.
+    flat = {k: v for k, v in (captured or {}).items() if str(v or "").strip()}
+    ordered = [f.key for f in fields_for(service_type) if f.key in flat]
+    extras = [k for k in flat if k in _DETAIL_LABELS and k not in ordered]
+    for key in [*ordered, *extras]:
+        value = _one_line(str(flat[key]))
+        if not value or value.lower() == _UNANSWERED:
+            continue
+        lines.append(f"{_detail_label(service_type, key)}: {value}")
+
+    also_line = _also_line(also)
+    if also_line:
+        lines.append(also_line)
+    return "\n".join(lines)
 
 
-async def append_description(ticket_id: str, text: str) -> None:
-    """Add a dated line to a ticket's description. Never overwrites what is there.
+def _also_line(also: list[str] | tuple[str, ...]) -> str:
+    labels = []
+    for key in also or ():
+        label = service_label(key)
+        if label not in labels:
+            labels.append(label)
+    if not labels:
+        return ""
+    return f"{_ALSO_PREFIX} {', '.join(labels)}."
 
-    Read-modify-write on a single text column — fine at this volume (one
-    client, one ticket, turns seconds apart) and simpler than a Postgres
-    string-concat update. Never raises: a missed description line must not
-    cost the client their reply.
+
+def initial_description(
+    service_type: str | None,
+    contact_type: str | None = None,
+    captured: dict[str, Any] | None = None,
+) -> str:
+    """The description a ticket is created with."""
+    return compose_description(service_type, contact_type, captured)
+
+
+async def set_also_asked(ticket_id: str, also: list[str]) -> None:
+    """Rewrite the 'Also asked about:' line to cover everything folded in so far.
+
+    Rewritten rather than appended: the list is derived from
+    captured_info.also_topics, which is already the complete set, so appending
+    would just restate it once per turn. Never raises — a missing briefing line
+    must not cost the client their reply.
     """
-    if not ticket_id or not (text or "").strip():
+    if not ticket_id:
         return
     try:
         row = await db.select_one(TABLE, "description", id=ticket_id)
         if row is None:
             return
-        existing = (row.get("description") or "").strip()
-        line = _timestamped(text)
-        merged = f"{existing}\n{line}" if existing else line
-        await db.update(TABLE, {"description": merged}, id=ticket_id)
+        lines = [
+            ln
+            for ln in (row.get("description") or "").splitlines()
+            if ln.strip() and not ln.startswith(_ALSO_PREFIX)
+        ]
+        line = _also_line(also)
+        if line:
+            lines.append(line)
+        await db.update(TABLE, {"description": "\n".join(lines)}, id=ticket_id)
     except Exception:  # noqa: BLE001
-        logger.exception("Could not append description to ticket %s", ticket_id)
+        logger.exception("Could not update the 'also asked' line on ticket %s", ticket_id)
 
 
 async def add_service_type(ticket_id: str, service_type: str | None) -> None:
@@ -482,31 +754,188 @@ async def add_service_type(ticket_id: str, service_type: str | None) -> None:
         logger.exception("Could not add service_type %r to ticket %s", service_type, ticket_id)
 
 
-async def merge_into(ticket_id: str, *, reason: str, service_type: str | None) -> None:
-    """Fold a new message into an existing ticket instead of raising another.
+async def add_topic_key(ticket_id: str, topic_key: str | None) -> list[str] | None:
+    """Record a second topic this ticket now also covers.
 
-    The two writes are independent and each already fails safely on its own,
-    so a partial failure (description written, service_type array not, or the
-    reverse) still leaves the ticket in a valid, useful state rather than
-    losing both.
+    open_topics_for_conversation() blocks a topic by looking its key up against
+    open tickets. Without this, a topic folded into an existing ticket was
+    never blocked: only the key the ticket was RAISED under is in the map, so
+    the next message about the merged topic missed the block, ran the whole
+    collection flow again, and came back round to the merge — appending to the
+    same ticket on every turn. Recording it here means the second topic behaves
+    exactly like the first: acknowledged once, then handled by the human.
+
+    Unlike service_type, this takes any value — it is our own key, not the
+    portal's constrained column, so candidate_new_hiring and the bare-intent
+    fallback topics are all valid here.
+
+    Returns the full also_topics list after the write, so the caller can rebuild
+    the description's "Also asked about" line from it, or None when there was
+    nothing to record.
     """
-    await append_description(ticket_id, reason)
+    if not ticket_id or not topic_key:
+        return None
+    try:
+        row = await db.select_one(TABLE, "captured_info", id=ticket_id)
+        if row is None:
+            return None
+        info = dict(row.get("captured_info") or {})
+        if topic_key == info.get("topic_key"):
+            return None  # this is what the ticket was raised for
+        also = list(info.get("also_topics") or [])
+        if topic_key in also:
+            return also
+        info["also_topics"] = also = also + [topic_key]
+        await db.update(TABLE, {"captured_info": info}, id=ticket_id)
+        return also
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not record topic %r on ticket %s", topic_key, ticket_id)
+        return None
+
+
+async def merge_into(ticket_id: str, *, service_type: str | None) -> None:
+    """Fold a related enquiry into an existing ticket instead of raising another.
+
+    Deliberately takes no free text. It used to take the client's raw message
+    and append it to the description, which is how the column filled up with
+    "Also: 6756453423" and "Also: Dhdpyglxi" — fragments an agent cannot act
+    on. What a merge actually adds is *which service* is now also covered; the
+    message itself is already on the ticket as a follow-up (add_follow_up) and
+    in the conversation transcript.
+
+    The writes are independent and each fails safely on its own, so a partial
+    failure still leaves the ticket valid rather than losing all of them.
+    """
     await add_service_type(ticket_id, service_type)
+    also = await add_topic_key(ticket_id, service_type)
+    if also:
+        await set_also_asked(ticket_id, also)
+
+
+# Topics that always get their own ticket and never absorb another. A safety
+# report or a formal complaint folded into a hiring enquiry is a complaint
+# nobody sees; both directions of that merge are barred here.
+ALWAYS_SEPARATE = {"dispute_assault", "dispute_salary"}
+
+# Which distinct piece of work each service belongs to.
+#
+# Two services in the same family are the same job seen from different angles
+# and belong on one ticket. Two in different families are different jobs and
+# must never share one, however close together they were mentioned: a transfer
+# and a passport renewal are handled by different people, at different times,
+# against different MOM submissions — merging them produced a single ticket
+# reading ['new_hiring','fee_enquiry','transfer','passport_renewal'], which is
+# four jobs and no owner for any of them.
+#
+# Anything not listed is its own family, so a new service type is separate by
+# default rather than silently absorbed.
+SERVICE_FAMILIES = {
+    "new_hiring": "hiring",
+    "direct_hiring": "hiring",
+    CANDIDATE_HIRING: "candidate",
+    CANDIDATE_REGISTRATION: "candidate",
+}
+
+# Topics that are not a piece of work in their own right — they qualify one.
+# "How much is it?" and "what documents do I need?" asked during a hiring
+# enquiry are part of that enquiry; asked cold, with nothing open, they raise
+# their own ticket like anything else.
+MODIFIER_TOPICS = {
+    "fee_enquiry",
+    "salary_enquiry",
+    "general_question",
+    "process_question",
+    "document_question",
+    "case_enquiry",
+    "media_received",
+}
+
+
+def family_for(service_type: str | None) -> str:
+    """The piece of work a service belongs to. Unlisted services are their own."""
+    return SERVICE_FAMILIES.get(service_type or "", service_type or "")
+
+
+def _families_covered(ticket: dict[str, Any]) -> set[str]:
+    """Every family a ticket already covers — its own topic and anything merged.
+
+    Read from captured_info, never from the service_type array: that column is
+    constrained to the portal's eleven values, so a topic outside them is filed
+    under a substitute (TICKET_SERVICE_FALLBACK sends an unanswerable general
+    question to 'transfer'). Matching on the substitute would fold a real
+    transfer request into an unrelated ticket. topic_key and also_topics hold
+    the true values, which is exactly why they exist.
+    """
+    info = ticket.get("captured_info") or {}
+    keys = [
+        info.get("topic_key") or primary_service_type(ticket),
+        *(info.get("also_topics") or []),
+    ]
+    return {family_for(key) for key in keys if key}
+
+
+async def pick_ticket_to_update(
+    open_tickets: dict[str, dict[str, Any]], *, message: str, service_type: str | None
+) -> dict[str, Any] | None:
+    """The live ticket this message belongs on, or None to raise a new one.
+
+    The rule is the service family, decided in code rather than by a model:
+
+      * a dispute or safety report always gets its own row (ALWAYS_SEPARATE);
+      * a modifier topic — a fee, salary, document or process question, an
+        attachment — lands on the open ticket it is qualifying;
+      * anything else merges only into a ticket already covering its own
+        family, and otherwise raises a new one.
+
+    This replaces a merge-by-default rule that asked an LLM whether two topics
+    were "the same issue" and folded them together whenever it was unsure. That
+    fixed the duplicate-ticket-per-turn problem and created a worse one: four
+    unrelated services on a single row. Families keep the deduplication (a fee
+    question during a hiring enquiry still updates the hiring ticket) without
+    ever merging two genuinely different jobs.
+    """
+    if service_type in ALWAYS_SEPARATE:
+        return None
+
+    candidates = [
+        t
+        for t in open_tickets.values()
+        if t.get("id") and primary_service_type(t) not in ALWAYS_SEPARATE
+    ]
+    if not candidates:
+        return None
+
+    if service_type in MODIFIER_TOPICS:
+        # Qualifies whatever is open. With one ticket there is nothing to decide;
+        # with several, ask which enquiry it belongs to and fall back to the one
+        # being worked most recently.
+        if len(candidates) == 1:
+            return candidates[0]
+        return await find_merge_candidate(
+            {str(i): t for i, t in enumerate(candidates)}, message=message
+        ) or candidates[-1]
+
+    family = family_for(service_type)
+    same_family = [t for t in candidates if family in _families_covered(t)]
+    if not same_family:
+        logger.info(
+            "%r is a separate piece of work from the %d open ticket(s) — raising its own",
+            service_type,
+            len(candidates),
+        )
+        return None
+    return same_family[-1]
 
 
 async def find_merge_candidate(
     open_tickets: dict[str, dict[str, Any]], *, message: str
 ) -> dict[str, Any] | None:
-    """Whether a new ticket-worthy message actually continues one already open.
+    """Which open ticket a new ticket-worthy message continues, if any.
 
-    Only called once the deterministic topic_key check has already found no
-    exact match — this is for the harder case where the topic looks different
-    on the surface (a salary question inside a hiring enquiry, a document
-    request for the same case) but is the same underlying issue a human is
-    already working. Errs toward "no match": a wrong merge buries one client's
-    issue inside an unrelated ticket, silently, where nobody goes looking for
-    it. A missed merge just costs one extra ticket, which is recoverable and
-    visible.
+    The judgement itself, without the default: returns the ticket the model
+    picked, or None when it picked none or was not confident enough. Callers
+    decide what None means — pick_ticket_to_update() treats it as "raise a
+    separate ticket", which is the only place that decision is made.
     """
     candidates = [t for t in open_tickets.values() if t.get("id")]
     if not candidates:
@@ -540,9 +969,12 @@ async def find_merge_candidate(
     except (TypeError, ValueError):
         confidence = 0.0
 
-    # A low-confidence "yes" is not enough for something this consequential —
-    # see the module docstring: a wrong merge is worse than an extra ticket.
-    if not (1 <= index <= len(candidates)) or confidence < 0.6:
+    # The bar sits at "more likely than not". It used to be 0.6, back when a
+    # missed merge cost one extra ticket; now that a conversation is meant to
+    # carry one live ticket, a hedged "probably the same" is the answer we want
+    # to act on. Disputes and safety reports never reach here at all — see
+    # ALWAYS_SEPARATE.
+    if not (1 <= index <= len(candidates)) or confidence < 0.5:
         return None
 
     chosen = candidates[index - 1]
@@ -554,6 +986,52 @@ async def find_merge_candidate(
         result.get("reasoning") or "",
     )
     return chosen
+
+
+# Flat keys that describe who is writing rather than what they asked for.
+_CONTACT_KEYS = {
+    "contact_type": "type",
+    "whatsapp_name": "name",
+    "whatsapp_number": "whatsapp_number",
+}
+
+
+def structure_captured(flat: dict[str, Any], *, detail_keys: set[str]) -> dict[str, Any]:
+    """Group a flat bag of captured values into the shape a ticket stores.
+
+        {"contact": {...}, "details": {...}, "notes": {...}}
+
+    The collector and the lead writer both work in flat key/value pairs, and
+    that is the right shape for them — a lead row has one column per answer.
+    A ticket is read by a person, though, and a single flat dict mixing
+    'preferred_nationality' with 'bot_note' and 'whatsapp_number' gives them no
+    idea which parts are the client's answers and which are our own plumbing.
+    The split happens here, at the last moment, so nothing upstream has to care.
+
+    topic_key and enquiry_type are deliberately NOT folded in: create() puts
+    them at the top level, where open_topics_for_conversation() looks for them.
+    """
+    contact: dict[str, Any] = {}
+    details: dict[str, Any] = {}
+    notes: dict[str, Any] = {}
+    for key, value in (flat or {}).items():
+        if value in (None, "", []):
+            continue
+        if key in _CONTACT_KEYS:
+            contact[_CONTACT_KEYS[key]] = value
+        elif key in detail_keys:
+            details[key] = value
+        else:
+            notes[key] = value
+
+    structured: dict[str, Any] = {}
+    if contact:
+        structured["contact"] = contact
+    if details:
+        structured["details"] = details
+    if notes:
+        structured["notes"] = notes
+    return structured
 
 
 async def create(

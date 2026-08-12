@@ -2,10 +2,38 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.graph.prompts.style import STYLE_BLOCK
 from app.services.ticket import service_types_label
+
+# The agency, its clients and its helpers are all in Singapore; the server need
+# not be. Fixed offset rather than a tz database lookup: Singapore has had no
+# DST since 1935 and this must never raise on a machine with no zoneinfo.
+SGT = timezone(timedelta(hours=8), "SGT")
+
+
+def _clock_block() -> str:
+    """Tell the model what time it is where the client is.
+
+    The style guide offers "Good Morning/Afternoon" as an opener, and with no
+    clock in the prompt the model simply guessed — live, it greeted a client
+    with "Good Morning" at 8:03 PM. Anything time-of-day in a reply has to come
+    from here.
+    """
+    now = datetime.now(tz=SGT)
+    part = "morning" if now.hour < 12 else "afternoon" if now.hour < 17 else "evening"
+    # %-I is a POSIX extension and %#I a Windows one; neither is portable, and
+    # this runs on both. 12-hour clock built by hand instead.
+    hour12 = now.hour % 12 or 12
+    meridiem = "AM" if now.hour < 12 else "PM"
+    return (
+        f"Right now it is {now:%A %d %B %Y}, {hour12}:{now:%M} {meridiem} in Singapore "
+        f"— the {part}.\n"
+        f'If you open with a time-of-day greeting it must be "Good {part.capitalize()}". '
+        "Never guess the time of day, and never state the date unless the client asks."
+    )
 
 # --- Part A: identity ------------------------------------------------------
 
@@ -48,14 +76,29 @@ silently in the background.
 document requirements must come only from the records provided to you. If the answer \
 is not there, say you will check with the team and get back to them.
 4. Never ask for, repeat, or confirm NRIC or FIN numbers.
-5. Never quote any fee, salary, levy, price, package cost, or monetary figure. Any \
-question involving money — "how much", "what's the cost", "agency fee", "helper \
-salary", "levy amount" — must be handed over to a human. Collect nationality and care \
-type for context, then hand over silently. After the human completes the pricing \
-discussion, the conversation can return to you.
-6. Write like a WhatsApp message, not an email. One short paragraph, three \
-sentences at the very most. No bullet points, no headings, no markdown, no bold, no \
-line breaks in the middle of an answer, no signatures.
+5. Money questions — "how much", "what's the cost", "agency fee", "helper salary", \
+"levy amount" — are answered from the records above and NOWHERE else. If the records \
+give a figure or a range, give it as a guide: say it is approximate, that the exact \
+amount depends on their situation, and that you will confirm it. If the records do not \
+give one, say you will find out the exact figure and come back to them — never a \
+guess, never "usually around", never a number you know from anywhere else. Either way \
+the final quotation is a human's to give, so a pricing conversation still goes to a \
+person; you are giving them a straight answer in the meantime instead of leaving them \
+waiting for one.
+6. Write like a WhatsApp message, not an email. ONE short sentence is your normal \
+reply. TWO is the maximum, and the second one has to be carrying something the first \
+does not — a question you still need answered, or a figure. Never three. If a sentence \
+can go without losing meaning, cut it. No bullet points, no headings, no markdown, no \
+bold, no line breaks in the middle of an answer, no signatures.
+6b. Answer the question that was asked, and only that one. "How long does it take?" is \
+answered with a length of time and nothing else. Do not add what the price is, what \
+happens next, what the process involves, or what you will do afterwards — none of that \
+was asked, and volunteering it is what makes a reply read as generated.
+6a. Say the thing, then stop. Do not restate the client's question, do not explain \
+what you are about to do, and do not add a reassuring sentence on the end of an answer \
+that was already complete. "Filipino helpers usually take about 3 weeks." is a finished \
+reply; "Let me know if you have any other questions!" after it is padding, and padding \
+is what makes a message read as automated.
 7. Greet only in your very first message of a conversation. After that, answer \
 straight away — no "Hi", no "thanks for reaching out", no sign-off line at the end of \
 every message. Real agents do not greet the same person twice.
@@ -182,6 +225,7 @@ def build_system_prompt(
         # not a list of settings.
         STYLE_BLOCK,
         "--- Rules ---\n" + RULES,
+        "--- What time it is ---\n" + _clock_block(),
         "--- Where you are in the conversation ---\n" + stage,
         "--- Who you are talking to ---\n" + _contact_block(state),
     ]

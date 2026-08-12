@@ -83,6 +83,31 @@ _ALLOWED = re.compile(
 
 NEUTRAL_FOLLOW_UP = "Let me get that sorted and come back to you shortly."
 
+# What we say when we cannot answer. A single fixed string was going out four
+# and five times in one conversation, word for word, which is unmistakably
+# machine-like — a person phrases the same thought differently each time.
+HOLDING_REPLIES = (
+    "Let me check on that and come back to you shortly.",
+    "I'll need to confirm that one — give me a bit and I'll let you know.",
+    "Let me find that out for you and revert shortly.",
+    "I'll double-check and get back to you on that.",
+)
+
+
+def holding_reply(history_text: str = "") -> str:
+    """A 'let me check' line we have not just used.
+
+    Falls back to the first phrasing when every option has been used recently,
+    which in practice means the conversation has bigger problems than repetition.
+    """
+    recent = " ".join(recent_bot_lines(history_text, count=4)).lower()
+    for line in HOLDING_REPLIES:
+        # Compare on the first few words: the guards downstream may have
+        # trimmed an opener off the copy that actually went out.
+        if " ".join(normalize_text_local(line).split()[:4]) not in normalize_text_local(recent):
+            return line
+    return HOLDING_REPLIES[0]
+
 
 def mentions_handover(text: str) -> bool:
     # Blank out sanctioned phrasing first so it cannot trip the pattern below.
@@ -384,7 +409,7 @@ def strip_repeated_opener(reply: str, *previous: str) -> str:
     return stripped[0].upper() + stripped[1:]
 
 
-def clamp_reply(text: str, max_sentences: int = 4) -> str:
+def clamp_reply(text: str, max_sentences: int = 2) -> str:
     """Trim self-directed notes and runaway length from an otherwise good reply."""
     body = _TRAILING_NOTES.sub("", (text or "").strip()).strip()
     sentences = re.split(r"(?<=[.!?])\s+", body)

@@ -57,16 +57,23 @@ async def _assault_ticket(state: ConversationState) -> dict[str, Any]:
     ticket = await ticket_service.create(
         conversation=conversation_ref(state),
         service_type="dispute_assault",
-        captured_info={
-            "contact_type": state.get("contact_type"),
-            "whatsapp_number": state.get("phone"),
-            "whatsapp_name": state.get("customer_name"),
-            "client_message": (state.get("incoming_text") or "")[:2000],
-        },
+        captured_info=ticket_service.structure_captured(
+            {
+                "contact_type": state.get("contact_type"),
+                "whatsapp_number": state.get("phone"),
+                "whatsapp_name": state.get("customer_name"),
+                "client_message": (state.get("incoming_text") or "")[:2000],
+            },
+            detail_keys=set(),
+        ),
         assigned_agent_id=agent_id,
         assignment_rule=rule,
+        # The one ticket where the client's own words belong on the briefing:
+        # whoever opens a safety report must read what was actually said.
         description=ticket_service.initial_description(
-            "dispute_assault", None, state.get("incoming_text")
+            "dispute_assault",
+            state.get("contact_type"),
+            {"client_message": state.get("incoming_text")},
         ),
     )
     return {

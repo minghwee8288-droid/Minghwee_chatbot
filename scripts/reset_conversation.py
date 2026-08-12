@@ -4,26 +4,34 @@
     python scripts/reset_conversation.py +917970027379 --keep-history
     python scripts/reset_conversation.py +917970027379 --wipe-lead
 
-By default this is a full clean slate: stored messages, tickets and handovers
-for that conversation are deleted, bot_status goes back to 'bot_active' and a
-fresh LangGraph thread is started.
+By default this is a full clean slate for ONE conversation: its stored messages,
+tickets and handovers are deleted, bot_status goes back to 'bot_active', the
+identity fields are cleared and a fresh LangGraph thread is started.
+
+Every delete is filtered by the conversation_id resolved from the phone number
+you passed, so no other number is ever in range and no table is ever emptied.
+``cleared wp_chat_messages (92 row(s))`` means 92 rows on that one conversation.
 
 Deleting the messages is the part that actually matters. The bot does not read
 its memory out of the LangGraph checkpoint alone — every turn rebuilds
-``history_text`` from wp_chat_messages (see app/api/webhook.py) and looks up the
-last ticket. A new thread id on its own leaves both in place, so the bot picks
-up the previous enquiry as if nothing had happened.
+``history_text`` from the last ``history_limit`` messages of wp_chat_messages
+(20 by default, see app/services/message.py) and it does not care which thread
+they belong to. A new thread id on its own leaves the whole previous test
+sitting there, so the bot picks the old enquiry up as if nothing had happened.
+
+That transcript is also the portal's, which is why this is TEST NUMBERS ONLY.
 
 This also deletes the conversation's old LangGraph checkpoint rows
-(checkpoints / checkpoint_blobs / checkpoint_writes, keyed by thread_id) —
+(cb_checkpoints / cb_checkpoint_blobs / cb_checkpoint_writes, keyed by thread_id) —
 without it, resetting the conversation row still leaves collected_info,
 asked_field_counts and everything else the checkpointer tracked sitting under
 the abandoned thread id forever. Harmless to the next run, which gets a fresh
 thread id either way, but it is real state from a "deleted" conversation still
 sitting in the database, and it accumulates by one orphaned thread per reset.
 
-``--keep-history`` resets only the routing state and leaves the transcript
-alone, for when you want to test how the bot resumes an existing thread.
+``--keep-history`` deletes nothing: the transcript, tickets and handovers all
+stay, and only the routing state is reset. Use it to test how the bot resumes an
+existing thread. ``--keep-tickets`` is accepted as a synonym.
 
 ``--wipe-lead`` additionally deletes this number's ``leads_candidate`` row.
 That table is keyed by phone and has no conversation_id, so the ordinary wipe
@@ -54,23 +62,39 @@ from app.services import lead as lead_service  # noqa: E402
 from app.utils import normalize_phone  # noqa: E402
 
 # Deleted child-first: cb_handovers and cb_tickets reference the conversation,
-# and cb_handovers rows point at a ticket.
+# and cb_handovers rows point at a ticket. wp_chat_messages last — nothing
+# references it, and it is the one the bot actually reads back.
+#
+# Every one of these is deleted with .eq("conversation_id", cid) below. There is
+# no unscoped delete in this file, and there must never be one: wp_chat_messages
+# is the portal's transcript table for every client, not just the test numbers.
 WIPE_TABLES = ("cb_handovers", "cb_tickets", "wp_chat_messages")
 
-# LangGraph's own tables (app/graph/graph.py's AsyncPostgresSaver.setup()),
-# all keyed by thread_id. Created over a raw psycopg connection, not through
-# the Supabase project — so they are not necessarily in PostgREST's schema
-# cache and db.table(...) is not a reliable way to reach them. This script
-# connects to SUPABASE_DB_URL directly instead, the same DSN the checkpointer
-# itself uses.
-CHECKPOINT_TABLES = ("checkpoints", "checkpoint_blobs", "checkpoint_writes")
+# LangGraph's own tables, all keyed by thread_id. The cb_ prefix is ours: the
+# library hardcodes unprefixed names and app/graph/checkpointer.py rewrites them,
+# so these must stay in step with _NAMES over there. Created over a raw psycopg
+# connection, not through the Supabase project — so they are not necessarily in
+# PostgREST's schema cache and db.table(...) is not a reliable way to reach them.
+# This script connects to SUPABASE_DB_URL directly instead, the same DSN the
+# checkpointer itself uses.
+CHECKPOINT_TABLES = ("cb_checkpoints", "cb_checkpoint_blobs", "cb_checkpoint_writes")
 
 
 async def _count(table: str, conversation_id: int) -> int:
+    """How many rows this conversation owns in one table.
+
+    An exact server-side count rather than len(rows): a long-running test number
+    can hold more messages than any page limit would return, and a reported "500
+    row(s)" on a delete that actually removed 900 is the kind of thing you only
+    notice much later.
+    """
     result = await db.execute(
-        db.table(table).select("id").eq("conversation_id", conversation_id).limit(1000)
+        db.table(table)
+        .select("id", count="exact")
+        .eq("conversation_id", conversation_id)
+        .limit(1)
     )
-    return len(result.data or [])
+    return result.count or 0
 
 
 def _wipe_checkpoints(thread_id: str | None) -> None:
@@ -120,7 +144,7 @@ async def _wipe_candidate_lead(phone: str) -> None:
 
 async def main() -> None:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    keep_history = "--keep-history" in sys.argv
+    keep_history = "--keep-history" in sys.argv or "--keep-tickets" in sys.argv
     wipe_lead = "--wipe-lead" in sys.argv
     if not args:
         print(__doc__)
@@ -137,14 +161,14 @@ async def main() -> None:
     print(f"conversation {cid} ({phone}) was bot_status={conversation.get('bot_status')!r}")
 
     if keep_history:
-        remaining = await _count("wp_chat_messages", cid)
-        print(f"  --keep-history: {remaining} message(s) left in place")
+        for table in WIPE_TABLES:
+            print(f"  --keep-history: {await _count(table, cid)} {table} row(s) left in place")
         print("  the bot will still see the previous enquiry in its history")
     else:
         for table in WIPE_TABLES:
             deleted = await _count(table, cid)
             await db.execute(db.table(table).delete().eq("conversation_id", cid))
-            print(f"  cleared {table} ({deleted} row(s))")
+            print(f"  cleared {table} ({deleted} row(s)) for conversation {cid} only")
 
     # A fresh thread id is minted below regardless of --keep-history, so the
     # old thread's checkpoint is abandoned either way — always clear it.

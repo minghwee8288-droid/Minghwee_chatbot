@@ -10,7 +10,7 @@ conversation down when an agent actually replies on the thread, or when it fails
 outright.
 
 This is **Project 2** of three. It shares one Supabase database with the RAG pipeline
-(Project 1) and the Ming Hwee OS platform (Project 3). It **reads** `cb_knowledge_base`,
+(Project 1) and the Ming Hwee OS platform (Project 3). It **reads** `cb_knowledge_base_updated`,
 and **writes** only to `wp_chat_*`, `cb_tickets` and `cb_handovers`.
 
 ---
@@ -120,12 +120,45 @@ model      : text-embedding-3-small
 dimensions : 1536          (EMBEDDING_DIMENSIONS, passed explicitly on every call)
 provider   : EMBEDDING_BASE_URL — blank for OpenAI direct,
              https://openrouter.ai/api/v1 to match the pipeline
-namespace  : RAG_NAMESPACE — blank searches all, or pin to document_chunks
+namespace  : RAG_NAMESPACE — blank searches all, or pin to one namespace
 ```
 
-`cb_knowledge_base.embedding` must be `vector(1536)` and `cb_match_knowledge_base` must
-take a `vector(1536)` argument. A dimension mismatch is caught at the embedding call and
-raised rather than silently returning nothing.
+Retrieval reads `cb_knowledge_base_updated` through
+[`cb_match_knowledge_base_updated`](scripts/cb_match_knowledge_base_updated.sql), which
+ships in this repo because the rebuilt schema defines the table but no match function.
+`embedding` on that table is a bare `public.vector` with **no declared dimension**, so
+the database will not reject a query vector of the wrong size — the guard is the
+explicit dimension check at the embedding call in
+[app/services/rag.py](app/services/rag.py). The model and dimension above must be the
+ones the pipeline used at ingest.
+
+Rows carry their own routing labels, so the filter runs *before* the vector search:
+
+| column | filtered on | catch-all also matched |
+| --- | --- | --- |
+| `service_type` | the active service (`state.service_type`) | `general` |
+| `contact_type` | `effective_contact_type()` — employer / candidate / supplier / partner | `all` |
+| `nationality` | PH / ID / MM from `collected_info` | `all` |
+| `namespace` | `RAG_NAMESPACE`, when set | — |
+
+An unrecognised value drops that filter rather than applying it: a wrong label returns
+only the catch-all bucket, which is worse than no filter at all.
+
+`contact_type` and `nationality` are CHECK-constrained, so their vocabularies are known.
+`service_type` is a free-form `varchar(60)` and nothing guarantees the pipeline labels
+chunks with the same words the bot calls its services, so the filter is checked against
+the values actually present in the table (read once per process, logged at startup). A
+service the table has never heard of is logged once and searched without a service
+filter. Run `check_retrieval.py` to see the vocabulary and decide whether a mapping is
+needed.
+
+`chunk_type` decides what is read off a row — `qa_pair` and `faq` are read as question +
+answer, `document_chunk` and `table_unit` from `content`. A `table_unit` goes in whole or
+not at all (`RAG_MAX_TABLE_CHARS`); half a fee table is worse than none. `style_example`
+rows are tone and formatting guidance, not evidence, and are excluded both in the match
+function and again in `rag.py`. `metadata.priority` (1 = emergency/safety) reranks
+results as a boost over similarity, and a row's `rag_score_floor` overrides the global
+threshold for that row.
 
 Verify and calibrate against the live knowledge base:
 
@@ -133,16 +166,20 @@ Verify and calibrate against the live knowledge base:
 python scripts/check_retrieval.py
 ```
 
-It reports namespace/row counts, runs ten representative client questions, prints the
-similarity distribution, and suggests `RAG_MATCH_THRESHOLD` / `RAG_CONFIDENCE_FLOOR`.
+It reports namespace / routing / chunk-type counts, runs ten representative client
+questions, prints the similarity distribution, and suggests `RAG_MATCH_THRESHOLD` /
+`RAG_CONFIDENCE_FLOOR`.
 
-Calibrated against the live knowledge base (791 chunks): answerable client questions
-score **0.533–0.771**, off-topic messages **0.147–0.344**. The shipped values of 0.35 /
-0.45 sit between those bands. Re-run this after any change to the RAG pipeline.
+The shipped thresholds (0.35 / 0.45) were calibrated against the **old**
+`cb_knowledge_base`, where answerable client questions scored 0.533–0.771 and off-topic
+messages 0.147–0.344. The rebuilt pipeline chunks and embeds differently, so re-run
+`check_retrieval.py` against `cb_knowledge_base_updated` and reset
+`RAG_MATCH_THRESHOLD` / `RAG_CONFIDENCE_FLOOR` from those numbers before going live.
 
-Known content issues in the knowledge base, with fix-up SQL, are documented in
-[scripts/kb_hygiene.sql](scripts/kb_hygiene.sql) — a stale MOM insurance figure that
-outranks the correct one, and internal delivery documents that are client-retrievable.
+[scripts/kb_hygiene.sql](scripts/kb_hygiene.sql) documents content issues found in the
+**old** table (a stale MOM insurance figure that outranked the correct one, and internal
+delivery documents that were client-retrievable). It is kept as a record of what to
+re-check in the new table; its SQL targets `cb_knowledge_base` and no longer applies.
 
 ### Preflight
 
@@ -289,7 +326,7 @@ unreadable.
 - **NRIC guard.** `[STFGM]\d{7}[A-Z]` is redacted in
   [app/utils.py](app/utils.py) before anything reaches the LLM, the embedding call, the
   transcript replay or `captured_info`, and a warning is logged.
-- **No invented facts.** If the best `cb_match_knowledge_base` similarity is below
+- **No invented facts.** If the best `cb_match_knowledge_base_updated` similarity is below
   `RAG_CONFIDENCE_FLOOR`, the bot says it will check with the team and hands over
   instead of answering.
 - **Grounded figures only.** Every number of 100 or more in a generated reply must

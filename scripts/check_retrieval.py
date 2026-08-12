@@ -1,4 +1,4 @@
-"""Verify and calibrate retrieval against the live cb_knowledge_base.
+"""Verify and calibrate retrieval against the live cb_knowledge_base_updated.
 
 Run this once the .env is filled in. It proves the query embedding matches the
 vectors the RAG pipeline stored, and prints the similarity distribution so
@@ -38,26 +38,78 @@ DEFAULT_QUERIES = [
 
 async def inspect_knowledge_base() -> None:
     print("=" * 78)
-    print("cb_knowledge_base contents")
+    print(f"{rag.KB_TABLE} contents")
     print("=" * 78)
-    rows = await db.select_many("cb_knowledge_base", "namespace, category, is_active", limit=5000)
+    rows = await db.select_many(
+        rag.KB_TABLE,
+        "namespace, service_type, contact_type, nationality, chunk_type, metadata, "
+        "rag_score_floor, is_active",
+        limit=10000,
+    )
     if not rows:
         print("  EMPTY — nothing to retrieve from.")
         return
 
-    namespaces: dict[str, int] = {}
-    categories: dict[str, int] = {}
-    inactive = 0
-    for row in rows:
-        namespaces[row.get("namespace") or "(null)"] = namespaces.get(row.get("namespace") or "(null)", 0) + 1
-        categories[row.get("category") or "(null)"] = categories.get(row.get("category") or "(null)", 0) + 1
-        if not row.get("is_active"):
-            inactive += 1
+    def tally(column: str) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for row in rows:
+            key = row.get(column) or "(null)"
+            counts[key] = counts.get(key, 0) + 1
+        return counts
+
+    inactive = sum(1 for row in rows if not row.get("is_active"))
 
     print(f"  rows            : {len(rows)}")
     print(f"  inactive rows   : {inactive}  (these are excluded from search)")
-    print(f"  namespaces      : {namespaces}")
-    print(f"  categories      : {categories}")
+    print(f"  namespaces      : {tally('namespace')}")
+    print(f"  service_type    : {tally('service_type')}")
+    print(f"  contact_type    : {tally('contact_type')}")
+    print(f"  nationality     : {tally('nationality')}")
+    print(f"  chunk_type      : {tally('chunk_type')}")
+    print(
+        f"  (style_example rows are tone guidance and are never returned as evidence)"
+    )
+
+    # Which metadata keys the classifier actually populates. The schema only
+    # promises `metadata jsonb NOT NULL DEFAULT '{}'` — `priority`,
+    # `figures_present` and `table_column` are conventions, not guarantees, and
+    # priority is what drives reranking.
+    keys: dict[str, int] = {}
+    priorities: dict[str, int] = {}
+    for row in rows:
+        metadata = row.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        for key in metadata:
+            keys[key] = keys.get(key, 0) + 1
+        if "priority" in metadata:
+            label = f"{metadata['priority']!r}"
+            priorities[label] = priorities.get(label, 0) + 1
+    print(f"  metadata keys   : {keys or '(none populated)'}")
+    print(f"  priority values : {priorities or '(none — reranking is a no-op)'}")
+
+    floors = [row.get("rag_score_floor") for row in rows if row.get("rag_score_floor") is not None]
+    if floors:
+        numeric = sorted(float(value) for value in floors)
+        print(
+            f"  rag_score_floor : {len(numeric)} rows, "
+            f"{numeric[0]:.3f}–{numeric[-1]:.3f}"
+        )
+        below = [value for value in numeric if value < settings.rag_match_threshold]
+        if below:
+            # The function treats a floor as a bar to RAISE. A floor beneath the
+            # global threshold therefore does nothing — if these were meant to
+            # let weaker rows through, the function needs the other reading.
+            print(
+                f"      NOTE: {len(below)} floor(s) sit below RAG_MATCH_THRESHOLD "
+                f"({settings.rag_match_threshold}) and have no effect"
+            )
+    else:
+        print("  rag_score_floor : none set")
+
+    # The service vocabulary the bot will actually be able to filter on.
+    vocabulary = await rag.service_vocabulary()
+    print(f"  service filter  : {sorted(vocabulary) if vocabulary else '(unreadable)'}")
 
 
 async def check_query(query: str) -> float:
@@ -69,8 +121,12 @@ async def check_query(query: str) -> float:
         return 0.0
     for match in matches:
         score = float(match.get("similarity") or 0)
-        label = (match.get("question") or match.get("content") or "")[:88].replace("\n", " ")
-        print(f"     {score:.3f}  [{match.get('namespace')}] {label}")
+        label = (match.get("question") or match.get("content") or match.get("answer") or "")
+        label = label[:88].replace("\n", " ")
+        print(
+            f"     {score:.3f}  [{match.get('chunk_type')} | {match.get('service_type')}/"
+            f"{match.get('contact_type')}/{match.get('nationality')}] {label}"
+        )
     return best
 
 
@@ -112,7 +168,15 @@ async def main() -> None:
     print()
     print("Suggested settings (answer confidently on good matches, hand over on weak ones):")
     print(f"  RAG_MATCH_THRESHOLD={max(0.05, hits[0] - 0.10):.2f}")
-    print(f"  RAG_CONFIDENCE_FLOOR={max(0.10, hits[len(hits) // 2] - 0.10):.2f}")
+    # RAG_SOFT_FLOOR, not RAG_CONFIDENCE_FLOOR: the latter is defined in config
+    # but read by no code path, so suggesting a value for it was advice that
+    # could not take effect. This one is the gate that replaces the reply and
+    # hands over.
+    print(f"  RAG_SOFT_FLOOR={max(0.10, hits[0] - 0.06):.2f}")
+    print()
+    print("Sanity-check the other side of the gap before trusting these — pass")
+    print("off-topic messages as arguments and confirm they score below the floor:")
+    print('  python scripts/check_retrieval.py "are you a bot" "can you fix my aircon"')
 
 
 if __name__ == "__main__":

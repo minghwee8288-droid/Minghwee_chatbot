@@ -21,6 +21,7 @@ from app.graph.state import (
     CANDIDATE_INTENT,
     DISPUTE_INTENTS,
     ENQUIRY_INTENTS,
+    KB_QUESTION_INTENTS,
     SERVICE_INTENTS,
     ConversationState,
     effective_contact_type,
@@ -54,17 +55,50 @@ def _blocked_topic(state: ConversationState) -> str | None:
 def route_after_intent(state: ConversationState) -> str:
     intent = state.get("intent") or "other"
 
+    # An acknowledgement or a sign-off. Nothing downstream should run: no
+    # retrieval, no collection question, no ticket, no reply. Checked before the
+    # blocked-topic branch so "ok" on a parked topic is silence rather than yet
+    # another "still checking on that for you".
+    if state.get("suppress_reply"):
+        return END
+
     # This turn's topic already has a human working it — acknowledge, do not
     # re-answer, re-collect or re-escalate. Checked first: whatever else the
     # classifier made of this message, a parked topic is parked.
+    #
+    # Parked, but not deaf. A general question we can answer from our own
+    # records still gets answered: it goes through retrieval and comes back to
+    # the same responder, which then has something to say beyond "still checking
+    # on that". Everything else — a chase, a correction, a new detail — takes
+    # the direct route as before.
     if _blocked_topic(state):
-        return "blocked_topic_responder"
+        return "rag_retriever" if intent in KB_QUESTION_INTENTS else "blocked_topic_responder"
 
     # Assault escalates immediately — no retrieval, no questions. Topic-scoped
     # like everything else once a ticket exists (the check above catches a
     # repeat), but the first report always gets the full safety response.
     if intent == "dispute_assault":
         return "handover_executor"
+
+    # Everything else goes through the knowledge base first, including the
+    # flows that then go on to collect. Retrieval used to be skipped entirely
+    # for anything with a service_type, which meant a fee, salary or document
+    # question never touched cb_knowledge_base_updated — the collector answered "let me
+    # pull the details together" from a prompt that had no records in it, on
+    # exactly the questions the knowledge base exists to answer. route_after_rag
+    # makes the collect-or-answer decision afterwards, on the same rules.
+    return "rag_retriever"
+
+
+def route_after_rag(state: ConversationState) -> str:
+    """Collect the service's details, or answer the question outright."""
+    intent = state.get("intent") or "other"
+
+    # A parked topic that came here for retrieval goes back to its own
+    # responder, which is the only node that logs the follow-up onto the ticket
+    # and the only one that will not re-escalate a topic a human already owns.
+    if _blocked_topic(state):
+        return "blocked_topic_responder"
 
     if (
         intent in SERVICE_INTENTS
@@ -83,8 +117,7 @@ def route_after_intent(state: ConversationState) -> str:
     if ticket_service.fields_for(state.get("service_type")):
         return "info_collector"
 
-    # Informational, case enquiries and anything unclassified go through the KB.
-    return "rag_retriever"
+    return "response_generator"
 
 
 def route_after_response(state: ConversationState) -> str:
@@ -101,8 +134,9 @@ def route_after_response(state: ConversationState) -> str:
 
 def route_after_collector(state: ConversationState) -> str:
     if not state.get("service_type"):
-        # Nothing collectable — fall back to answering from the knowledge base.
-        return "rag_retriever"
+        # Nothing collectable — answer it instead. Retrieval has already run
+        # for this turn, so this goes straight to the responder.
+        return "response_generator"
     return "ticket_creator" if state.get("info_complete") else END
 
 
@@ -125,12 +159,20 @@ def build_graph(checkpointer: Any = None):
         route_after_intent,
         {
             "rag_retriever": "rag_retriever",
-            "info_collector": "info_collector",
             "handover_executor": "handover_executor",
+            "blocked_topic_responder": "blocked_topic_responder",
+            END: END,
+        },
+    )
+    builder.add_conditional_edges(
+        "rag_retriever",
+        route_after_rag,
+        {
+            "info_collector": "info_collector",
+            "response_generator": "response_generator",
             "blocked_topic_responder": "blocked_topic_responder",
         },
     )
-    builder.add_edge("rag_retriever", "response_generator")
     builder.add_conditional_edges(
         "response_generator",
         route_after_response,
@@ -143,7 +185,11 @@ def build_graph(checkpointer: Any = None):
     builder.add_conditional_edges(
         "info_collector",
         route_after_collector,
-        {"ticket_creator": "ticket_creator", "rag_retriever": "rag_retriever", END: END},
+        {
+            "ticket_creator": "ticket_creator",
+            "response_generator": "response_generator",
+            END: END,
+        },
     )
     builder.add_edge("ticket_creator", "handover_executor")
     builder.add_edge("handover_executor", END)
@@ -179,9 +225,10 @@ async def _build_checkpointer() -> Any:
         )
         return MemorySaver()
 
-    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
     from psycopg.rows import dict_row
     from psycopg_pool import AsyncConnectionPool
+
+    from app.graph.checkpointer import CbAsyncPostgresSaver
 
     _pool = AsyncConnectionPool(
         conninfo=settings.supabase_db_url,
@@ -196,9 +243,9 @@ async def _build_checkpointer() -> Any:
         },
     )
     await _pool.open(wait=True, timeout=15)
-    checkpointer = AsyncPostgresSaver(_pool)
+    checkpointer = CbAsyncPostgresSaver(_pool)
     await checkpointer.setup()
-    logger.info("LangGraph Postgres checkpointer ready")
+    logger.info("LangGraph Postgres checkpointer ready (cb_checkpoint* tables)")
     return checkpointer
 
 
@@ -265,6 +312,7 @@ _TURN_RESET: dict[str, Any] = {
     "media_items": [],
     "ticket_id": None,
     "ticket_number": None,
+    "suppress_reply": False,
 }
 
 

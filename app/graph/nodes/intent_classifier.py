@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Any
 
+from app.graph.closure import needs_no_reply
 from app.graph.llm import complete_json
 from app.graph.prompts.templates import (
     ASSAULT_VERIFY_SYSTEM,
@@ -207,6 +208,20 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
             "intent_confidence": 1.0,
             "intent_reasoning": "safety keyword match",
         }
+
+    # "ok", "thanks", "noted 👍", "I'll get back to you" — read it, do not answer
+    # it. Checked after the assault override and before the classifier call, so
+    # a sign-off costs nothing and can never be turned into a topic, a ticket or
+    # a reply. The active service, collected fields and ask counts all live on
+    # the checkpoint and are untouched, so the flow resumes exactly where it was
+    # the moment the client says something real again.
+    if needs_no_reply(message, history_text=state.get("history_text") or ""):
+        logger.info(
+            "Conversation %s: %r needs no reply — staying silent",
+            state.get("conversation_id"),
+            message[:60],
+        )
+        return {"suppress_reply": True, "reply": ""}
 
     user_prompt = INTENT_USER.format(
         active_service=active_service or "none",

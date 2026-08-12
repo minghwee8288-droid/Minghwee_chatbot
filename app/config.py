@@ -66,7 +66,9 @@ class Settings(BaseSettings):
 
     # --- Embeddings ---
     # Must match the RAG pipeline exactly: same model, same dimensions, same
-    # provider endpoint. A mismatch produces silently useless similarity scores.
+    # provider endpoint. A mismatch produces silently useless similarity
+    # scores — and cb_knowledge_base_updated.embedding is a bare `vector` with
+    # no declared dimension, so the database will not catch it either.
     openai_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
@@ -118,16 +120,47 @@ class Settings(BaseSettings):
     tenant_id: str = ""
     environment: str = "development"
     log_level: str = "INFO"
-    debounce_seconds: float = 3.0
+    # How long the client has to stop typing before their messages are treated
+    # as one turn. The timer restarts on every message, so a burst of five is
+    # still one reply. Raised from 3s: clients routinely pause two or three
+    # seconds mid-thought, and each pause was costing them a separate answer.
+    debounce_seconds: float = 8.0
 
     # --- RAG ---
-    # Calibrated against the live knowledge base with scripts/check_retrieval.py:
-    # answerable client questions score 0.53-0.77, off-topic messages 0.15-0.34.
+    # Calibrated against cb_knowledge_base_updated (270 chunks) with
+    # scripts/check_retrieval.py:
+    #
+    #   answerable client questions : 0.464 / 0.673 / 0.765  (min/median/max)
+    #   off-topic messages          : 0.094 / 0.267 / 0.462
+    #
+    # The bands separate cleanly apart from one outlier — "do you sell property
+    # in singapore" scored 0.462 against "Can expats hire a maid in Singapore?"
+    # on the shared words alone. Excluding it, off-topic tops out at 0.313.
     rag_match_threshold: float = 0.35
     rag_match_count: int = 5
+    # NOT READ BY ANYTHING. It was the upper gate of a two-gate design; the
+    # design collapsed to the single soft floor below and this was left behind.
+    # Changing it has no effect — rag_soft_floor is the knob. Kept only so an
+    # existing RAG_CONFIDENCE_FLOOR in a deployed .env does not fail to parse.
     rag_confidence_floor: float = 0.45
+    # Below this, nothing retrieved is worth answering from: the reply is
+    # replaced and the conversation goes to a human. Above it the records ARE
+    # used — a partial match on a real question is still our own material, and
+    # replacing it with "let me check with the team" reads as a bot that knows
+    # nothing.
+    #
+    # 0.40 sits between the two measured bands: above the off-topic mass
+    # (0.313 excluding the outlier) and below the weakest real question
+    # (0.464). At the old 0.30 the bot would answer "can you help me fix my
+    # aircon" (0.313) out of whatever the records happened to return.
+    rag_soft_floor: float = 0.40
     # 20% overlap makes chunks longer; cap what goes into the prompt.
     rag_max_chunk_chars: int = 1200
+    # A table_unit row holds a whole table and is never truncated — half a fee
+    # table is worse than none, because the model answers confidently from the
+    # half it got. Anything longer than this is dropped from the context
+    # instead of being cut, so the bot says it will check.
+    rag_max_table_chars: int = 3000
     # Blank = search every namespace.
     rag_namespace: str = ""
 

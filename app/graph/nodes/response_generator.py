@@ -9,6 +9,7 @@ from typing import Any
 from app.config import settings
 from app.graph.guards import (
     clamp_reply,
+    holding_reply,
     is_degenerate,
     looks_like_document,
     recent_bot_lines,
@@ -38,7 +39,8 @@ from app.services import handover as handover_service
 
 logger = logging.getLogger(__name__)
 
-FALLBACK_REPLY = "Let me check with the team and get back to you shortly."
+# The "I'll check" line is no longer a constant — it is drawn per turn from
+# guards.HOLDING_REPLIES so the same wording does not go out twice in a row.
 PROMPT_FOR_QUESTION = "Sure, go ahead. What would you like to know?"
 
 # Turns with no reason to match the knowledge base, exempt from the weak-
@@ -137,6 +139,9 @@ def _clean(reply: str) -> tuple[str, bool]:
 
 async def response_generator(state: ConversationState) -> dict[str, Any]:
     intent = state.get("intent") or "other"
+    # Varied, so the four separate ways this turn can end up saying "I'll check"
+    # do not all say it in the same words twice running.
+    fallback = holding_reply(state.get("history_text") or "")
     instruction_template = {
         "case_enquiry": CASE_INSTRUCTION,
         AGENCY_INFO_INTENT: AGENCY_INFO_INSTRUCTION,
@@ -169,11 +174,11 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         # Not lower than this: at 0.2 the model degenerated into repeating its
         # own instructions. Figures are kept honest by the grounding guard
         # below, not by a low temperature.
-        raw = await complete(system_prompt, user_prompt, temperature=0.45, max_tokens=300)
+        raw = await complete(system_prompt, user_prompt, temperature=0.45, max_tokens=120)
     except Exception:  # noqa: BLE001 - never leave the client without an answer
         logger.exception("Response generation failed on conversation %s", state.get("conversation_id"))
         return {
-            "reply": FALLBACK_REPLY,
+            "reply": fallback,
             "needs_handover": True,
             "handover_reason": handover_service.REASON_CONFUSED,
         }
@@ -191,10 +196,13 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         )
         reply = ""
     else:
-        reply = clamp_reply(reply)
+        # Two sentences. A third almost always turns out to be padding — the
+        # explanation after the answer, or the offer of further help — and it is
+        # what makes the thread read as a chatbot rather than a consultant.
+        reply = clamp_reply(reply, max_sentences=2)
 
     if not reply:
-        reply = FALLBACK_REPLY
+        reply = fallback
         token_present = True
 
     # The client has not asked anything yet — invite them to, rather than
@@ -225,7 +233,7 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
             state.get("conversation_id"),
             invented,
         )
-        reply = FALLBACK_REPLY
+        reply = fallback
         token_present = True
 
     # A markdown-formatted answer is the model writing from its own knowledge
@@ -236,19 +244,22 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
             "Conversation %s: reply was formatted like a document — replaced with a handover",
             state.get("conversation_id"),
         )
-        reply = FALLBACK_REPLY
+        reply = fallback
         token_present = True
 
-    # Nothing relevant in the knowledge base — do not let the model improvise.
-    # Conversational turns are exempt: "ok thanks", "are you a bot" and similar
-    # never match the knowledge base, and handing those to an agent would push
-    # most conversations to a human within a message or two. Real unanswered
-    # questions are still caught by the handover token.
+    # Nothing relevant in the knowledge base at all — do not let the model
+    # improvise. The bar here is rag_soft_floor, not rag_confidence_floor: a
+    # partial match is still our own material and should be used, which is the
+    # whole point of having a knowledge base. Conversational turns are exempt:
+    # "ok thanks", "are you a bot" and similar never match anything, and handing
+    # those to an agent would push most conversations to a human within a
+    # message or two. Real unanswered questions are still caught by the handover
+    # token, and no figure survives the grounding guard above regardless.
     weak_retrieval = (
         intent not in CHITCHAT_INTENTS
         and asks_something(state.get("incoming_text", ""))
         and not state.get("case_summary")
-        and float(state.get("rag_best_score") or 0.0) < settings.rag_confidence_floor
+        and float(state.get("rag_best_score") or 0.0) < settings.rag_soft_floor
     )
     # Acknowledged, then passed to a person: the bot cannot open an attachment,
     # and registering a helper needs documents and verification.
@@ -266,7 +277,7 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
             float(state.get("rag_best_score") or 0.0),
             state.get("conversation_id"),
         )
-        reply = FALLBACK_REPLY
+        reply = fallback
 
     reply = strip_repeated_opener(reply, *recent_bot_lines(state.get("history_text", "")))
 
