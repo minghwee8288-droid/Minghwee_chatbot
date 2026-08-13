@@ -278,7 +278,8 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     "media_received": [],
 }
 
-URGENT_SERVICES = {"dispute_assault"}
+# Services that open at the top priority level rather than the default one.
+HIGH_PRIORITY_SERVICES = {"dispute_assault"}
 
 # Mirrors cb_tkt_service_check. The chatbot recognises two kinds of enquiry the
 # portal's schema predates — a candidate offering herself for placement, and a
@@ -398,7 +399,14 @@ def missing_fields(service_type: str | None, collected: dict[str, Any]) -> list[
 
 
 def priority_for(service_type: str | None) -> str:
-    return "urgent" if service_type in URGENT_SERVICES else "normal"
+    """The level a new ticket opens at.
+
+    Set once, here, at insert. The portal owns it from then on: an agent can
+    re-triage a ticket to any of high/medium/low and nothing in the bot
+    overwrites that. cb_tkt_priority_check permits both these values and the
+    'urgent'/'normal' they replaced while the migration is in flight.
+    """
+    return "high" if service_type in HIGH_PRIORITY_SERVICES else "medium"
 
 
 async def next_ticket_number() -> str:

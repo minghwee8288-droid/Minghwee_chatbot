@@ -289,18 +289,36 @@ EMPLOYER_LEAD_SERVICES = {
     "home_leave",
     "passport_renewal",
 }
-CANDIDATE_LEAD_SERVICES = {"candidate_new_hiring", "transfer"}
+CANDIDATE_LEAD_SERVICES = {"candidate_new_hiring"}
+
+# 'transfer' is in neither set. It is the one service both sides of the table
+# ask about — a helper looking for a new employer, and an employer moving a
+# helper they already have — so it is decided by who is asking, not by the
+# service. See kind_for().
+TRANSFER = "transfer"
 
 
 def kind_for(service_type: str | None, contact_type: str | None) -> str | None:
     """Which lead table this enquiry belongs in, per §19 — or None."""
-    if service_type in CANDIDATE_LEAD_SERVICES:
-        return CANDIDATE
-    if service_type not in EMPLOYER_LEAD_SERVICES:
-        return None
     # §19 keys off the service, but a supplier or partner asking about fees is
     # not an employer lead — §15 and §16 say they never produce one.
-    if (contact_type or "").strip() in {"supplier", "partner"}:
+    supplier_side = (contact_type or "").strip() in {"supplier", "partner"}
+
+    if service_type in CANDIDATE_LEAD_SERVICES:
+        return CANDIDATE
+    if service_type == TRANSFER:
+        # Filed against the service alone, this put an employer on the helper
+        # table. Live: a client who had just said "Iam the current employer of
+        # her" became candidate lead LC-2026-0002, so the agent who opened it
+        # saw the employer recorded as the helper — and leads_candidate has no
+        # interest_type, requirement, budget or summary column to hold what
+        # they actually asked for.
+        if supplier_side:
+            return None
+        return CANDIDATE if (contact_type or "").strip() == CANDIDATE else EMPLOYER
+    if service_type not in EMPLOYER_LEAD_SERVICES:
+        return None
+    if supplier_side:
         return None
     return EMPLOYER
 

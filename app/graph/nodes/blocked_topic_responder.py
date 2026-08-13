@@ -30,6 +30,7 @@ from app.graph.guards import (
     ungrounded_figures,
 )
 from app.config import settings
+from app.graph.closure import is_closing, is_pure_acknowledgement
 from app.graph.llm import complete
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
@@ -97,6 +98,44 @@ PROBE_REPLY = (
     "can walk you through exactly what it covers."
 )
 
+# The client wants something OTHER than the topic a human is already handling.
+# This is not a chase and must never be rationed as one: it is a second piece of
+# work walking in the door, and it is the most valuable message in the thread.
+#
+# Live, "I want another service" and "Hey I want another service" both got
+# silence — the classifier kept the sticky 'renewal' label, so neither the
+# question words nor the intent backstop in _is_asking() saw anything to answer.
+# The client then wrote "Hey can you you help me out ??", which retrieved
+# nothing and escalated to a human as bot_confused. They were not confused; we
+# were.
+_NEW_SERVICE_REQUEST = re.compile(
+    # "another service", "1 more service", "a new case", "second enquiry"
+    r"\b(another|different|other|second|new|more|extra|additional|"
+    r"1|one|two|2)\s+(more\s+)?"
+    r"(service|servies|enquiry|inquiry|matter|thing|question|case|request|help)\b|"
+    r"\b(something|anything)\s+else\b|"
+    # "Service I want", "I want help from your agency", "need your help with"
+    r"\b(want|need|looking\s+for|ask\s+(?:you\s+)?for)\b[^?]{0,30}\b(service|help|assist)|"
+    r"\b(service|help)\b[^?]{0,20}\b(i\s+want|i\s+need|please)\b|"
+    r"\bhelp\s+(?:me\s+)?(?:from|with)\s+(?:your\s+)?(agency|team|something)\b|"
+    r"\bnot\s+about\s+(that|this)\b|"
+    r"\bchange\s+(the\s+)?(topic|subject)\b",
+    re.IGNORECASE,
+)
+
+# Deterministic on purpose. The one thing we need is which service they mean,
+# and a generated reply here reaches for the parked topic instead of moving off
+# it — the whole reason this branch exists.
+NEW_SERVICE_REPLY = "Of course — which service can I help you with?"
+
+# Asked once, and they are still asking for "another service" without naming
+# one. Going quiet at this point is what produced four unanswered messages in a
+# row live. We cannot work out what they want, so stop guessing and put a person
+# on it — which is what the client has effectively been asking for.
+NEW_SERVICE_HANDOVER = (
+    "Let me get one of the team to help you with that — someone will be with you shortly."
+)
+
 
 # A bare acknowledgement — nothing is being asked, whatever intent the
 # classifier settled on. The classifier usually catches these upstream ("'Ok'
@@ -125,7 +164,16 @@ def _is_asking(state: ConversationState, message: str) -> bool:
         return False
     if _ASKS.search(message or ""):
         return True
-    return state.get("intent") in (KB_QUESTION_INTENTS | {CASE_INTENT})
+    if state.get("intent") in (KB_QUESTION_INTENTS | {CASE_INTENT}):
+        return True
+    # Everything that is not an acknowledgement is the client saying something.
+    # This used to end at the intent check, which meant replying required
+    # MATCHING a pattern and silence was the fallback for anything unfamiliar —
+    # so every phrasing nobody had thought of in advance was met with nothing.
+    # Live, that was "I want 1 more service", "Service I want" and "I want help
+    # from your agency", three messages in a row, all silent. Silence needs a
+    # positive reason now; the reason is the acknowledgement check above.
+    return not is_pure_acknowledgement(message or "") and not is_closing(message or "")
 
 
 def _should_reassure(state: ConversationState, ticket: dict[str, Any], message: str) -> bool:
@@ -145,6 +193,8 @@ def _should_reassure(state: ConversationState, ticket: dict[str, Any], message: 
         return True  # first message since the ticket was raised — reassure once
     if _DIRECT_ADDRESS.search((message or "").strip()):
         return True  # "are you there?" — never met with silence
+    if _NEW_SERVICE_REQUEST.search(message or ""):
+        return True  # asking for other work entirely — not a chase on this one
     return _is_asking(state, message)
 
 
@@ -240,6 +290,33 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
             ticket.get("ticket_number"),
         )
         return {"reply": "", "suppress_reply": True, "needs_handover": False}
+
+    # Not a chase at all — they want different work done. Ask which, and say
+    # nothing about the parked topic: they have already been told it is with a
+    # human, and repeating it here is what turns "I want another service" into
+    # another round of "still checking".
+    if not answering and _NEW_SERVICE_REQUEST.search(message):
+        logger.info(
+            "Conversation %s: client asking for work other than blocked topic %r "
+            "(ticket %s) — asking which service",
+            state.get("conversation_id"),
+            topic_key,
+            ticket.get("ticket_number"),
+        )
+        asked_already = any(
+            near_duplicate(NEW_SERVICE_REPLY, line)
+            for line in recent_bot_lines(state.get("history_text", ""), count=3)
+        )
+        if not asked_already:
+            return {"reply": NEW_SERVICE_REPLY, "needs_handover": False}
+        # We asked which service and they are still asking for "another" one
+        # without naming it. Repeating the question is useless and going quiet
+        # is worse, so hand it to a person.
+        logger.info(
+            "Conversation %s: asked which service once and still unnamed — handing to a human",
+            state.get("conversation_id"),
+        )
+        return {"reply": NEW_SERVICE_HANDOVER, "needs_handover": True}
 
     # They are asking again about a topic we have just held. There is nothing
     # new to tell them, so do not spend a call generating another "still

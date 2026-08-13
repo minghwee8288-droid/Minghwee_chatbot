@@ -79,7 +79,12 @@ def is_pure_acknowledgement(text: str) -> bool:
     if not body:
         return False
     if _NO_CONTENT.match(body):  # a bare 👍
-        return True
+        # ...but "?" and "??" are punctuation-only too, and they are the exact
+        # opposite of an acknowledgement: a client who has had no answer and is
+        # prompting for one. Live, "??" was silenced as if it were a thumbs-up,
+        # which is the single most irritating thing we can do to someone already
+        # waiting.
+        return "?" not in body
     if len(_words(body)) > _MAX_ACK_WORDS:
         return False
     if _QUESTION.search(body):
@@ -121,13 +126,43 @@ def is_closing(text: str) -> bool:
     return bool(_CLOSING.search(body))
 
 
+# A bare yes or no, and nothing else. These sit inside _ACK above, which is
+# right when they follow a statement ("noted, yes") and wrong when they follow a
+# question — then they are the answer we asked for.
+_BARE_ANSWER = re.compile(
+    r"^\W*(?:"
+    r"yes|yeah|yep|yup|ya|yah|correct|exactly|true|right|confirm(?:ed)?|"
+    r"no|nope|nah|not\s+yet|negative"
+    r")\W*$",
+    re.IGNORECASE,
+)
+
+
+def _we_just_asked(history_text: str) -> bool:
+    """Whether our own last message put a question to the client."""
+    for line in reversed((history_text or "").splitlines()):
+        if line.startswith("You:"):
+            return "?" in line
+    return False
+
+
 def needs_no_reply(text: str, *, history_text: str = "") -> bool:
     """Whether this message should be read and left unanswered.
 
     Never silent on the opening message of a conversation: a lone "hi" is
     somebody starting a conversation, not closing one, and answering it is the
     whole job.
+
+    Never silent on a bare yes or no when we were the ones who just asked. The
+    acknowledgement pattern lists "yes" — correct after a statement, and twice
+    live it swallowed an answer instead: we asked "is she currently with you?"
+    and "has her current employer agreed to the transfer?", the client replied
+    "Yes" to each, and got nothing back both times. They had to rephrase
+    themselves ("She is with me", "Iam the current employer of her") to move a
+    flow that was already waiting on exactly that answer.
     """
     if not (history_text or "").strip():
+        return False
+    if _BARE_ANSWER.match((text or "").strip()) and _we_just_asked(history_text):
         return False
     return is_pure_acknowledgement(text) or is_closing(text)
