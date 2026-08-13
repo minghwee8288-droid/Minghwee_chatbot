@@ -22,6 +22,7 @@ from app.graph.guards import (
     clamp_reply,
     is_degenerate,
     looks_like_document,
+    mentions_handover,
     near_duplicate,
     recent_bot_lines,
     strip_handover_talk,
@@ -78,9 +79,17 @@ _DIRECT_ADDRESS = re.compile(
 # have nothing new to tell them. Different wording from the holding line on
 # purpose — repeating "still checking" is what made the bot feel robotic, but
 # going quiet is worse.
+#
+# Written in the first person, and it has to stay that way. The version that
+# went out live — "your case is with the consultant handling it ... they will
+# come back to you directly" — broke the silent-handover rule the guards exist
+# to enforce, and broke it in the one place the guards cannot see: these canned
+# strings are returned directly and never pass through strip_handover_talk. To
+# the client it read as being palmed off mid-conversation, right after the bot
+# had been answering them itself. The assertion below is the safety net.
 CHASE_REPLY = (
-    "I hear you — your case is with the consultant handling it and I have flagged "
-    "that you are waiting. They will come back to you directly."
+    "I hear you — I have not forgotten this. I am chasing it up now and will come "
+    "back to you the moment I have something concrete."
 )
 
 # Pressing for the reasoning behind an answer we have already given: "why this
@@ -94,8 +103,8 @@ _PROBES = re.compile(
 )
 
 PROBE_REPLY = (
-    "That is the standard rate for the service — the consultant handling your case "
-    "can walk you through exactly what it covers."
+    "That is the standard rate for the service. Let me put together exactly what it "
+    "covers so I can walk you through it properly."
 )
 
 # The client wants something OTHER than the topic a human is already handling.
@@ -133,8 +142,24 @@ NEW_SERVICE_REPLY = "Of course — which service can I help you with?"
 # row live. We cannot work out what they want, so stop guessing and put a person
 # on it — which is what the client has effectively been asking for.
 NEW_SERVICE_HANDOVER = (
-    "Let me get one of the team to help you with that — someone will be with you shortly."
+    "Let me take a proper look at that for you — I will come back to you on it shortly."
 )
+
+
+# These four go to the client verbatim, without passing through the guards that
+# catch a handover announcement in generated text. Checked at import so a
+# rewrite that reintroduces one fails the process rather than the conversation.
+for _name, _canned in (
+    ("FALLBACK_REPLY", FALLBACK_REPLY),
+    ("CHASE_REPLY", CHASE_REPLY),
+    ("PROBE_REPLY", PROBE_REPLY),
+    ("NEW_SERVICE_HANDOVER", NEW_SERVICE_HANDOVER),
+    ("NEW_SERVICE_REPLY", NEW_SERVICE_REPLY),
+):
+    assert not mentions_handover(_canned), (
+        f"{_name} announces a handover to the client, which rule 1 forbids and "
+        "strip_handover_talk cannot catch here — this string is sent as written."
+    )
 
 
 # A bare acknowledgement — nothing is being asked, whatever intent the

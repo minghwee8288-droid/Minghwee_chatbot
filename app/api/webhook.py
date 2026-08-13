@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
@@ -198,6 +199,77 @@ async def emergency_override(conversation: dict[str, Any], text: str) -> bool:
     return True
 
 
+# Someone checking whether anyone is on the other end. blocked_topic_responder
+# has its own copy of this for the case where the bot is still running the
+# thread; this one covers the case where it has stood itself down, which is the
+# one that produced silence live.
+#
+# Chasing a reply counts. "when can i expect your reply?" is the same person
+# asking the same thing as "are you there" — it arrived in the same unanswered
+# run live — and the alternative for both is nothing at all until the 72-hour
+# net expires.
+_DIRECT_ADDRESS = re.compile(
+    r"^\W*(hello+|hi+|hey+|you\s+there|are\s+you\s+(there|alive|ok)|anyone|any\s?one\s+there|"
+    r"bot|is\s+(anyone|someone)\s+there)\W*$|\bare\s+you\s+there\b|\bhello+\s*\?+|^\W*\?+\W*$"
+    r"|\bany\s+(update|news|reply|response)\b|\bwhen\s+(can|will|do)\s+(i|you)\b"
+    r"|\bhow\s+long\s+(will|does|do)\b|\bstill\s+waiting\b|\bwaiting\s+for\s+(your|a)\s+(reply|response)\b",
+    re.IGNORECASE,
+)
+
+STILL_HERE_REPLY = (
+    "I am here — still working on this for you. I will come back to you as soon as "
+    "I have something."
+)
+
+
+async def acknowledge_direct_address(conversation: dict[str, Any], text: str) -> bool:
+    """Answer "are you there?" on a thread the bot has stood itself down on.
+
+    A bot-initiated handover sets bot_status=human_active with no agent message
+    behind it, so maybe_return_to_bot() falls through to the 72-hour safety net
+    and every message until then is dropped without a word. Live, that was
+    "so please find the suitable candidates for me", "when can i expect your
+    reply?" and "??" in a row, then "Are you there", "Hello", "Hello", "Hi" on
+    the other number — eight unanswered messages across two conversations in one
+    test. Being ignored while asking whether anyone is there is the worst thing
+    the bot can do, and it is worse precisely because the client was in the
+    middle of a conversation that had been going well.
+
+    Deliberately narrow. It fires only when a REAL agent has never messaged the
+    thread — an agent mid-conversation owns it and must not be talked over — and
+    only once, because a bot repeating "I am here" at someone who is waiting is
+    its own kind of insult. Everything else stays silent exactly as before, and
+    nothing here takes the conversation back: bot_status is left alone.
+    """
+    if not _DIRECT_ADDRESS.search((text or "").strip()):
+        return False
+
+    conversation_id = conversation["id"]
+    if await message_service.last_agent_message_at(conversation_id) is not None:
+        return False  # a human is on this thread — theirs to answer
+
+    history = await message_service.get_history(conversation_id)
+    if any(
+        near_duplicate(STILL_HERE_REPLY, line, threshold=0.7)
+        for line in recent_bot_lines(message_service.format_history(history), count=3)
+    ):
+        logger.info(
+            "Conversation %s: already told them we are here — staying quiet", conversation_id
+        )
+        return False
+
+    logger.info(
+        "Conversation %s: client asking if anyone is there during a bot standdown — answering once",
+        conversation_id,
+    )
+    try:
+        await message_service.send_bot_reply(conversation, STILL_HERE_REPLY)
+    except WhapiError:
+        logger.exception("Could not deliver the standdown acknowledgement on %s", conversation_id)
+        return False
+    return True
+
+
 async def may_engage(phone: str, conversation: dict[str, Any] | None) -> tuple[bool, str]:
     """Decide whether this conversation is the bot's to answer.
 
@@ -346,7 +418,9 @@ async def handle_inbound(message: IncomingMessage) -> None:
         logger.info("Bot standing down on %s: %s", phone, reason)
         # ...unless someone is reporting harm. Silence is not an option there.
         if reason != ALLOWLIST_BLOCK and existing is not None:
-            await emergency_override(existing, message.text_for_llm)
+            if await emergency_override(existing, message.text_for_llm):
+                return
+            await acknowledge_direct_address(existing, message.text_for_llm)
         return
 
     if existing is not None:
@@ -361,7 +435,8 @@ async def handle_inbound(message: IncomingMessage) -> None:
                 existing["id"],
                 settings.agent_pause_minutes,
             )
-            await emergency_override(existing, message.text_for_llm)
+            if not await emergency_override(existing, message.text_for_llm):
+                await acknowledge_direct_address(existing, message.text_for_llm)
             return
 
     conversation, is_new = await conversation_service.get_or_create(
@@ -381,6 +456,7 @@ async def handle_inbound(message: IncomingMessage) -> None:
             conversation_id,
             conversation.get("bot_status"),
         )
+        await acknowledge_direct_address(conversation, message.text_for_llm)
         return
 
     await debouncer.add(message)
@@ -540,6 +616,31 @@ def _dedupe(messages: list[IncomingMessage]) -> list[IncomingMessage]:
     return sorted(unique, key=lambda m: m.timestamp)
 
 
+def _predates_our_last_reply(
+    conversation: dict[str, Any], messages: list[IncomingMessage]
+) -> bool:
+    """Whether the client sent all of this before they could have read our reply.
+
+    A burst typed with pauses longer than the debounce window becomes two turns.
+    The client typed all of it as one thought, so the second turn's messages are
+    not an answer to the question the first turn just asked — they were written
+    before it arrived. Generating the same question again is the visible result:
+    live, the client got "When would you like the helper to start?" and, in the
+    very next message, "What about start date — when do you need her to begin?"
+
+    The repeat guard below lets questions through on purpose, because a repeated
+    question usually means the client has not answered it yet and going quiet
+    would strand the flow. That reasoning holds only when they have SEEN it.
+    This is the test for whether they have.
+    """
+    sent_at = _parse_timestamp(conversation.get("last_bot_reply_at"))
+    if sent_at is None or not messages:
+        return False
+    if sent_at.tzinfo is None:
+        sent_at = sent_at.replace(tzinfo=timezone.utc)
+    return all(m.timestamp <= sent_at for m in messages)
+
+
 async def _process_locked(phone: str, messages: list[IncomingMessage]) -> None:
     # Re-read after acquiring the lock: the previous batch may have handed over.
     conversation = await conversation_service.get_by_phone(phone)
@@ -649,9 +750,10 @@ async def _process_locked(phone: str, messages: list[IncomingMessage]) -> None:
     # rewrite for that, and if it still comes out the same the client has not
     # answered it yet — going silent there strands the flow, which is worse than
     # asking twice.
-    if "?" not in reply and any(
+    repeats_us = any(
         near_duplicate(reply, line) for line in recent_bot_lines(payload["history_text"], 2)
-    ):
+    )
+    if repeats_us and ("?" not in reply or _predates_our_last_reply(conversation, messages)):
         logger.info(
             "Conversation %s: reply repeats our last message — not sending it again",
             conversation["id"],

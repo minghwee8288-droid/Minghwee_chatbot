@@ -6,7 +6,10 @@ information collection survives across separate WhatsApp messages.
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any, TypedDict
+
+logger = logging.getLogger(__name__)
 
 # --- Intents ---------------------------------------------------------------
 
@@ -157,6 +160,30 @@ def effective_contact_type(state: "ConversationState") -> str:
     )
     if stored and stored != "unknown" and has_master_record:
         return stored
+
+    # An OPEN lead on this number sits between the two. It is not a master
+    # record, but it is not one message's reading either: it was written when
+    # this enquiry started and it is what the current flow is being collected
+    # against. Letting a fresh per-message detection override it is how a live
+    # conversation flipped employer -> candidate -> employer on consecutive
+    # turns, and the collector — correctly, for a real service change — threw
+    # away the name and email it had already gathered and asked for them again.
+    #
+    # Only while the lead is open, and only against a detection that disagrees:
+    # a client who genuinely comes back as the other party gets a new lead, and
+    # that new kind then wins here in its turn.
+    lead_kind = (state.get("lead_kind") or "").strip().lower()
+    if lead_kind and detected and detected != lead_kind:
+        logger.info(
+            "Conversation %s reads as a %s this message, but the open lead on this "
+            "number is a %s one — keeping %s so the flow is not reset mid-enquiry",
+            state.get("conversation_id"),
+            detected,
+            lead_kind,
+            lead_kind,
+        )
+        return lead_kind
+
     return detected or stored or "unknown"
 
 

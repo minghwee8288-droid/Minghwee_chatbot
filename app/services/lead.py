@@ -517,7 +517,8 @@ async def create_if_absent(
         {
             "tenant_id": settings.tenant_id or None,
             "branch_id": branch_id,
-            "lead_number": await next_lead_number(table),
+            # lead_number is filled in by insert_numbered() below — see there
+            # for why it cannot be generated once up front.
             # status ('new'), temperature and received_at come from §0 defaults.
         }
     )
@@ -525,7 +526,12 @@ async def create_if_absent(
         payload["owner_profile_id"] = owner_profile_id
 
     try:
-        created = await db.insert(table, payload)
+        created = await db.insert_numbered(
+            table,
+            payload,
+            number_field="lead_number",
+            next_number=lambda: next_lead_number(table),
+        )
     except Exception:  # noqa: BLE001
         logger.exception("Lead creation failed for %s on %s", phone, table)
         return None

@@ -1066,7 +1066,9 @@ async def create(
     payload = {
         "tenant_id": settings.tenant_id or None,
         "conversation_id": conversation["id"],
-        "ticket_number": await next_ticket_number(),
+        # ticket_number is filled in by insert_numbered() below, which re-reads
+        # it on a collision — two clients messaging at once otherwise generate
+        # the same CB-YYYY-NNNN and the second ticket is silently lost.
         # An array so a later merge can add more services onto this same
         # ticket. Seeded with just stored_service, never true_service:
         # _storable_service() only sets true_service when the requested value
@@ -1089,7 +1091,12 @@ async def create(
     if created_lead_id:
         payload["created_lead_id"] = created_lead_id
     try:
-        ticket = await db.insert(TABLE, payload)
+        ticket = await db.insert_numbered(
+            TABLE,
+            payload,
+            number_field="ticket_number",
+            next_number=next_ticket_number,
+        )
     except Exception:  # noqa: BLE001 - a ticket failure must not block the handover
         logger.exception("Ticket creation failed for conversation %s", conversation["id"])
         return None

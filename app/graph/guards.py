@@ -410,11 +410,26 @@ def strip_repeated_opener(reply: str, *previous: str) -> str:
 
 
 def clamp_reply(text: str, max_sentences: int = 2) -> str:
-    """Trim self-directed notes and runaway length from an otherwise good reply."""
-    body = _TRAILING_NOTES.sub("", (text or "").strip()).strip()
+    """Trim self-directed notes and runaway length from an otherwise good reply.
+
+    The truncation is logged with what was cut. A reply reading "Transfer helper.
+    Let me check who's available locally and get back to you shortly." went to a
+    client, and there was no way afterwards to tell whether the model wrote that
+    fragment or this function made one by keeping two sentences out of a longer
+    thought. Without the discarded tail in the log the question cannot be
+    settled, and a fix chosen without settling it is a guess.
+    """
+    original = (text or "").strip()
+    body = _TRAILING_NOTES.sub("", original).strip()
     sentences = re.split(r"(?<=[.!?])\s+", body)
     if len(sentences) > max_sentences:
         body = " ".join(sentences[:max_sentences]).strip()
+        logger.info(
+            "Clamped reply to %d sentence(s): kept %r, dropped %r",
+            max_sentences,
+            body,
+            " ".join(sentences[max_sentences:]).strip(),
+        )
     return body
 
 
