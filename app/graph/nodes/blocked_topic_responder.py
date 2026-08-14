@@ -92,6 +92,19 @@ CHASE_REPLY = (
     "back to you the moment I have something concrete."
 )
 
+# For "are you there" / "hey" specifically — see _DIRECT_ADDRESS below. Worded
+# differently from CHASE_REPLY on purpose: they answer different questions
+# ("is anyone listening" vs "any progress"), and sharing one string meant a
+# direct address could get swallowed by CHASE_REPLY's own near-duplicate
+# check when a chase had just gone out. Live, on conversation 3766, "hey"
+# after "I hear you — I have not forgotten this..." had gone out minutes
+# earlier produced nothing — near_duplicate() correctly refused to repeat
+# CHASE_REPLY, but nobody had told it "hey" needed an answer of its own.
+STILL_HERE_REPLY = (
+    "I am here — still working on this for you. I will let you know the moment I "
+    "have an update."
+)
+
 # Pressing for the reasoning behind an answer we have already given: "why this
 # much", "what's included", "break it down". Our records carry figures, not the
 # justification for them, so this is a question only a person can take.
@@ -152,6 +165,7 @@ NEW_SERVICE_HANDOVER = (
 for _name, _canned in (
     ("FALLBACK_REPLY", FALLBACK_REPLY),
     ("CHASE_REPLY", CHASE_REPLY),
+    ("STILL_HERE_REPLY", STILL_HERE_REPLY),
     ("PROBE_REPLY", PROBE_REPLY),
     ("NEW_SERVICE_HANDOVER", NEW_SERVICE_HANDOVER),
     ("NEW_SERVICE_REPLY", NEW_SERVICE_REPLY),
@@ -315,6 +329,29 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
             ticket.get("ticket_number"),
         )
         return {"reply": "", "suppress_reply": True, "needs_handover": False}
+
+    # Checking whether anyone is on the other end. Handled before _chasing()
+    # below on purpose: _chasing() reuses CHASE_REPLY and drops the message
+    # entirely once that line has already gone out once, which is correct for
+    # an ordinary chase but not for this — "hey" deserves an answer even if a
+    # chase was just acknowledged a minute ago. This has its own reply and its
+    # own dedup so it never inherits CHASE_REPLY's silence.
+    if not answering and _DIRECT_ADDRESS.search(message):
+        already_said = any(
+            near_duplicate(STILL_HERE_REPLY, line)
+            for line in recent_bot_lines(state.get("history_text", ""), count=2)
+        )
+        logger.info(
+            "Conversation %s: client checking if anyone is there on blocked topic %r "
+            "(ticket %s) — answering",
+            state.get("conversation_id"),
+            topic_key,
+            ticket.get("ticket_number"),
+        )
+        return {
+            "reply": CHASE_REPLY if already_said else STILL_HERE_REPLY,
+            "needs_handover": False,
+        }
 
     # Not a chase at all — they want different work done. Ask which, and say
     # nothing about the parked topic: they have already been told it is with a
