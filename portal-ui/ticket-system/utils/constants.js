@@ -7,7 +7,10 @@
  * tickets" rather than as a bug.
  */
 
-export const STATUS_OPTIONS = ['open', 'in_progress', 'resolved', 'closed'];
+// 'in_progress' and 'closed' are valid on the column but the chatbot never
+// writes them and the portal never has either — only 'open' and 'resolved'
+// are ever set, so those are the only two offered as choices.
+export const STATUS_OPTIONS = ['open', 'resolved'];
 
 /**
  * The three values cb_tkt_priority_check permits on cb_tickets.priority.
