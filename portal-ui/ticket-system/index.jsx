@@ -100,8 +100,8 @@ export default function TicketSystemModule({ supabaseClient, pageSize = DEFAULT_
       <div className="border-b border-gray-200 pb-4">
         <h1 className="text-xl font-black text-[#003E60]">Ticket Management</h1>
         <p className="mt-1 max-w-3xl text-sm leading-6 text-gray-500">
-          Enquiries the WhatsApp chatbot handed over. A ticket left Open or In Progress keeps the
-          bot from answering that topic.
+          Enquiries the WhatsApp chatbot handed over. A ticket left Open keeps the bot from
+          answering that topic.
         </p>
       </div>
 

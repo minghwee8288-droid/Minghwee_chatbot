@@ -35,9 +35,7 @@ import LoadingSkeleton from './LoadingSkeleton';
 const CARD_COLORS = {
   total: COLORS.darkBlue,
   open: COLORS.blue,
-  in_progress: COLORS.amber,
   resolved: COLORS.green,
-  closed: COLORS.grey,
 };
 
 function KpiCard({ label, value, color, loading, hint }) {
@@ -181,7 +179,7 @@ export default function TicketDashboard({
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <KpiCard label="Total" value={total} color={CARD_COLORS.total} loading={loading} />
         <KpiCard
           label="Open"
@@ -191,22 +189,9 @@ export default function TicketDashboard({
           hint="Bot paused on topic"
         />
         <KpiCard
-          label="In Progress"
-          value={status.in_progress || 0}
-          color={CARD_COLORS.in_progress}
-          loading={loading}
-          hint="Bot paused on topic"
-        />
-        <KpiCard
           label="Resolved"
           value={status.resolved || 0}
           color={CARD_COLORS.resolved}
-          loading={loading}
-        />
-        <KpiCard
-          label="Closed"
-          value={status.closed || 0}
-          color={CARD_COLORS.closed}
           loading={loading}
         />
       </div>
