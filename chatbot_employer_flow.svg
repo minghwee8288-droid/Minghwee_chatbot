@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 1580" font-family="Segoe UI, Arial, sans-serif">
+
+  <!-- ============ DEFS ============ -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#4B5563"/>
+    </marker>
+  </defs>
+
+  <style>
+    .box       { fill:#FFFFFF; stroke:#0D7AD2; stroke-width:2; rx:10; }
+    .box-bot   { fill:#EAF3FC; stroke:#0D7AD2; stroke-width:2; rx:10; }
+    .box-human { fill:#FFF3E0; stroke:#D97706; stroke-width:2; rx:10; }
+    .box-db    { fill:#E9F9F1; stroke:#059669; stroke-width:2; rx:10; }
+    .decision  { fill:#FDEEEE; stroke:#DF0000; stroke-width:2; }
+    .lane-head { fill:#003E60; }
+    .title     { font-size:15px; font-weight:700; fill:#003E60; }
+    .label     { font-size:13px; fill:#1F2937; }
+    .sub       { font-size:11px; fill:#6B7280; }
+    .edge      { fill:none; stroke:#4B5563; stroke-width:1.6; marker-end:url(#arrow); }
+    .edge-yes  { fill:none; stroke:#059669; stroke-width:1.8; marker-end:url(#arrow); }
+    .edge-no   { fill:none; stroke:#DF0000; stroke-width:1.8; marker-end:url(#arrow); }
+    .edge-label{ font-size:11px; fill:#374151; font-weight:600; }
+    text { font-family: 'Segoe UI', Arial, sans-serif; }
+  </style>
+
+  <!-- ============ HEADER ============ -->
+  <text x="490" y="32" text-anchor="middle" font-size="20" font-weight="800" fill="#003E60">
+    Employer Enquiry Flow — WhatsApp Chatbot
+  </text>
+  <text x="490" y="52" text-anchor="middle" class="sub">
+    Example flow for an employer asking about hiring services (direct hire / transfer / new hiring)
+  </text>
+
+  <!-- ============ LANE LEGEND ============ -->
+  <g transform="translate(40,68)">
+    <rect x="0" y="0" width="14" height="14" fill="#EAF3FC" stroke="#0D7AD2"/>
+    <text x="20" y="11" class="sub">Bot</text>
+    <rect x="70" y="0" width="14" height="14" fill="#FFF3E0" stroke="#D97706"/>
+    <text x="90" y="11" class="sub">Human (Salesperson / Consultant)</text>
+    <rect x="290" y="0" width="14" height="14" fill="#E9F9F1" stroke="#059669"/>
+    <text x="310" y="11" class="sub">Database</text>
+    <rect x="380" y="0" width="14" height="14" fill="#FDEEEE" stroke="#DF0000"/>
+    <text x="400" y="11" class="sub">Decision</text>
+  </g>
+
+  <!-- ============ 1. Employer message ============ -->
+  <rect x="380" y="95" width="220" height="54" class="box"/>
+  <text x="490" y="118" text-anchor="middle" class="label" font-weight="700">Employer sends inquiry</text>
+  <text x="490" y="135" text-anchor="middle" class="sub">e.g. "I need a transfer maid"</text>
+
+  <path class="edge" d="M490,149 V180"/>
+
+  <!-- ============ 2. Bot gathers requirement ============ -->
+  <rect x="350" y="180" width="280" height="60" class="box-bot"/>
+  <text x="490" y="205" text-anchor="middle" class="label" font-weight="700">Bot identifies topic &amp; asks</text>
+  <text x="490" y="222" text-anchor="middle" class="sub">gathers requirements (service type, details)</text>
+
+  <path class="edge" d="M490,240 V265"/>
+
+  <!-- ============ 3. Create / update lead ============ -->
+  <rect x="370" y="265" width="240" height="50" class="box-db"/>
+  <text x="490" y="288" text-anchor="middle" class="label" font-weight="700">Lead created / updated</text>
+  <text x="490" y="303" text-anchor="middle" class="sub">employer + enquiry saved to DB</text>
+
+  <path class="edge" d="M490,315 V345"/>
+
+  <!-- ============ 4. Decision: can bot answer? ============ -->
+  <polygon points="490,345 620,410 490,475 360,410" class="decision"/>
+  <text x="490" y="404" text-anchor="middle" class="label" font-weight="700">Can the bot fully</text>
+  <text x="490" y="420" text-anchor="middle" class="label" font-weight="700">answer this itself?</text>
+
+  <!-- YES branch: bot answers directly, loops back to keep chatting -->
+  <path class="edge-yes" d="M620,410 H760" />
+  <text x="695" y="401" text-anchor="middle" class="edge-label" fill="#059669">Yes</text>
+
+  <rect x="760" y="382" width="180" height="56" class="box-bot"/>
+  <text x="850" y="405" text-anchor="middle" class="label" font-weight="700">Bot answers</text>
+  <text x="850" y="421" text-anchor="middle" class="sub">directly from knowledge</text>
+
+  <path class="edge-yes" d="M850,438 V500 H630" />
+  <text x="850" y="465" text-anchor="middle" class="edge-label" fill="#6B7280">employer may keep asking</text>
+
+  <!-- NO branch: bot cannot answer -> raise ticket -->
+  <path class="edge-no" d="M490,475 V505"/>
+  <text x="465" y="495" text-anchor="middle" class="edge-label" fill="#DF0000">No</text>
+
+  <!-- ============ 5. Raise ticket + assign ============ -->
+  <rect x="360" y="505" width="260" height="62" class="box-human"/>
+  <text x="490" y="528" text-anchor="middle" class="label" font-weight="700">Bot raises a Ticket</text>
+  <text x="490" y="544" text-anchor="middle" class="sub">assigned to the salesperson handling</text>
+  <text x="490" y="558" text-anchor="middle" class="sub">this lead (or next in round-robin)</text>
+
+  <path class="edge" d="M490,567 V597"/>
+
+  <!-- ============ 6. Bot pauses topic ============ -->
+  <rect x="350" y="597" width="280" height="60" class="box-bot"/>
+  <text x="490" y="620" text-anchor="middle" class="label" font-weight="700">Bot tells employer a human will help</text>
+  <text x="490" y="637" text-anchor="middle" class="sub">bot goes silent on this topic until resolved</text>
+
+  <path class="edge" d="M490,657 V687"/>
+
+  <!-- ============ 7. Human resolves ============ -->
+  <rect x="350" y="687" width="280" height="66" class="box-human"/>
+  <text x="490" y="712" text-anchor="middle" class="label" font-weight="700">Salesperson handles the ticket</text>
+  <text x="490" y="729" text-anchor="middle" class="sub">replies to employer directly in the chat,</text>
+  <text x="490" y="744" text-anchor="middle" class="sub">then marks the ticket Resolved</text>
+
+  <path class="edge" d="M490,753 V783"/>
+
+  <!-- ============ 8. Bot resumes ============ -->
+  <rect x="330" y="783" width="320" height="76" class="box-bot"/>
+  <text x="490" y="806" text-anchor="middle" class="label" font-weight="700">Bot resumes on that topic</text>
+  <text x="490" y="823" text-anchor="middle" class="sub">picks up the conversation with the context of</text>
+  <text x="490" y="838" text-anchor="middle" class="sub">what the salesperson resolved, and can explain</text>
+  <text x="490" y="853" text-anchor="middle" class="sub">the bot ⇄ human handover if the employer asks</text>
+
+  <path class="edge" d="M490,859 V889"/>
+
+  <!-- ============ 9. Decision: employer asks again ============ -->
+  <polygon points="490,889 640,960 490,1031 340,960" class="decision"/>
+  <text x="490" y="954" text-anchor="middle" class="label" font-weight="700">Employer asks something</text>
+  <text x="490" y="970" text-anchor="middle" class="label" font-weight="700">new the bot can't answer?</text>
+
+  <!-- loop: same salesperson -->
+  <path class="edge-no" d="M640,960 H820 V545 H620"/>
+  <text x="825" y="750" text-anchor="middle" class="edge-label" fill="#DF0000" transform="rotate(-90 825 750)">New ticket → same salesperson (sticky assignment)</text>
+
+  <!-- end: no further issue -->
+  <path class="edge-yes" d="M490,1031 V1061"/>
+  <text x="465" y="1050" text-anchor="middle" class="edge-label" fill="#059669">No</text>
+
+  <rect x="370" y="1061" width="240" height="54" class="box" rx="27"/>
+  <text x="490" y="1093" text-anchor="middle" class="label" font-weight="700">Bot keeps handling the chat</text>
+
+  <!-- ============ FOOTNOTE ============ -->
+  <g transform="translate(60,1160)">
+    <rect x="0" y="0" width="860" height="130" fill="#F9FAFB" stroke="#E5E7EB" rx="10"/>
+    <text x="20" y="26" class="label" font-weight="700" fill="#003E60">Notes on this example flow</text>
+    <text x="20" y="50" class="sub">• "Sticky assignment": every ticket raised on the same conversation goes to the salesperson already handling that lead, not a new round-robin pick.</text>
+    <text x="20" y="70" class="sub">• While a ticket is Open, the bot will not answer that specific topic again on that conversation — it waits for the human.</text>
+    <text x="20" y="90" class="sub">• Once Resolved, the bot regains that topic and carries the context of what was resolved into the next reply.</text>
+    <text x="20" y="110" class="sub">• Ticket statuses used in practice: Open and Resolved (this diagram shows the employer path only — helper/candidate flows differ).</text>
+  </g>
+
+</svg>
