@@ -31,7 +31,7 @@ from app.services import message as message_service
 from app.services import ticket as ticket_service
 from app.services import transcription as transcription_service
 from app.utils import redact_nric
-from app.whapi.client import WhapiError
+from app.whapi.client import WhapiError, whapi
 from app.whapi.debouncer import MessageDebouncer
 from app.whapi.parser import IncomingMessage, parse_webhook, verify_signature
 
@@ -476,6 +476,15 @@ async def handle_inbound(message: IncomingMessage) -> None:
 
     await message_service.store_incoming(conversation_id, message)
     await conversation_service.touch_inbound(conversation_id, message.text_for_llm)
+
+    # The blue tick, sent the moment we take the message — not when a reply
+    # eventually goes out. A parked topic, the debounce window and a busy
+    # conversation lock can all legitimately delay the reply by real seconds;
+    # without this the client's only signal during that gap is silence, which
+    # reads as being ignored. mark_read is best-effort (swallows its own HTTP
+    # errors) and must never block or fail the turn over a cosmetic tick.
+    if message.whapi_message_id:
+        await whapi.mark_read(message.whapi_message_id)
 
     if _should_identify(conversation, is_new):
         conversation = await identify_contact(conversation)
