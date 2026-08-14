@@ -781,6 +781,23 @@ async def _process_locked(phone: str, messages: list[IncomingMessage]) -> None:
 
     reply = (result.get("reply") or "").strip()
     if not reply:
+        # No exception, no dedup log, no WhapiError — every other silent path
+        # above logs something before returning. This was the one gap: a node
+        # could compute a reply and this branch would still fire with nothing
+        # to show for it, and there was no way to tell which of those was
+        # actually happening. Conversation 3766, salary_enquiry, 2026-08-14
+        # ~07:51 UTC: blocked_topic_responder logged deciding on CHASE_REPLY,
+        # but nothing was ever sent and nothing else logged — this line is
+        # here so the next occurrence says exactly what the graph handed back.
+        logger.info(
+            "Conversation %s: graph returned no reply for this turn (intent=%s "
+            "service=%s suppress_reply=%s needs_handover=%s) — nothing sent",
+            conversation["id"],
+            result.get("intent"),
+            result.get("service_type"),
+            result.get("suppress_reply"),
+            result.get("needs_handover"),
+        )
         return
 
     # Last line of defence against sending the same thing twice. Each node has
