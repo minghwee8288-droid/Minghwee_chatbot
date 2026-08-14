@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 import time
 from collections import OrderedDict
@@ -44,6 +45,31 @@ ALLOWLIST_BLOCK = "number not in BOT_ALLOWED_NUMBERS"
 
 # One lock per conversation, so turns on the same thread never overlap.
 _LOCKS: dict[str, asyncio.Lock] = {}
+
+# A blue tick that lands the instant the message arrives reads as a machine.
+# A person notices their phone, not the server; this is what the delay below
+# stands in for. Randomised within the window rather than fixed so it does
+# not land on the same beat every single time.
+_READ_RECEIPT_DELAY_RANGE = (10.0, 20.0)
+
+# asyncio does not keep a fire-and-forget task alive on its own — nothing else
+# holds a reference to it, so it can be garbage-collected mid-sleep and the
+# tick never goes out. Held here until it finishes, then dropped.
+_READ_RECEIPT_TASKS: set[asyncio.Task] = set()
+
+
+def _schedule_read_receipt(message_id: str | None) -> None:
+    """Mark a message read after a human-length pause, without delaying the turn."""
+    if not message_id:
+        return
+
+    async def _mark_after_delay() -> None:
+        await asyncio.sleep(random.uniform(*_READ_RECEIPT_DELAY_RANGE))
+        await whapi.mark_read(message_id)
+
+    task = asyncio.create_task(_mark_after_delay())
+    _READ_RECEIPT_TASKS.add(task)
+    task.add_done_callback(_READ_RECEIPT_TASKS.discard)
 
 # Webhook-level replay guard.
 #
@@ -477,14 +503,13 @@ async def handle_inbound(message: IncomingMessage) -> None:
     await message_service.store_incoming(conversation_id, message)
     await conversation_service.touch_inbound(conversation_id, message.text_for_llm)
 
-    # The blue tick, sent the moment we take the message — not when a reply
-    # eventually goes out. A parked topic, the debounce window and a busy
-    # conversation lock can all legitimately delay the reply by real seconds;
-    # without this the client's only signal during that gap is silence, which
-    # reads as being ignored. mark_read is best-effort (swallows its own HTTP
-    # errors) and must never block or fail the turn over a cosmetic tick.
-    if message.whapi_message_id:
-        await whapi.mark_read(message.whapi_message_id)
+    # The blue tick — scheduled a human-length pause out, not fired instantly
+    # (see _schedule_read_receipt) and not tied to when the reply itself goes
+    # out. A parked topic, the debounce window and a busy conversation lock
+    # can all legitimately delay the reply by real seconds; without a read
+    # receipt in that gap the client's only signal is silence, which reads as
+    # being ignored.
+    _schedule_read_receipt(message.whapi_message_id)
 
     if _should_identify(conversation, is_new):
         conversation = await identify_contact(conversation)
