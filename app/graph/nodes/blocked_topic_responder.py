@@ -102,7 +102,7 @@ CHASE_REPLY = (
 # CHASE_REPLY, but nobody had told it "hey" needed an answer of its own.
 STILL_HERE_REPLY = (
     "I am here — still working on this for you. I will let you know the moment I "
-    "have an update."
+    "have an update. Meanwhile, let me know if there's anything else I can help with."
 )
 
 # Pressing for the reasoning behind an answer we have already given: "why this
