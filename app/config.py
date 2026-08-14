@@ -178,11 +178,22 @@ class Settings(BaseSettings):
     agent_grace_hours: int = 24
 
     # How long a conversation stays with a human before the bot may pick it up
-    # again. Only relevant now to a standdown with no agent message behind it —
-    # the bot failing outright (see _fail_over_to_human) — since a real agent
-    # message is governed by agent_pause_minutes instead. The clock starts
-    # after the last bot reply. 0 disables the return entirely.
+    # again, when the standdown's cause cannot be identified at all (no
+    # handover row, or a reason outside the ones this file knows how to
+    # recover). A genuine bot crash uses bot_failure_timeout_minutes instead —
+    # this is the conservative "we truly don't know what's going on" fallback.
+    # The clock starts after the last bot reply. 0 disables the return
+    # entirely.
     human_active_timeout_hours: int = 72
+
+    # How long to wait after the bot crashes mid-turn (REASON_CONFUSED —
+    # "Bot could not answer" in the portal) before trying again on its own.
+    # This used to fall through to human_active_timeout_hours (72h), which is
+    # right for a standdown of unknown cause but absurd for a plain bot
+    # failure — a client stuck for most of a day because the bot hit an
+    # exception once. 0 disables the auto-resume (permanent until an agent
+    # resolves the ticket or otherwise flips bot_status back).
+    bot_failure_timeout_minutes: int = 30
 
     # A human agent typing on the thread pauses the bot conversation-wide —
     # the one thing that still does, now that every other trigger is

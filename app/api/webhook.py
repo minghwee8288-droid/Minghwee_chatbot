@@ -222,7 +222,7 @@ STILL_HERE_REPLY = (
 )
 
 
-async def acknowledge_direct_address(conversation: dict[str, Any], text: str) -> bool:
+async def acknowledge_direct_address(conversation: dict[str, Any], text: str, phone: str) -> bool:
     """Answer "are you there?" on a thread the bot has stood itself down on.
 
     A bot-initiated handover sets bot_status=human_active with no agent message
@@ -240,6 +240,11 @@ async def acknowledge_direct_address(conversation: dict[str, Any], text: str) ->
     only once, because a bot repeating "I am here" at someone who is waiting is
     its own kind of insult. Everything else stays silent exactly as before, and
     nothing here takes the conversation back: bot_status is left alone.
+
+    Locked per-conversation like process_batch(): live, "??" and "Are you
+    there" arrived close enough together that both calls read history before
+    either reply was stored, and both passed the "haven't said this yet"
+    check — the client got the same "I am here" line twice in a row.
     """
     if not _DIRECT_ADDRESS.search((text or "").strip()):
         return False
@@ -248,26 +253,27 @@ async def acknowledge_direct_address(conversation: dict[str, Any], text: str) ->
     if await message_service.last_agent_message_at(conversation_id) is not None:
         return False  # a human is on this thread — theirs to answer
 
-    history = await message_service.get_history(conversation_id)
-    if any(
-        near_duplicate(STILL_HERE_REPLY, line, threshold=0.7)
-        for line in recent_bot_lines(message_service.format_history(history), count=3)
-    ):
-        logger.info(
-            "Conversation %s: already told them we are here — staying quiet", conversation_id
-        )
-        return False
+    async with _conversation_lock(phone):
+        history = await message_service.get_history(conversation_id)
+        if any(
+            near_duplicate(STILL_HERE_REPLY, line, threshold=0.7)
+            for line in recent_bot_lines(message_service.format_history(history), count=3)
+        ):
+            logger.info(
+                "Conversation %s: already told them we are here — staying quiet", conversation_id
+            )
+            return False
 
-    logger.info(
-        "Conversation %s: client asking if anyone is there during a bot standdown — answering once",
-        conversation_id,
-    )
-    try:
-        await message_service.send_bot_reply(conversation, STILL_HERE_REPLY)
-    except WhapiError:
-        logger.exception("Could not deliver the standdown acknowledgement on %s", conversation_id)
-        return False
-    return True
+        logger.info(
+            "Conversation %s: client asking if anyone is there during a bot standdown — answering once",
+            conversation_id,
+        )
+        try:
+            await message_service.send_bot_reply(conversation, STILL_HERE_REPLY)
+        except WhapiError:
+            logger.exception("Could not deliver the standdown acknowledgement on %s", conversation_id)
+            return False
+        return True
 
 
 async def may_engage(phone: str, conversation: dict[str, Any] | None) -> tuple[bool, str]:
@@ -355,6 +361,40 @@ async def maybe_return_to_bot(conversation: dict[str, Any]) -> dict[str, Any]:
         await handover_service.back_to_bot(conversation, reason=handover_service.REASON_AGENT_RESOLVED)
         return await conversation_service.get_by_id(conversation_id) or conversation
 
+    # What actually caused the CURRENT standdown, not just whether an agent
+    # ever spoke on this thread at some point in its history. A bot crash
+    # (REASON_CONFUSED — "Bot could not answer" in the portal) used to inherit
+    # whichever timer last_agent_message_at() happened to imply from some
+    # unrelated, possibly very old, real agent message on the same thread —
+    # see latest_bot_to_human_reason. That timer is either far too short (10
+    # minutes since a stale message that already elapsed, so the bot resumes
+    # on the very next inbound message regardless of whether the crash was
+    # ever actually looked at) or, if no agent message exists at all, far too
+    # long (the 72h safety net, meant for a standdown of unknown cause, not a
+    # plain crash). A crash gets its own short, purpose-built timer instead.
+    latest_reason = await handover_service.latest_bot_to_human_reason(conversation_id)
+    if latest_reason == handover_service.REASON_CONFUSED:
+        if settings.bot_failure_timeout_minutes <= 0:
+            return conversation  # auto-resume disabled — permanent until explicitly resolved
+        reference = _parse_timestamp(conversation.get("last_bot_reply_at")) or _parse_timestamp(
+            conversation.get("updated_at")
+        )
+        if reference is None:
+            return conversation
+        idle = max(datetime.now(tz=timezone.utc) - reference, timedelta(0))
+        if idle >= timedelta(minutes=settings.bot_failure_timeout_minutes):
+            logger.info(
+                "Conversation %s: bot failure %.0f min ago — retrying",
+                conversation_id,
+                idle.total_seconds() / 60,
+            )
+            # Fresh thread, not resume_from_pause(): the crash may have left the
+            # langgraph checkpoint mid-turn in whatever state produced the
+            # exception, and replaying that is worse than starting clean.
+            await handover_service.back_to_bot(conversation, reason=handover_service.REASON_BOT_FAILURE_TIMEOUT)
+            return await conversation_service.get_by_id(conversation_id) or conversation
+        return conversation
+
     last_agent = await message_service.last_agent_message_at(conversation_id)
     if last_agent is not None:
         if settings.agent_pause_minutes <= 0:
@@ -370,9 +410,9 @@ async def maybe_return_to_bot(conversation: dict[str, Any]) -> dict[str, Any]:
             return await conversation_service.get_by_id(conversation_id) or conversation
         return conversation
 
-    # No agent message was ever found — this standdown came from the bot
-    # failing outright, not a human being on the thread. Long safety-net
-    # timeout only, so an unresolved bot failure does not sit silent forever.
+    # No agent message was ever found and the standdown isn't a recognised bot
+    # failure either — cause unknown. Long safety-net timeout only, so an
+    # unidentified standdown does not sit silent forever.
     if settings.human_active_timeout_hours <= 0:
         return conversation
 
@@ -420,7 +460,7 @@ async def handle_inbound(message: IncomingMessage) -> None:
         if reason != ALLOWLIST_BLOCK and existing is not None:
             if await emergency_override(existing, message.text_for_llm):
                 return
-            await acknowledge_direct_address(existing, message.text_for_llm)
+            await acknowledge_direct_address(existing, message.text_for_llm, phone)
         return
 
     if existing is not None:
@@ -436,7 +476,7 @@ async def handle_inbound(message: IncomingMessage) -> None:
                 settings.agent_pause_minutes,
             )
             if not await emergency_override(existing, message.text_for_llm):
-                await acknowledge_direct_address(existing, message.text_for_llm)
+                await acknowledge_direct_address(existing, message.text_for_llm, phone)
             return
 
     conversation, is_new = await conversation_service.get_or_create(
@@ -456,7 +496,7 @@ async def handle_inbound(message: IncomingMessage) -> None:
             conversation_id,
             conversation.get("bot_status"),
         )
-        await acknowledge_direct_address(conversation, message.text_for_llm)
+        await acknowledge_direct_address(conversation, message.text_for_llm, phone)
         return
 
     await debouncer.add(message)

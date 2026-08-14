@@ -42,6 +42,10 @@ REASON_CANDIDATE = "candidate_registration"
 # A short, auto-expiring standdown ended on its own — the agent went quiet for
 # agent_pause_minutes without resolving anything or replying again.
 REASON_AGENT_PAUSE_EXPIRED = "agent_pause_expired"
+# A bot crash (REASON_CONFUSED) auto-retried after bot_failure_timeout_minutes
+# with nobody having touched it — distinct from REASON_AGENT_IDLE, which is
+# the long 72h safety net for a standdown of unknown cause.
+REASON_BOT_FAILURE_TIMEOUT = "bot_failure_timeout"
 
 
 async def _log(
@@ -66,6 +70,34 @@ async def _log(
         )
     except Exception:  # noqa: BLE001 - logging must never block the handover itself
         logger.exception("Could not log handover for conversation %s", conversation_id)
+
+
+async def latest_bot_to_human_reason(conversation_id: int) -> str | None:
+    """The reason behind the standdown currently in force, if any.
+
+    maybe_return_to_bot() used to decide how to recover purely from whether a
+    real agent message exists ANYWHERE in the thread's history. That breaks a
+    thread that has ever had a real agent on it: a later bot_confused failover
+    (the bot crashing mid-turn, nothing to do with that old agent message)
+    inherited the short agent_pause_minutes timer keyed off that stale
+    message, and if no inbound message happened to arrive more than
+    agent_pause_minutes after it, the thread never got a chance to resume —
+    conversation 3766 sat in human_active all night with zero human_to_bot
+    handovers despite the last real agent contact being long over. Looking at
+    the most recent handover's reason instead of message history lets the
+    caller tell "a human actually silenced this" apart from "the bot silenced
+    itself".
+    """
+    result = await db.execute(
+        db.table(TABLE)
+        .select("reason")
+        .eq("conversation_id", conversation_id)
+        .eq("direction", BOT_TO_HUMAN)
+        .order("created_at", desc=True)
+        .limit(1)
+    )
+    rows = result.data or []
+    return rows[0].get("reason") if rows else None
 
 
 async def to_human(
