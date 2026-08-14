@@ -361,40 +361,6 @@ async def maybe_return_to_bot(conversation: dict[str, Any]) -> dict[str, Any]:
         await handover_service.back_to_bot(conversation, reason=handover_service.REASON_AGENT_RESOLVED)
         return await conversation_service.get_by_id(conversation_id) or conversation
 
-    # What actually caused the CURRENT standdown, not just whether an agent
-    # ever spoke on this thread at some point in its history. A bot crash
-    # (REASON_CONFUSED — "Bot could not answer" in the portal) used to inherit
-    # whichever timer last_agent_message_at() happened to imply from some
-    # unrelated, possibly very old, real agent message on the same thread —
-    # see latest_bot_to_human_reason. That timer is either far too short (10
-    # minutes since a stale message that already elapsed, so the bot resumes
-    # on the very next inbound message regardless of whether the crash was
-    # ever actually looked at) or, if no agent message exists at all, far too
-    # long (the 72h safety net, meant for a standdown of unknown cause, not a
-    # plain crash). A crash gets its own short, purpose-built timer instead.
-    latest_reason = await handover_service.latest_bot_to_human_reason(conversation_id)
-    if latest_reason == handover_service.REASON_CONFUSED:
-        if settings.bot_failure_timeout_minutes <= 0:
-            return conversation  # auto-resume disabled — permanent until explicitly resolved
-        reference = _parse_timestamp(conversation.get("last_bot_reply_at")) or _parse_timestamp(
-            conversation.get("updated_at")
-        )
-        if reference is None:
-            return conversation
-        idle = max(datetime.now(tz=timezone.utc) - reference, timedelta(0))
-        if idle >= timedelta(minutes=settings.bot_failure_timeout_minutes):
-            logger.info(
-                "Conversation %s: bot failure %.0f min ago — retrying",
-                conversation_id,
-                idle.total_seconds() / 60,
-            )
-            # Fresh thread, not resume_from_pause(): the crash may have left the
-            # langgraph checkpoint mid-turn in whatever state produced the
-            # exception, and replaying that is worse than starting clean.
-            await handover_service.back_to_bot(conversation, reason=handover_service.REASON_BOT_FAILURE_TIMEOUT)
-            return await conversation_service.get_by_id(conversation_id) or conversation
-        return conversation
-
     last_agent = await message_service.last_agent_message_at(conversation_id)
     if last_agent is not None:
         if settings.agent_pause_minutes <= 0:
@@ -410,29 +376,53 @@ async def maybe_return_to_bot(conversation: dict[str, Any]) -> dict[str, Any]:
             return await conversation_service.get_by_id(conversation_id) or conversation
         return conversation
 
-    # No agent message was ever found and the standdown isn't a recognised bot
-    # failure either — cause unknown. Long safety-net timeout only, so an
-    # unidentified standdown does not sit silent forever.
-    if settings.human_active_timeout_hours <= 0:
-        return conversation
-
+    # No stored evidence of a real agent ever replying on this thread. That
+    # covers two cases that look identical from here: a bot crash
+    # (REASON_CONFUSED) and an outbound event agent_took_over() silenced the
+    # bot for but that had nothing storable — a reaction, a delete notice —
+    # see has_reply_content(). Conversation 3766 was exactly the second case:
+    # the handover log said "agent replied directly", but there was no
+    # message row to ever measure an idle time against, so this fell through
+    # to the old 72h "unknown cause" branch and stayed stuck for most of a
+    # day. Neither case has anything to lose by retrying soon, so both get
+    # the short bot_failure_timeout_minutes timer. human_active_timeout_hours
+    # only still applies if that fast timer is disabled (set to 0) — it is
+    # not a second, slower attempt on top of it.
     reference = _parse_timestamp(conversation.get("last_bot_reply_at")) or _parse_timestamp(
         conversation.get("updated_at")
     )
     if reference is None:
         return conversation
-
     idle = max(datetime.now(tz=timezone.utc) - reference, timedelta(0))
-    if idle >= timedelta(hours=settings.human_active_timeout_hours):
+
+    if settings.bot_failure_timeout_minutes > 0:
+        if idle < timedelta(minutes=settings.bot_failure_timeout_minutes):
+            return conversation
+        logger.info(
+            "Conversation %s: no evidence of a real agent reply, idle %.0f min — retrying",
+            conversation_id,
+            idle.total_seconds() / 60,
+        )
+    elif settings.human_active_timeout_hours > 0 and idle >= timedelta(hours=settings.human_active_timeout_hours):
         logger.info(
             "Conversation %s idle with no agent ever involved, for %.0fh — returning it to the bot",
             conversation_id,
             idle.total_seconds() / 3600,
         )
-        await handover_service.back_to_bot(conversation, reason=handover_service.REASON_AGENT_IDLE)
-        return await conversation_service.get_by_id(conversation_id) or conversation
+    else:
+        return conversation  # both timers disabled or not yet elapsed — stay put
 
-    return conversation
+    latest_reason = await handover_service.latest_bot_to_human_reason(conversation_id)
+    reason = (
+        handover_service.REASON_BOT_FAILURE_TIMEOUT
+        if latest_reason == handover_service.REASON_CONFUSED
+        else handover_service.REASON_AGENT_IDLE
+    )
+    # Fresh thread, not resume_from_pause(): a crash may have left the
+    # langgraph checkpoint mid-turn in whatever state produced the exception,
+    # and replaying that is worse than starting clean.
+    await handover_service.back_to_bot(conversation, reason=reason)
+    return await conversation_service.get_by_id(conversation_id) or conversation
 
 
 async def handle_inbound(message: IncomingMessage) -> None:
@@ -526,6 +516,21 @@ async def handle_outbound(message: IncomingMessage) -> None:
         await message_service.store_auto_reply(conversation["id"], message)
         logger.info(
             "Ignoring WhatsApp Business auto-reply on conversation %s", conversation["id"]
+        )
+        return
+
+    # A reaction, a delete notice or some other protocol event is not a human
+    # replying — see has_reply_content(). Silencing the bot on one of these
+    # leaves last_agent_message_at() with nothing to ever find, which is
+    # exactly what happened to conversation 3766: stuck in human_active with
+    # no stored message to measure an idle time against, so recovery fell
+    # through to the 72h unknown-cause safety net instead of the 10-minute
+    # agent pause it should have gotten if a real reply had been sent.
+    if not message_service.has_reply_content(message):
+        logger.debug(
+            "Ignoring contentless outbound event on conversation %s (type=%s) — not an agent reply",
+            conversation["id"],
+            message.message_type,
         )
         return
 

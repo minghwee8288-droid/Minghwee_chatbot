@@ -117,13 +117,29 @@ async def store_incoming(conversation_id: int, message: IncomingMessage) -> dict
     return await _insert_ignoring_duplicates(payload)
 
 
+def has_reply_content(message: IncomingMessage) -> bool:
+    """Whether this outbound event is an actual message, not a reaction/protocol event.
+
+    Whapi's ``messages`` array is not limited to text and media: reactions,
+    delete notices and other protocol events arrive the same way, with
+    ``from_me=True`` and nothing store_agent_reply can persist. Conversation
+    3766 got silenced by exactly one of these — the handover row said "agent
+    replied directly", but wp_chat_messages has no matching outbound row at
+    all, so last_agent_message_at() could never find it and the standdown had
+    no idle time to measure against, ever. The caller must check this BEFORE
+    deciding the thread has a real agent on it — storage succeeding or failing
+    is a separate question from whether there was anything to store.
+    """
+    return _storable_body(message) is not None or bool(message.media_url)
+
+
 async def store_agent_reply(conversation_id: int, message: IncomingMessage) -> dict[str, Any] | None:
     """Persist an outbound message the bot did not send (a human agent typed it).
 
     Never raises: the caller uses this on the agent-detection path, and failing
     to store a row must not stop the bot from standing down.
     """
-    if _storable_body(message) is None and not message.media_url:
+    if not has_reply_content(message):
         return None
     payload = {
         "conversation_id": conversation_id,

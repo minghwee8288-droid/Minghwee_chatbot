@@ -72,8 +72,23 @@ async def _log(
         logger.exception("Could not log handover for conversation %s", conversation_id)
 
 
+# The only two reasons a bot_to_human row ever actually accompanies a
+# bot_status flip to human_active — see to_human() and agent_took_over().
+# Every other bot_to_human reason (ticket_raised, fee_enquiry, salary_enquiry,
+# dispute_escalation, media_received, candidate_registration) is written by
+# log_escalation() or the emergency-override path, neither of which touches
+# bot_status at all — see log_escalation's own docstring. Mixing those into
+# "what caused the standdown" is exactly the bug that kept conversation 3766
+# stuck: its ticket (reason=ticket_raised) was logged at 22:23, after the
+# 22:15 crash (reason=bot_confused), so it became the "latest" bot_to_human
+# row despite never having silenced anything — and the crash's own reason,
+# the only one that matters here, was invisible to a query that did not know
+# to ignore it.
+STANDDOWN_REASONS = (REASON_CONFUSED, REASON_AGENT_TAKEOVER)
+
+
 async def latest_bot_to_human_reason(conversation_id: int) -> str | None:
-    """The reason behind the standdown currently in force, if any.
+    """Which of the two status-changing standdowns is currently in force, if any.
 
     maybe_return_to_bot() used to decide how to recover purely from whether a
     real agent message exists ANYWHERE in the thread's history. That breaks a
@@ -81,18 +96,20 @@ async def latest_bot_to_human_reason(conversation_id: int) -> str | None:
     (the bot crashing mid-turn, nothing to do with that old agent message)
     inherited the short agent_pause_minutes timer keyed off that stale
     message, and if no inbound message happened to arrive more than
-    agent_pause_minutes after it, the thread never got a chance to resume —
-    conversation 3766 sat in human_active all night with zero human_to_bot
-    handovers despite the last real agent contact being long over. Looking at
-    the most recent handover's reason instead of message history lets the
-    caller tell "a human actually silenced this" apart from "the bot silenced
-    itself".
+    agent_pause_minutes after it, the thread never got a chance to resume.
+    Looking at the most recent STANDDOWN_REASONS row instead of message
+    history lets the caller tell "a human actually silenced this" apart from
+    "the bot silenced itself" — restricted to those two reasons specifically,
+    not just any bot_to_human row, because most of them (tickets, fee/salary
+    enquiries, disputes) are topic-scoped escalations that never silenced
+    anything and must not be mistaken for the cause of a standdown.
     """
     result = await db.execute(
         db.table(TABLE)
         .select("reason")
         .eq("conversation_id", conversation_id)
         .eq("direction", BOT_TO_HUMAN)
+        .in_("reason", list(STANDDOWN_REASONS))
         .order("created_at", desc=True)
         .limit(1)
     )

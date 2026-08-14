@@ -177,22 +177,26 @@ class Settings(BaseSettings):
     # Protects live conversations an agent is in the middle of handling.
     agent_grace_hours: int = 24
 
-    # How long a conversation stays with a human before the bot may pick it up
-    # again, when the standdown's cause cannot be identified at all (no
-    # handover row, or a reason outside the ones this file knows how to
-    # recover). A genuine bot crash uses bot_failure_timeout_minutes instead —
-    # this is the conservative "we truly don't know what's going on" fallback.
-    # The clock starts after the last bot reply. 0 disables the return
-    # entirely.
+    # Backstop only used if bot_failure_timeout_minutes below is set to 0.
+    # Whenever there is no stored message proving a real agent replied — a bot
+    # crash, or an outbound event with nothing to store (a reaction, a delete
+    # notice) that still silenced the bot — bot_failure_timeout_minutes is the
+    # one that actually governs recovery; this is not a second, slower
+    # attempt layered on top of it. The clock starts after the last bot
+    # reply. 0 disables the return entirely.
     human_active_timeout_hours: int = 72
 
-    # How long to wait after the bot crashes mid-turn (REASON_CONFUSED —
-    # "Bot could not answer" in the portal) before trying again on its own.
-    # This used to fall through to human_active_timeout_hours (72h), which is
-    # right for a standdown of unknown cause but absurd for a plain bot
-    # failure — a client stuck for most of a day because the bot hit an
-    # exception once. 0 disables the auto-resume (permanent until an agent
-    # resolves the ticket or otherwise flips bot_status back).
+    # How long to wait, with no stored evidence of a real agent ever having
+    # replied on the thread, before the bot tries again on its own. Covers
+    # both a bot crash mid-turn (REASON_CONFUSED — "Bot could not answer" in
+    # the portal) and an outbound event that silenced the bot but left nothing
+    # to store (see has_reply_content() in app/services/message.py) — both
+    # look identical to maybe_return_to_bot(), and neither has anything to
+    # lose by retrying soon rather than waiting out human_active_timeout_hours,
+    # which used to be the only fallback and left a client stuck for most of a
+    # day over one bot exception. 0 disables this fast path and falls back to
+    # human_active_timeout_hours instead; 0 on both means permanent standdown
+    # until an agent resolves the ticket or otherwise flips bot_status back.
     bot_failure_timeout_minutes: int = 30
 
     # A human agent typing on the thread pauses the bot conversation-wide —
