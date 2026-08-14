@@ -214,8 +214,10 @@ class ConversationState(TypedDict, total=False):
     matched_supplier_id: str | None
     matched_case_id: str | None
     salesperson_profile_id: str | None
-    # Their most recent cb_tickets row, shown to a returning employer's prompt.
-    last_ticket: dict[str, Any] | None
+    # Their last few cb_tickets rows (newest first), shown to a returning
+    # employer's prompt so it can flag a topic that looks different from what
+    # they raised before instead of silently starting a fresh collection.
+    recent_tickets: list[dict[str, Any]] | None
     # An open leads/leads_candidate row this number already matched.
     matched_lead_id: str | None
     matched_lead_number: str | None

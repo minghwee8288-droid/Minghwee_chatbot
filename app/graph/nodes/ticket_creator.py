@@ -247,6 +247,7 @@ async def ticket_creator(state: ConversationState) -> dict[str, Any]:
         matched_employer_id=state.get("matched_employer_id"),
         salesperson_profile_id=state.get("salesperson_profile_id"),
         contact_type=state.get("contact_type") or state.get("detected_contact_type"),
+        conversation_id=state.get("conversation_id"),
     )
 
     # Only this service's own fields. Belt-and-braces against a stale value

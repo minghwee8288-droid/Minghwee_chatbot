@@ -433,19 +433,28 @@ async def next_ticket_number() -> str:
 
 async def last_for_conversation(conversation_id: int) -> dict[str, Any] | None:
     """The client's most recent ticket, for the 'previous enquiry' prompt line."""
+    recent = await recent_for_conversation(conversation_id, limit=1)
+    return recent[0] if recent else None
+
+
+async def recent_for_conversation(conversation_id: int, *, limit: int = 3) -> list[dict[str, Any]]:
+    """The client's last few tickets, newest first, so the prompt can flag a
+    topic that looks different from what they raised before — not just repeat
+    the single latest one. ``description`` is what carries the distinguishing
+    detail (whose care, which child) that service_type alone cannot.
+    """
     try:
         result = await db.execute(
             db.table(TABLE)
-            .select("service_type, status, created_at")
+            .select("service_type, status, created_at, description")
             .eq("conversation_id", conversation_id)
             .order("created_at", desc=True)
-            .limit(1)
+            .limit(limit)
         )
     except Exception:  # noqa: BLE001 - a missing history line must not break the turn
-        logger.exception("Could not read the last ticket for conversation %s", conversation_id)
-        return None
-    rows = result.data or []
-    return rows[0] if rows else None
+        logger.exception("Could not read recent tickets for conversation %s", conversation_id)
+        return []
+    return result.data or []
 
 
 # Statuses a ticket must be in to still be "live" — eligible to be matched

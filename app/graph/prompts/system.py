@@ -134,20 +134,45 @@ mention that they sent a voice note, never ask them to type instead, never refer
 the transcription. From your perspective, it is just another message."""
 
 
-def _previous_enquiry(ticket: dict[str, Any] | None) -> str:
-    """One line describing the client's last ticket, for returning employers."""
-    if not ticket:
+def _previous_enquiries(tickets: list[dict[str, Any]] | None) -> str:
+    """Their last few tickets, for returning employers.
+
+    A single "previous enquiry: New Hiring" line could not tell a helper for
+    the kids apart from one for an elderly parent — both are the same
+    service_type. A conversation that reopened cold on the second case never
+    mentioned the first, because the model had nothing distinguishing to
+    point at. description carries that detail (household, who needs care),
+    so each ticket gets its own block instead of one flattened line.
+    """
+    tickets = [t for t in (tickets or []) if t]
+    if not tickets:
         return ""
-    # service_type is stored as an array (a merged ticket can cover more than
-    # one) — the raw list must never reach the prompt as text, so this always
-    # goes through the label helper rather than reading the column directly.
-    service = service_types_label(ticket)
-    # created_at arrives as an ISO timestamp; the date alone is what an agent
-    # would mention in chat.
-    created = str(ticket.get("created_at") or "").split("T")[0]
-    status = ticket.get("status") or "unknown"
-    when = f" on {created}" if created else ""
-    return f"- Previous enquiry: {service}{when} (status: {status})"
+    blocks = []
+    for ticket in tickets:
+        # service_type is stored as an array (a merged ticket can cover more
+        # than one) — the raw list must never reach the prompt as text, so
+        # this always goes through the label helper rather than reading the
+        # column directly.
+        service = service_types_label(ticket)
+        created = str(ticket.get("created_at") or "").split("T")[0]
+        status = ticket.get("status") or "unknown"
+        when = f" on {created}" if created else ""
+        header = f"- {service}{when} (status: {status}):"
+        description = (ticket.get("description") or "").strip()
+        if description:
+            indented = "\n".join(f"    {line}" for line in description.splitlines() if line.strip())
+            blocks.append(f"{header}\n{indented}")
+        else:
+            blocks.append(header)
+    lines = ["- Previous enquiries on this conversation, most recent first:", *blocks]
+    lines.append(
+        "  If what they are asking for now is a genuinely different need from these "
+        "(a different person, a different service) do not just start collecting for it "
+        "silently — say what you found (in one short line) and ask whether this is in "
+        "addition to the earlier one or instead of it. If it is clearly the same enquiry "
+        "continuing, do not re-ask anything already answered above."
+    )
+    return "\n".join(lines)
 
 
 def _contact_block(state: dict[str, Any]) -> str:
@@ -163,7 +188,7 @@ def _contact_block(state: dict[str, Any]) -> str:
         )
         if state.get("matched_case_id"):
             lines.append("- They have an active case with us.")
-        previous = _previous_enquiry(state.get("last_ticket"))
+        previous = _previous_enquiries(state.get("recent_tickets"))
         if previous:
             lines.append(previous)
     elif contact_type == "candidate":

@@ -775,10 +775,10 @@ async def _process_locked(phone: str, messages: list[IncomingMessage]) -> None:
 
     # Only employers get the "previous enquiry" line, so only look it up for them.
     contact_type = conversation.get("contact_type") or ""
-    last_ticket = (
-        await ticket_service.last_for_conversation(conversation["id"])
+    recent_tickets = (
+        await ticket_service.recent_for_conversation(conversation["id"], limit=3)
         if contact_type == "employer"
-        else None
+        else []
     )
     # An open lead means we have qualified this number before: the collector
     # should not start the same questions again. Master records make it moot.
@@ -803,7 +803,7 @@ async def _process_locked(phone: str, messages: list[IncomingMessage]) -> None:
         "matched_candidate_id": conversation.get("matched_candidate_id"),
         "matched_supplier_id": conversation.get("matched_supplier_id"),
         "matched_case_id": conversation.get("matched_case_id"),
-        "last_ticket": last_ticket,
+        "recent_tickets": recent_tickets,
         # Lead columns do not exist on wp_chat_conversations, so an open lead is
         # read per turn rather than stored on the row.
         "matched_lead_id": (open_lead or {}).get("id"),

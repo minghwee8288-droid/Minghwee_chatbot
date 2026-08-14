@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 ADMIN_ESCALATION = "admin_escalation"
 EXISTING_SALESPERSON = "existing_salesperson"
+CONVERSATION_STICKY = "conversation_sticky"
 ROUND_ROBIN = "round_robin"
 
 
@@ -64,6 +65,35 @@ async def _employer_salesperson(employer_id: str | None) -> str | None:
     return (employer or {}).get("salesperson_profile_id")
 
 
+async def _conversation_agent(conversation_id: int | None) -> str | None:
+    """The agent already handling this conversation, from an earlier ticket.
+
+    Each ticket used to run its own round robin, so one client could pick up
+    a different agent per ticket on the same thread — three tickets, three
+    strangers. Every ticket on a conversation should land on whoever already
+    has it; round robin only picks a new agent for a conversation that has
+    never been assigned one at all.
+    """
+    if not conversation_id:
+        return None
+    try:
+        result = await db.execute(
+            db.table("cb_tickets")
+            .select("assigned_agent_id")
+            .eq("conversation_id", conversation_id)
+            .order("created_at", desc=True)
+            .limit(5)
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not look up the existing agent for conversation %s", conversation_id)
+        return None
+    for row in result.data or []:
+        agent_id = row.get("assigned_agent_id")
+        if agent_id:
+            return agent_id
+    return None
+
+
 async def _next_round_robin_agent() -> str | None:
     try:
         data = await db.rpc("cb_get_next_agent", {"p_tenant_id": settings.tenant_id})
@@ -90,6 +120,7 @@ async def resolve_agent(
     matched_employer_id: str | None = None,
     salesperson_profile_id: str | None = None,
     contact_type: str | None = None,
+    conversation_id: int | None = None,
 ) -> tuple[str | None, str]:
     """Pick the agent and report which rule produced them."""
     if intent == "dispute_assault":
@@ -112,6 +143,11 @@ async def resolve_agent(
     if salesperson:
         logger.info("Returning employer -> existing salesperson %s", salesperson)
         return salesperson, EXISTING_SALESPERSON
+
+    sticky_agent = await _conversation_agent(conversation_id)
+    if sticky_agent:
+        logger.info("Conversation %s already has agent %s -> keeping it", conversation_id, sticky_agent)
+        return sticky_agent, CONVERSATION_STICKY
 
     agent_id = await _next_round_robin_agent()
     if agent_id:

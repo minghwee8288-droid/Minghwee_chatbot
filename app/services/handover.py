@@ -142,6 +142,7 @@ async def to_human(
             matched_employer_id=conversation.get("matched_employer_id"),
             salesperson_profile_id=salesperson_profile_id,
             contact_type=contact_type or conversation.get("contact_type"),
+            conversation_id=conversation_id,
         )
 
     portal_user_id = await assignment_service.map_to_portal_user(assigned_agent_id)
@@ -206,6 +207,7 @@ async def log_escalation(
             matched_employer_id=conversation.get("matched_employer_id"),
             salesperson_profile_id=salesperson_profile_id,
             contact_type=contact_type or conversation.get("contact_type"),
+            conversation_id=conversation_id,
         )
 
     await _log(
