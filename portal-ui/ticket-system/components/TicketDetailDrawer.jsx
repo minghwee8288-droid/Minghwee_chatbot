@@ -139,17 +139,19 @@ export default function TicketDetailDrawer({
       assigned_agent_id: selectedAgentId || null,
     };
 
-    let { error: saveError } = await supabaseClient
+    let { data: savedRows, error: saveError } = await supabaseClient
       .from('cb_tickets')
       .update({ ...base, updated_at: new Date().toISOString() })
-      .eq('id', ticket.id);
+      .eq('id', ticket.id)
+      .select('id');
 
     if (saveError && isMissingColumn(saveError)) {
       console.warn('cb_tickets has no updated_at column — saving without it', saveError);
-      ({ error: saveError } = await supabaseClient
+      ({ data: savedRows, error: saveError } = await supabaseClient
         .from('cb_tickets')
         .update(base)
-        .eq('id', ticket.id));
+        .eq('id', ticket.id)
+        .select('id'));
     }
 
     setIsSaving(false);
@@ -157,6 +159,15 @@ export default function TicketDetailDrawer({
     if (saveError) {
       console.error('Ticket save failed', saveError);
       if (onToast) onToast('Save failed — please try again', 'error');
+      return;
+    }
+
+    // RLS silently matches zero rows instead of erroring when the caller has
+    // no write policy — without this check that reads as a normal save and
+    // the ticket quietly keeps its old status.
+    if (!savedRows || savedRows.length === 0) {
+      console.error('Ticket save matched no rows — likely blocked by RLS', ticket.id);
+      if (onToast) onToast('Save failed — you may not have permission to edit this ticket', 'error');
       return;
     }
 
