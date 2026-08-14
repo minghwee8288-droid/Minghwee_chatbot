@@ -283,10 +283,21 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
     # switches the service to fee_enquiry, whose two fields are already filled,
     # so collection ends early and the ticket is filed under the wrong service
     # with the remaining requirements never asked for.
+    #
+    # Only while that service is still IN PROGRESS, though. Once its ticket is
+    # raised and the topic is parked, "sticking" to it does the opposite of
+    # what this rule is for: it drags a genuinely new, unrelated question back
+    # into the blocked topic, where blocked_topic_responder's chase-dedup then
+    # swallows it as a repeat of an old chase. Live, on conversation 3766,
+    # "I want salary — know the salary expectation of indo workers" — asked
+    # right after the bot itself had said "which service can I help you
+    # with?" — got glued back onto the already-raised 'renewal' ticket this
+    # way and was silently dropped.
     if (
         active_service
         and active_service not in SOFT_SERVICES
         and service_type in SOFT_SERVICES
+        and active_service not in (state.get("blocked_topics") or {})
     ):
         logger.info(
             "Keeping active service %s despite a %s question", active_service, service_type
