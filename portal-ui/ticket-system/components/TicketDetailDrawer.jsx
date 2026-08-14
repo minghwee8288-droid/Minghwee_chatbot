@@ -25,6 +25,10 @@ import HandoverSection from './HandoverSection';
 import LoadingSkeleton from './LoadingSkeleton';
 import ServiceTypePill from './ServiceTypePill';
 
+// Mirrors app.services.conversation.CLOSED_STATUSES — both mean "finished"
+// at the ticket level, but wp_chat_conversations.status only has 'resolved'.
+const TICKET_CLOSED_STATUSES = new Set(['resolved', 'closed']);
+
 /**
  * One ticket, in full, with the three fields the portal may change.
  *
@@ -169,6 +173,27 @@ export default function TicketDetailDrawer({
       console.error('Ticket save matched no rows — likely blocked by RLS', ticket.id);
       if (onToast) onToast('Save failed — you may not have permission to edit this ticket', 'error');
       return;
+    }
+
+    // wp_chat_conversations.status only ever means "does this thread still
+    // need a human" — the bot's instant-return check in maybe_return_to_bot()
+    // reads it, not cb_tickets.status. Without this, resolving a ticket here
+    // left that field untouched and the bot sat out the full agent-idle timer
+    // even though the case was already closed. The CHECK constraint on that
+    // column only permits 'open'/'resolved', so both ticket-closed values
+    // ('resolved' and 'closed') collapse to the same 'resolved' here.
+    if (ticket.conversation_id !== null && ticket.conversation_id !== undefined) {
+      const wasClosed = TICKET_CLOSED_STATUSES.has(ticket.status || '');
+      const isClosed = TICKET_CLOSED_STATUSES.has(selectedStatus);
+      if (wasClosed !== isClosed) {
+        const { error: conversationError } = await supabaseClient
+          .from('wp_chat_conversations')
+          .update({ status: isClosed ? 'resolved' : 'open' })
+          .eq('id', ticket.conversation_id);
+        if (conversationError) {
+          console.error('Conversation status sync failed', conversationError);
+        }
+      }
     }
 
     if (onToast) onToast('Ticket updated successfully', 'success');
