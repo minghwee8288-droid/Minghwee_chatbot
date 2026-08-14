@@ -38,20 +38,56 @@ const CARD_COLORS = {
   resolved: COLORS.green,
 };
 
-function KpiCard({ label, value, color, loading, hint }) {
+/** Two-digit hex alpha appended to a `#rrggbb` colour, for tinted chip fills. */
+function withAlpha(hex, alpha) {
+  return `${hex}${alpha}`;
+}
+
+const KPI_ICONS = {
+  total: (
+    <path
+      d="M4 6h16M4 12h16M4 18h10"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  ),
+  open: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 8v4l3 2" strokeLinecap="round" strokeLinejoin="round" />
+    </>
+  ),
+  resolved: <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />,
+};
+
+function KpiCard({ kind, label, value, color, loading, hint }) {
   return (
-    <div className="flex overflow-hidden rounded-lg border border-gray-200 bg-white">
-      <div className="w-1 flex-shrink-0" style={{ backgroundColor: color }} aria-hidden="true" />
-      <div className="min-w-0 flex-1 px-4 py-4">
+    <div className="group flex items-center gap-4 rounded-xl border border-gray-200 bg-white px-5 py-4 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md">
+      <div
+        className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full"
+        style={{ backgroundColor: withAlpha(color, '1A') }}
+        aria-hidden="true"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke={color}
+          strokeWidth="2"
+          className="h-5 w-5"
+        >
+          {KPI_ICONS[kind]}
+        </svg>
+      </div>
+      <div className="min-w-0 flex-1">
         <p className="text-xs font-bold uppercase tracking-wide text-gray-500">{label}</p>
         {loading ? (
-          <div className="mt-2 h-8 w-14 animate-pulse rounded bg-gray-200" />
+          <div className="mt-1.5 h-8 w-14 animate-pulse rounded bg-gray-200" />
         ) : (
-          <p className="mt-1.5 text-3xl font-black leading-none text-[#003E60]">{value}</p>
+          <p className="text-3xl font-black leading-tight tabular-nums text-[#003E60]">{value}</p>
         )}
-        {/* Reserved whether or not this card has a hint, so the five cards keep
-            one baseline instead of stepping up and down across the row. */}
-        <p className="mt-1.5 h-4 text-xs leading-4 text-gray-400">{hint || ''}</p>
+        {/* Reserved whether or not this card has a hint, so all cards keep one
+            baseline instead of stepping up and down across the row. */}
+        <p className="h-4 text-xs leading-4 text-gray-400">{hint || ''}</p>
       </div>
     </div>
   );
@@ -179,9 +215,10 @@ export default function TicketDashboard({
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-        <KpiCard label="Total" value={total} color={CARD_COLORS.total} loading={loading} />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <KpiCard kind="total" label="Total" value={total} color={CARD_COLORS.total} loading={loading} />
         <KpiCard
+          kind="open"
           label="Open"
           value={status.open || 0}
           color={CARD_COLORS.open}
@@ -189,6 +226,7 @@ export default function TicketDashboard({
           hint="Bot paused on topic"
         />
         <KpiCard
+          kind="resolved"
           label="Resolved"
           value={status.resolved || 0}
           color={CARD_COLORS.resolved}
