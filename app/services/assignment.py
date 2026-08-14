@@ -19,8 +19,12 @@ logger = logging.getLogger(__name__)
 
 ADMIN_ESCALATION = "admin_escalation"
 EXISTING_SALESPERSON = "existing_salesperson"
-CONVERSATION_STICKY = "conversation_sticky"
 ROUND_ROBIN = "round_robin"
+# Reusing an agent this conversation already has is still reported as
+# ROUND_ROBIN, not a distinct value: cb_tkt_assignment_rule_check on
+# cb_tickets only permits the three rules above, and adding a new one needs a
+# migration this code cannot run. The agent still originally came from the
+# rotation — this ticket just didn't draw a new one.
 
 
 async def _find_admin() -> str | None:
@@ -147,7 +151,7 @@ async def resolve_agent(
     sticky_agent = await _conversation_agent(conversation_id)
     if sticky_agent:
         logger.info("Conversation %s already has agent %s -> keeping it", conversation_id, sticky_agent)
-        return sticky_agent, CONVERSATION_STICKY
+        return sticky_agent, ROUND_ROBIN
 
     agent_id = await _next_round_robin_agent()
     if agent_id:
