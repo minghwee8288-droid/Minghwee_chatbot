@@ -43,6 +43,20 @@ router = APIRouter(tags=["webhook"])
 # Marker for the one stand-down reason no emergency may override.
 ALLOWLIST_BLOCK = "number not in BOT_ALLOWED_NUMBERS"
 
+# How recent "our last message" has to be for the repeat guard below to apply.
+# The guard exists for one specific race — two messages typed seconds apart
+# turning into two turns that both answer the same question — so it should
+# not still be live minutes later. Two KB answers that share a template
+# ("X helpers start at roughly S$A to S$B...") but differ only in the
+# nationality word and the four figures score well above near_duplicate's 0.8
+# ratio threshold even though they answer two different questions. Live,
+# "Can you tell me salary of filipino helpers" got answered correctly, and
+# "Ok and for indonesia works??" a minute later got silently swallowed as a
+# repeat of it — same sentence shape, different country, different numbers —
+# and the client got nothing for fifteen minutes until a later rephrasing
+# happened to fall outside the ratio by chance.
+_REPEAT_GUARD_WINDOW_SECONDS = 90
+
 # One lock per conversation, so turns on the same thread never overlap.
 _LOCKS: dict[str, asyncio.Lock] = {}
 
@@ -846,7 +860,22 @@ async def _process_locked(phone: str, messages: list[IncomingMessage]) -> None:
     # rewrite for that, and if it still comes out the same the client has not
     # answered it yet — going silent there strands the flow, which is worse than
     # asking twice.
-    repeats_us = any(
+    #
+    # Gated on recency: this exists for messages typed seconds apart, not for
+    # two different questions minutes apart that happen to share a KB
+    # template. Without the gate, a same-shaped-different-figures answer
+    # (a different nationality's salary range, a different service's fee
+    # range) reads as "the same thing again" and gets dropped no matter how
+    # long ago the similar-looking answer actually went out.
+    last_reply_at = _parse_timestamp(conversation.get("last_bot_reply_at"))
+    if last_reply_at and last_reply_at.tzinfo is None:
+        last_reply_at = last_reply_at.replace(tzinfo=timezone.utc)
+    replied_recently = (
+        last_reply_at is not None
+        and (datetime.now(timezone.utc) - last_reply_at).total_seconds()
+        <= _REPEAT_GUARD_WINDOW_SECONDS
+    )
+    repeats_us = replied_recently and any(
         near_duplicate(reply, line) for line in recent_bot_lines(payload["history_text"], 2)
     )
     if repeats_us and ("?" not in reply or _predates_our_last_reply(conversation, messages)):
