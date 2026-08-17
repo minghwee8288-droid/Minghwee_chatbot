@@ -76,6 +76,20 @@ export default function TicketTable({
     onSort(key, nextDirection);
   };
 
+  /**
+   * Anywhere in the row opens the ticket.
+   *
+   * Skipped while the user has text selected: the row carries a phone number
+   * and a case id, and dragging across either to copy it ends in a click. The
+   * drawer opening on top of that reads as the table swallowing the gesture.
+   */
+  const handleRowClick = (ticket) => {
+    if (!onSelectTicket) return;
+    const selection = typeof window !== 'undefined' ? window.getSelection() : null;
+    if (selection && String(selection).length > 0) return;
+    onSelectTicket(ticket);
+  };
+
   return (
     <section className="rounded-lg border border-gray-200 bg-white">
       <header className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
@@ -151,12 +165,24 @@ export default function TicketTable({
                 const isLive = OPEN_STATUSES.includes(ticket.status);
 
                 return (
-                  <tr key={ticket.id} className="align-top hover:bg-gray-50">
+                  <tr
+                    key={ticket.id}
+                    onClick={() => handleRowClick(ticket)}
+                    className="align-top hover:bg-gray-50 cursor-pointer"
+                  >
                     <td className="px-4 py-3">
+                      {/* Kept a real button, and it is the row's only tab stop:
+                          the row itself is a mouse affordance, so the keyboard
+                          path stays here rather than on a focusable <tr>.
+                          stopPropagation so a click on it does not also reach
+                          the row and open the drawer twice. */}
                       <button
                         type="button"
-                        onClick={() => onSelectTicket && onSelectTicket(ticket)}
-                        className="rounded text-sm font-bold text-[#0D7AD2] hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (onSelectTicket) onSelectTicket(ticket);
+                        }}
+                        className="rounded text-left text-sm font-bold text-[#0D7AD2] hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
                         {ticket.ticket_number || DASH}
                       </button>
