@@ -64,7 +64,14 @@ _LOCKS: dict[str, asyncio.Lock] = {}
 # A person notices their phone, not the server; this is what the delay below
 # stands in for. Randomised within the window rather than fixed so it does
 # not land on the same beat every single time.
-_READ_RECEIPT_DELAY_RANGE = (10.0, 20.0)
+#
+# Cut from 10-20s: the whole thread was reading as slow, and this window was
+# the worst offender because it could put the tick AFTER the reply. Both
+# timers start when the message lands, and a fast turn (debounce + graph +
+# typing) finishes inside ~12s, so a tick at 15s arrived second — an ordering
+# no human produces. Kept jittered rather than a flat 2.0 so it still does not
+# land on the same beat every time.
+_READ_RECEIPT_DELAY_RANGE = (1.0, 3.0)
 
 # asyncio does not keep a fire-and-forget task alive on its own — nothing else
 # holds a reference to it, so it can be garbage-collected mid-sleep and the

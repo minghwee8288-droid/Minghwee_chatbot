@@ -124,7 +124,11 @@ class Settings(BaseSettings):
     # as one turn. The timer restarts on every message, so a burst of five is
     # still one reply. Raised from 3s: clients routinely pause two or three
     # seconds mid-thought, and each pause was costing them a separate answer.
-    debounce_seconds: float = 8.0
+    # Since trimmed 8 -> 2 for responsiveness, which is below the window that
+    # history argues for: a pause longer than 2s splits one thought into two
+    # turns again. process_batch()'s mid-turn fold-in and the near-duplicate
+    # repeat guard absorb some of that, but not a genuinely slow typist.
+    debounce_seconds: float = 2.0
 
     # --- RAG ---
     # Calibrated against cb_knowledge_base_updated (270 chunks) with

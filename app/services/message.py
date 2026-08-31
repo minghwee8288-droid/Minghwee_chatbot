@@ -259,7 +259,10 @@ async def send_bot_reply(conversation: dict[str, Any], body: str) -> dict[str, A
     conversation_id = conversation["id"]
 
     # Typing indicator scaled to the reply length keeps the thread human.
-    typing_time = max(1, min(len(body) // 25, 6))
+    # Capped at 2s rather than 6: on a long KB answer the bubble was adding six
+    # seconds on top of the debounce window and the graph run, and the client
+    # reads that as the bot being slow, not as someone typing.
+    typing_time = max(1, min(len(body) // 25, 2))
     try:
         response = await whapi.send_text(phone, body, typing_time=typing_time)
     except WhapiError:
