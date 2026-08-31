@@ -133,6 +133,30 @@ client who has already answered.
 - Amounts written in words. Convert them to figures: "six hundred fifty dollars a \
 month" -> "$650", "around seven hundred" -> "$700".
 
+Capture what the client said in passing, not only what they were asked. One \
+sentence often answers several fields at once, and every field you leave empty here \
+is a question the consultant then asks about something the client has already told \
+them. "I need someone for my 2 kids, 3 and 5, we're a family of four in a condo" \
+answers the care type, the children, the household size and the type of home — \
+return all four.
+
+Some fields list the answers the office works with. Match what the client said to \
+the closest one and return THAT wording, so the record is consistent:
+- "3 room flat", "HDB 3rm" -> "HDB 1-3 room"; "5 room" -> "HDB 4-5 room"; \
+"condominium" -> "condo"; "terrace", "bungalow" -> "landed"
+- "we are 4 at home", "me, my wife and 2 kids" -> "3-4"
+- "next week", "urgently", "immediately" -> "as soon as possible - within 2 weeks"; \
+"still looking around", "just checking" -> "just exploring for now"
+- "Pinay", "Philippines" -> "Filipino"; "Burmese" -> "Myanmar"
+But return what the client actually said whenever it carries detail no listed answer \
+does — "$680", "HDB 4 room with a store room", "8 of us including my in-laws". Never \
+force a real answer into a bucket that loses information, and never invent a bucket \
+value for a field the client said nothing about.
+
+A field that can hold several answers takes them all, comma-separated: languages \
+"English, Mandarin, Hokkien", cooking "Chinese, halal kitchen", care type "childcare, \
+eldercare".
+
 If the client corrects an earlier answer, return the corrected value."""
 
 EXTRACTION_USER = """Fields to look for:
@@ -152,11 +176,18 @@ Extract the fields."""
 
 COLLECTOR_INSTRUCTION = """The client is enquiring about: {service_label}.
 
-You still need to find out: {field_label}.
+You still need to find out: {field_label}.{field_guidance}
 
 The contact block above tells you what we already know about this client from our \
 records. Do not ask for information already shown there — their name, phone number, \
 employer status, or existing case reference.
+
+Ask for that one detail and nothing else. If the client has already told you \
+something — in this message, earlier in the conversation, or in the confirmed list \
+above — it is answered, and asking for it again is the fastest way to make them \
+realise they are talking to software. That includes detail they gave in passing: \
+someone who wrote "I need help with my two boys, 4 and 7" has already told you how \
+many children there are and how old they are, and must not be asked either.
 
 Write the next WhatsApp message asking for that one detail, the way a colleague \
 would in a chat. One or two short sentences.

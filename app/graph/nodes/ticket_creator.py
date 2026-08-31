@@ -286,6 +286,15 @@ async def ticket_creator(state: ConversationState) -> dict[str, Any]:
     if not allowed:
         captured.setdefault("client_message", (state.get("incoming_text") or "")[:2000])
 
+    # The bot qualifies the enquiry; it never collects the application
+    # paperwork. Rule 4/4a keep it from asking, and redact_nric() would strip an
+    # NRIC before it ever reached this dict anyway — so without this line the
+    # agent opens a thoroughly qualified ticket with no indication that the
+    # Singpass block is the next thing anyone has to do.
+    outstanding = ticket_service.pending_documentation(service_type)
+    if outstanding:
+        captured.setdefault("still_to_collect", list(outstanding))
+
     # A media ticket also needs what the attachment actually was.
     if service_type == MEDIA_INTENT:
         captured.update(_media_summary(state.get("media_items") or []))

@@ -177,10 +177,57 @@ def _states_a_care_type(text: str) -> bool:
     return bool(re.sub(r"[^a-z0-9]+", "", remainder.lower()))
 
 
+def _field_guidance(
+    service_type: str, collected: dict[str, Any], field: ticket_service.Field
+) -> str:
+    """What to tell the model about the specific detail it is asking for.
+
+    Two things the field label alone cannot carry: the answers the office
+    actually works with, and whether this question changes the subject.
+
+    The options are given as examples to steer the question, never as a list to
+    read out. A client asked "1-2, 3-4, 5-6 or 7 or more?" is filling in a form;
+    a client asked "how many of you are there at home?" is having a
+    conversation, and both produce the same value.
+    """
+    parts: list[str] = []
+
+    previous_group = ticket_service.preceding_group(service_type, collected, field)
+    if field.group and previous_group and field.group != previous_group:
+        parts.append(
+            f"\n\nYou have finished with {previous_group} and are moving on to "
+            f"{field.group}. A handful of words to mark the turn is fine "
+            '("got it — and about the home itself,") but it is not required, and it '
+            "must never become a formula you use at every change of subject."
+        )
+    elif field.group and not previous_group:
+        parts.append(f"\n\nThis is the first thing you are asking about {field.group}.")
+
+    if field.options:
+        parts.append(
+            "\n\nThe answers the office works with here are: "
+            + ", ".join(field.options)
+            + ". Use them to shape the question — dropping two or three in as examples "
+            "is how a person asks it. Never read the whole set out, never number them, "
+            "and never present them as a menu to choose from. Whatever the client "
+            "answers is their answer, listed or not."
+        )
+
+    return "".join(parts)
+
+
 async def _extract(
     state: ConversationState, service_type: str, asked: dict[str, int]
 ) -> dict[str, Any]:
-    fields = ticket_service.fields_for(service_type)
+    # include_undecided: a gate that has not been decided yet still goes to the
+    # extractor. The turn the client says "for my mum, she's 82 and bedridden"
+    # is the same turn that opens the eldercare gate, and a field left out of
+    # this list on that turn is a question asked about something already
+    # answered. Gates that are decided and closed stay out — nobody with no
+    # children should have children_detail offered to a model at all.
+    fields = ticket_service.applicable_fields(
+        service_type, state.get("collected_info") or {}, include_undecided=True
+    )
     if not fields:
         return {}
 
@@ -433,6 +480,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         instruction = COLLECTOR_INSTRUCTION.format(
             service_label=label,
             field_label=next_field.label,
+            field_guidance=_field_guidance(service_type, collected, next_field),
             previous_message=previous or "(this is your first message)",
         ) + dropped_note + answer_first
         if next_field.optional:

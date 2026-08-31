@@ -244,6 +244,38 @@ overrides the classifier — safety never depends on model confidence.
 [app/services/ticket.py](app/services/ticket.py). The collector asks one question per
 message, in the agency's voice, and never re-asks something already answered.
 
+**The employer qualification set** (`new_hiring`) is the long one: 20 fields ordered by
+topic — who they are, what they need, their household, their preferences, timing,
+anything else, how they found us. Everything from `hire_source` down is `optional`
+(asked once, dropped without complaint), so a client in a hurry is never blocked.
+
+Two mechanisms keep it from reading as a form:
+
+- **Gates.** A `Field` may carry a `Gate` on an earlier answer, so the detail questions
+  only appear for the households they apply to — `children_detail` behind childcare,
+  `elderly_detail` behind eldercare (both open on "all of the above"), `pet_detail`
+  behind a yes, `referrer_name` behind an actual referral. A gate has three states, not
+  two: `undecided` (the answer it keys off is not in yet) keeps the field in the
+  *extractor's* list while keeping it out of the *asker's*, which is what lets one
+  opening message answer four questions at once and never be asked them again.
+  `applicable_fields(..., include_undecided=True)` is the extractor's view;
+  `missing_fields()` is the asker's.
+- **Options and topics.** `Field.options` carries the answers the office works with, and
+  `Field.group` the topic. The collector feeds both to the model
+  (`_field_guidance()`): options steer the wording and are offered as examples, never
+  read out as a menu, and a change of `group` lets the model put a seam in rather than
+  jumping from pets to salary. Whatever the client actually says is the recorded answer,
+  listed or not — `EXTRACTION_SYSTEM` maps free text onto the closest bucket only when
+  nothing is lost by it.
+
+**The application paperwork is deliberately not collected over chat.** NRIC/FIN, date of
+birth, citizenship, passport, spouse identity, residential address, occupation, income
+bracket and the IC numbers of everyone at the address are all Singpass fields on the work
+permit application. Rules 4 and 4a forbid asking for any of them, and `redact_nric()`
+would strip an NRIC before it reached `captured_info` regardless. `pending_documentation()`
+puts the list on the ticket as `captured_info.notes.still_to_collect` instead, so the
+agent picking up a fully qualified enquiry knows exactly what is left to do.
+
 **Escalation is topic-scoped, not conversation-wide.** Every trigger below raises a
 `cb_tickets` row and logs a `cb_handovers` entry, but leaves `bot_status` alone — the bot
 keeps answering everything else on the conversation. The ticket's `captured_info.topic_key`

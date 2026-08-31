@@ -20,6 +20,57 @@ logger = logging.getLogger(__name__)
 
 TABLE = "cb_tickets"
 
+# What the collector records for a field the client would not answer. Defined
+# up here rather than beside the briefing labels below because Gate has to read
+# it too, and a gate is evaluated long before a description is composed.
+UNANSWERED = "not provided"
+
+
+def _mentions(value: str, terms: tuple[str, ...]) -> bool:
+    """Whether an answer contains any of these words.
+
+    Anchored on a word boundary rather than a bare substring test: "all" as a
+    plain substring matches "small" and "overall", and the care-type gates key
+    off exactly that word.
+    """
+    haystack = (value or "").lower()
+    return any(re.search(rf"(?<![a-z]){re.escape(term)}", haystack) for term in terms)
+
+
+@dataclass(frozen=True)
+class Gate:
+    """A condition on an earlier answer that decides whether a field is asked.
+
+    Three states, not a boolean, because "not yet known" is not "no":
+
+    - ``open``      the answer is in and it opens this field — ask it.
+    - ``closed``    the answer is in and it rules this field out — never ask,
+                    and never even offer it to the extractor.
+    - ``undecided`` the field it keys off is still unanswered. Not asked yet,
+                    but still handed to the extractor, so a client who opens
+                    with "I need someone for my 2 kids, 3 and 5" has already
+                    answered it by the time we get there and is never asked.
+
+    ``excludes`` is checked first: "no, I don't have pets" contains "have", and
+    without it every household in Singapore would be asked what breed.
+    """
+
+    field: str
+    matches: tuple[str, ...]
+    excludes: tuple[str, ...] = ()
+
+    def state(self, collected: dict[str, Any] | None) -> str:
+        value = str((collected or {}).get(self.field) or "").strip()
+        # UNANSWERED leaves the gate undecided rather than closing it. A client
+        # who would not say what kind of care they need has not said there are
+        # no children, and if they mention them later the extractor should
+        # still be listening for it.
+        if not value or value.lower() == UNANSWERED:
+            return "undecided"
+        if _mentions(value, self.excludes):
+            return "closed"
+        return "open" if _mentions(value, self.matches) else "closed"
+
 
 @dataclass(frozen=True)
 class Field:
@@ -33,16 +84,39 @@ class Field:
     # Not needed for the lead. Asked once, dropped without complaint — §23.6,
     # and email specifically, which plenty of clients do not have.
     optional: bool = False
+    # Which part of the conversation this belongs to. Fields are asked in list
+    # order, so a group is simply a run of consecutive fields — the collector
+    # uses it to let the model bridge naturally when the subject changes
+    # instead of jumping from pets to salary with no seam.
+    group: str = ""
+    # The answers the form behind this flow accepts. Offered to the client as
+    # examples, never read out as a menu, and never used to reject what they
+    # actually say — a client who answers "3 bedroom HDB" has answered.
+    options: tuple[str, ...] = ()
+    # Only asked once an earlier answer opens it. See Gate.
+    gate: Gate | None = None
 
 
 # --- Fields per service ----------------------------------------------------
 #
-# CONVERSATION_FLOWS §22, verbatim. Nothing outside that list is asked: budget,
-# salary_expectation and summary are captured only if volunteered (§23.4, §23.9),
-# interest_type is inferred from intent and never asked (§23.3), and phone,
-# source, tenant, branch, temperature and status are already known (§0).
+# CONVERSATION_FLOWS §22 for every flow except new_hiring, which now runs the
+# full employer qualification set (§22-EXT below). Outside that flow nothing
+# beyond the §22 list is asked: salary_expectation and summary are captured only
+# if volunteered (§23.4, §23.9), interest_type is inferred from intent and never
+# asked (§23.3), and phone, source, tenant, branch, temperature and status are
+# already known (§0).
 #
-# The question wording is the document's own.
+# Fields are asked in list order and grouped by topic, so the conversation moves
+# through one subject at a time rather than hopping between them. A gated field
+# sits directly under the answer that opens it.
+#
+# NOT collected here, deliberately: the identity block the work permit
+# application needs — NRIC/FIN, date of birth, citizenship, passport number,
+# spouse identity, residential address, occupation, income bracket and the IC
+# numbers of everyone at the address. Every one of those is a Singpass field,
+# and Rule 4 plus redact_nric() mean an NRIC typed into WhatsApp reaches the
+# ticket as [REDACTED-ID] anyway. PENDING_DOCUMENTATION below puts it on the
+# ticket as the salesperson's next step instead.
 
 # Human-readable name for each service, used in prompts and log lines. Owned
 # here rather than by a node module: find_merge_candidate() needs it and
@@ -111,6 +185,42 @@ def _case_id() -> Field:
     return Field("case_id", "case ID", "May I have your case ID?", max_asks=1, optional=True)
 
 
+# --- Gates on the employer flow --------------------------------------------
+#
+# Each keys off an answer already given, so the detail questions only appear
+# for the households they apply to: an eldercare-only client is never asked
+# how old the children are, and a client with no pets is never asked the breed.
+# "all of the above" deliberately opens both care gates.
+
+_CHILDCARE = Gate(
+    "requirement",
+    ("child", "kid", "baby", "infant", "toddler", "newborn", "son", "daughter",
+     "all of the above", "all", "everything", "both"),
+)
+
+_ELDERCARE = Gate(
+    "requirement",
+    ("elder", "senior", "old", "aged", "grandma", "grandmother", "grandpa",
+     "grandfather", "parent", "mother", "father", "mum", "mom", "dad",
+     "bedridden", "dementia", "stroke",
+     "all of the above", "all", "everything", "both"),
+)
+
+_HAS_PETS = Gate(
+    "pets",
+    ("yes", "have", "dog", "cat", "bird", "fish", "hamster", "rabbit", "tortoise"),
+    # "no pets" and "no, I don't have any" both contain a match term. Checked
+    # first, so a negative answer closes the gate rather than opening it.
+    excludes=("no pet", "none", "nope", "don't", "dont", "do not", "haven't", "havent"),
+)
+
+_WAS_REFERRED = Gate(
+    "referral_source",
+    ("referral", "referred", "refer", "friend", "family", "relative", "staff",
+     "colleague", "word of mouth", "recommend"),
+)
+
+
 SERVICE_FIELDS: dict[str, list[Field]] = {
     # §2 — employer lead flow.
     #
@@ -127,28 +237,221 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     # conversation over. Everything added here is asked once and let go if it is
     # not answered, so a client in a hurry is still never blocked.
     "new_hiring": [
-        Field("full_name", "name", "May I know your name?"),
+        # --- About them ---
+        Field("full_name", "name", "May I know your name?", group="who they are"),
         _EMAIL,
-        Field("requirement", "type of care", "What kind of care are you looking for?"),
-        Field("preferred_nationality", "nationality preference", "Do you have a preferred nationality?"),
         Field(
-            "household",
-            "household",
-            "Who would she be looking after at home — how many are in the household?",
+            "first_time_hire",
+            "whether this is their first time hiring",
+            "Is this your first time hiring a domestic helper?",
             max_asks=2,
+            group="who they are",
+            options=("first time hiring", "hired before"),
+        ),
+        # --- What they need ---
+        #
+        # requirement gates the two detail questions below it, so it is asked
+        # before them and never after. Its own value is also what leads.requirement
+        # is written from, which is why the key is unchanged from the four-question
+        # version of this flow.
+        Field(
+            "requirement",
+            "type of care",
+            "What would you mainly need help with — childcare, eldercare, or general "
+            "housework and cooking?",
+            group="what they need",
+            options=(
+                "childcare",
+                "eldercare",
+                "general housework and cooking",
+                "all of the above",
+            ),
         ),
         Field(
-            "start_timeline",
-            "start date",
-            "When are you hoping to have someone start?",
+            "children_detail",
+            "the children",
+            "How many children, and how old are they?",
             max_asks=2,
+            group="what they need",
+            gate=_CHILDCARE,
+        ),
+        Field(
+            "elderly_detail",
+            "the elderly family member",
+            "Could you tell me a bit about them — their age, how mobile they are, and "
+            "any medical conditions?",
+            max_asks=2,
+            group="what they need",
+            gate=_ELDERCARE,
+        ),
+        # --- Their household ---
+        Field(
+            "household",
+            "household size",
+            "How many people live in your household?",
+            max_asks=2,
+            group="their household",
+            options=("1-2", "3-4", "5-6", "7 or more"),
+        ),
+        Field(
+            "home_type",
+            "type of home",
+            "What type of home are you in?",
+            max_asks=2,
+            group="their household",
+            options=(
+                "HDB 1-3 room",
+                "HDB 4-5 room",
+                "HDB Executive",
+                "condo",
+                "private apartment",
+                "landed",
+            ),
+        ),
+        Field(
+            "pets",
+            "whether they have pets",
+            "Do you have any pets at home?",
+            max_asks=2,
+            group="their household",
+            options=("no pets", "yes"),
+        ),
+        Field(
+            "pet_detail",
+            "the pets",
+            "What kind, and how many?",
+            max_asks=2,
+            group="their household",
+            gate=_HAS_PETS,
+        ),
+        Field(
+            "languages",
+            "languages spoken at home",
+            "What languages are spoken at home?",
+            max_asks=2,
+            group="their household",
+            options=(
+                "English",
+                "Mandarin",
+                "Malay",
+                "Hokkien",
+                "Teochew",
+                "Cantonese",
+                "Tamil",
+            ),
+        ),
+        # --- Their preferences ---
+        #
+        # Everything from here down is optional bar the nationality: a client who
+        # has answered eleven questions has earned the right to stop, and each of
+        # these is asked once and let go. They are still worth asking — an agent
+        # shortlisting without a budget or a rest-day expectation is guessing.
+        Field(
+            "preferred_nationality",
+            "nationality preference",
+            "Do you have a preferred nationality?",
+            group="their preferences",
+            options=("Filipino", "Indonesian", "Myanmar", "no preference"),
+        ),
+        Field(
+            "hire_source",
+            "transfer or new hire",
+            "Would you prefer a transfer helper already in Singapore, or a new hire "
+            "from overseas?",
+            max_asks=1,
+            optional=True,
+            group="their preferences",
+            options=("transfer", "new hire from overseas", "no preference"),
+        ),
+        Field(
+            "cooking",
+            "cooking requirements",
+            "Any particular cooking you would want her to handle?",
+            max_asks=1,
+            optional=True,
+            group="their preferences",
+            options=(
+                "Chinese",
+                "Malay",
+                "Indian",
+                "Western",
+                "halal kitchen",
+                "vegetarian",
+                "no specific requirement",
+            ),
         ),
         Field(
             "budget",
-            "monthly budget",
+            "monthly salary budget",
             "Do you have a monthly salary budget in mind?",
             max_asks=1,
             optional=True,
+            group="their preferences",
+            options=(
+                "below $500",
+                "$500-600",
+                "$600-700",
+                "$700-800",
+                "above $800",
+                "not sure yet",
+            ),
+        ),
+        Field(
+            "rest_day",
+            "rest day arrangement",
+            "How would you want to handle her rest days?",
+            max_asks=1,
+            optional=True,
+            group="their preferences",
+            options=("weekly day off", "compensation in lieu", "flexible"),
+        ),
+        # --- When they need someone ---
+        Field(
+            "start_timeline",
+            "start date",
+            "How soon are you hoping to have someone start?",
+            max_asks=2,
+            group="timing",
+            options=(
+                "as soon as possible - within 2 weeks",
+                "within 1 month",
+                "within 2 months",
+                "just exploring for now",
+            ),
+        ),
+        # --- Anything else ---
+        Field(
+            "additional_notes",
+            "anything else we should know",
+            "Anything else I should note down before I pull this together?",
+            max_asks=1,
+            optional=True,
+            group="anything else",
+        ),
+        # --- Where they came from ---
+        Field(
+            "referral_source",
+            "how they heard about us",
+            "How did you hear about Ming Hwee?",
+            max_asks=1,
+            optional=True,
+            group="how they found us",
+            options=(
+                "Google search",
+                "friend or family referral",
+                "social media",
+                "returning client",
+                "staff referral",
+            ),
+        ),
+        Field(
+            "referrer_name",
+            "who referred them",
+            "Who was it that referred you?",
+            max_asks=1,
+            optional=True,
+            group="how they found us",
+            gate=_WAS_REFERRED,
         ),
     ],
     # §3 — candidate lead flow. Separate from new_hiring: a job seeker is never
@@ -387,15 +690,99 @@ def topic_key_for(service_type: str | None, contact_type: str | None, intent: st
 
 
 def fields_for(service_type: str | None) -> list[Field]:
+    """Every field the flow defines, gated or not.
+
+    The unfiltered list, because that is what the callers who need it want:
+    ordering a briefing, labelling a captured value, and deciding whether a
+    service collects anything at all. Use applicable_fields() to decide what to
+    put to a client.
+    """
     return SERVICE_FIELDS.get(service_type or "", [])
 
 
+def applicable_fields(
+    service_type: str | None,
+    collected: dict[str, Any] | None,
+    *,
+    include_undecided: bool = False,
+) -> list[Field]:
+    """The fields that apply to this client, in asking order.
+
+    Ungated fields always apply. A gated one applies once the answer it keys
+    off has opened it.
+
+    ``include_undecided`` keeps the fields whose gate cannot be decided yet.
+    That is what the extractor wants and the asker does not: a client who says
+    "I need someone for my mum, she's 82 and had a stroke" answers
+    elderly_detail in the same breath as requirement, and dropping the field
+    from the extraction list on that turn means asking for it again afterwards.
+    """
+    applicable: list[Field] = []
+    for field in fields_for(service_type):
+        if field.gate is None:
+            applicable.append(field)
+            continue
+        state = field.gate.state(collected)
+        if state == "open" or (include_undecided and state == "undecided"):
+            applicable.append(field)
+    return applicable
+
+
 def missing_fields(service_type: str | None, collected: dict[str, Any]) -> list[Field]:
+    """What still has to be asked — gated fields that do not apply are not missing."""
     return [
         field
-        for field in fields_for(service_type)
+        for field in applicable_fields(service_type, collected)
         if not str(collected.get(field.key) or "").strip()
     ]
+
+
+def preceding_group(service_type: str | None, collected: dict[str, Any], field: Field) -> str:
+    """The topic covered just before this field, or "" if it opens the flow.
+
+    Lets the collector tell the model it is changing the subject, so the move
+    from pets to salary gets a seam instead of reading as the next row of a form.
+    """
+    ordered = applicable_fields(service_type, collected)
+    for index, candidate in enumerate(ordered):
+        if candidate.key == field.key:
+            # Back to the nearest field that belongs to a topic at all. _EMAIL
+            # is shared with the candidate flow and carries no group of its
+            # own, and reading the blank straight off would announce "who they
+            # are" as a new subject on the question right after their name.
+            for earlier in reversed(ordered[:index]):
+                if earlier.group:
+                    return earlier.group
+            return ""
+    return ""
+
+
+# What still has to be collected after the chat, and never over it. These are
+# the Singpass-backed fields on the work permit application: the employer's
+# legal identity, their spouse's, where they live, what they earn and who else
+# is at the address. The bot must not ask for any of it (Rule 4), so the ticket
+# carries it as the salesperson's next step — otherwise a qualification the bot
+# ran perfectly still leaves the agent wondering what is outstanding.
+PENDING_DOCUMENTATION = (
+    "Singpass identity (full legal name, NRIC/FIN, date of birth, citizenship, "
+    "passport if EP holder)",
+    "Marital status, and spouse identity and citizenship if married",
+    "Residential address and type of residence",
+    "Occupation, employer and monthly income bracket (NOA)",
+    "Family members at the same address (name, relationship, IC/BC, date of birth)",
+)
+
+# Only the employer new-hire flow, which is the one that qualifies a client in
+# full and therefore the one where "what is left to do" is a real question.
+# direct_hiring and replacement end in the same paperwork, but neither was
+# changed here and neither collects enough for the note to add anything an
+# agent does not already know — adding it there would just be noise on a
+# ticket whose handling nobody has revisited.
+_DOCUMENTATION_SERVICES = {"new_hiring"}
+
+
+def pending_documentation(service_type: str | None) -> tuple[str, ...]:
+    return PENDING_DOCUMENTATION if service_type in _DOCUMENTATION_SERVICES else ()
 
 
 def priority_for(service_type: str | None) -> str:
@@ -614,7 +1001,20 @@ _DETAIL_LABELS = {
     "preferred_nationality": "Preferred nationality",
     "requirement": "Care type",
     "care_type": "Care type",
-    "household": "Household",
+    "first_time_hire": "Hired before",
+    "children_detail": "Children",
+    "elderly_detail": "Elderly",
+    "household": "Household size",
+    "home_type": "Home",
+    "pets": "Pets",
+    "pet_detail": "Pet details",
+    "languages": "Languages at home",
+    "hire_source": "Transfer or new hire",
+    "cooking": "Cooking",
+    "rest_day": "Rest day",
+    "additional_notes": "Also mentioned",
+    "referral_source": "Heard about us via",
+    "referrer_name": "Referred by",
     "start_timeline": "Start date",
     "timeline": "Needed by",
     "budget": "Budget",
@@ -635,7 +1035,7 @@ _DETAIL_LABELS = {
 
 # Recorded by the collector for a field the client would not answer. It belongs
 # in captured_info, where the gap is honest, but not on a briefing line.
-_UNANSWERED = "not provided"
+_UNANSWERED = UNANSWERED
 
 _MAX_DETAIL_VALUE = 120
 _ALSO_PREFIX = "Also asked about:"
