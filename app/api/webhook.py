@@ -264,8 +264,8 @@ _DIRECT_ADDRESS = re.compile(
 )
 
 STILL_HERE_REPLY = (
-    "I am here — still working on this for you. I will come back to you as soon as "
-    "I have something."
+    "I'm here! This is with a live agent and they'll connect with you shortly. "
+    "In the meantime, is there anything else I can help you with?"
 )
 
 

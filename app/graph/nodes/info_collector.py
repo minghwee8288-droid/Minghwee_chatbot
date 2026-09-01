@@ -166,8 +166,14 @@ def _with_push_name(state: ConversationState, known: dict[str, str]) -> dict[str
 
 
 FALLBACK_QUESTION = "Sorry, could you tell me a bit more about what you need?"
-FALLBACK_CLOSING = "Noted, thanks for the details. Let me pull this together and come back to you shortly."
-FALLBACK_ACKNOWLEDGEMENT = "Got it. Let me look into this and come back to you shortly."
+FALLBACK_CLOSING = (
+    "Noted, thanks for the details. I've passed this to our team and a live agent "
+    "will connect with you shortly. Anything else I can help you with?"
+)
+FALLBACK_ACKNOWLEDGEMENT = (
+    "Got it. A live agent will pick this up and connect with you shortly. "
+    "Is there anything else I can help with in the meantime?"
+)
 
 # Values that only mean anything as an answer to a question that was asked.
 #

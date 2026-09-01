@@ -49,7 +49,10 @@ from app.services.ticket import TICKET_SERVICE_TYPES, service_label
 
 logger = logging.getLogger(__name__)
 
-FALLBACK_REPLY = "Still checking on that for you — I'll have an update as soon as I can."
+FALLBACK_REPLY = (
+    "A live agent has this one and will connect with you shortly. "
+    "Anything else I can help you with in the meantime?"
+)
 
 # A reassurance we have already sent. Matched against our own recent messages so
 # the same holding line never goes out twice running, whatever wording the model
@@ -88,8 +91,9 @@ _DIRECT_ADDRESS = re.compile(
 # the client it read as being palmed off mid-conversation, right after the bot
 # had been answering them itself. The assertion below is the safety net.
 CHASE_REPLY = (
-    "I hear you — I have not forgotten this. I am chasing it up now and will come "
-    "back to you the moment I have something concrete."
+    "I hear you — this has not been forgotten. It is with a live agent and I am "
+    "chasing them for you now, so they should connect with you shortly. Anything "
+    "else I can help with while you wait?"
 )
 
 # For "are you there" / "hey" specifically — see _DIRECT_ADDRESS below. Worded
@@ -101,8 +105,8 @@ CHASE_REPLY = (
 # earlier produced nothing — near_duplicate() correctly refused to repeat
 # CHASE_REPLY, but nobody had told it "hey" needed an answer of its own.
 STILL_HERE_REPLY = (
-    "I am here — still working on this for you. I will let you know the moment I "
-    "have an update. Meanwhile, let me know if there's anything else I can help with."
+    "I'm here! This one is with a live agent and they'll connect with you shortly. "
+    "In the meantime, is there anything else I can help you with?"
 )
 
 # Pressing for the reasoning behind an answer we have already given: "why this
@@ -155,13 +159,15 @@ NEW_SERVICE_REPLY = "Of course — which service can I help you with?"
 # row live. We cannot work out what they want, so stop guessing and put a person
 # on it — which is what the client has effectively been asking for.
 NEW_SERVICE_HANDOVER = (
-    "Let me take a proper look at that for you — I will come back to you on it shortly."
+    "Let me get a live agent onto that for you — they'll connect with you shortly."
 )
 
 
-# These four go to the client verbatim, without passing through the guards that
-# catch a handover announcement in generated text. Checked at import so a
-# rewrite that reintroduces one fails the process rather than the conversation.
+# These go to the client verbatim, without passing through the guards that vet
+# generated text. Saying a live agent will pick it up is now required (rule 2);
+# what mentions_handover() still catches is a promise the office has not made —
+# a named colleague, or a specific time. Checked at import so a rewrite that
+# introduces one fails the process rather than the conversation.
 for _name, _canned in (
     ("FALLBACK_REPLY", FALLBACK_REPLY),
     ("CHASE_REPLY", CHASE_REPLY),
@@ -171,8 +177,9 @@ for _name, _canned in (
     ("NEW_SERVICE_REPLY", NEW_SERVICE_REPLY),
 ):
     assert not mentions_handover(_canned), (
-        f"{_name} announces a handover to the client, which rule 1 forbids and "
-        "strip_handover_talk cannot catch here — this string is sent as written."
+        f"{_name} names a colleague or promises a specific time, which rule 2a "
+        "forbids and strip_handover_talk cannot catch here — this string is sent "
+        "as written."
     )
 
 

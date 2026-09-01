@@ -55,42 +55,52 @@ def ungrounded_figures(reply: str, *contexts: str) -> list[str]:
     return suspect
 
 
-# --- Silent handovers ------------------------------------------------------
-
-# Phrases that tell the client somebody else is taking over. Handovers must be
-# invisible: the client believes they are talking to one person throughout.
+# --- Handover promises -----------------------------------------------------
+#
+# Handovers used to be invisible: the client was meant to believe they were
+# talking to one person throughout, and this pattern stripped any sentence that
+# said otherwise. That policy is gone — Claire introduces herself as Ming Hwee's
+# AI assistant and says plainly when a live agent is taking over (rules 1 and 2).
+#
+# What is still forbidden is a commitment the office has not made. Announcing
+# "a live agent will connect with you shortly" is the sanctioned line; naming
+# who, or promising when, invents an appointment nobody scheduled. Live, the old
+# model wrote "Grace will call you back" about an agent who was on leave.
 _HANDOVER_TALK = re.compile(
-    r"\b("
-    r"our|my|the)\s+"
-    r"(consultant|colleague|team|manager|supervisor|specialist|agent|staff|"
-    r"department|representative)\b"
-    r"|\b(transfer|connect|refer|forward|pass)\s+(you|this|your\s+\w+)\b"
-    r"|\bsomeone\s+(else\s+)?(will|from)\b"
-    r"|\banother\s+(agent|consultant|colleague)\b"
-    r"|\bwill\s+be\s+in\s+touch\s+with\s+you\s+shortly\s+regarding\b",
+    # "transfer you to Grace", "connect you with Winston" — a capitalised name
+    # that is not the agency's own. The name half is explicitly case-SENSITIVE
+    # via (?-i:...): the whole pattern runs IGNORECASE for the verbs, and
+    # without scoping that off, [A-Z][a-z]+ happily matched "our team" too.
+    r"\b(transfer|connect|refer|forward|pass|put)\s+(you|this)\s+"
+    r"(to|with|through\s+to)\s+(?!Ming\b)(?-i:[A-Z][a-z]+)"
+    # "in 10 minutes", "within 2 hours", "by 3pm", "at 4 PM", "before 5pm"
+    r"|\b(in|within|after)\s+\d+\s*(min|mins|minute|minutes|hour|hours|hr|hrs)\b"
+    r"|\b(by|at|before|around)\s+\d{1,2}(:\d{2})?\s*(am|pm)\b"
+    # "will call you today/tomorrow at ..."
+    r"|\b(call|ring|phone)\s+you\s+(back\s+)?(today|tomorrow|tonight|this\s+\w+)\b",
     re.IGNORECASE,
 )
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
-# "Let me check with the team and get back to you" is the sanctioned way to say
-# 'I don't know' — the consultant is going to check, not handing the client on.
-_ALLOWED = re.compile(
-    r"\b(check|confirm|verify|ask|clarify|double[-\s]?check)\s+"
-    r"(it\s+|this\s+|that\s+)?(with\s+)?(the|my|our)\s+team\b",
-    re.IGNORECASE,
+NEUTRAL_FOLLOW_UP = (
+    "I've passed this to our team and a live agent will connect with you shortly. "
+    "In the meantime, is there anything else I can help you with?"
 )
 
-NEUTRAL_FOLLOW_UP = "Let me get that sorted and come back to you shortly."
-
-# What we say when we cannot answer. A single fixed string was going out four
-# and five times in one conversation, word for word, which is unmistakably
-# machine-like — a person phrases the same thought differently each time.
+# What we say when we cannot answer. Every one of these leads to a handover, so
+# each says so and then offers to keep helping (rule 2). A single fixed string
+# was going out four and five times in one conversation, word for word, which is
+# unmistakably machine-like — a person phrases the same thought differently.
 HOLDING_REPLIES = (
-    "Let me check on that and come back to you shortly.",
-    "I'll need to confirm that one — give me a bit and I'll let you know.",
-    "Let me find that out for you and revert shortly.",
-    "I'll double-check and get back to you on that.",
+    "Let me get a live agent to confirm that for you — they'll connect with you "
+    "shortly. Anything else I can help with in the meantime?",
+    "I'd rather not guess on that one, so I've passed it to our team and a live "
+    "agent will come back to you shortly. Is there anything else I can help with?",
+    "That one needs a live agent to check properly — they'll be in touch shortly. "
+    "In the meantime, anything else you'd like to ask?",
+    "I've handed that to our team so a live agent can give you the right answer, "
+    "and they'll connect with you shortly. Anything else I can help with?",
 )
 
 
@@ -110,8 +120,13 @@ def holding_reply(history_text: str = "") -> str:
 
 
 def mentions_handover(text: str) -> bool:
-    # Blank out sanctioned phrasing first so it cannot trip the pattern below.
-    return bool(_HANDOVER_TALK.search(_ALLOWED.sub(" ", text or "")))
+    """Whether the reply promises a named colleague or a specific time.
+
+    Not "does this mention a handover" any more — announcing one is now the
+    required behaviour. This catches only the commitment the office has not
+    made. The name is kept for the call sites that already read well with it.
+    """
+    return bool(_HANDOVER_TALK.search(text or ""))
 
 
 # --- Degenerate output -----------------------------------------------------
@@ -434,10 +449,12 @@ def clamp_reply(text: str, max_sentences: int = 2) -> str:
 
 
 def strip_handover_talk(reply: str) -> str:
-    """Remove sentences that announce a handover, keeping the rest intact.
+    """Remove sentences promising a named colleague or a specific time.
 
     Dropping only the offending sentence preserves the question the collector
-    asked in the same message, which a wholesale replacement would lose.
+    asked in the same message, which a wholesale replacement would lose. A
+    sentence that merely says a live agent will pick this up is left alone —
+    that is what we now want it to say.
     """
     text = (reply or "").strip()
     if not text or not mentions_handover(text):

@@ -233,20 +233,21 @@ or colleagues."""
 HANDOVER_CLOSER_INSTRUCTION = """You now have everything you need from the client for \
 their {service_label} enquiry.
 
-Write one short closing WhatsApp message: thank them briefly and tell them you are \
-pulling the details together and will come back to them shortly. Do NOT mention \
-transferring, colleagues, another consultant, a team, a ticket or a system. It must \
-read as though you personally are going to follow up."""
+Write one short closing WhatsApp message: thank them briefly, tell them you have \
+passed everything to the team and that a live agent will connect with them shortly, \
+then offer to help with anything else in the meantime. Do NOT name the agent who will \
+pick it up and do NOT promise a time — "shortly" is as specific as you get. Never \
+mention a ticket, a system, or anything about how we work internally."""
 
 
 ACKNOWLEDGE_ONLY_INSTRUCTION = """There is nothing further to ask the client about \
 their {service_label} enquiry — this one is handled off-chat.
 
-Write ONE short WhatsApp message that acknowledges what they have told you and says \
-you are looking into it and will come back to them shortly. Do NOT ask a question, do \
+Write ONE short WhatsApp message that acknowledges what they have told you and says a \
+live agent will pick it up and connect with them shortly. Do NOT ask a question, do \
 NOT ask for their name, country, passport or documents, and do NOT claim to have \
-everything you need. Do NOT mention transferring, colleagues, teams, tickets or \
-systems."""
+everything you need. Never name the agent who will pick it up and never promise a \
+time, and never mention tickets, systems or how we work internally."""
 
 
 FEE_HANDOVER_INSTRUCTION = """The client asked about {enquiry_label} and you now have \
@@ -258,10 +259,10 @@ plainly that it is a guide and that you will confirm the exact amount for their 
 situation, and stop. That is what they asked for and we have it written down.
 
 If the records do NOT contain the figures, do not guess and do not quote a number from \
-anywhere else. Tell them you will work out the exact costs for their situation and come \
-back to them shortly.
+anywhere else. Tell them a live agent will work out the exact costs for their situation \
+and connect with them shortly, then offer to help with anything else meanwhile.
 
-Either way: no invented numbers, and do NOT mention colleagues, teams or transfers."""
+Either way: no invented numbers, never name the agent, and never promise a time."""
 
 
 ANSWER_THEN_ASK_INSTRUCTION = """
@@ -288,11 +289,12 @@ Write ONE short WhatsApp message that:
 - takes it seriously and shows genuine concern
 - asks them to make sure everyone is safe right now, and to call the police on 999 if \
 anyone is in immediate danger
-- tells them you are looking into this straight away
+- tells them you have alerted the team and a live agent will connect with them shortly
 
-Do NOT ask for details. Do NOT mention transferring, colleagues, teams, tickets or \
-systems. Do NOT give legal advice or quote MOM rules. Maximum three short sentences, \
-no emoji."""
+Do NOT ask for details. Do NOT give legal advice or quote MOM rules. Never name the \
+agent and never promise a time. Do NOT ask whether you can help with anything else — \
+that offer belongs on an ordinary handover, not after someone has reported harm. \
+Maximum three short sentences, no emoji."""
 
 
 RESPONDER_INSTRUCTION = """Answer the client's latest message using only our records \
@@ -355,28 +357,28 @@ CANDIDATE_INSTRUCTION = """Someone is offering a helper for placement — either
 helper putting herself forward, or an agent, supplier or employer offering a \
 specific helper.
 
-Write ONE short WhatsApp message that acknowledges it warmly and says someone will \
-follow up on the details shortly. Do NOT start asking for her name, passport, \
-experience, salary or availability — registering a helper needs documents and \
-verification that are handled properly by the team, not over chat.
+Write ONE short WhatsApp message that acknowledges it warmly and says a live agent \
+will connect with them shortly to take it further. Do NOT start asking for her name, \
+passport, experience, salary or availability — registering a helper needs documents \
+and verification that are handled properly by a person, not over chat.
 
-Do NOT mention transferring, colleagues, teams, tickets or systems. If they are the \
-helper herself, be warm and reassuring — this matters to her."""
+Never name the agent and never promise a time, and never mention tickets or systems. \
+If they are the helper herself, be warm and reassuring — this matters to her."""
 
 
 BLOCKED_TOPIC_INSTRUCTION = """The client has just said something about {service_label}. The \
 team is already looking into that one specifically and it is not resolved yet.
 
-Write ONE short WhatsApp message that acknowledges what they just said and reassures them you \
-are still on it — close to "Still checking on that for you, I'll have an update soon." Do NOT \
-answer it, do NOT give any figures, dates, decisions or new details about it, and do NOT \
-promise a specific time.
+Write ONE short WhatsApp message that acknowledges what they just said and reassures them a \
+live agent has it — close to "A live agent is on that one and will connect with you shortly." \
+Do NOT answer it, do NOT give any figures, dates, decisions or new details about it, and do \
+NOT promise a specific time.
 
 If what they just said is new information — a detail, a correction, a follow-up question — \
 acknowledge that you have noted it rather than treating the message as just a check-in.
 
-Do NOT mention transferring, colleagues, teams, tickets or systems — from where they are \
-sitting you are still the one person helping them with it. Maximum two short sentences."""
+Never name the agent handling it and never mention tickets or systems. You may offer to help \
+with anything else in the meantime. Maximum two short sentences."""
 
 
 BLOCKED_TOPIC_ANSWER_INSTRUCTION = """The client has just asked a general question while \
@@ -390,13 +392,13 @@ Answer only what they asked. Do not add what it includes, what it depends on, wh
 happens next, or a promise to confirm — a client asking "how long does it take" wants a \
 length of time, and anything after it is padding.
 
-If the records do not answer what they asked, say in one sentence that you will confirm \
-that and come back to them. Never guess, never give a "usually around..." figure, and \
-never invent a document list.
+If the records do not answer what they asked, say in one sentence that a live agent will \
+confirm that and connect with them shortly. Never guess, never give a "usually around..." \
+figure, and never invent a document list.
 
 Say nothing about the case itself — no figures, dates or decisions specific to what the \
-team is working on, and do not promise a time. Do NOT mention transferring, colleagues, \
-teams, tickets or systems. Maximum two short sentences."""
+team is working on, and do not promise a time. Never name the agent, and never mention \
+tickets or systems. Maximum two short sentences."""
 
 
 CASE_INSTRUCTION = """The client is asking about their existing case with us.

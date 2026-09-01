@@ -22,9 +22,13 @@ from app.services import ticket as ticket_service
 
 logger = logging.getLogger(__name__)
 
+# Deliberately does NOT end with "anything else I can help you with?" — rule 2
+# asks for that offer on an ordinary handover, and it is the wrong thing to say
+# to someone who has just reported harm. Safety first, then a person, and stop.
 ASSAULT_FALLBACK_REPLY = (
     "I'm really sorry to hear this. Please make sure everyone is safe right now — "
-    "if anyone is in danger, call the police at 999 immediately. I'm looking into this now."
+    "if anyone is in danger, call the police at 999 immediately. I've alerted our "
+    "team and a live agent will connect with you shortly."
 )
 
 REASON_BY_INTENT = {

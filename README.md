@@ -3,9 +3,10 @@
 WhatsApp assistant for **Ming Hwee Employment Agency** (Singapore, MOM Licence 12C6072).
 It sits on Thomas's existing WhatsApp Business number via Whapi, answers common
 enquiries from the knowledge base, and collects the basics for each service request.
-When it hits something a human must handle, it raises a ticket for that one topic and
-keeps talking to the client about everything else — silently, same thread, no
-announcement that anyone or anything else is involved. The bot only stands the whole
+It introduces itself as **Claire, Ming Hwee's AI assistant**, and says so plainly when
+asked. When it hits something a human must handle, it raises a ticket for that one
+topic, tells the client a live agent will connect with them shortly, and keeps talking
+to them about everything else in the same thread. The bot only stands the whole
 conversation down when an agent actually replies on the thread, or when it fails
 outright.
 
@@ -369,9 +370,14 @@ unreadable.
   alone was not enough — the model quoted a figure that was not in context.
 - **No prices from the bot.** Fee and salary questions only collect nationality and care
   type; the figures come from the agent.
-- **No bot disclosure, no handover announcements.** Both are hard rules in the system
-  prompt ([app/graph/prompts/system.py](app/graph/prompts/system.py)), and no code path
-  sends a transfer message.
+- **AI disclosure, and no promises the office has not made.** Claire introduces herself
+  as Ming Hwee's AI assistant and answers honestly when asked (rules 1/1a in
+  [app/graph/prompts/system.py](app/graph/prompts/system.py)). Handovers are announced,
+  not hidden — but `strip_handover_talk`
+  ([guards.py](app/graph/guards.py)) still removes any sentence that names the
+  colleague picking it up or promises a specific time, because those are commitments
+  nobody scheduled. "A live agent will connect with you shortly" is the sanctioned
+  line; "Grace will call you at 3pm" is not.
 - **Group chats ignored.** Only 1:1 client threads are processed.
 
 ---
