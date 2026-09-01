@@ -439,6 +439,10 @@ no bullet points, no quotes, and never address the client. Do not invent \
 anything that is not in the conversation. Do not include a fee, salary or any \
 figure the client did not say themselves.
 
+Always write the summary in English, whatever language the conversation was in — \
+it is read off a lead by the Singapore office, not by the client. Keep the \
+client's own name as they gave it, and write any figures in Western digits.
+
 Examples of the register:
 "Looking for Indonesian helper for elderly care. Mother 78, diabetes. Contact via WhatsApp."
 "Indonesian helper, 3 years elderly care experience in Hong Kong. Available immediately."

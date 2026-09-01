@@ -126,6 +126,13 @@ the client did not give, never fill a field with "unknown" or "not provided".
 Values must be short and literal (e.g. "elderly care", "Filipino", "$650-700", \
 "next month", "Feb 2026").
 
+Always write the values in English, whatever language the conversation is in. The \
+consultant reads these off a ticket, and a requirement recorded as \
+"बुजुर्गों की देखभाल" is a requirement nobody in the office can action. Translate the \
+meaning, keep it literal, and do not add anything the client did not say. Names are \
+the exception — a person's name is written as they gave it. Numbers and money always \
+in Western digits ("$650", never "६५०").
+
 Two things that ARE answers and must be captured:
 - "any", "no preference", "up to you", "you decide", "doesn't matter" — record \
 "no preference". Leaving it empty makes the consultant ask again, which irritates a \

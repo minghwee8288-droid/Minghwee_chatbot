@@ -162,12 +162,20 @@ CANDIDATE_SERVICES = {CANDIDATE_HIRING, "transfer"}
 
 # Asked once at the end of the two lead-creating flows (§2 step 4, §3). Not in
 # the §22 list because it is not required — plenty of clients have no email.
+# Asked LAST in every flow it appears in, never near the top. A client who has
+# opened a WhatsApp chat has already told us how to reach them; asking for an
+# email as the second question reads as a form, and it was the second thing a
+# real employer enquiry got asked before anyone had established what she wanted.
+# It stays optional and max_asks=1, so it is offered once at the end and dropped
+# without complaint — by then the client has answered everything that qualifies
+# them, and the lead is already open on their name and number regardless.
 _EMAIL = Field(
     "email",
     "email address",
     "Do you have an email I can note down for updates?",
     max_asks=1,
     optional=True,
+    group="staying in touch",
 )
 
 # §5 step 3 read with §0: the number is already known, so the question is
@@ -239,7 +247,6 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     "new_hiring": [
         # --- About them ---
         Field("full_name", "name", "May I know your name?", group="who they are"),
-        _EMAIL,
         Field(
             "first_time_hire",
             "whether this is their first time hiring",
@@ -453,12 +460,12 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             group="how they found us",
             gate=_WAS_REFERRED,
         ),
+        _EMAIL,
     ],
     # §3 — candidate lead flow. Separate from new_hiring: a job seeker is never
     # asked an employer's questions. Same identity-first ordering.
     "candidate_new_hiring": [
         Field("full_name", "name", "May I know your name?"),
-        _EMAIL,
         Field("nationality", "nationality", "Which country are you from?"),
         Field(
             "experience",
@@ -473,6 +480,7 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             max_asks=2,
         ),
         Field("availability", "availability", "When would you be able to start?", max_asks=2),
+        _EMAIL,
     ],
     # §6 — collects nothing at all.
     "direct_hiring": [],
@@ -746,10 +754,11 @@ def preceding_group(service_type: str | None, collected: dict[str, Any], field: 
     ordered = applicable_fields(service_type, collected)
     for index, candidate in enumerate(ordered):
         if candidate.key == field.key:
-            # Back to the nearest field that belongs to a topic at all. _EMAIL
-            # is shared with the candidate flow and carries no group of its
-            # own, and reading the blank straight off would announce "who they
-            # are" as a new subject on the question right after their name.
+            # Back to the nearest field that belongs to a topic at all. A field
+            # with no group of its own must not make the NEXT one announce a
+            # subject change it never left — reading the blank straight off
+            # would have the collector introduce a topic the client is already
+            # halfway through.
             for earlier in reversed(ordered[:index]):
                 if earlier.group:
                     return earlier.group
