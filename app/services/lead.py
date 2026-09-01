@@ -404,10 +404,25 @@ async def update_from_collected(
         logger.exception("Could not update lead %s on %s", lead_id, TABLE_FOR[kind])
         return None
 
+    # An update matching no rows is not an error to PostgREST — it returns an
+    # empty list. Logging success regardless is how a deleted lead row stayed
+    # invisible: the log said "Updated employer lead ba29b6c5..." on every turn
+    # while the row had not existed for hours, and the only other symptom was
+    # tickets silently failing the foreign key to it.
+    if not rows:
+        logger.error(
+            "Lead %s on %s matched no row — it has been deleted, or RLS is "
+            "hiding it. The requirements collected on this conversation have "
+            "not been saved anywhere.",
+            lead_id,
+            TABLE_FOR[kind],
+        )
+        return None
+
     logger.info(
         "Updated %s lead %s with %s", kind, lead_id, ", ".join(sorted(payload))
     )
-    return rows[0] if rows else None
+    return rows[0]
 
 
 # --- Summary (§21) ---------------------------------------------------------

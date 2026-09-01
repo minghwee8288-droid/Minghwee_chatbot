@@ -399,6 +399,10 @@ async def _open_lead_early(
     return {
         "created_lead_id": lead.get("id"),
         "created_lead_number": lead.get("lead_number"),
+        # created_lead_kind, not lead_kind: the webhook rewrites lead_kind from
+        # the per-turn matched-lead lookup, which finds nothing on the very
+        # conversation that just opened one. See ConversationState.
+        "created_lead_kind": kind,
         "lead_kind": kind,
     }
 

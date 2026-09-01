@@ -113,7 +113,14 @@ async def _finish_lead(
     if not lead_id:
         return None
 
-    kind = state.get("lead_kind") or lead_service.EMPLOYER
+    # created_lead_kind is written beside created_lead_id and nothing overwrites
+    # it. lead_kind describes the MATCHED lead and the webhook resets it every
+    # turn, so it is None on exactly the conversations that opened a lead here.
+    kind = (
+        state.get("created_lead_kind")
+        or state.get("lead_kind")
+        or lead_service.EMPLOYER
+    )
     summary = ""
     if kind == lead_service.EMPLOYER:  # leads_candidate has no summary column
         summary = await lead_service.write_summary(

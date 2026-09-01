@@ -1499,16 +1499,56 @@ async def create(
     }
     if created_lead_id:
         payload["created_lead_id"] = created_lead_id
-    try:
-        ticket = await db.insert_numbered(
+
+    async def _insert(row: dict[str, Any]) -> dict[str, Any] | None:
+        return await db.insert_numbered(
             TABLE,
-            payload,
+            row,
             number_field="ticket_number",
             next_number=next_ticket_number,
         )
+
+    try:
+        ticket = await _insert(payload)
     except Exception:  # noqa: BLE001 - a ticket failure must not block the handover
-        logger.exception("Ticket creation failed for conversation %s", conversation["id"])
-        return None
+        # cb_tickets.created_lead_id is a foreign key to leads(id), and the graph
+        # checkpoint holds that id for the life of the thread. Delete the lead row
+        # and every later insert on the conversation violates the constraint —
+        # forever, because nothing clears the stale pointer. Live: conversation 36
+        # raised ten ticket_raised handovers in twenty minutes, every one with
+        # ticket_id NULL and no ticket behind it, because L-2026-0001 had been
+        # removed by hand.
+        #
+        # The ticket is the work item; the lead link is a convenience. Dropping
+        # the link to keep the ticket is the right trade in both directions.
+        if not created_lead_id:
+            logger.exception("Ticket creation failed for conversation %s", conversation["id"])
+            return None
+        logger.exception(
+            "Ticket creation failed for conversation %s — retrying without the "
+            "created_lead_id %s, which no longer resolves",
+            conversation["id"],
+            created_lead_id,
+        )
+        orphaned = dict(payload)
+        orphaned.pop("created_lead_id", None)
+        # Keep the trail: the agent should still see which lead this came from,
+        # even though the row it pointed at is gone.
+        orphaned["captured_info"] = {
+            **info,
+            "notes": {
+                **(info.get("notes") or {}),
+                "lead_link_broken": created_lead_id,
+            },
+        }
+        try:
+            ticket = await _insert(orphaned)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Ticket creation failed for conversation %s even without the lead link",
+                conversation["id"],
+            )
+            return None
 
     if ticket:
         logger.info(

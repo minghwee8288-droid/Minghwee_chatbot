@@ -231,6 +231,14 @@ class ConversationState(TypedDict, total=False):
     # §1B leaves a lead from an earlier enquiry to whoever has worked it since.
     created_lead_id: str | None
     created_lead_number: str | None
+    # Which table created_lead_id lives on. Deliberately NOT lead_kind: that one
+    # describes the MATCHED lead and the webhook rewrites it every turn from a
+    # fresh find_by_phone(), so it is None whenever no earlier lead exists — which
+    # is exactly the case where we opened one ourselves. _finish_lead() read
+    # lead_kind, got None, and fell back to 'employer'; on a candidate enquiry
+    # that sent the update to `leads` with a leads_candidate id, where it matched
+    # nothing and said so in no log.
+    created_lead_kind: str | None
     # What the classifier thinks this contact is, used only while the database
     # says 'unknown'.
     detected_contact_type: str | None
