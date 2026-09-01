@@ -81,10 +81,49 @@ _LEAD_FIELD_SOURCES = (
 )
 
 
+# WhatsApp push names that are not a person. The push name is whatever the
+# client set on their own profile, so it is a shop, a role, or an emoji at least
+# as often as it is a name — which is why has_real_name() will not open a lead
+# on one. It is still worth using for full_name when it plainly IS a name: the
+# prompt already prints it and the model already greets with it, so asking "may
+# I know your name?" straight after "Hi Gurdeep!" reads as a machine that is not
+# listening. Anything that fails this test falls through and is asked for.
+_NOT_A_PERSON = {
+    # businesses
+    "pte", "ltd", "llp", "inc", "co", "company", "agency", "agencies",
+    "employment", "service", "services", "trading", "enterprise", "enterprises",
+    "shop", "store", "cleaning", "catering", "transport", "construction",
+    "renovation", "contractor", "maid", "maids", "helper", "helpers",
+    # roles and relationships people use as a display name
+    "mummy", "mommy", "mum", "mom", "mama", "daddy", "dad", "papa", "boss",
+    "sir", "madam", "mdm", "maam", "auntie", "aunty", "uncle", "bro", "sis",
+    "me", "myself", "home", "house", "wife", "husband",
+}
+
+# Letters in any script (so 陈美玲 and Nurul both pass) plus the punctuation that
+# appears inside real names. Digits and emoji are what this is here to reject.
+_NAME_PUNCTUATION = set(" .'-")
+
+
+def _looks_like_a_person(name: str) -> bool:
+    """Whether a WhatsApp push name can stand in for the client's own name."""
+    cleaned = " ".join((name or "").split())
+    if not 2 <= len(cleaned) <= 60:
+        return False
+    if not all(char.isalpha() or char in _NAME_PUNCTUATION for char in cleaned):
+        return False
+    words = cleaned.split()
+    if not 1 <= len(words) <= 4:
+        return False
+    return not any(word.strip(".'-").lower() in _NOT_A_PERSON for word in words)
+
+
 def _known_fields(state: ConversationState) -> dict[str, str]:
+    known: dict[str, str] = {}
+
     lead = state.get("matched_lead")
     if not isinstance(lead, dict):
-        return {}
+        return _with_push_name(state, known)
 
     # leads.full_name is the EMPLOYER's name; leads_candidate.full_name is the
     # helper's. The same column answers helper_name only on a candidate lead —
@@ -93,7 +132,6 @@ def _known_fields(state: ConversationState) -> dict[str, str]:
     # the helper actually is.
     is_candidate_lead = (state.get("lead_kind") or "").strip().lower() == "candidate"
 
-    known: dict[str, str] = {}
     for column, field_key in _LEAD_FIELD_SOURCES:
         if field_key == "helper_name" and not is_candidate_lead:
             continue
@@ -109,6 +147,21 @@ def _known_fields(state: ConversationState) -> dict[str, str]:
         if field_key in {"full_name", "helper_name"} and value.lower().startswith("whatsapp lead"):
             continue
         known.setdefault(field_key, value[:300])
+    return _with_push_name(state, known)
+
+
+def _with_push_name(state: ConversationState, known: dict[str, str]) -> dict[str, str]:
+    """Fall back to the WhatsApp push name for full_name, when it is one.
+
+    Applied last, so a name the client actually gave us on an earlier enquiry
+    (the lead row above) always wins over whatever they set on their profile.
+    Only ever full_name — never helper_name: the push name belongs to whoever
+    holds the phone, and on a replacement or transfer enquiry that is the
+    employer, not the helper being asked about.
+    """
+    push_name = str(state.get("customer_name") or "").strip()
+    if not known.get("full_name") and _looks_like_a_person(push_name):
+        known["full_name"] = push_name[:300]
     return known
 
 
