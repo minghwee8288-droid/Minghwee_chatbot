@@ -275,13 +275,25 @@ does not know the name, it uses none.
 and lead summaries are written in English because Singapore staff read them off a ticket.
 
 **"Transfer" is split by contact type** (`resolve_service`). The `transfer` field list is
-written for the *helper* (her permit expiry, her employer's consent, her availability). An
-**employer** who says "transfer" wants to *hire* a transfer helper, so he is routed into
-`new_hiring` with `hire_source` pre-seeded to `transfer` — he is never asked the helper's
-own questions. Only a `candidate` keeps the helper-side `transfer` flow. `transfer` is
-therefore no longer in `_CONTACT_BY_INTENT` (it was forcing every transfer to `employer`,
-which is what put an employer into the helper's questionnaire); it is an employer
-*fallback* instead, so the model can still tag a genuine job-seeker as a candidate.
+written for the *helper* (her permit expiry, her employer's consent, her availability), so
+only a `candidate` keeps it. An **employer** who says "transfer" resolves to
+**`transfer_employer`** — its own service with its own short, employer-answerable field
+list, whose first question disambiguates the two opposite things an employer can mean
+(taking a transfer helper *on* vs *releasing* their own). `transfer` is not in
+`_CONTACT_BY_INTENT` (forcing every transfer to `employer` is what put an employer into
+the helper's questionnaire); it is an employer *fallback* instead, so a genuine job-seeker
+can still be tagged a candidate.
+
+> **Why `transfer_employer` is a separate service and not a remap onto `new_hiring`:**
+> the blocked-topic key *is* the service key. The first version of this fix mapped an
+> employer's transfer onto `new_hiring`, so once a hiring ticket existed, "I also want a
+> transfer" computed the **same** topic key — the graph read a brand-new request as a
+> follow-up on the parked hiring topic and replied "a live agent will connect with you
+> shortly" indefinitely, collecting nothing (live, 2026-09-02). Any future "route service
+> A into service B's questions" must keep its own key, or it inherits B's parked topic.
+> `transfer_employer` is not one of the 11 values `cb_tkt_service_check` allows, so
+> `TICKET_SERVICE_FALLBACK` files it under `transfer` with the true key in
+> `captured_info.topic_key`; it is in `EMPLOYER_LEAD_SERVICES` so it still opens a lead.
 
 ---
 
@@ -357,6 +369,22 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-02** — Multi-topic round: four fixes for a thread that piled hiring + salary +
+  transfer + passport into one conversation. (A) **Employer transfer given its own service
+  `transfer_employer`**, fixing a regression from earlier the same day: remapping it onto
+  `new_hiring` made its blocked-topic key identical to an open hiring ticket's, so a new
+  transfer request was answered as a follow-up ("a live agent will connect with you
+  shortly", forever) and never collected. Its field list is employer-answerable and opens
+  by disambiguating take-on vs release. (B) **A service switch no longer wipes everything**
+  — `_PORTABLE_ACROSS_SERVICES` carries client facts (name, nationality, household,
+  budget, email) across, while helper/case/document fields still reset. This is why a
+  salary question after a hiring flow re-asked "which nationality are you looking at?".
+  (C) **A money question searches the whole KB** instead of being filtered to the in-flight
+  service — measured: filtered retrieval surfaced **0** salary figures, unfiltered surfaced
+  `$200/$300/$450/$950`, which is why the bot said "I don't have a specific range" twice
+  before answering on the third ask. (D) **`passport_renewal` collects** helper location,
+  permit expiry and urgency (Rule 4a still bars the passport number itself).
 
 - **2026-09-02** — Second round of live-tester fixes. (1) **A client's question is
   never recorded as a field answer**: the extractor was filing "is there a salary budget

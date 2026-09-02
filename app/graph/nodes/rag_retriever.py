@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from app.graph.guards import last_bot_line
@@ -41,6 +42,33 @@ def _search_query(state: ConversationState) -> str:
     return "\n".join(parts)
 
 
+# Money words. A message carrying one is asking or talking about figures, and
+# those figures are spread across the knowledge base under their own service
+# labels (salary_enquiry, fee_enquiry, general) — not under whichever flow the
+# client happens to be in the middle of.
+#
+# Live, 2026-09-02: mid new_hiring the client asked "is there any approximate
+# range?" three separate times. Retrieval was filtered to service=new_hiring
+# each time, the salary chunks sat under other labels, so the model had nothing
+# grounded to quote — it answered "I don't have a specific range to share" twice
+# and once tried to invent $500-700, which ungrounded_figures correctly threw
+# away. The figures were in the KB the whole time. Dropping the service filter
+# on these turns is what makes them reachable; nationality still narrows it.
+_MONEY_TALK = re.compile(
+    r"\b(salary|salaries|wage|wages|pay|paid|payment|fee|fees|cost|costs|price|"
+    r"pricing|charge|charges|package|levy|deposit|budget|range|quotation|quote|"
+    r"afford|expensive|cheap)\b",
+    re.IGNORECASE,
+)
+
+
+def _service_filter(state: ConversationState) -> str | None:
+    """Which service to narrow retrieval to — None means search everything."""
+    if _MONEY_TALK.search(state.get("incoming_text") or ""):
+        return None
+    return state.get("service_type")
+
+
 def _nationality(state: ConversationState) -> str | None:
     """The PH/ID/MM code this conversation is about, if we know it.
 
@@ -65,7 +93,7 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
     # anything we cannot determine is passed as None and simply not filtered on.
     matches = await rag.search(
         _search_query(state),
-        service_type=state.get("service_type"),
+        service_type=_service_filter(state),
         contact_type=effective_contact_type(state),
         nationality=_nationality(state),
     )

@@ -128,6 +128,7 @@ SERVICE_LABELS = {
     "direct_hiring": "direct hire processing",
     "replacement": "replacing their current helper",
     "transfer": "a helper transfer",
+    "transfer_employer": "a helper transfer",
     "renewal": "a work permit renewal",
     "home_leave": "home leave for their helper",
     "passport_renewal": "a passport renewal",
@@ -152,6 +153,17 @@ def service_label(service_type: str | None) -> str:
 
 
 CANDIDATE_HIRING = "candidate_new_hiring"
+
+# An EMPLOYER's transfer request. Its own service rather than a remap onto
+# new_hiring, and that distinction is the whole point: the topic key a ticket is
+# blocked against is the service key. Folding an employer's transfer into
+# new_hiring (the first fix for the helper-questionnaire bug) meant that once a
+# hiring ticket existed, "I also want a transfer" computed the SAME topic key,
+# so the graph read a brand-new request as a follow-up on the parked hiring
+# topic and answered "a live agent will connect with you shortly" forever
+# without ever collecting anything. Live, 2026-09-02 18:34-18:45. A separate key
+# keeps the corrected employer-side questions AND its own ticket.
+TRANSFER_EMPLOYER = "transfer_employer"
 
 # What the classifier calls a helper offering herself for placement. It is an
 # intent name, not a flow — resolve_service() maps it onto CANDIDATE_HIRING.
@@ -491,7 +503,50 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         Field("reason", "reason for the replacement", "What is the reason for the replacement?"),
         Field("timeline", "timeline", "When would you need the replacement by?"),
     ],
-    # §5 — candidate flow. Employers never initiate a transfer.
+    # An EMPLOYER's transfer. "Transfer" means two opposite things from this
+    # side — taking ON a helper already in Singapore, or RELEASING their own to
+    # another employer — and a short message rarely says which. So the first
+    # question is the one that disambiguates, and the rest are neutral enough to
+    # fit either. Deliberately short: the transfer process itself (release
+    # letter, MOM paperwork) is a consultant's job, so this qualifies the
+    # request and hands over rather than running a full hiring questionnaire.
+    # None of these is the helper's own permit or her employer's consent — the
+    # employer cannot answer those, which is what four testers flagged.
+    TRANSFER_EMPLOYER: [
+        Field(
+            "transfer_direction",
+            "what they need",
+            "Are you looking to take on a transfer helper already in Singapore, or "
+            "to release your current helper to another employer?",
+            max_asks=2,
+            options=(
+                "taking on a transfer helper",
+                "releasing my current helper",
+            ),
+        ),
+        Field(
+            "helper_name",
+            "helper's name",
+            "May I know the helper's name?",
+            max_asks=2,
+            optional=True,
+        ),
+        Field(
+            "reason",
+            "reason for the transfer",
+            "What is the reason for the transfer?",
+            max_asks=2,
+            optional=True,
+        ),
+        Field(
+            "timeline",
+            "timeline",
+            "When are you hoping to have this sorted?",
+            max_asks=2,
+            optional=True,
+        ),
+    ],
+    # §5 — candidate flow. A HELPER transferring herself to a new employer.
     "transfer": [
         Field("helper_name", "name", "May I know your name?"),
         Field("reason", "reason for the transfer", "May I know the reason for the transfer?"),
@@ -554,6 +609,35 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             "passport expiry",
             "When does her current passport expire?",
             max_asks=2,
+        ),
+        # Added 2026-09-02: the flow used to stop at the expiry date and hand
+        # over, and a tester said "you didnt asked any thing more related to the
+        # helper for passport renewal". These are what the agent has to chase
+        # next — where she is decides which embassy handles it, and whether the
+        # permit expires alongside the passport changes the order of the work.
+        # Deliberately NOT the passport number, her date of birth or her address:
+        # Rule 4a keeps the whole Singpass block off WhatsApp.
+        Field(
+            "helper_location",
+            "where the helper is",
+            "Is she currently in Singapore?",
+            max_asks=2,
+            optional=True,
+            options=("in Singapore", "overseas", "on home leave"),
+        ),
+        Field(
+            "permit_expiry",
+            "work permit expiry",
+            "And when does her work permit expire?",
+            max_asks=2,
+            optional=True,
+        ),
+        Field(
+            "timeline",
+            "how urgent",
+            "How soon does she need the new passport?",
+            max_asks=2,
+            optional=True,
         ),
     ],
     # §10, §11 — only ever asked for what the client has not already stated.
@@ -628,6 +712,7 @@ TICKET_SERVICE_TYPES = {
 # of what the portal's column ends up holding.
 TICKET_SERVICE_FALLBACK = {
     CANDIDATE_HIRING: "new_hiring",
+    TRANSFER_EMPLOYER: "transfer",
     CANDIDATE_REGISTRATION: "new_hiring",
     "media_received": "transfer",
     "general_question": "transfer",
@@ -686,9 +771,12 @@ def resolve_service(service_type: str | None, contact_type: str | None) -> str |
     # four separate testers flagged as nonsensical. For an employer it is simply
     # a hiring enquiry: route into new_hiring, where info_collector pre-seeds
     # hire_source="transfer" so he is never asked "transfer or new hire?" again.
-    # Only a candidate keeps the helper-side transfer flow.
+    # Only a candidate keeps the helper-side transfer flow. The employer gets
+    # TRANSFER_EMPLOYER — its own service, NOT new_hiring, so a transfer raised
+    # after a hiring ticket is a new topic rather than a follow-up on the parked
+    # one (see the constant).
     if service_type == "transfer" and contact != "candidate":
-        return "new_hiring"
+        return TRANSFER_EMPLOYER
     # A supplier or partner offering another helper keeps the bare registration
     # service: they raise no lead, so there is nothing to collect from them.
     if service_type == CANDIDATE_REGISTRATION and contact not in _THIRD_PARTY_CONTACTS:
@@ -986,6 +1074,7 @@ SERVICE_SUMMARIES = {
     "direct_hiring": "wants us to process a helper they have already chosen",
     "replacement": "wants to replace their current helper",
     "transfer": "needs help with a work permit transfer",
+    "transfer_employer": "needs help transferring a helper in or out",
     "renewal": "needs a work permit renewal",
     "home_leave": "is arranging home leave for their helper",
     "passport_renewal": "needs help renewing a helper's passport",

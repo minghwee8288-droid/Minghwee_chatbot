@@ -288,6 +288,11 @@ EMPLOYER_LEAD_SERVICES = {
     "renewal",
     "home_leave",
     "passport_renewal",
+    # An employer's transfer resolves to its own service (ticket.TRANSFER_EMPLOYER)
+    # so its ticket topic cannot collide with an open hiring one. It is still an
+    # employer lead — without it here kind_for() returns None and a client asking
+    # to transfer a helper in or out leaves no lead behind at all.
+    "transfer_employer",
 }
 CANDIDATE_LEAD_SERVICES = {"candidate_new_hiring"}
 

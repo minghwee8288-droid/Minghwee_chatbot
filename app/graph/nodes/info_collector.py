@@ -199,6 +199,36 @@ UNANSWERED = "not provided"
 # Fields that must name the work, not the enquiry.
 _CARE_TYPE_FIELDS = {"requirement", "care_type"}
 
+# Facts about the CLIENT that stay true when the service changes, and so survive
+# the switch-reset below.
+#
+# The reset exists to stop one service's answers being filed as another's — a
+# case ID given for a renewal is not a passport renewal's case ID. But it wiped
+# everything, including things that do not belong to a service at all. Live
+# (2026-09-02 18:31): a client finished a hiring enquiry having said "Filipino",
+# then asked about salary; the service switched to salary_enquiry, the reset
+# cleared the lot, and the bot asked "which nationality are you looking at?" —
+# they had to answer "I have tell you the nationality before".
+#
+# Only identity and preference keys are listed. Anything tied to a specific
+# helper, case or document (helper_name, case_id, permit_expiry,
+# passport_expiry, transfer_direction) is deliberately absent: those DO belong
+# to one service and carrying them across is the contamination the reset is for.
+_PORTABLE_ACROSS_SERVICES = {
+    "full_name",
+    "email",
+    "contact_number",
+    "nationality",
+    "preferred_nationality",
+    "requirement",
+    "care_type",
+    "household",
+    "home_type",
+    "languages",
+    "budget",
+    "referral_source",
+}
+
 # A value the extractor handed back that is itself a QUESTION, not an answer.
 # Live (screenshot, 2026-09-02): a client mid-hiring asked "is there a monthly
 # salary budget in mind?" back to us, and the extractor recorded it as the
@@ -466,14 +496,28 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # fills the new service's fields with the old service's values and files a
     # ticket full of irrelevant detail.
     switched = bool(state.get("collected_service")) and state["collected_service"] != service_type
-    previous = {} if switched else (state.get("collected_info") or {})
+    everything = state.get("collected_info") or {}
+    # On a switch, keep the facts that are about the client rather than about the
+    # old service, so the new flow never re-asks something they already told us.
+    carried_over = (
+        {
+            key: value
+            for key, value in everything.items()
+            if key in _PORTABLE_ACROSS_SERVICES and str(value or "").strip()
+        }
+        if switched
+        else {}
+    )
+    previous = carried_over if switched else everything
     asked = {} if switched else dict(state.get("asked_field_counts") or {})
     if switched:
         logger.info(
-            "Conversation %s switched from %s to %s — clearing collected info",
+            "Conversation %s switched from %s to %s — cleared the old service's "
+            "answers, carried over %s",
             state.get("conversation_id"),
             state.get("collected_service"),
             service_type,
+            ", ".join(sorted(carried_over)) or "nothing",
         )
 
     extraction_state = {**dict(state), "collected_info": previous}
@@ -504,17 +548,6 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             state.get("conversation_id"),
             ", ".join(sorted(known)),
         )
-
-    # An employer who asked about a "transfer" helper is routed out of the
-    # helper-side transfer flow into new_hiring (resolve_service). He has already
-    # told us he wants a transfer helper, so seed hire_source and never put the
-    # "transfer or new hire?" question back to him.
-    if (
-        state.get("service_type") == "transfer"
-        and service_type == "new_hiring"
-        and not str(previous.get("hire_source") or "").strip()
-    ):
-        known["hire_source"] = "transfer"
 
     extracted = {**known, **extracted}
     collected = {**previous, **extracted}
@@ -562,7 +595,10 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     carry: dict[str, Any] = dict(extracted)
     counts: dict[str, Any] = {}
     if switched:
-        carry[RESET_KEY] = True
+        # RESET_KEY empties collected_info in the reducer, so the portable facts
+        # have to be written back alongside it or they are lost from state even
+        # though this turn used them. Anything extracted this turn still wins.
+        carry = {**carried_over, **extracted, RESET_KEY: True}
         counts[RESET_KEY] = True
 
     label = service_label(service_type)
