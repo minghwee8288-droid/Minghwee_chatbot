@@ -226,12 +226,14 @@ Easy to get wrong:
 
 - `BOT_ALLOWED_NUMBERS` — the safety gate. Fails **closed** if malformed. The startup log
   prints the resolved list; trust that, not the file.
-- `OPENROUTER_MODEL` — currently `anthropic/claude-sonnet-5`.
-- `LLM_REASONING=off` — maps to Anthropic thinking disabled. **Never send `budget_tokens`
-  on Sonnet 5; it 400s.** Sonnet 5 also rejects `temperature`, but `llm.py` sends it and
-  that is fine: OpenRouter drops parameters the provider does not accept, because
-  provider routing is deliberately unconstrained (`require_parameters` made every call
-  404 — do not reintroduce it).
+- `OPENROUTER_MODEL` — currently `moonshotai/kimi-k3`. `llm.py` is model-agnostic: it
+  reads this setting, sends `temperature`/`frequency_penalty`, and never sends
+  `budget_tokens`. Provider routing is deliberately unconstrained — OpenRouter drops
+  parameters the target provider does not accept, and `require_parameters` made every
+  call 404, so **do not reintroduce it**. (If you switch back to Sonnet 5: `off` maps to
+  Anthropic thinking disabled, and `budget_tokens` 400s there — but `llm.py` sends none.)
+- `LLM_REASONING=off` — Kimi K3 is a reasoning model; `off` turns the thinking down for
+  ~3s replies at far lower cost.
 - `RAG_SOFT_FLOOR` (0.40) is the real retrieval knob. `RAG_CONFIDENCE_FLOOR` is **dead
   config, read by nothing** — kept only so existing `.env` files still parse.
 - `TENANT_ID` must be set or lead and ticket numbering break.
@@ -351,6 +353,10 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-02** — Model reverted to `moonshotai/kimi-k3` (from `anthropic/claude-sonnet-5`).
+  `.env` and `.env.example` updated; `llm.py` needed no change (model-agnostic, sends no
+  `budget_tokens`). The Sonnet-specific parameter notes are kept as a switch-back hint.
 
 - **2026-09-02** — Live multi-tester fixes. (1) **Transfer split by contact type**: an
   employer asking for a transfer helper was being run through the helper's own
