@@ -448,6 +448,35 @@ def clamp_reply(text: str, max_sentences: int = 2) -> str:
     return body
 
 
+# Claire talking about Ming Hwee as though it were somebody else. She is Ming
+# Hwee's assistant, so "we sent it over to the agency, they have passed it up"
+# is not a rephrasing — it is a different speaker — and "as instructed" is the
+# prompt talking out loud.
+#
+# Live, 2026-09-02 19:44, after a client had asked three times why a question
+# had been skipped: "When we took down the details you gave, we sent it all
+# over to the agency as instructed. They have passed them up to a live agent to
+# handle." Nothing else catches it: it is fluent, it is not degenerate, it
+# names no colleague and promises no time, and it is not in brackets, so
+# strip_meta_commentary never looks at it.
+#
+# "our team", "our agent" and "I've passed this to the team" are deliberately
+# NOT matched — those are the first person and are exactly what rule 2 asks for.
+_THIRD_PARTY_SELF = re.compile(
+    r"\bas\s+instructed\b"
+    r"|\b(?:sent|send|passed|forwarded|forward|escalated|escalate|gave|given|"
+    r"handed|submitted|relayed)\b[^.!?]{0,40}\bto\s+(?:the\s+)?"
+    r"(?:agency|agencies|office|company|firm)\b"
+    r"|\bthe\s+agency\s+(?:has|have|will|then|they)\b",
+    re.IGNORECASE,
+)
+
+
+def speaks_of_us_as_a_third_party(reply: str) -> bool:
+    """Whether the reply describes Ming Hwee as somebody other than the speaker."""
+    return bool(_THIRD_PARTY_SELF.search(reply or ""))
+
+
 def strip_handover_talk(reply: str) -> str:
     """Remove sentences promising a named colleague or a specific time.
 

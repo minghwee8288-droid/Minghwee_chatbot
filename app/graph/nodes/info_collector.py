@@ -18,6 +18,7 @@ from app.graph.guards import (
     near_duplicate,
     recent_bot_lines,
     same_opening,
+    speaks_of_us_as_a_third_party,
     strip_handover_talk,
     strip_meta_commentary,
     strip_repeated_opener,
@@ -263,12 +264,109 @@ _CARE_TYPE_FILLER = re.compile(
 # consultant and a form: live, "How much is your agency fee?" asked during a
 # hiring flow got "Thanks, I'll pull the details together and come back to you"
 # — the question was never even acknowledged, let alone answered.
+#
+# Widened after a live round on 2026-09-02: "In 2 weeks can you provide" was
+# answered by moving straight on to the next question. It carries no question
+# mark and none of the words listed here, so ANSWER_THEN_ASK never fired —
+# while _VALUE_IS_QUESTION, which is far broader, DID match and threw the "in 2
+# weeks" half away as well. The client's answer was lost and their question
+# ignored in the same turn. The two patterns have to agree about what reads as
+# a question, so the openers below now mirror that one.
 _ASKS_SOMETHING = re.compile(
     r"\?|\b(how\s+(much|long|many|do|does)|what\s+(documents?|do\s+i|is|are)|"
     r"which\s+documents?|when\s+(can|will|do)|cost|price|fee|fees|charge|"
-    r"salary|levy|deposit|require[ds]?|needed)\b",
+    r"salary|levy|deposit|require[ds]?|needed|"
+    r"can\s+(you|we|i)|could\s+you|do\s+you\s+(have|provide|offer|know)|"
+    r"are\s+you\s+able|will\s+you|is\s+it\s+possible|is\s+there|are\s+there|"
+    r"any\s+(idea|chance)|possible\s+to)\b",
     re.IGNORECASE,
 )
+
+
+# An answer that confirms something EXISTS without ever saying what it is.
+#
+# Live, 2026-09-02 19:38. Asked "anything else we should know — like if your
+# grandmother has any medical conditions or mobility issues?", the client
+# answered "Yes grandmother has medical condition". The field filled, the flow
+# moved on to how they heard about us, and four messages later they were
+# writing "You didnt asked for which medical condition my grandmother is
+# suffering from is that looks normal for you tell me you are ignoring that" —
+# then asking twice more. missing_fields() only asks whether the key is set,
+# and by that test this was answered.
+#
+# Anchored at the end on purpose: the vague word has to be the LAST thing said.
+# "a heart condition", "some mobility issues" and "diabetes and high blood
+# pressure" all name the thing and are left alone; "has medical condition",
+# "has a condition" and "there are some issues" do not.
+_ASSERTS_WITHOUT_DETAIL = re.compile(
+    r"\b(?:has|have|had|is|are|got|some|any|a|an|the|with|of|medical|health)\s+"
+    r"(?:medical\s+|health\s+)?"
+    r"(?:conditions?|illnesses?|issues?|problems?|ailments?|difficulties|"
+    r"disabilit(?:y|ies)|requirements?|preferences?|needs?|allerg(?:y|ies))"
+    r"\s*[.!,]*\s*$",
+    re.IGNORECASE,
+)
+
+# An address that parses but is almost certainly mistyped. Live, same round:
+# "Vd@gmail.con" went onto the lead exactly as written. Email is the only
+# channel the office has for sending helper profiles, so a wrong one does not
+# fail loudly — it fails silently, forever, and nobody finds out.
+_EMAIL_SHAPE = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
+_TYPO_DOMAINS = re.compile(
+    r"@(?:gmial|gmai|gmal|gnail|hotmial|hotmai|homail|yahooo|yaho|outlok|outllok)\.|"
+    r"\.(?:con|cmo|ocm|xom|vom|c0m|comm|cim|cpm|om)$",
+    re.IGNORECASE,
+)
+
+
+def _unfinished(
+    service_type: str, collected: dict[str, Any], asked: dict[str, int]
+) -> tuple[list[ticket_service.Field], dict[str, str]]:
+    """Fields holding a value that does not actually answer them.
+
+    missing_fields() asks one question — is the key set? That is the right test
+    for most answers and the wrong one for two shapes that have both now gone
+    out to a client: an answer that says something exists without saying what
+    it is, and a contact address that is plainly mistyped.
+
+    The value is KEPT either way. It is real and it belongs on the ticket; it
+    is simply not finished, so the field goes back to the front of the queue
+    and is asked once more for the part that is missing. The ask counters still
+    apply, so this adds at most one more question and can never loop.
+    """
+    fields: list[ticket_service.Field] = []
+    notes: dict[str, str] = {}
+    for field in ticket_service.fields_for(service_type):
+        value = str(collected.get(field.key) or "").strip()
+        if not value or value.lower() == UNANSWERED:
+            continue
+        note = ""
+        if field.key == "email":
+            # email is max_asks=1, so the ordinary limit would rule out ever
+            # querying a typo. Exactly one confirmation is allowed instead.
+            if asked.get(field.key, 0) <= field.max_asks and (
+                not _EMAIL_SHAPE.match(value) or _TYPO_DOMAINS.search(value)
+            ):
+                note = (
+                    f'\n\nThey gave their email as "{value}", which looks like it may '
+                    "have a typo in it. Read it back to them exactly as they wrote it "
+                    "and ask if that is right. Do NOT correct it yourself and do NOT "
+                    "say what you think it should be — just check."
+                )
+        elif asked.get(field.key, 0) < min(
+            field.max_asks, MAX_ASKS_PER_FIELD
+        ) and _ASSERTS_WITHOUT_DETAIL.search(value):
+            note = (
+                f'\n\nThey have told you "{value}" — that something is there, but not '
+                "what it is, and what it is, is the part that matters. Ask them for it "
+                "directly, warmly, now. Do not thank them and change the subject: "
+                "skipping past the one thing a client has just raised is what makes "
+                "them feel unheard."
+            )
+        if note:
+            fields.append(field)
+            notes[field.key] = note
+    return fields, notes
 
 
 def _states_a_care_type(text: str) -> bool:
@@ -307,6 +405,21 @@ def _field_guidance(
         )
     elif field.group and not previous_group:
         parts.append(f"\n\nThis is the first thing you are asking about {field.group}.")
+
+    # The office's own wording for this field. Without it the model sees only
+    # the LABEL — "the elderly family member" — and asks the thinnest question
+    # that fits it. Live, 2026-09-02 19:00: a field whose written question is
+    # "their age, how mobile they are, and any medical conditions" went out as
+    # "May I know who the care is for?". "For my grandmother" filled it, the
+    # flow moved on, and the medical condition was never asked about at all —
+    # which is the complaint the client spent the next four messages making.
+    # The label says WHICH field; only the question says what it has to get.
+    parts.append(
+        f'\n\nThe office asks this as: "{field.question}" Put it in your own words, '
+        "but ask for everything that question asks for — if it names three things, a "
+        "question that gets one of them is not this question. Never read it out "
+        "verbatim like a form."
+    )
 
     if field.options:
         parts.append(
@@ -585,6 +698,19 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
 
     missing = ticket_service.missing_fields(service_type, collected)
 
+    # A field can hold a value and still not be finished — see _unfinished().
+    # Put those back at the FRONT: the client raised it a moment ago, and the
+    # whole failure being fixed here is asking about something else instead.
+    unfinished, follow_up_notes = _unfinished(service_type, collected, asked)
+    if unfinished:
+        logger.info(
+            "Conversation %s: %s answered but not finished — asking again for the "
+            "part that is missing",
+            state.get("conversation_id"),
+            ", ".join(field.key for field in unfinished),
+        )
+        missing = unfinished + [f for f in missing if f.key not in follow_up_notes]
+
     # The lead is opened the moment the client has given a name, not at the end
     # of collection. A client who answers two questions and then stops used to
     # leave nothing behind at all — no lead, no ticket, no record that anyone
@@ -613,15 +739,30 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         else ""
     )
 
+    # The greeting and the AI disclosure are two sentences before a single
+    # question has been asked, so a two-sentence budget deletes the question
+    # itself. Live, 2026-09-02 19:25: "I need a helper" was answered with
+    # "Good Evening! I'm Claire, Ming Hwee's AI assistant." and nothing else —
+    # the client had to send "I need helper" again to get a question out of us.
+    # It is a coin flip on punctuation: written "Good Evening, I'm Claire..."
+    # that is one sentence and the question survives; written with an
+    # exclamation mark it is two and clamp_reply cuts the question off.
+    first_contact = not (state.get("history_text") or "").strip()
+
     if missing:
         next_field = missing[0]
         previous = last_bot_line(state.get("history_text", ""))
-        instruction = COLLECTOR_INSTRUCTION.format(
-            service_label=label,
-            field_label=next_field.label,
-            field_guidance=_field_guidance(service_type, collected, next_field),
-            previous_message=previous or "(this is your first message)",
-        ) + dropped_note + answer_first
+        instruction = (
+            COLLECTOR_INSTRUCTION.format(
+                service_label=label,
+                field_label=next_field.label,
+                field_guidance=_field_guidance(service_type, collected, next_field),
+                previous_message=previous or "(this is your first message)",
+            )
+            + dropped_note
+            + follow_up_notes.get(next_field.key, "")
+            + answer_first
+        )
         if next_field.optional:
             # §2 step 4 / §23.6: asked once, and a no is taken as an answer.
             instruction += (
@@ -636,8 +777,9 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             system_prompt_state,
             instruction,
             fallback=next_field.question,
-            # Answering their question and then asking ours does not fit in two.
-            max_sentences=3 if answer_first else 2,
+            # Answering their question and then asking ours does not fit in two,
+            # and neither does introducing yourself before asking anything.
+            max_sentences=3 if (answer_first or first_contact) else 2,
         )
         counts[next_field.key] = 1
         logger.info(
@@ -685,7 +827,13 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         system_prompt_state,
         instruction,
         fallback=fallback,
-        max_sentences=3 if answer_first else 2,
+        # The closing message is three things by design (§8): thank them, say a
+        # live agent will connect, offer to help with anything else. At two, the
+        # offer was the sentence that got cut — live, 2026-09-02 19:18, the log
+        # reads: kept "...a live agent will connect with you shortly.", dropped
+        # "In the meantime, is there anything else I can help you with?" — and
+        # the client was left at a dead end straight after a handover.
+        max_sentences=3,
     )
     logger.info(
         "Conversation %s finished collection for %s: %s",
@@ -733,6 +881,15 @@ async def _write(
     reply = strip_meta_commentary(reply.strip().strip('"'))
     if is_degenerate(reply) or looks_like_document(reply):
         logger.error("Discarded malformed collector reply: %r", reply[:200])
+        return fallback or FALLBACK_QUESTION
+
+    # Claire IS Ming Hwee. A reply narrating what "the agency" did with the
+    # client's details is a different speaker; the field's own question is not.
+    if speaks_of_us_as_a_third_party(reply):
+        logger.warning(
+            "Collector reply spoke of us in the third person (%r) - using the plain question",
+            reply[:160],
+        )
         return fallback or FALLBACK_QUESTION
 
     # The bot must never INVENT a price. A figure is allowed when it is echoing

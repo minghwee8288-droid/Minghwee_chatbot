@@ -62,10 +62,36 @@ _MONEY_TALK = re.compile(
 )
 
 
+# The fields whose own question is about money. When one of them is next, the
+# figures have to be in front of the model BEFORE it writes, not after.
+_MONEY_FIELDS = {"budget", "salary_expectation", "salary", "fee"}
+
+
 def _service_filter(state: ConversationState) -> str | None:
     """Which service to narrow retrieval to — None means search everything."""
     if _MONEY_TALK.search(state.get("incoming_text") or ""):
         return None
+
+    # The client's own words are not the only money turn. Retrieval runs before
+    # the collector, so the field we are ABOUT to ask sits in last turn's
+    # outstanding list — the first entry is whatever was just asked, the second
+    # is what comes next. Live, 2026-09-02 19:13: the turn that asked "do you
+    # have a monthly salary budget in mind?" retrieved under service=new_hiring,
+    # the model reached for a $500-$700 range from nowhere, and
+    # ungrounded_figures correctly binned the whole reply and sent the bare
+    # question instead ("quoted unstated figure(s) ['700', '500', '600']"). The
+    # figures it needed were in the knowledge base the whole time, filed under
+    # salary_enquiry. Only the first two are checked: budget is outstanding from
+    # the first turn of a hiring flow, and testing the whole list would switch
+    # the service filter off for the entire conversation.
+    if any(key in _MONEY_FIELDS for key in (state.get("missing_field_keys") or [])[:2]):
+        return None
+
+    # And our own last line counts: "what's your monthly budget?" -> "around 600"
+    # is a money exchange in which the client's words carry no money word at all.
+    if _MONEY_TALK.search(last_bot_line(state.get("history_text") or "")):
+        return None
+
     return state.get("service_type")
 
 

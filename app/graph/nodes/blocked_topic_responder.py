@@ -25,6 +25,7 @@ from app.graph.guards import (
     mentions_handover,
     near_duplicate,
     recent_bot_lines,
+    speaks_of_us_as_a_third_party,
     strip_handover_talk,
     strip_meta_commentary,
     strip_repeated_opener,
@@ -457,8 +458,21 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
         reply = FALLBACK_REPLY
     elif is_degenerate(reply) or looks_like_document(reply):
         reply = FALLBACK_REPLY
+    elif speaks_of_us_as_a_third_party(reply):
+        # Claire is Ming Hwee, so a reply describing what "the agency" did with
+        # the client's details is a different speaker, not a paraphrase. The
+        # vetted holding line says the same thing in the first person.
+        logger.warning(
+            "Conversation %s: blocked-topic reply spoke of us in the third person "
+            "(%r) - holding instead",
+            state.get("conversation_id"),
+            reply[:160],
+        )
+        reply = FALLBACK_REPLY
     else:
-        reply = clamp_reply(strip_handover_talk(reply), max_sentences=2)
+        # An answer carrying a figure plus the offer of further help does not
+        # fit in two; a bare holding line still must not run past it.
+        reply = clamp_reply(strip_handover_talk(reply), max_sentences=3 if answering else 2)
     if not reply:
         reply = FALLBACK_REPLY
 

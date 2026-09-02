@@ -163,7 +163,9 @@ because the lead is opened early and the ticket is created much later.
 | No named colleague / no promised time | `guards.strip_handover_talk` | Handover *announcements* are now required (§8). This catches only "Grace will call at 3pm". The name half is case-SENSITIVE via `(?-i:...)`. |
 | Canned strings are pre-vetted | import-time assert in `blocked_topic_responder.py` | Strings sent verbatim bypass the guards, so they are checked at import. |
 | No prompt echo / degenerate output | `guards.is_degenerate` | Weak on unspaced scripts (Chinese, Burmese). |
-| Max 2 sentences | `guards.clamp_reply` | Logs the discarded tail deliberately. |
+| Max 2 sentences (3 on a greeting, a handover close, or an answered question) | `guards.clamp_reply` | Logs the discarded tail deliberately. Two is one short of what those three turns structurally need — see §11. |
+| Claire never speaks of Ming Hwee as a third party | `guards.speaks_of_us_as_a_third_party` | "we sent it to the agency, they have passed it up" and prompt-leaked "as instructed". Falls back to the vetted holding line. |
+| A vague or mistyped answer does not close a field | `info_collector._unfinished` | Value is kept; the field returns to the front of the queue for one more ask. |
 | Never repeat an opener | `guards.strip_repeated_opener` | Checks several previous bot lines. |
 | One phone, one lead, ever | `lead.create_if_absent` (§1B) | **Currently scoped per-table — see §9.** |
 | Ticket survives a dead lead link | `ticket.create` retry | Drops `created_lead_id`, records `notes.lead_link_broken`. |
@@ -369,6 +371,46 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-02** — Fifth live round. Five defects, each reproduced from the log or a
+  screenshot before it was touched.
+  (A) **The model never saw a field's own question.** `COLLECTOR_INSTRUCTION` is given
+  `field.label` only, so `elderly_detail` — written as *"their age, how mobile they are,
+  and any medical conditions"* — went out as *"May I know who the care is for?"*.
+  "For my grandmother" filled it, the flow moved on, and the medical condition was never
+  asked about at all; the client spent four messages saying so ("you are ignoring that").
+  `_field_guidance` now carries the hand-written question as the ground the question must
+  cover. **The label says which field; only the question says what it has to get.**
+  (B) **A field could hold a value and still not be answered.** `_unfinished()` catches two
+  shapes that both reached a client: an answer asserting something exists without saying
+  what ("Yes grandmother has medical condition") and a mistyped address (`Vd@gmail.con`,
+  which went onto the lead as written — email is the only channel the office has for
+  sending profiles, so it fails silently and forever). The value is **kept**; the field
+  goes back to the front of the queue for one more ask, bounded by `max_asks`.
+  (C) **`clamp_reply(2)` was deleting required sentences**, and the log proves it both
+  ways: *dropped "In the meantime, is there anything else I can help you with?"* after a
+  handover (§8 requires that offer), and on first contact *"Good Evening! I'm Claire, Ming
+  Hwee's AI assistant."* went out with no question, so the client had to repeat "I need
+  helper". It was a coin flip on punctuation — a comma after "Good Evening" makes it one
+  sentence and the question survives; an exclamation mark makes it two and the question is
+  cut. Now 3 on first contact, on the handover close, and when answering a client's
+  question.
+  (D) **A question inside an answer lost both halves.** "In 2 weeks can you provide" has no
+  question mark, so `_ASKS_SOMETHING` never fired and the question was ignored — while
+  `_VALUE_IS_QUESTION`, far broader, *did* match and discarded the "in 2 weeks" answer too.
+  The two patterns now agree on what reads as a question.
+  (E) **Money retrieval widened to the turn before the question.** `ungrounded_figures`
+  binned a whole reply — logged: *quoted unstated figure(s) ['700', '500', '600']* — because
+  the turn that asks the budget question retrieved under `service=new_hiring` while the
+  figures sit under `salary_enquiry`. `_service_filter` now also drops the filter when a
+  money field is one of the next two, or when our own last line asked about money. Only the
+  next two: `budget` is outstanding from turn 1, so testing the whole list would disable
+  the service filter for the entire conversation.
+  Also: `speaks_of_us_as_a_third_party` — Claire is Ming Hwee, so *"we sent it all over to
+  the agency as instructed, they have passed them up to a live agent"* (live, after a
+  client asked three times why a question had been skipped) is a different speaker, not a
+  paraphrase. Nothing else caught it: fluent, not degenerate, no named colleague, no
+  promised time, not in brackets.
 
 - **2026-09-02** — Multi-topic round: four fixes for a thread that piled hiring + salary +
   transfer + passport into one conversation. (A) **Employer transfer given its own service
