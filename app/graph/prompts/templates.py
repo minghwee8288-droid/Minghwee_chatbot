@@ -42,7 +42,12 @@ agent / employer offering a specific helper for us to place
 - document_question   : what documents/forms are needed, where to send them
 - fee_enquiry         : asks about agency fees, package price, cost, deposit, levy
 - salary_enquiry      : asks about the helper's salary, off days pay, increment
-- new_hiring          : wants to hire a helper (first time or a new one)
+- new_hiring          : wants to hire a helper (first time or a new one). \
+"Helper", "maid", "domestic worker", "worker(s)", "someone to help at home" all \
+mean the same thing — "I need workers", "I'm looking for a maid", "need someone \
+for my mum" are all new_hiring. A question about WHETHER we can hire in time \
+("can they start before October?", "is that possible?") is still new_hiring, not \
+a general question and NOT a handover — engage and collect
 - direct_hiring       : already has a specific helper in mind and wants us to process it
 - replacement         : wants to replace their current helper
 - transfer            : transfer helper between employers
@@ -84,6 +89,14 @@ service — e.g. "forget that, my helper's work permit is expiring" is renewal, 
 new_hiring.
 - A client stating a budget or salary figure while a hiring enquiry is in progress is \
 answering that enquiry, not starting a salary_enquiry.
+- Some messages contain TWO needs at once — most commonly "release / transfer out my \
+current helper AND hire a new one to replace her". Classify the one we can actually \
+collect a qualification for: the NEW HIRE. Return new_hiring. Releasing or transferring \
+out the current helper is a step the agent handles from the release letter — it needs \
+no question list from us, and the full message is on record for them. So \
+"my helper is leaving, I want to hire an Indonesian one to replace her" is new_hiring \
+(preferred_nationality Indonesian), NOT replacement or transfer. Reserve replacement \
+for when the client wants US to find a swap and is not themselves driving a release.
 - Asking "how much" about the agency's charges is fee_enquiry; asking "how much do I \
 pay her" is salary_enquiry.
 - If the contact is a returning employer with an active case and they ask about \

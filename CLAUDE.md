@@ -237,6 +237,10 @@ Easy to get wrong:
 - `RAG_SOFT_FLOOR` (0.40) is the real retrieval knob. `RAG_CONFIDENCE_FLOOR` is **dead
   config, read by nothing** — kept only so existing `.env` files still parse.
 - `TENANT_ID` must be set or lead and ticket numbering break.
+- `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
+  **overrides** the code default, so bumping the default alone changes nothing on a box
+  whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
+  only the free-text window.
 
 ---
 
@@ -354,6 +358,21 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-09-02** — Second round of live-tester fixes. (1) **A client's question is
+  never recorded as a field answer**: the extractor was filing "is there a salary budget
+  in mind?" as the `budget` value, so the field looked answered and the salary question
+  went unanswered until re-asked. `_VALUE_IS_QUESTION` in `info_collector` drops any
+  interrogative extracted value, leaving the field open and letting ANSWER_THEN_ASK
+  answer the question. (2) **`HISTORY_LIMIT` 20 → 40** (code default *and* both `.env`
+  files — the `.env` value overrides the code default, so the live server `.env` must be
+  edited too): a full `new_hiring` qualification runs 20+ turns and the earliest exchanges
+  were scrolling out of the model's view mid-flow. Collected fields already persist in the
+  checkpoint, so this only widens the free-text window. (3) **"workers"/"domestic worker"
+  now read as `new_hiring`**, and a first-contact timeline-feasibility question ("can they
+  start before October?") engages and collects instead of handing straight to an agent.
+  (4) **Compound "release my helper + hire a new one" classifies as `new_hiring`** (the
+  collectible need), with the release left as an agent step — it was being run as a bare
+  `replacement` that collected nothing about the new hire.
 - **2026-09-02** — Model reverted to `moonshotai/kimi-k3` (from `anthropic/claude-sonnet-5`).
   `.env` and `.env.example` updated; `llm.py` needed no change (model-agnostic, sends no
   `budget_tokens`). The Sonnet-specific parameter notes are kept as a switch-back hint.

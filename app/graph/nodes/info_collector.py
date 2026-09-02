@@ -199,6 +199,22 @@ UNANSWERED = "not provided"
 # Fields that must name the work, not the enquiry.
 _CARE_TYPE_FIELDS = {"requirement", "care_type"}
 
+# A value the extractor handed back that is itself a QUESTION, not an answer.
+# Live (screenshot, 2026-09-02): a client mid-hiring asked "is there a monthly
+# salary budget in mind?" back to us, and the extractor recorded it as the
+# `budget` answer — so the field looked filled, the salary question was never
+# answered, and the client had to ask again. A field answer is never a
+# question: "how much", "what is", "is there", a trailing "?" — none of that is
+# the client stating their own budget/nationality/timeline. Dropping it lets the
+# question fall to the ANSWER_THEN_ASK path (which answers it) and leaves the
+# field genuinely open so it is still asked.
+_VALUE_IS_QUESTION = re.compile(
+    r"\?|^\s*(?:how\s+(?:much|long|many|do|does|about)|what(?:'?s|\s+is|\s+are|\s+do)?|"
+    r"which|when|where|why|who|is\s+there|are\s+there|do\s+you|can\s+(?:i|you|we)|"
+    r"could\s+you|would\s+(?:it|you)|any\s+idea|tell\s+me)\b",
+    re.IGNORECASE,
+)
+
 # Words that describe wanting a helper rather than what the helper is for.
 # "I want to hire a helper" is entirely made of these; "helper for my elderly
 # mother" is not, and neither is "cooking and cleaning".
@@ -314,6 +330,19 @@ async def _extract(
             continue
         text = str(value).strip()
         if not text or text.lower() in {"unknown", "n/a", "na", "none", "not provided", "null"}:
+            continue
+        # A question is never a field answer. When the client asks us something
+        # ("what's the typical salary?"), the extractor sometimes files it as the
+        # very field being asked about — the field then looks answered and the
+        # question goes unanswered. Drop it: the ANSWER_THEN_ASK path handles the
+        # question, and the field stays open to be asked properly.
+        if _VALUE_IS_QUESTION.search(text):
+            logger.info(
+                "Conversation %s: ignoring '%s' for '%s' — it is a question, not an answer",
+                state.get("conversation_id"),
+                text[:40],
+                key,
+            )
             continue
         # "No preference" is only an answer if there was a question. Unasked,
         # it is the model filling in the form on the client's behalf.

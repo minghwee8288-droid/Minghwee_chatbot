@@ -65,7 +65,7 @@ _INTENT_ALIASES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"home\s*leave|vacation|going home", re.I), "home_leave"),
     (re.compile(r"passport", re.I), "passport_renewal"),
     (re.compile(r"direct\s*hir", re.I), "direct_hiring"),
-    (re.compile(r"hir(e|ing)|new helper|maid|domestic|elderly|childcare|kids|care", re.I), "new_hiring"),
+    (re.compile(r"hir(e|ing)|new helper|maid|worker|domestic|elderly|childcare|kids|care", re.I), "new_hiring"),
     (re.compile(r"fee|cost|price|charge|package", re.I), "fee_enquiry"),
     (re.compile(r"salary|wage|pay", re.I), "salary_enquiry"),
     (re.compile(r"assault|abuse|violen|unsafe", re.I), "dispute_assault"),

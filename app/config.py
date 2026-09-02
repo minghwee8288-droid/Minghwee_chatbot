@@ -169,7 +169,14 @@ class Settings(BaseSettings):
     rag_namespace: str = ""
 
     # --- Conversation ---
-    history_limit: int = 20
+    # How many past messages each turn loads from the DB into the prompt. The
+    # collected fields survive across turns in the checkpoint regardless, so this
+    # is not about re-asking answered questions — it is the free-text window the
+    # model reasons over. A full new_hiring qualification runs 20+ turns, and at
+    # 20 the earliest exchanges (an early salary question, a nuance the client
+    # gave once) scrolled out of view mid-flow. 40 keeps a long qualification
+    # whole without bloating every prompt.
+    history_limit: int = 40
 
     # Safety gate. When set, the bot only engages these numbers and stays
     # completely silent on every other conversation — the portal keeps working
