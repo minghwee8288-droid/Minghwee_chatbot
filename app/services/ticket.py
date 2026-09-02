@@ -677,6 +677,18 @@ def resolve_service(service_type: str | None, contact_type: str | None) -> str |
     contact = (contact_type or "").strip()
     if service_type == "new_hiring" and contact == "candidate":
         return CANDIDATE_HIRING
+    # "Transfer" means two opposite things depending on who is asking. A helper
+    # already in Singapore looking for a new employer drives the transfer flow —
+    # her own permit expiry, her own employer's consent, her own availability.
+    # An EMPLOYER who says "transfer" wants to *hire* a transfer helper, and
+    # asking him those same questions (the helper's name, her permit expiry, her
+    # current employer's consent, which number to reach him on) is exactly what
+    # four separate testers flagged as nonsensical. For an employer it is simply
+    # a hiring enquiry: route into new_hiring, where info_collector pre-seeds
+    # hire_source="transfer" so he is never asked "transfer or new hire?" again.
+    # Only a candidate keeps the helper-side transfer flow.
+    if service_type == "transfer" and contact != "candidate":
+        return "new_hiring"
     # A supplier or partner offering another helper keeps the bare registration
     # service: they raise no lead, so there is nothing to collect from them.
     if service_type == CANDIDATE_REGISTRATION and contact not in _THIRD_PARTY_CONTACTS:

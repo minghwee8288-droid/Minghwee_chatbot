@@ -476,6 +476,17 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             ", ".join(sorted(known)),
         )
 
+    # An employer who asked about a "transfer" helper is routed out of the
+    # helper-side transfer flow into new_hiring (resolve_service). He has already
+    # told us he wants a transfer helper, so seed hire_source and never put the
+    # "transfer or new hire?" question back to him.
+    if (
+        state.get("service_type") == "transfer"
+        and service_type == "new_hiring"
+        and not str(previous.get("hire_source") or "").strip()
+    ):
+        known["hire_source"] = "transfer"
+
     extracted = {**known, **extracted}
     collected = {**previous, **extracted}
 

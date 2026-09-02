@@ -143,10 +143,16 @@ _CONTACT_TYPES = {"employer", "candidate", "supplier", "partner"}
 # "I am looking for a maid" and "I am looking for work" both land on it, which
 # is the whole reason resolve_service() splits the two hiring flows. Forcing it
 # to employer would send every job seeker down the employer's questions.
+#
+# transfer is NOT here either, for the same reason. "Transfer" is raised by both
+# sides: a helper already in Singapore looking for a new employer, AND an
+# employer wanting to hire a transfer helper. Forcing it to employer sent a real
+# helper down the wrong flow; forcing it either way is wrong. Let the model
+# decide, fall back to employer (most inbound is), and let resolve_service()
+# split the flow — an employer's "transfer" is really a hiring enquiry.
 _CONTACT_BY_INTENT = {
     "direct_hiring": "employer",
     "replacement": "employer",
-    "transfer": "employer",
     "renewal": "employer",
     "home_leave": "employer",
     "passport_renewal": "employer",
@@ -157,6 +163,7 @@ _CONTACT_BY_INTENT = {
 # Applied only after the model has been given its say.
 _CONTACT_FALLBACK_BY_INTENT = {
     "new_hiring": "employer",
+    "transfer": "employer",
 }
 
 
