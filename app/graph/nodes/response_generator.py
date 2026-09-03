@@ -11,6 +11,7 @@ from app.graph.guards import (
     clamp_reply,
     holding_reply,
     is_degenerate,
+    leaks_internal_reasoning,
     looks_like_document,
     recent_bot_lines,
     strip_handover_talk,
@@ -192,6 +193,16 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
             "Conversation %s: discarded degenerate reply (%d chars): %r",
             state.get("conversation_id"),
             len(reply),
+            reply[:200],
+        )
+        reply = ""
+    elif leaks_internal_reasoning(reply):
+        # The model narrated its own reasoning to the client instead of answering
+        # — e.g. reading the empty-records instruction back at them. Drop it; the
+        # holding line below says the same thing in a way meant for a person.
+        logger.error(
+            "Conversation %s: discarded reply that leaked internal reasoning: %r",
+            state.get("conversation_id"),
             reply[:200],
         )
         reply = ""

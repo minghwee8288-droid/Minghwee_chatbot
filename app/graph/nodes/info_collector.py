@@ -14,6 +14,7 @@ from app.graph.guards import (
     clamp_reply,
     is_degenerate,
     last_bot_line,
+    leaks_internal_reasoning,
     looks_like_document,
     near_duplicate,
     recent_bot_lines,
@@ -881,6 +882,14 @@ async def _write(
     reply = strip_meta_commentary(reply.strip().strip('"'))
     if is_degenerate(reply) or looks_like_document(reply):
         logger.error("Discarded malformed collector reply: %r", reply[:200])
+        return fallback or FALLBACK_QUESTION
+
+    # The model reading its own reasoning back at the client instead of asking —
+    # e.g. copying the empty-records instruction. Same failure the response
+    # generator now guards; the collector answers mid-flow questions too, so it
+    # can hit it on the same salary turn.
+    if leaks_internal_reasoning(reply):
+        logger.error("Collector reply leaked internal reasoning: %r", reply[:200])
         return fallback or FALLBACK_QUESTION
 
     # Claire IS Ming Hwee. A reply narrating what "the agency" did with the

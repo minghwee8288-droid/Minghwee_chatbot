@@ -477,6 +477,38 @@ def speaks_of_us_as_a_third_party(reply: str) -> bool:
     return bool(_THIRD_PARTY_SELF.search(reply or ""))
 
 
+# The model narrating its own process to the client, UNBRACKETED — so
+# strip_meta_commentary (which only cuts brackets) never sees it, and it is
+# fluent so is_degenerate passes it too.
+#
+# Live, 2026-09-03: a salary-range question with nothing in the records. When
+# retrieval is empty, format_context used to hand the model a block reading
+# "(no relevant records found) ... You do not have information to answer this."
+# Kimi copied it straight to the client: "The client asked about salary range.
+# Records say 'no relevant records found', so I can't give a figure ... never
+# quote a figure that isn't there. Should I ask them the range, or handle this
+# together?" — its whole reply was internal monologue.
+#
+# Every marker below is language that can ONLY appear when the model is
+# describing its own reasoning or reading an instruction back; a genuine reply
+# to a client never contains any of them. So a match discards the whole reply in
+# favour of the holding line — there is no good sentence to salvage out of it.
+_INTERNAL_MONOLOGUE = re.compile(
+    r"\bno\s+relevant\s+records?\s+found\b"
+    r"|\byou\s+do\s+not\s+have\s+(?:the\s+)?information\s+to\s+answer\b"
+    r"|\bthe\s+client\s+(?:asked|wants|said|mentioned|is\s+asking|needs|requested)\b"
+    r"|\bshould\s+i\b[^?.!]*\bhandle\s+this\b"
+    r"|\bnever\s+quote\b"
+    r"|\bfigure\s+that\s+(?:isn'?t|is\s+not)\s+there\b",
+    re.IGNORECASE,
+)
+
+
+def leaks_internal_reasoning(reply: str) -> bool:
+    """Whether the reply is the model narrating its process rather than talking to the client."""
+    return bool(_INTERNAL_MONOLOGUE.search(reply or ""))
+
+
 def strip_handover_talk(reply: str) -> str:
     """Remove sentences promising a named colleague or a specific time.
 

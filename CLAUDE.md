@@ -165,6 +165,7 @@ because the lead is opened early and the ticket is created much later.
 | No prompt echo / degenerate output | `guards.is_degenerate` | Weak on unspaced scripts (Chinese, Burmese). |
 | Max 2 sentences (3 on a greeting, a handover close, or an answered question) | `guards.clamp_reply` | Logs the discarded tail deliberately. Two is one short of what those three turns structurally need — see §11. |
 | Claire never speaks of Ming Hwee as a third party | `guards.speaks_of_us_as_a_third_party` | "we sent it to the agency, they have passed it up" and prompt-leaked "as instructed". Falls back to the vetted holding line. |
+| No internal monologue reaches the client | `guards.leaks_internal_reasoning` | Unbracketed process-narration `strip_meta_commentary` misses: "no relevant records found", "the client asked...", "should I ask them or handle this", "never quote". Discards the whole reply for the holding line. The empty-records `rag.format_context` block was reworded so it is no longer a line to echo. |
 | A vague or mistyped answer does not close a field | `info_collector._unfinished` | Value is kept; the field returns to the front of the queue for one more ask. |
 | Never repeat an opener | `guards.strip_repeated_opener` | Checks several previous bot lines. |
 | One phone, one lead, ever | `lead.create_if_absent` (§1B) | **Currently scoped per-table — see §9.** |
@@ -371,6 +372,29 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-03** — **Model leaked its own reasoning to a client on a salary-range
+  question.** When retrieval came back empty, `rag.format_context` injected a block
+  containing the literal string `(no relevant records found)` and the instruction
+  *"You do not have information to answer this. Tell the client you will check..."*.
+  Kimi copied it almost verbatim to the client: *"The client asked about salary range.
+  Records say 'no relevant records found', so I can't give a figure ... never quote a
+  figure that isn't there. Should I ask them the range, or handle this together?"* —
+  the whole reply was internal monologue. It slipped every guard: fluent (not
+  degenerate), unbracketed (`strip_meta_commentary` only cuts brackets), no figure, no
+  named colleague. Two-part fix, both halves: (1) the empty-records block was reworded
+  to carry no quotable status line and no copyable instruction; (2) new guard
+  `leaks_internal_reasoning` discards any reply carrying process-narration markers
+  ("no relevant records found", "you do not have information to answer", "the client
+  asked/wants/said", "should I ... handle this", "never quote", "figure that isn't
+  there") — every one is language that can only appear when the model is describing its
+  own reasoning, so a match drops the whole reply for the holding line. Wired into both
+  `response_generator._clean`'s discard path and `info_collector._write` (the collector
+  answers mid-flow money questions, so it hits the same turn). Verified: all four leak
+  shapes caught, the grounded `$1,568` fee answer and the honest "I'll check with our
+  team" deflection both pass untouched. The separate question of whether fix E is
+  actually surfacing salary *figures* for this turn is unresolved pending the RAG log
+  line (`KB search returned N matches ... filters: service=...`) for that conversation.
 
 - **2026-09-02** — Fifth live round. Five defects, each reproduced from the log or a
   screenshot before it was touched.

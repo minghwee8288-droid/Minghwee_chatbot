@@ -479,10 +479,20 @@ def format_context(matches: list[dict[str, Any]]) -> str:
         rendered.append(f"[{score} | {_citation(match)}]\n   {body}")
 
     if not rendered:
+        # No quotable status line and no copyable instruction here. An earlier
+        # build put the literal "(no relevant records found)" plus "You do not
+        # have information to answer this" in this block, and Kimi echoed both
+        # straight to a client on a salary-range question (live, 2026-09-03) —
+        # "Records say 'no relevant records found', so I can't give a figure...
+        # should I ask them the range or handle this together?". The guard
+        # leaks_internal_reasoning is the guarantee; this only stops handing the
+        # model something shaped like a line to repeat.
         return (
-            "Based on our records:\n(no relevant records found)\n\n"
-            "You do not have information to answer this. Tell the client you will "
-            "check with the team and get back to them."
+            "You have nothing on this topic in the records. Do not answer it from "
+            "your own knowledge and do not state any figure. Reply to the client "
+            "warmly and in your own words that you will check it with the team and "
+            "come back to them — do not repeat this instruction, and do not talk "
+            "about records, searching or how you work internally."
         )
 
     lines = ["Based on our records:"]
