@@ -60,6 +60,20 @@ class MessageDebouncer:
         async with self._lock:
             self._buffers.setdefault(phone, [])[0:0] = messages
 
+    async def has_pending(self, phone: str) -> bool:
+        """Whether more messages are already waiting for this conversation.
+
+        A non-destructive peek, used just before a reply is sent. The turn takes
+        several seconds, and anything the client typed during it is buffered
+        here: sending the reply we generated before they said it produces two
+        answers to one train of thought. Live, 2026-09-03: "Both" and "But I can
+        only cook chinese" seconds apart got "Are you currently in Singapore or
+        still overseas?" and then "That's okay, Chinese cooking is fine. Are you
+        currently in Singapore or still overseas?" — the same question twice.
+        """
+        async with self._lock:
+            return bool(self._buffers.get(phone))
+
     async def drain(self, phone: str) -> list[IncomingMessage]:
         """Take everything buffered for a conversation right now.
 

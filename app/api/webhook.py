@@ -57,6 +57,10 @@ ALLOWLIST_BLOCK = "number not in BOT_ALLOWED_NUMBERS"
 # happened to fall outside the ratio by chance.
 _REPEAT_GUARD_WINDOW_SECONDS = 90
 
+# How many times one locked run will fold in messages that arrived mid-turn.
+# Bounded so a message storm cannot spin here; the final pass always sends.
+_MAX_PASSES = 5
+
 # One lock per conversation, so turns on the same thread never overlap.
 _LOCKS: dict[str, asyncio.Lock] = {}
 
@@ -692,10 +696,17 @@ async def process_batch(phone: str, messages: list[IncomingMessage]) -> None:
         pending = _dedupe(messages + await debouncer.drain(phone))
         # A message that genuinely arrives after the reply is a new turn, so
         # keep going until nothing is left. Bounded in case of a message storm.
-        for _ in range(5):
+        #
+        # allow_hold lets a pass drop its reply when the client is still typing,
+        # so the next one answers everything together. The LAST pass is never
+        # allowed to: otherwise a client who keeps typing through all five gets
+        # silence, which is worse than a reply that is one message behind.
+        for attempt in range(_MAX_PASSES):
             if not pending:
                 break
-            await _process_locked(phone, pending)
+            await _process_locked(
+                phone, pending, allow_hold=attempt < _MAX_PASSES - 1
+            )
             pending = _dedupe(await debouncer.drain(phone))
 
 
@@ -741,7 +752,9 @@ def _predates_our_last_reply(
     return all(m.timestamp <= sent_at for m in messages)
 
 
-async def _process_locked(phone: str, messages: list[IncomingMessage]) -> None:
+async def _process_locked(
+    phone: str, messages: list[IncomingMessage], *, allow_hold: bool = True
+) -> None:
     # Re-read after acquiring the lock: the previous batch may have handed over.
     conversation = await conversation_service.get_by_phone(phone)
     if conversation is None:
@@ -888,6 +901,27 @@ async def _process_locked(phone: str, messages: list[IncomingMessage]) -> None:
     if repeats_us and ("?" not in reply or _predates_our_last_reply(conversation, messages)):
         logger.info(
             "Conversation %s: reply repeats our last message — not sending it again",
+            conversation["id"],
+        )
+        return
+
+    # The client kept typing while we were generating. This reply answers only
+    # the first half of what they said, and the loop in process_batch is about
+    # to run again with the rest — so sending it produces two replies to one
+    # train of thought, the second repeating the first's question. Drop it and
+    # let the next pass answer everything at once; nothing is lost, because the
+    # messages this turn consumed are already in the transcript the next turn
+    # reads. The graph has already run either way, so this suppresses a message,
+    # not a ticket.
+    #
+    # Live, 2026-09-03: "Both" then "But I can only cook chinese" seconds apart
+    # got "Are you currently in Singapore or still overseas?" immediately
+    # followed by "That's okay, Chinese cooking is fine. Are you currently in
+    # Singapore or still overseas?" — the same question twice in one minute.
+    if allow_hold and await debouncer.has_pending(phone):
+        logger.info(
+            "Conversation %s: client is still typing — holding this reply so the next "
+            "pass answers all of it at once",
             conversation["id"],
         )
         return
