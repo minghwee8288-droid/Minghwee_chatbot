@@ -172,6 +172,8 @@ because the lead is opened early and the ticket is created much later.
 | Ticket survives a dead lead link | `ticket.create` retry | Drops `created_lead_id`, records `notes.lead_link_broken`. |
 | NRIC never reaches the LLM | `utils.redact_nric` | Applied to the batch text; the raw body is still stored in the DB. |
 | Assault: keyword override, no LLM confidence | `intent_classifier.ASSAULT_PATTERNS` | **English-only — see §9.** |
+| A transfer is never asked the first-time-hire question | `intent_classifier._TRANSFER_PATTERN` | "transfer" beside maid/helper/employer/permit/service, or "change employer", forces `transfer`. Does not fire while another service is mid-collection. English-only (§9.2). |
+| A job-seeker is never met with a holding line | `intent_classifier._JOBSEEKER_PATTERN` | "need a job", "provide work to us", "someone's home … work", "I am a maid" force `candidate_registration`. Skipped for a known employer, so "someone to work at **my** home" stays `new_hiring`. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -379,6 +381,28 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-03** — **Transfer and job-seeker forced deterministically; the compound
+  "transfer out + hire new → new_hiring" rule is REVERSED.** Two live failures, both
+  from the client's own screenshots. (A) *"Hello"* → *"I need to transfer my maid to
+  someone else because I need to find a new maid"* → **"Is this your first time hiring a
+  domestic helper?"**. That was not a model slip: the classifier prompt explicitly
+  instructed it, telling the model to classify a compound release-plus-hire as the
+  collectible half, `new_hiring`. Per the client's written spec (transfer = an existing
+  helper on a valid permit moving between employers; *"the word transfer near
+  maid/helper/employer means TRANSFER — never New Hiring"*, and never ask a transfer
+  client the first-time question), **transfer now wins whenever the word is used about a
+  helper**, even in a compound message; the onward hire becomes an agent step. The
+  new_hiring preference survives only for a compound with **no** mention of a transfer
+  ("my helper is leaving, I want an Indonesian one"). (B) A job-seeker — *"I heard you
+  provide some work to us so that we can earn money"*, *"I can go to someone's home and
+  do some work"*, *"I said I need a job"* — was never read as `candidate_registration`
+  and got the same holding line twice, prompting *"what is something to check with your
+  team"*. Both are now keyword overrides beside `ASSAULT_PATTERNS`, because the prompt
+  alone has now failed on each of them live. Neither fires while a different service is
+  mid-collection, and the job-seeker net is skipped for a known employer so *"someone to
+  work at **my** home"* stays `new_hiring` — verified against six employer phrasings.
+  Both are English-only, so they inherit §9.2.
 
 - **2026-09-03** — **Model switched to `openai/gpt-5.6-luna`** (from `moonshotai/kimi-k3`).
   Non-pro Luna deliberately — the `luna-pro` slug bakes in `reasoning.mode=pro` (heavy
