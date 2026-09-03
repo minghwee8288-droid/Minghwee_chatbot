@@ -11,8 +11,10 @@ from app.graph.guards import (
     clamp_reply,
     holding_reply,
     is_degenerate,
+    last_bot_line,
     leaks_internal_reasoning,
     looks_like_document,
+    near_duplicate,
     recent_bot_lines,
     strip_handover_talk,
     strip_meta_commentary,
@@ -291,6 +293,24 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         reply = fallback
 
     reply = strip_repeated_opener(reply, *recent_bot_lines(state.get("history_text", "")))
+
+    # Saying the same thing twice running is the clearest sign we are stuck, and
+    # the client reads it as not being listened to. Live, 2026-09-03: a job
+    # seeker was told "I'll check with the team and come back to you shortly."
+    # twice, word for word, and answered "what is something to check with your
+    # team". info_collector has guarded against this for a while; this node
+    # never did. If we have nothing new to say, vary the wording AND put a
+    # person on it — a second identical holding line is not a reply.
+    previous = last_bot_line(state.get("history_text") or "")
+    if previous and near_duplicate(reply, previous):
+        logger.warning(
+            "Conversation %s: reply repeated the previous message (%r) — varying it "
+            "and handing over",
+            state.get("conversation_id"),
+            reply[:120],
+        )
+        reply = holding_reply(state.get("history_text") or "")
+        needs_handover = True
 
     update: dict[str, Any] = {"reply": reply, "needs_handover": needs_handover}
     if needs_handover and not state.get("handover_reason"):

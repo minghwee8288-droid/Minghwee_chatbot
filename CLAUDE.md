@@ -382,6 +382,32 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-09-03** — **Prompt audit: six contradictions removed.** Confirmed the live model
+  is `openai/gpt-5.6-luna`, so the recent misclassifications were Luna's — but the audit
+  found the prompts were instructing much of the bad behaviour outright, which no model
+  change would fix. (1) **IDENTITY claimed to be human.** *"You are a real person on the
+  team"* sat one sentence before *"you are Ming Hwee's AI assistant. You do not pretend
+  to be human."* A leftover from the pre-Claire persona, and a standing instruction to
+  lie about being an AI. Removed. (2) **Two contradictory sentence caps.** Rule 6 and
+  `style.py` both said *"never three"*, while rule 2 requires a handover line **plus**
+  the "anything else?" offer, first contact needs greeting + question, and
+  `ANSWER_THEN_ASK` says "no more than three" — the guard was widened to 3 for exactly
+  these on 2026-09-02 but the prompt still forbade it. Rule 6 now names the three cases
+  where a third sentence is *expected*, and caps at four. (3) **`style.py` banned the
+  offer rule 2 requires** — *"Never offer further help as a closing line"* vs rule 2's
+  mandatory *"In the meantime, is there anything else I can help you with?"*. Now carved
+  out. (4) **`style.py` banned the "I'll confirm the exact amount" that rule 5 requires**
+  for money. Now exempted for fees/salaries/levies. (5) **`style.py` still said
+  "hand over silently"** — the reverse of the announced-handover policy since 2026-09-01,
+  and it also skipped rule 2b. Rewritten. (6) **`style.py` said agents "ask 2-3 things"**
+  against rule 8's one-question-per-message; reconciled (one question may cover related
+  details). Also: the unknown-contact block said only *"default to employer tone"*, which
+  helped bury the job-seeker — it now says to read the message first. **Code:**
+  `response_generator` never checked `near_duplicate`, so it sent *"I'll check with the
+  team and come back to you shortly."* twice word for word to a job seeker (live), who
+  replied *"what is something to check with your team"*. It now varies the wording and
+  hands over — repeating ourselves means we are stuck.
+
 - **2026-09-03** — **Transfer and job-seeker forced deterministically; the compound
   "transfer out + hire new → new_hiring" rule is REVERSED.** Two live failures, both
   from the client's own screenshots. (A) *"Hello"* → *"I need to transfer my maid to
