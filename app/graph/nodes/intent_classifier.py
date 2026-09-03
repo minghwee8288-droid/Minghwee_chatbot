@@ -20,7 +20,9 @@ from app.graph.state import (
     TICKET_ONLY_INTENTS,
     TICKETABLE_INTENTS,
     ConversationState,
+    effective_contact_type,
 )
+from app.services import ticket as ticket_service
 
 logger = logging.getLogger(__name__)
 
@@ -313,36 +315,10 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
                 f"{result.get('reasoning') or ''}".strip()
             )
 
-    # An in-flight service survives an ambiguous follow-up message — UNLESS the
-    # client has plainly named and asked for different, concrete work while a
-    # topic is parked. Live, 2026-09-03: after a hiring + salary handover, "I am
-    # looking for transfer helper" read to the model as 'other', the parked
-    # service was glued back on, and blocked_topic_responder asked "Of course —
-    # which service can I help you with?" — for the very service the client had
-    # just named. They had to repeat "I want transfer service I have tell you
-    # that" before it started collecting. A standalone service word, asked for,
-    # overrides the stickiness so the new request routes to its own collection.
-    # Gated on blocked_topics (a handover has happened) and on _WANTS_SERVICE so
-    # it cannot hijack an ordinary answer given mid-collection.
+    # An in-flight service survives an ambiguous follow-up message.
     if active_service and intent in {"other", "greeting", "smalltalk"}:
-        named = (
-            _named_service(message)
-            if state.get("blocked_topics") and _WANTS_SERVICE.search(message)
-            else None
-        )
-        if named and named != active_service:
-            logger.info(
-                "Conversation %s: client named %r while %r is parked — routing the "
-                "new request instead of sticking to the parked topic",
-                state.get("conversation_id"),
-                named,
-                active_service,
-            )
-            service_type = named
-            intent = named
-        else:
-            service_type = active_service
-            intent = active_service if active_service in ALL_INTENTS else intent
+        service_type = active_service
+        intent = active_service if active_service in ALL_INTENTS else intent
 
     # A price question inside a live enquiry is part of that enquiry, not a new
     # one. Without this, "how much do you charge" halfway through new_hiring
@@ -369,6 +345,39 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
             "Keeping active service %s despite a %s question", active_service, service_type
         )
         service_type = active_service
+
+    # Deterministic new-service correction, independent of how the model labelled
+    # this turn. If the client NAMES and ASKS FOR concrete work whose topic is
+    # not the one we resolved to, and we resolved to a topic a human already owns
+    # while the named work is NOT itself parked, this is a new request that the
+    # model dragged onto the parked topic — route it to its own collection.
+    #
+    # Live, 2026-09-03, TWICE. First "I am looking for transfer helper" read as
+    # 'other' and stickiness glued the parked service on; then "Also I am looking
+    # for transfer helper" read CONFIDENTLY as new_hiring (the word "helper",
+    # while a new_hiring ticket was parked). Both fell into
+    # blocked_topic_responder and were answered "Of course — which service can I
+    # help you with?" — for the service just named. An earlier fix only covered
+    # the 'other' case; keying on "dragged onto a PARKED topic" covers the
+    # confident mislabel too. The `landed_key in parked` gate is what stops this
+    # from ever yanking a LIVE, unparked collection off its rails: an ordinary
+    # mid-flow answer resolves to a service that is in progress, not parked.
+    named = _named_service(message)
+    if named and _WANTS_SERVICE.search(message) and named != service_type:
+        contact = effective_contact_type(state)
+        parked = state.get("blocked_topics") or {}
+        landed_key = ticket_service.topic_key_for(service_type, contact, intent)
+        named_key = ticket_service.topic_key_for(named, contact, named)
+        if landed_key in parked and named_key not in parked:
+            logger.info(
+                "Conversation %s: message names %r but was read as %r, which is parked "
+                "— routing the new request to its own collection",
+                state.get("conversation_id"),
+                named,
+                service_type,
+            )
+            service_type = named
+            intent = named
 
     try:
         confidence = float(result.get("confidence") or 0.0)
