@@ -479,11 +479,44 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     "candidate_new_hiring": [
         Field("full_name", "name", "May I know your name?"),
         Field("nationality", "nationality", "Which country are you from?"),
+        # The categories here are deliberately WORD FOR WORD the ones the
+        # employer's `requirement` field offers. A consultant matching this
+        # helper to a family reads both sides of the same pairing, so if one
+        # side said "eldercare" and the other "caring for the elderly" the
+        # match has to be made by eye. Change these two lists together or not
+        # at all.
+        Field(
+            "work_scope",
+            "the work she can take on",
+            "What kind of work are you able to take on — childcare, eldercare, or "
+            "general housework and cooking?",
+            max_asks=2,
+            group="what she can do",
+            options=(
+                "childcare",
+                "eldercare",
+                "general housework and cooking",
+                "all of the above",
+            ),
+        ),
         Field(
             "experience",
             "experience",
             "How many years of experience do you have as a helper?",
             max_asks=2,
+            group="what she can do",
+        ),
+        # Deliberately separate from work_scope: what she is WILLING to do and
+        # what she has actually been employed to do are different facts, and the
+        # gap between them is exactly what a consultant needs to see. "I can do
+        # all of the above" with two years of childcare only is a placeable
+        # helper, but not for a bedridden grandmother.
+        Field(
+            "experience_field",
+            "the work she has actually done before",
+            "Which of those have you actually worked in before?",
+            max_asks=2,
+            group="what she can do",
         ),
         Field(
             "current_location",
