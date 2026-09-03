@@ -286,11 +286,14 @@ can do.
 
 If "Our records" above answers it, answer it in one sentence, plainly and specifically, \
 using their figures, lists or steps. Quote a document checklist as a short inline list, \
-not as bullet points.
+not as bullet points. If a figure, band or range that fits what they asked is written in \
+the records — even an approximate one — you MUST give it as a guide; deflecting to "I'll \
+confirm with the team" when the number is sitting in the records above is the exact \
+failure this instruction exists to stop.
 
-If the records do not answer it, say in one sentence that you will confirm that and come \
-back to them. Do not guess, do not give a "usually it is around..." figure, and do not \
-invent a document list.
+If the records genuinely do not contain it, say in one sentence that you will confirm \
+that and come back to them. Do not guess, do not give a "usually it is around..." figure \
+from your own knowledge, and do not invent a document list.
 
 Then ask your own question. Total: no more than three short sentences."""
 
