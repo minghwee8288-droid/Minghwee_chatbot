@@ -33,6 +33,9 @@ from app.graph.guards import (
 )
 from app.config import settings
 from app.graph.closure import is_closing, is_pure_acknowledgement
+# Shared, not duplicated (§9.8): the one detector for "the client named a concrete
+# service in their own words". intent_classifier owns it; this node only reads it.
+from app.graph.nodes.intent_classifier import _named_service
 from app.graph.llm import complete
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
@@ -365,7 +368,15 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
     # nothing about the parked topic: they have already been told it is with a
     # human, and repeating it here is what turns "I want another service" into
     # another round of "still checking".
-    if not answering and _NEW_SERVICE_REQUEST.search(message):
+    #
+    # But only when they have NOT already named the service. Asking "which
+    # service can I help you with?" at someone who just said "I am looking for
+    # transfer helper" is the exact "you are ignoring me" failure a tester hit
+    # twice (2026-09-03). The routing fix in intent_classifier sends a named,
+    # not-yet-parked service straight to collection so it never reaches here; if
+    # a named service does land here it is a chase on a parked topic, which the
+    # reassure/chase handling below answers properly.
+    if not answering and _NEW_SERVICE_REQUEST.search(message) and not _named_service(message):
         logger.info(
             "Conversation %s: client asking for work other than blocked topic %r "
             "(ticket %s) — asking which service",
