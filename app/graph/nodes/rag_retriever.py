@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Any
 
+from app.config import settings
 from app.graph.guards import last_bot_line
 from app.graph.state import ConversationState, effective_contact_type
 from app.services import contact as contact_service
@@ -117,13 +118,54 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
     # Routing labels are per chunk, so the filter runs before the vector search.
     # Each one is inclusive of its catch-all bucket inside the match function;
     # anything we cannot determine is passed as None and simply not filtered on.
+    query = _search_query(state)
+    contact = effective_contact_type(state)
+    nationality = _nationality(state)
+    service = _service_filter(state)
     matches = await rag.search(
-        _search_query(state),
-        service_type=_service_filter(state),
-        contact_type=effective_contact_type(state),
-        nationality=_nationality(state),
+        query,
+        service_type=service,
+        contact_type=contact,
+        nationality=nationality,
     )
     best = rag.best_similarity(matches)
+
+    # A service filter can starve a question the knowledge base can answer.
+    # Live, 2026-09-03: with a passport_renewal ticket parked, "How much time it
+    # takes in renewal" was filtered to the four passport_renewal rows, scored
+    # 0.385 against them and fell under the soft floor, so the client got the
+    # holding line. The rows that answer it — work permit renewal, filed under
+    # 'renewal' — score 0.464 and were excluded by the filter, not by the
+    # question. The next message, which happened to say the word "passport",
+    # scored 0.506 and was answered, so from the client's side we ignored one
+    # question and then answered it a message late.
+    #
+    # Same shape as the money-question carve-out in _service_filter above, and
+    # handled here instead of by adding another keyword to it, because the
+    # trigger is not the wording of the question — it is the filtered search
+    # coming back empty-handed. Only ever widens: the narrow result is kept
+    # unless the wider one genuinely scores better. The nationality filter is
+    # deliberately NOT dropped — the KB holds per-nationality passport timings,
+    # and a confident answer about the wrong country is worse than a holding
+    # line.
+    if service and best < settings.rag_soft_floor:
+        wider = await rag.search(
+            query,
+            service_type=None,
+            contact_type=contact,
+            nationality=nationality,
+        )
+        wider_best = rag.best_similarity(wider)
+        if wider_best > best:
+            logger.info(
+                "Retrieval under service=%s scored %.3f (floor %.2f); searching the whole "
+                "knowledge base found %.3f — using the wider result",
+                service,
+                best,
+                settings.rag_soft_floor,
+                wider_best,
+            )
+            matches, best = wider, wider_best
 
     return {
         "rag_matches": matches,

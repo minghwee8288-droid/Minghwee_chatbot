@@ -120,6 +120,31 @@ def _looks_like_a_person(name: str) -> bool:
     return not any(word.strip(".'-").lower() in _NOT_A_PERSON for word in words)
 
 
+# A requirement, condition or house rule the client states off their own bat, as
+# opposed to an answer to whatever we asked. The prompt is told to acknowledge
+# these; this is the half that does not depend on the model noticing. Live,
+# 2026-09-03: "She shouldn't do smoke and drinks not allowed in my home please"
+# was met with the next question and no reaction, the client asked "Did you read
+# this?", and the model answered "Yes, I read it" while paraphrasing a
+# completely different message.
+#
+# Deliberately narrow. "can't" and "don't" are left out because they are far
+# more often about the CLIENT ("I can't say yet", "I don't have a case ID") than
+# a requirement about the helper, and a note that fires on every other turn
+# would put the echoing back that the no-repeat rule exists to stop.
+_VOLUNTEERED_REQUIREMENT = re.compile(
+    r"\b(?:should|must|shall|will)\s+not\b"
+    r"|\b(?:shouldn|mustn|wouldn|won|isn|aren)\'?t\b"
+    r"|\bnot\s+(?:allowed|permitted|acceptable)\b"
+    r"|\bno\s+(?:smoking|smoke|drinking|drinks|alcohol|boyfriend|boyfriends|"
+    r"handphone|tattoo|pork|beef)\b"
+    r"|\b(?:must|should|needs?\s+to|has\s+to)\s+(?:be\s+able\s+to|know\s+how)\b"
+    r"|\bprefer(?:ably)?\s+(?:someone|a\s+helper|her\s+to|non[- ])\b"
+    r"|\bi\s+(?:want|need)\s+(?:someone|a\s+helper|her)\s+(?:who|to\s+be)\b",
+    re.IGNORECASE,
+)
+
+
 def _prior_hires(state: ConversationState) -> int:
     """Placements on file for this number, coerced safely to an int."""
     try:
@@ -735,6 +760,20 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "how many, we are not showing them their file — and then ask your question."
         )
 
+    # They stated a requirement rather than answering; say so before asking the
+    # next thing. Not conditional on the extractor having found a home for it —
+    # the failure this fixes is conversational, and a client whose requirement
+    # is silently filed still thinks we ignored them.
+    requirement_note = ""
+    if _VOLUNTEERED_REQUIREMENT.search(state.get("incoming_text") or ""):
+        requirement_note = (
+            f"{chr(92)}n{chr(92)}nThe client has just stated a requirement or a house rule of their "
+            "own. Acknowledge that one thing in a short clause before your question — "
+            "plainly, in your own words, no repeating their sentence back at them and no "
+            "promising anything about it — then ask. Do not let it pass without a word, "
+            "and do not claim to have read it while responding to something else."
+        )
+
     missing = ticket_service.missing_fields(service_type, collected)
 
     # A field can hold a value and still not be finished — see _unfinished().
@@ -800,6 +839,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             )
             + dropped_note
             + returning_note
+            + requirement_note
             + follow_up_notes.get(next_field.key, "")
             + answer_first
         )

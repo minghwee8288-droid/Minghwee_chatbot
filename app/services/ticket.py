@@ -453,9 +453,17 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             ),
         ),
         # --- Anything else ---
+        #
+        # Also the bucket for a requirement the client volunteers that no other
+        # field covers. Live, 2026-09-03: "She shouldn't do smoke and drinks not
+        # allowed in my home please" was recorded nowhere and never mentioned
+        # again — the label said only "anything else we should know", which is
+        # not something an extractor reads a house rule into. The client noticed
+        # ("Did you read this?") and had to ask twice before we acknowledged it.
         Field(
             "additional_notes",
-            "anything else we should know",
+            "any other requirements, house rules or preferences about the helper "
+            "(e.g. no smoking, no drinking, no boyfriend, must be able to swim)",
             "Anything else I should note down before I pull this together?",
             max_asks=1,
             optional=True,
@@ -544,11 +552,57 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     # §6 — collects nothing at all.
     "direct_hiring": [],
     # §4
+    # §4 — replacement. Four questions were not enough to shortlist anybody:
+    # the agent got a name, a reason and a date, then had to start the
+    # conversation over to find out how long the current helper had been there,
+    # whether we placed her in the first place, what the client wants instead,
+    # and whether the outgoing helper is going home or to another employer —
+    # which is the difference between a repatriation and a transfer out, and
+    # decides who in the office picks the case up. Added at the client's request,
+    # 2026-09-03.
     "replacement": [
         _case_id(),
         Field("helper_name", "helper's name", "May I know your current helper's name?", max_asks=2),
+        Field(
+            "helper_tenure",
+            "how long the current helper has been with them",
+            "How long has your current helper been with you?",
+            max_asks=2,
+        ),
+        # Deliberately a question and not a database read. prior_hires says
+        # whether we have ever placed ANYONE with them, which does not say
+        # whether we placed THIS helper — `placements.candidate_id` is null on
+        # most rows, so there is nothing to match her against.
+        Field(
+            "helper_from_us",
+            "whether the current helper came from us",
+            "Is your current helper from Ming Hwee, or did you hire her elsewhere?",
+            max_asks=2,
+            options=("from Ming Hwee", "hired elsewhere"),
+        ),
         Field("reason", "reason for the replacement", "What is the reason for the replacement?"),
-        Field("timeline", "timeline", "When would you need the replacement by?"),
+        Field(
+            "current_helper_exit",
+            "what happens to the current helper",
+            "Are you sending your current helper back to her home country, or "
+            "transferring her to another employer?",
+            max_asks=2,
+            options=("going home", "transferring to another employer", "not decided yet"),
+        ),
+        Field(
+            "timeline",
+            "timeline",
+            "When are you planning to replace her, and when would you ideally want "
+            "the new helper to start?",
+            max_asks=2,
+        ),
+        Field(
+            "replacement_preferences",
+            "what they want in the replacement helper",
+            "What are you looking for in the replacement helper — nationality, "
+            "experience, languages, or anything else that matters to you?",
+            max_asks=2,
+        ),
     ],
     # An EMPLOYER's transfer. "Transfer" means two opposite things from this
     # side — taking ON a helper already in Singapore, or RELEASING their own to
@@ -1170,6 +1224,10 @@ _DETAIL_LABELS = {
     "cooking": "Cooking",
     "rest_day": "Rest day",
     "additional_notes": "Also mentioned",
+    "helper_tenure": "Current helper's time with them",
+    "helper_from_us": "Current helper placed by us",
+    "current_helper_exit": "Current helper going",
+    "replacement_preferences": "Wants in the replacement",
     "referral_source": "Heard about us via",
     "referrer_name": "Referred by",
     "start_timeline": "Start date",

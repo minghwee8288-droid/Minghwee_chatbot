@@ -173,6 +173,8 @@ because the lead is opened early and the ticket is created much later.
 | NRIC never reaches the LLM | `utils.redact_nric` | Applied to the batch text; the raw body is still stored in the DB. |
 | Assault: keyword override, no LLM confidence | `intent_classifier.ASSAULT_PATTERNS` | **English-only — see §9.** |
 | A transfer is never asked the first-time-hire question | `intent_classifier._TRANSFER_PATTERN` | "transfer" beside maid/helper/employer/permit/service, or "change employer", forces `transfer`. Does not fire while another service is mid-collection. English-only (§9.2). |
+| A volunteered requirement is acknowledged, not silently filed | `info_collector._VOLUNTEERED_REQUIREMENT` | Adds a note to the collector instruction. Narrow on purpose — "can't"/"don't" excluded. |
+| A service filter never starves an answerable question | `rag_retriever` (widening retry) | Below the soft floor, retries with no service filter. Nationality is kept. |
 | A returning client is never asked if they have hired before | `info_collector._known_fields` | Filled from non-archived `placements`. Only a POSITIVE count is evidence — 0 also means "unknown number". |
 | An answer to our own question cannot be dragged onto a parked topic | `intent_classifier` (live-collection rule) | Unless the client names that service or chases its status. |
 | A job-seeker is never met with a holding line | `intent_classifier._JOBSEEKER_PATTERN` | "need a job", "provide work to us", "someone's home … work", "I am a maid" force `candidate_registration`. Skipped for a known employer, so "someone to work at **my** home" stays `new_hiring`. |
@@ -400,6 +402,45 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-03** — **Replacement collects five more things; a parked service no longer
+  starves retrieval; a volunteered requirement is acknowledged.** (A) **`replacement`
+  went from 4 fields to 8**, at the client's request: how long the current helper has
+  been with them, whether we placed her, what happens to her (home vs transferred out —
+  the difference between a repatriation and a transfer, and it decides who picks the case
+  up), a two-sided timeline, and what they want in the replacement. `helper_from_us` is
+  deliberately a question and not a `prior_hires` read: that count says whether we have
+  placed *anyone* with them, not whether we placed *this* helper, and
+  `placements.candidate_id` is null on most rows so there is nothing to match her
+  against. (B) **A service filter buried an answerable question.** Live: with a
+  `passport_renewal` ticket parked, *"How much time it takes in renewal"* was filtered to
+  the four `passport_renewal` rows, scored **0.385** and fell under the 0.40 soft floor,
+  so the client got the holding line — while the rows that answer it (work permit
+  renewal, filed under `renewal`) score **0.464** and were excluded by the filter, not by
+  the question. The next message happened to contain the word "passport", scored 0.506
+  and was answered, so from the client's side we ignored a question and then answered it
+  a message late. `rag_retriever` now retries with **no service filter** whenever the
+  filtered search comes back under the floor, keeping the better of the two. Handled here
+  rather than as another `_service_filter` keyword because the trigger is not the wording
+  of the question — it is the filtered search coming back empty-handed. **Nationality is
+  deliberately kept** on the retry: the KB holds per-nationality passport timings and a
+  confident answer about the wrong country is worse than a holding line. Measured after:
+  0.385 → 0.443 (answers), and *"how much do you charge"* still correctly falls to the
+  holding line, so the widening does not turn everything into a confident answer.
+  (C) **A stated requirement was silently dropped.** *"She shouldn't do smoke and drinks
+  not allowed in my home please"* got the next question with no reaction; the client
+  asked *"Did you read this?"* and the model replied *"Yes, I read it"* while paraphrasing
+  a **different** message, then admitted the skip only when pushed a second time. Three
+  parts: `additional_notes`' label was widened from "anything else we should know" — which
+  is not something an extractor reads a house rule into — to name requirements, house
+  rules and preferences outright; `COLLECTOR_INSTRUCTION`'s "never repeat their sentence
+  back" rule was **carved out**, since it was written about echoing the answer to the
+  question just asked and was being applied to volunteered requirements too (another
+  prompt instructing the bad behaviour); and `_VOLUNTEERED_REQUIREMENT` adds the
+  acknowledgement note mechanically so it does not depend on the model noticing. The
+  pattern is narrow on purpose — `can't` and `don't` are excluded because they are far
+  more often about the client ("I can't say yet", "I don't have a case ID"). Verified: all
+  6 requirement shapes fire, all 19 ordinary answers from that transcript stay quiet.
 
 - **2026-09-03** — **The hiring flow asks the database before it asks the client, and an
   answer to our own question can no longer be swallowed by a parked topic.** Both from
