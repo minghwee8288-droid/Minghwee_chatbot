@@ -261,6 +261,48 @@ def _chasing(state: ConversationState) -> bool:
     )
 
 
+# A general information question about a service, as opposed to a chase on the
+# client's own case. "How long does passport renewal take?" is answerable from
+# the knowledge base whether or not a ticket is parked; "any update on my
+# passport?" is not, and must keep going to the holding line.
+#
+# Live, 2026-09-03, in two separate chats: "how long does passport renewal take?"
+# and "Tell me one thing how long does passport renewal take for my filipino
+# helper" were both answered "a live agent is handling it" — while the row that
+# answers them scores 0.814. The classifier reads them as intent
+# 'passport_renewal' (a SERVICE), which is not in KB_QUESTION_INTENTS, so the
+# question failed the same membership test in two places at once: the router
+# never ran retrieval, and _answerable() would have refused anyway. Asking about
+# a service is not the same as chasing a case.
+_GENERAL_INFO = re.compile(
+    r"\bhow\s+long\s+(?:does|do|will|is|it)\b"
+    r"|\bhow\s+much\b"
+    r"|\bhow\s+many\b"
+    r"|\bwhat\s+(?:documents?|papers?|forms?)\b"
+    r"|\bwhat\s+(?:is|are)\s+the\s+(?:process|procedure|steps?|requirements?|timeline|cost)\b"
+    r"|\bwhat\s+do\s+i\s+need\b"
+    r"|\bis\s+there\s+(?:a|any)\s+(?:fee|cost|charge)\b",
+    re.IGNORECASE,
+)
+
+# Status language. These are a chase even when phrased with "how long".
+_CHASING_STATUS = re.compile(
+    r"\bany\s+(?:update|news)\b"
+    r"|\bwhat'?s?\s+(?:the\s+)?status\b"
+    r"|\bhow\s+far\b"
+    r"|\bis\s+it\s+(?:done|ready|approved|confirmed)\b"
+    r"|\bstill\s+waiting\b"
+    r"|\bprogress\b",
+    re.IGNORECASE,
+)
+
+
+def asks_general_info(message: str) -> bool:
+    """Whether the message asks about a service in general, not about their case."""
+    text = message or ""
+    return bool(_GENERAL_INFO.search(text)) and not _CHASING_STATUS.search(text)
+
+
 def _answerable(state: ConversationState) -> bool:
     """Whether this is a general question our own records can answer.
 
@@ -279,7 +321,9 @@ def _answerable(state: ConversationState) -> bool:
     your requirements..." on a search that returned 0 matches. A weak best score
     is the same failure in slower motion, so the soft floor applies too.
     """
-    if state.get("intent") not in KB_QUESTION_INTENTS:
+    if state.get("intent") not in KB_QUESTION_INTENTS and not asks_general_info(
+        state.get("incoming_text") or ""
+    ):
         return False
     if not state.get("rag_matches"):
         return False

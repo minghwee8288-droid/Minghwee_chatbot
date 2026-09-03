@@ -10,7 +10,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from app.config import settings
-from app.graph.nodes.blocked_topic_responder import blocked_topic_responder
+from app.graph.nodes.blocked_topic_responder import asks_general_info, blocked_topic_responder
 from app.graph.nodes.handover_executor import handover_executor
 from app.graph.nodes.info_collector import info_collector
 from app.graph.nodes.intent_classifier import intent_classifier
@@ -71,8 +71,19 @@ def route_after_intent(state: ConversationState) -> str:
     # the same responder, which then has something to say beyond "still checking
     # on that". Everything else — a chase, a correction, a new detail — takes
     # the direct route as before.
+    # asks_general_info covers the questions the classifier labels with a SERVICE
+    # name rather than a question intent — "how long does passport renewal take?"
+    # comes back as intent 'passport_renewal', which is not in
+    # KB_QUESTION_INTENTS, so it used to skip retrieval entirely and be answered
+    # "a live agent is handling it" while the row that answers it sat in the
+    # knowledge base at 0.814 similarity (live, twice, 2026-09-03). Retrieval
+    # runs; route_after_rag sends it back to the same responder, which can now
+    # actually answer it. A chase ("any update?") is excluded and still parks.
     if _blocked_topic(state):
-        return "rag_retriever" if intent in KB_QUESTION_INTENTS else "blocked_topic_responder"
+        answerable_question = intent in KB_QUESTION_INTENTS or asks_general_info(
+            state.get("incoming_text") or ""
+        )
+        return "rag_retriever" if answerable_question else "blocked_topic_responder"
 
     # Assault escalates immediately — no retrieval, no questions. Topic-scoped
     # like everything else once a ticket exists (the check above catches a

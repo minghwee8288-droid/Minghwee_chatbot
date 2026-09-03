@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 
 TABLE = "wp_chat_messages"
 
+# sent_by marker for the WhatsApp Business auto-reply. Stored so duplicate
+# suppression and the portal see it, but never rendered into the LLM history
+# and never counted as agent activity — see store_auto_reply/format_history.
+AUTO_REPLY_SENDER = "whatsapp_auto"
+
 # Whapi echoes our own sends back as `from_me` webhooks. The echo can arrive
 # before the insert below has committed, so ids are also held in memory for a
 # few minutes — otherwise the bot would mistake its own message for an agent.
@@ -176,7 +181,7 @@ async def store_auto_reply(conversation_id: int, message: IncomingMessage) -> di
             "body": message.body or None,
             "whapi_message_id": message.whapi_message_id,
             "status": "sent",
-            "sent_by": "whatsapp_auto",
+            "sent_by": AUTO_REPLY_SENDER,
             "is_bot": True,
         }
     )
@@ -306,7 +311,7 @@ async def last_agent_message_at(conversation_id: int) -> datetime | None:
         .limit(10)
     )
     for row in result.data or []:
-        if row.get("sent_by") == "whatsapp_auto" or await is_auto_reply(row.get("body")):
+        if row.get("sent_by") == AUTO_REPLY_SENDER or await is_auto_reply(row.get("body")):
             continue
         raw = str(row.get("created_at") or "")
         try:
@@ -344,11 +349,22 @@ async def get_history(
 
 
 def format_history(rows: list[dict[str, Any]]) -> str:
-    """Render the transcript for the LLM prompt."""
+    """Render the transcript for the LLM prompt.
+
+    The WhatsApp Business auto-reply is left out. It is stored (so duplicate
+    suppression and the portal both see it) but it is not Claire speaking, and
+    rendering it as "You:" had two live consequences on 2026-09-03: the prompt's
+    first_message check reads a non-empty history, so Claire was told the
+    conversation was already going and never introduced herself — "i need job"
+    was answered "Which country are you from?" with no "I'm Claire, Ming Hwee's
+    AI assistant" anywhere. It also opens "Thank you for contacting Ming Hwee
+    Agency", so the repeated-gratitude guard thought she had already thanked
+    them. Boilerplate the office sends automatically is not part of her turn.
+    """
     lines: list[str] = []
     for row in rows:
         body = (row.get("body") or "").strip()
-        if not body:
+        if not body or row.get("sent_by") == AUTO_REPLY_SENDER:
             continue
         speaker = "Client" if row.get("direction") == "inbound" else "You"
         lines.append(f"{speaker}: {body}")

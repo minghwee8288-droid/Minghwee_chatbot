@@ -46,6 +46,16 @@ logger = logging.getLogger(__name__)
 # guards.HOLDING_REPLIES so the same wording does not go out twice in a row.
 PROMPT_FOR_QUESTION = "Sure, go ahead. What would you like to know?"
 
+# The same invitation for the FIRST message of a conversation, which needs the
+# introduction rule 1 requires. Live, 2026-09-03: "Hey" was answered "Sure, go
+# ahead. What would you like to know?" and Claire never said who she was — this
+# path returns a canned string, so it bypasses the model and the prompt rule
+# with it. Fixed wording rather than a time-of-day greeting: "Hi" is correct at
+# every hour, and this string is sent verbatim without passing the guards.
+FIRST_CONTACT_PROMPT = (
+    "Hi, I'm Claire, Ming Hwee's AI assistant. What can I help you with today?"
+)
+
 # Turns with no reason to match the knowledge base, exempt from the weak-
 # retrieval guard. agency_info is answered from the identity block at the top of
 # the system prompt; attachments and candidate offers never match anything.
@@ -230,7 +240,11 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
             "Conversation %s: nothing asked yet, inviting the question instead of handing over",
             state.get("conversation_id"),
         )
-        return {"reply": PROMPT_FOR_QUESTION, "needs_handover": False}
+        first_contact = not (state.get("history_text") or "").strip()
+        return {
+            "reply": FIRST_CONTACT_PROMPT if first_contact else PROMPT_FOR_QUESTION,
+            "needs_handover": False,
+        }
 
     # Refuse to send a figure that is not in the records, whatever the model says.
     #
