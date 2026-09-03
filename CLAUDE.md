@@ -373,6 +373,25 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-09-03** — **"Of course — which service can I help you with?" asked for a
+  service the client had just named.** After a hiring + salary handover, "I am looking
+  for transfer helper" read to the model as `other`; the stickiness rule (intent
+  classifier, "an in-flight service survives an ambiguous follow-up") glued the parked
+  service back on, so `_blocked_topic` matched and `blocked_topic_responder` sent
+  `NEW_SERVICE_REPLY` — asking which service, for the one they had named. The client had
+  to repeat "I want transfer service I have tell you that" before collection started.
+  Root cause: the keyword map (`_INTENT_ALIASES`) only ever runs against the model's
+  returned *intent string*, never the client's own words, so a plainly-named service was
+  invisible to the deterministic layer. Fix: `_named_service()` matches the standalone,
+  unambiguous service words (transfer, renew, replace, passport, home leave, direct
+  hire) against the *message*, and the stickiness branch now overrides the parked service
+  when the client both **names** such work and **asks for** it (`_WANTS_SERVICE`), gated
+  on `blocked_topics` being non-empty. So the new request routes to its own collection
+  instead of being parked. The two gates keep it from hijacking an ordinary
+  mid-collection answer: "Filipino" and "her passport is expiring" (no want-verb) still
+  stick; "I also want to renew my helper's permit" overrides. Verified against all seven
+  shapes. The broad `new_hiring` net and the money words are deliberately excluded.
+
 - **2026-09-03** — **Model leaked its own reasoning to a client on a salary-range
   question.** When retrieval came back empty, `rag.format_context` injected a block
   containing the literal string `(no relevant records found)` and the instruction

@@ -78,6 +78,39 @@ _INTENT_ALIASES: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
+# Concrete services a client names outright, matched against their MESSAGE — the
+# aliases above only ever see the model's returned intent string, never the
+# client's own words. Deliberately only the standalone, unambiguous words: not
+# new_hiring's broad net ("care", "kids", "worker") and not the money words, so
+# this can override an ambiguous classification without mistaking an ordinary
+# collection answer for a new request.
+_NAMED_SERVICE = (
+    (re.compile(r"\btransfer\b", re.I), "transfer"),
+    (re.compile(r"\brenew", re.I), "renewal"),
+    (re.compile(r"\breplace", re.I), "replacement"),
+    (re.compile(r"\bpassport\b", re.I), "passport_renewal"),
+    (re.compile(r"\bhome\s*leave\b|\bgoing\s+home\b", re.I), "home_leave"),
+    (re.compile(r"\bdirect\s*hir", re.I), "direct_hiring"),
+)
+
+# The client asking FOR work, as opposed to answering a question with a word that
+# happens to be a service name. Gates the override below so "her passport is
+# expiring" mid new_hiring does not get read as a passport_renewal request.
+_WANTS_SERVICE = re.compile(
+    r"\b(want|need|looking\s+for|require|help\s+with|do\s+you\s+(do|have|offer)|"
+    r"can\s+you|would\s+like|another|other|different|new)\b",
+    re.IGNORECASE,
+)
+
+
+def _named_service(text: str) -> str | None:
+    """A concrete service the client named outright in their own words, if any."""
+    for pattern, service in _NAMED_SERVICE:
+        if pattern.search(text or ""):
+            return service
+    return None
+
+
 def _coerce_intent(raw_intent: str, raw_service: Any) -> str:
     """Map whatever the model returned onto an intent we actually route on."""
     intent = (raw_intent or "").strip().lower().replace(" ", "_")
@@ -280,10 +313,36 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
                 f"{result.get('reasoning') or ''}".strip()
             )
 
-    # An in-flight service survives an ambiguous follow-up message.
+    # An in-flight service survives an ambiguous follow-up message — UNLESS the
+    # client has plainly named and asked for different, concrete work while a
+    # topic is parked. Live, 2026-09-03: after a hiring + salary handover, "I am
+    # looking for transfer helper" read to the model as 'other', the parked
+    # service was glued back on, and blocked_topic_responder asked "Of course —
+    # which service can I help you with?" — for the very service the client had
+    # just named. They had to repeat "I want transfer service I have tell you
+    # that" before it started collecting. A standalone service word, asked for,
+    # overrides the stickiness so the new request routes to its own collection.
+    # Gated on blocked_topics (a handover has happened) and on _WANTS_SERVICE so
+    # it cannot hijack an ordinary answer given mid-collection.
     if active_service and intent in {"other", "greeting", "smalltalk"}:
-        service_type = active_service
-        intent = active_service if active_service in ALL_INTENTS else intent
+        named = (
+            _named_service(message)
+            if state.get("blocked_topics") and _WANTS_SERVICE.search(message)
+            else None
+        )
+        if named and named != active_service:
+            logger.info(
+                "Conversation %s: client named %r while %r is parked — routing the "
+                "new request instead of sticking to the parked topic",
+                state.get("conversation_id"),
+                named,
+                active_service,
+            )
+            service_type = named
+            intent = named
+        else:
+            service_type = active_service
+            intent = active_service if active_service in ALL_INTENTS else intent
 
     # A price question inside a live enquiry is part of that enquiry, not a new
     # one. Without this, "how much do you charge" halfway through new_hiring
