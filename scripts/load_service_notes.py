@@ -40,7 +40,13 @@ logger = logging.getLogger("load_service_notes")
 # retrieval without an error.
 SOURCE_DOCUMENT = "Ming Hwee Service Notes"
 
-# nationality is varchar(5) and the live vocabulary is all/id/mm/ph.
+# nationality is varchar(5) and the CHECK constraint
+# cb_knowledge_base_updated_nationality_check requires UPPERCASE codes —
+# 'PH'/'ID'/'MM' — alongside lowercase 'all'. Confirmed against the live table
+# (all 253, PH 12, ID 4, MM 3) after a lowercase 'ph' was rejected with 23514.
+# nationality_code() emits the same uppercase codes and the match function
+# compares them exactly, so these rows are reachable by a nationality-filtered
+# search. Do not "normalise" these to lowercase: the constraint will reject it.
 # contact_type vocabulary is all/candidate/employer. Both filters are inclusive
 # of their catch-all bucket, so 'all' is reachable from every query.
 ROWS: list[dict[str, Any]] = [
@@ -74,7 +80,7 @@ ROWS: list[dict[str, Any]] = [
     },
     {
         "service_type": "passport_renewal",
-        "nationality": "ph",
+        "nationality": "PH",
         "section_heading": "Passport renewal — Filipino helper",
         "question": "How long does passport renewal take for a Filipino helper?",
         "answer": (
@@ -87,7 +93,7 @@ ROWS: list[dict[str, Any]] = [
     },
     {
         "service_type": "passport_renewal",
-        "nationality": "id",
+        "nationality": "ID",
         "section_heading": "Passport renewal — Indonesian helper",
         "question": "How long does passport renewal take for an Indonesian helper?",
         "answer": (
@@ -99,7 +105,7 @@ ROWS: list[dict[str, Any]] = [
     },
     {
         "service_type": "passport_renewal",
-        "nationality": "mm",
+        "nationality": "MM",
         "section_heading": "Passport renewal — Myanmar helper",
         "question": "How long does passport renewal take for a Myanmar helper?",
         "answer": (
