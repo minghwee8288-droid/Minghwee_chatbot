@@ -16,7 +16,9 @@ from app.graph.prompts.templates import (
 )
 from app.graph.state import (
     ALL_INTENTS,
+    CANDIDATE_INTENT,
     MEDIA_INTENT,
+    SERVICE_INTENTS,
     TICKET_ONLY_INTENTS,
     TICKETABLE_INTENTS,
     ConversationState,
@@ -38,6 +40,41 @@ ASSAULT_PATTERNS = re.compile(
 HUMAN_REQUEST_PATTERNS = re.compile(
     r"\b(speak|talk|chat)\s+(to|with)\s+(a\s+)?(human|person|real person|someone|"
     r"agent|consultant|manager|boss|thomas)\b|\bcall me\b|\bwho am i (talking|speaking) to\b",
+    re.IGNORECASE,
+)
+
+# Deterministic transfer detector. The model keeps reading "transfer my maid" as
+# new_hiring and showing the first-time-hire question — the one question a
+# transfer must never get (client spec, 2026-09-03: "Hello" -> "I need to
+# transfer my maid to someone else" -> "Is this your first time hiring...?").
+# "transfer" within a few words of a helper/employer/permit word (either order),
+# plus "change employer" and "take over a transfer". resolve_service() still
+# splits an employer's transfer into its own employer-answerable flow.
+_TRANSFER_PATTERN = re.compile(
+    r"\btransfer\b(?:\W+\w+){0,4}\W+"
+    r"(?:maid|helper|fdw|domestic\s+worker|worker|employer|permit|service|her|him|she)\b"
+    r"|\b(?:maid|helper|fdw|domestic\s+worker|worker|employer|permit|her|she)\b"
+    r"(?:\W+\w+){0,4}\W+\btransfer\b"
+    r"|\bchange\s+(?:my\s+|her\s+|the\s+)?employer\b"
+    r"|\btake\s+over\s+(?:a\s+)?transfer\b",
+    re.IGNORECASE,
+)
+
+# Deterministic job-seeker detector. A helper offering herself is
+# candidate_registration, but "I heard you provide work so we can earn money" /
+# "I need a job" / "I can go to someone's home and do some work" was deflected as
+# 'other' with a holding line (live, 2026-09-03). Phrased to catch a job-seeker
+# without catching an employer: "someone's home" (a stranger's, not "my home"),
+# "I am a maid", "need a job" — never "I need a helper".
+_JOBSEEKER_PATTERN = re.compile(
+    r"\b(?:need|want|looking\s+for|searching\s+for)\s+(?:a\s+)?(?:job|work\b)"
+    r"|\blooking\s+for\s+(?:a\s+)?employer\b"
+    r"|\bgive\s+me\s+(?:a\s+)?(?:job|work)\b"
+    r"|\bregister\s+(?:me|myself)\b"
+    r"|\bi\s*(?:'m|\s+am)\s+(?:a\s+)?(?:maid|helper|domestic\s+worker)\b"
+    r"|\bprovide\s+(?:some\s+)?work\s+(?:to|for)\s+(?:us|me)\b"
+    r"|\b(?:someone|somebody)(?:'?s)?\s+home\b(?:\W+\w+){0,6}\W+\bwork\b"
+    r"|\bwork\b(?:\W+\w+){0,6}\W+(?:someone|somebody)(?:'?s)?\s+home\b",
     re.IGNORECASE,
 )
 
@@ -301,6 +338,41 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
             result["service_type"] = None
 
     service_type = _normalise_service(intent, result.get("service_type"))
+
+    # --- Deterministic overrides. The model gets these two wrong repeatedly and
+    # each has a visible consequence the client complains about. Neither fires
+    # while a DIFFERENT service is mid-collection: that stays put, and a genuine
+    # switch off a parked topic is handled by the named-service correction below.
+    if (
+        _TRANSFER_PATTERN.search(message)
+        and intent != "dispute_assault"
+        and active_service not in SERVICE_INTENTS
+    ):
+        if intent != "transfer":
+            logger.info(
+                "Conversation %s: transfer keywords override intent %r -> transfer "
+                "(a transfer must never be asked the first-time-hire question)",
+                state.get("conversation_id"),
+                intent,
+            )
+        intent, service_type = "transfer", "transfer"
+
+    # A helper offering herself is candidate_registration, not a holding line.
+    # Skipped for a known employer, whose "I need work done" is not a job request.
+    elif (
+        _JOBSEEKER_PATTERN.search(message)
+        and intent not in {"dispute_assault", CANDIDATE_INTENT}
+        and active_service not in SERVICE_INTENTS
+        and not state.get("matched_employer_id")
+        and effective_contact_type(state) != "employer"
+    ):
+        logger.info(
+            "Conversation %s: job-seeker keywords override intent %r -> %s",
+            state.get("conversation_id"),
+            intent,
+            CANDIDATE_INTENT,
+        )
+        intent, service_type = CANDIDATE_INTENT, None
 
     # These are their own ticket rather than something to collect against. The
     # classifier is told to return service_type null for them, so set it here

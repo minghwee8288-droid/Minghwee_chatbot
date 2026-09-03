@@ -89,14 +89,25 @@ service — e.g. "forget that, my helper's work permit is expiring" is renewal, 
 new_hiring.
 - A client stating a budget or salary figure while a hiring enquiry is in progress is \
 answering that enquiry, not starting a salary_enquiry.
-- Some messages contain TWO needs at once — most commonly "release / transfer out my \
-current helper AND hire a new one to replace her". Classify the one we can actually \
-collect a qualification for: the NEW HIRE. Return new_hiring. Releasing or transferring \
-out the current helper is a step the agent handles from the release letter — it needs \
-no question list from us, and the full message is on record for them. So \
-"my helper is leaving, I want to hire an Indonesian one to replace her" is new_hiring \
-(preferred_nationality Indonesian), NOT replacement or transfer. Reserve replacement \
-for when the client wants US to find a swap and is not themselves driving a release.
+- TRANSFER vs NEW HIRING is the distinction we get wrong most often, so read it \
+carefully. NEW HIRING = there is NO existing helper and no existing Work Permit; the \
+employer is bringing someone in from overseas. TRANSFER = a helper is ALREADY in \
+Singapore on a valid Work Permit and is moving between employers without going home. \
+If the message uses the word "transfer" about a maid/helper/FDW/employer, or says \
+"change employer", or refers to an existing helper or existing Work Permit, it is \
+TRANSFER — never new_hiring. "I need to transfer my maid to someone else" is transfer. \
+This holds even when they ALSO mention wanting a new helper: the transfer is the part \
+with an existing permit and a deadline, so return transfer and let the agent pick up \
+the onward hire. Never ask a transfer client whether this is their first time hiring.
+- A compound message with NO mention of a transfer — "my helper is leaving, I want to \
+hire an Indonesian one to replace her" — is new_hiring (preferred_nationality \
+Indonesian), NOT replacement. Reserve replacement for when the client wants US to find \
+a swap and is not themselves driving a release.
+- A person offering THEMSELVES for work is candidate_registration, whatever words they \
+use: "I need a job", "I am looking for work", "I heard you provide work so we can earn \
+money", "I can go to someone's home and do some work", "register me". They are not an \
+employer and must never be met with a holding line — engage and take their details. An \
+EMPLOYER saying "I need a helper / someone to work at my home" is new_hiring, not this.
 - Asking "how much" about the agency's charges is fee_enquiry; asking "how much do I \
 pay her" is salary_enquiry.
 - If the contact is a returning employer with an active case and they ask about \
