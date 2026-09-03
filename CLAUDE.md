@@ -229,14 +229,21 @@ Easy to get wrong:
 
 - `BOT_ALLOWED_NUMBERS` — the safety gate. Fails **closed** if malformed. The startup log
   prints the resolved list; trust that, not the file.
-- `OPENROUTER_MODEL` — currently `moonshotai/kimi-k3`. `llm.py` is model-agnostic: it
-  reads this setting, sends `temperature`/`frequency_penalty`, and never sends
-  `budget_tokens`. Provider routing is deliberately unconstrained — OpenRouter drops
-  parameters the target provider does not accept, and `require_parameters` made every
-  call 404, so **do not reintroduce it**. (If you switch back to Sonnet 5: `off` maps to
-  Anthropic thinking disabled, and `budget_tokens` 400s there — but `llm.py` sends none.)
-- `LLM_REASONING=off` — Kimi K3 is a reasoning model; `off` turns the thinking down for
-  ~3s replies at far lower cost.
+- `OPENROUTER_MODEL` — currently `openai/gpt-5.6-luna` (switched from `moonshotai/kimi-k3`
+  on 2026-09-03; rollback = set it back and `docker compose up -d`). `llm.py` is
+  model-agnostic: it reads this setting, sends `temperature`/`frequency_penalty` and a
+  `reasoning` field via `extra_body`, and never sends `budget_tokens`. Provider routing is
+  deliberately unconstrained — OpenRouter drops parameters the target provider does not
+  accept, and `require_parameters` made every call 404, so **do not reintroduce it**.
+  **Use plain `luna`, not `luna-pro`** — the pro slug bakes in `reasoning.mode=pro` (heavy
+  thinking billed as output, 7–55s latency), the opposite of a quick-reply bot. (If you
+  switch back to Sonnet 5: `off` maps to Anthropic thinking disabled, and `budget_tokens`
+  400s there — but `llm.py` sends none.) **All guards were tuned against Kimi's failure
+  modes; a new model fails differently — a model change needs a full scenario pass, not a
+  spot check.**
+- `LLM_REASONING=off` — Luna (like Kimi) is a reasoning model; `off` turns the thinking
+  down for fast, far cheaper replies. Whether `off` actually overrides a `-pro` slug's
+  baked-in reasoning is untested — another reason to stay on plain `luna`.
 - `RAG_SOFT_FLOOR` (0.40) is the real retrieval knob. `RAG_CONFIDENCE_FLOOR` is **dead
   config, read by nothing** — kept only so existing `.env` files still parse.
 - `TENANT_ID` must be set or lead and ticket numbering break.
@@ -372,6 +379,20 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-03** — **Model switched to `openai/gpt-5.6-luna`** (from `moonshotai/kimi-k3`).
+  Non-pro Luna deliberately — the `luna-pro` slug bakes in `reasoning.mode=pro` (heavy
+  thinking billed as output, 7–55s latency), wrong for quick WhatsApp replies. On the
+  benchmarks Luna is well above Kimi on intelligence/coding/agentic, has a 1M context, and
+  a lower sticker price ($0.20/$1.20 vs $0.52/$2.45 per 1M) — though a reasoning model's
+  real cost depends on how much it thinks. `llm.py` needed no change (model-agnostic,
+  sends `reasoning` via `extra_body`, no `budget_tokens`). `.env.example` and
+  `config.py` default updated; the **live server `.env` must be edited too** (it overrides
+  the code default) — set `OPENROUTER_MODEL=openai/gpt-5.6-luna` and `docker compose up -d`
+  (not `restart`). Rollback = set it back to `moonshotai/kimi-k3`. NOT YET VALIDATED: the
+  guards (`leaks_internal_reasoning`, `ungrounded_figures`, the language rules) were all
+  tuned against Kimi's failure modes; Luna fails differently and needs a full scenario
+  pass. The Kimi-specific notes are kept as a switch-back hint.
 
 - **2026-09-03** — **"Of course — which service can I help you with?" asked for a
   service the client had just named.** After a hiring + salary handover, "I am looking

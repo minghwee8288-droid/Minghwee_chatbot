@@ -29,12 +29,17 @@ class Settings(BaseSettings):
     # --- OpenRouter (LLM) ---
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_model: str = "moonshotai/kimi-k3"
-    # Kimi K3 is a reasoning model: left alone it spends completion tokens
-    # thinking before it writes anything, and those come out of max_tokens.
-    # Measured on a full system prompt: ~430 reasoning tokens, 8-16s per call
-    # and 18x the cost of DeepSeek, for the same answer. A WhatsApp turn makes
-    # two or three calls, so that is a minute of silence for the client.
+    openrouter_model: str = "openai/gpt-5.6-luna"
+    # Switched from moonshotai/kimi-k3 on 2026-09-03. Rollback: set this (or the
+    # server .env) back to moonshotai/kimi-k3 and `docker compose up -d`.
+    #
+    # openai/gpt-5.6-luna is the non-pro Luna (NOT luna-pro): the pro variant
+    # bakes reasoning.mode=pro into the slug, which is heavy thinking billed as
+    # output tokens and 7-55s latency — the opposite of what a WhatsApp bot
+    # wants. Both Luna variants and Kimi are reasoning models: left alone they
+    # spend completion tokens thinking before writing anything, and those come
+    # out of max_tokens. A WhatsApp turn makes two or three calls, so thinking
+    # on is a minute of silence for the client.
     #
     #   off     - no thinking. ~3s, the same replies. The default.
     #   low     - a little thinking, similar speed.
