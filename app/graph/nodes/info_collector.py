@@ -120,8 +120,33 @@ def _looks_like_a_person(name: str) -> bool:
     return not any(word.strip(".'-").lower() in _NOT_A_PERSON for word in words)
 
 
+def _prior_hires(state: ConversationState) -> int:
+    """Placements on file for this number, coerced safely to an int."""
+    try:
+        return int(state.get("prior_hires") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _known_fields(state: ConversationState) -> dict[str, str]:
     known: dict[str, str] = {}
+
+    # Whether they are a returning client is a matter of record, not a question.
+    # The webhook counts their non-archived `placements` rows every turn; a
+    # positive count fills the field here so first_time_hire is never asked of
+    # someone we have already placed a helper with.
+    #
+    # Only a POSITIVE count is evidence. Zero covers three different things —
+    # they hired elsewhere, the portal has no placement for them yet, and we
+    # have never seen this number — none of which is "first time with us". Those
+    # still get the question, which is why it is now worded about US rather than
+    # about hiring in general.
+    prior_hires = _prior_hires(state)
+    if prior_hires:
+        known["first_time_hire"] = (
+            f"hired through us before - {prior_hires} placement"
+            f"{'s' if prior_hires > 1 else ''} on record"
+        )
 
     lead = state.get("matched_lead")
     if not isinstance(lead, dict):
@@ -697,6 +722,19 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "carry on. Never ask for the case ID again."
         )
 
+    # Said once, on the turn the database answers first_time_hire for us: `known`
+    # only carries a field the collected state does not already hold, so this
+    # cannot repeat on later turns of the same service. Skipping the question
+    # silently would read as us not knowing them at all.
+    returning_note = ""
+    if "first_time_hire" in known:
+        returning_note = (
+            "\n\nOur own records show they have hired a helper through us before, so "
+            "that is already established and you must never ask it. Open this message "
+            "by welcoming them back in one short clause — no details of who, when or "
+            "how many, we are not showing them their file — and then ask your question."
+        )
+
     missing = ticket_service.missing_fields(service_type, collected)
 
     # A field can hold a value and still not be finished — see _unfinished().
@@ -761,6 +799,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
                 previous_message=previous or "(this is your first message)",
             )
             + dropped_note
+            + returning_note
             + follow_up_notes.get(next_field.key, "")
             + answer_first
         )

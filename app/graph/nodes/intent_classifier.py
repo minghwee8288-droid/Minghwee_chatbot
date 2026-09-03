@@ -142,6 +142,22 @@ _WANTS_SERVICE = re.compile(
 )
 
 
+# Status language: chasing the case a human already owns, as opposed to asking
+# about the service in general. These are a chase even when phrased with
+# "how long". Lives here rather than in blocked_topic_responder, which imports
+# it, because that module already imports _named_service from this one and the
+# reverse direction would be a cycle.
+_CHASING_STATUS = re.compile(
+    r"\bany\s+(?:update|news)\b"
+    r"|\bwhat'?s?\s+(?:the\s+)?status\b"
+    r"|\bhow\s+far\b"
+    r"|\bis\s+it\s+(?:done|ready|approved|confirmed)\b"
+    r"|\bstill\s+waiting\b"
+    r"|\bprogress\b",
+    re.IGNORECASE,
+)
+
+
 def _named_service(text: str) -> str | None:
     """A concrete service the client named outright in their own words, if any."""
     for pattern, service in _NAMED_SERVICE:
@@ -450,6 +466,51 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
             )
             service_type = named
             intent = named
+
+    # The mirror image of the correction above: same failure, opposite input.
+    # There the client named a NEW service and the model dragged it onto a
+    # parked one. Here the client named nothing at all — they answered the
+    # question we had just asked — and the model dragged the LIVE collection
+    # onto the parked topic instead.
+    #
+    # Live, 2026-09-03: with a transfer ticket already parked, "Meanwhile I want
+    # to hire new helper" correctly opened new_hiring and asked a question. The
+    # client answered "First time". Two words carry no topic, so the model read
+    # them against a thread that is mostly about the transfer and labelled them
+    # 'transfer' — which was parked — and blocked_topic_responder replied "a
+    # live agent is handling the transfer", abandoning the collection it had
+    # opened one message earlier. The client had answered our own question and
+    # got told someone else was dealing with something else.
+    #
+    # An answer to our question has no topic of its own; it can only belong to
+    # the collection that asked it. The two legitimate ways back to the parked
+    # topic are both preserved: NAMING it (the correction above, and excluded
+    # here) and CHASING it ("any update on the transfer?"), which is the whole
+    # point of parking a topic.
+    parked = state.get("blocked_topics") or {}
+    if (
+        active_service
+        and active_service not in parked
+        and service_type != active_service
+        and ticket_service.fields_for(active_service)
+        and not _named_service(message)
+        and not _CHASING_STATUS.search(message)
+        and ticket_service.topic_key_for(
+            service_type, effective_contact_type(state), intent
+        )
+        in parked
+    ):
+        logger.info(
+            "Conversation %s: %r read as %r, which a human already owns, while %s is "
+            "mid-collection and unparked — keeping the live collection",
+            state.get("conversation_id"),
+            message[:60],
+            service_type,
+            active_service,
+        )
+        service_type = active_service
+        if active_service in ALL_INTENTS:
+            intent = active_service
 
     try:
         confidence = float(result.get("confidence") or 0.0)

@@ -214,6 +214,10 @@ class ConversationState(TypedDict, total=False):
     matched_supplier_id: str | None
     matched_case_id: str | None
     salesperson_profile_id: str | None
+    # Non-archived `placements` rows for this employer: how many helpers we have
+    # actually placed with them. 0 means "we have no record", NOT "first time" —
+    # an unknown number is also 0. Only a positive count is evidence.
+    prior_hires: int
     # Their last few cb_tickets rows (newest first), shown to a returning
     # employer's prompt so it can flag a topic that looks different from what
     # they raised before instead of silently starting a fresh collection.

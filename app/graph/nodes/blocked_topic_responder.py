@@ -35,7 +35,7 @@ from app.config import settings
 from app.graph.closure import is_closing, is_pure_acknowledgement
 # Shared, not duplicated (§9.8): the one detector for "the client named a concrete
 # service in their own words". intent_classifier owns it; this node only reads it.
-from app.graph.nodes.intent_classifier import _named_service
+from app.graph.nodes.intent_classifier import _CHASING_STATUS, _named_service
 from app.graph.llm import complete
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
@@ -282,17 +282,6 @@ _GENERAL_INFO = re.compile(
     r"|\bwhat\s+(?:is|are)\s+the\s+(?:process|procedure|steps?|requirements?|timeline|cost)\b"
     r"|\bwhat\s+do\s+i\s+need\b"
     r"|\bis\s+there\s+(?:a|any)\s+(?:fee|cost|charge)\b",
-    re.IGNORECASE,
-)
-
-# Status language. These are a chase even when phrased with "how long".
-_CHASING_STATUS = re.compile(
-    r"\bany\s+(?:update|news)\b"
-    r"|\bwhat'?s?\s+(?:the\s+)?status\b"
-    r"|\bhow\s+far\b"
-    r"|\bis\s+it\s+(?:done|ready|approved|confirmed)\b"
-    r"|\bstill\s+waiting\b"
-    r"|\bprogress\b",
     re.IGNORECASE,
 )
 

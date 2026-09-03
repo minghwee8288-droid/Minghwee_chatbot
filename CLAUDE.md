@@ -173,6 +173,8 @@ because the lead is opened early and the ticket is created much later.
 | NRIC never reaches the LLM | `utils.redact_nric` | Applied to the batch text; the raw body is still stored in the DB. |
 | Assault: keyword override, no LLM confidence | `intent_classifier.ASSAULT_PATTERNS` | **English-only — see §9.** |
 | A transfer is never asked the first-time-hire question | `intent_classifier._TRANSFER_PATTERN` | "transfer" beside maid/helper/employer/permit/service, or "change employer", forces `transfer`. Does not fire while another service is mid-collection. English-only (§9.2). |
+| A returning client is never asked if they have hired before | `info_collector._known_fields` | Filled from non-archived `placements`. Only a POSITIVE count is evidence — 0 also means "unknown number". |
+| An answer to our own question cannot be dragged onto a parked topic | `intent_classifier` (live-collection rule) | Unless the client names that service or chases its status. |
 | A job-seeker is never met with a holding line | `intent_classifier._JOBSEEKER_PATTERN` | "need a job", "provide work to us", "someone's home … work", "I am a maid" force `candidate_registration`. Skipped for a known employer, so "someone to work at **my** home" stays `new_hiring`. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -199,6 +201,15 @@ cb_tkt_priority_check   high | medium | low
 cb_tkt_status_check     open | in_progress | resolved | closed
 cb_tickets_created_lead_id_fkey -> leads(id)   [no ON DELETE SET NULL yet — §9]
 ```
+
+**`placements` is the only record of "they hired through us."** One row per helper
+placed with an employer (`employer_id`, `candidate_id`, `archived_at`, confirmed live
+2026-09-03; 6 rows). An `employers` row means the portal holds their details and a
+`leads` row means they once enquired — neither is a hire. `contact.count_prior_hires()`
+counts the non-archived rows and the webhook puts the number on every turn as
+`prior_hires`, which is what stops the hiring flow asking a returning client whether they
+have hired before. `cases.case_type` also carries a label like `First-time hire`, but its
+full vocabulary is unconfirmed (one row exists), so nothing reads it.
 
 **The bot never closes a ticket.** No code path writes `cb_tickets.status` after insert.
 The portal owns resolution.
@@ -344,7 +355,15 @@ Ordered by what will hurt first.
    `lead.best_name`.
 9. **`scripts/TEST_SCRIPT.md` §E is inverted** — it still treats "admits it is a bot" as
    a failure, which is now the required behaviour.
-10. **Unbounded in-memory caches** with no TTL: `_LOCKS` (webhook),
+10. **Re-raising a parked topic mid-collection is answered with the wrong question.**
+    With a transfer ticket parked and `new_hiring` collecting, "I want to transfer my
+    helper" resolves through plain stickiness to `new_hiring`, so the client gets the
+    next hiring question rather than "your transfer is with an agent". The named-service
+    correction does not fire (the named service IS parked) and the live-collection rule
+    does not fire (we did not land on a parked topic). Not fixed deliberately: forcing
+    `service_type` to the parked service for one turn would overwrite the in-flight
+    `service_type` on the checkpoint and strand the live collection.
+11. **Unbounded in-memory caches** with no TTL: `_LOCKS` (webhook),
     `_AUTO_REPLY_VERDICTS` (message), `_MISSING_COLUMNS` (contact), `_vocabularies` (rag).
 
 ---
@@ -381,6 +400,37 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-03** — **The hiring flow asks the database before it asks the client, and an
+  answer to our own question can no longer be swallowed by a parked topic.** Both from
+  one live thread. (A) Mid-transfer, "Meanwhile I want to hire new helper" was answered
+  **"Is this your first time hiring a domestic helper?"** — asked of a man who was in the
+  middle of telling us about the helper he currently employs, and asked about hiring in
+  general when what the agency needs to know is whether they are *our* client. Two
+  changes: the question is now scoped to us (*"Have you hired a helper through our agency
+  before, or will this be your first time hiring with us?"*), and it is only asked when
+  the database cannot answer it. `contact.count_prior_hires()` counts an employer's
+  non-archived `placements` rows — the only table that records an actual placement, as
+  opposed to `employers` (the portal has their details) or `leads` (they once enquired) —
+  and the webhook puts the count on every turn as `prior_hires`. A positive count fills
+  `first_time_hire` in `_known_fields`, so the question is never put and the collector is
+  told once to welcome them back before asking its next question. **Only a positive count
+  is evidence:** zero covers "hired elsewhere", "no placement on file yet" and "we have
+  never seen this number", so those still get the question — which is exactly why the
+  wording had to change too. (B) On the next message the client answered **"First time"**
+  and got **"Noted, a live agent is handling the transfer"** — the collection opened one
+  message earlier was abandoned mid-question. Two words carry no topic, so the model read
+  them against a thread that was mostly about the transfer, labelled them `transfer`,
+  which was parked, and `blocked_topic_responder` took the turn. New rule in
+  `intent_classifier`, the mirror image of the 2026-09-03 named-service correction: when a
+  live, **unparked** collection exists and the turn lands on a **parked** topic, keep the
+  live collection — unless the client **names** that service (the older correction's job)
+  or **chases** it (*"any update on my transfer?"*), which is what parking a topic is for.
+  Verified against six shapes. `_CHASING_STATUS` moved from `blocked_topic_responder` to
+  `intent_classifier` rather than being duplicated — that module already imports
+  `_named_service` from this one, and the reverse direction would be a cycle.
+  `transfer_employer` deliberately did **not** gain a history question: it is documented
+  as short on purpose, and the agent can read the placement history off the portal.
 
 - **2026-09-03** — **Prompt audit: six contradictions removed.** Confirmed the live model
   is `openai/gpt-5.6-luna`, so the recent misclassifications were Luna's — but the audit

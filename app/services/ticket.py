@@ -259,13 +259,27 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     "new_hiring": [
         # --- About them ---
         Field("full_name", "name", "May I know your name?", group="who they are"),
+        # Asked about US, not about hiring in general — and only when the
+        # database cannot answer it. `placements` records every helper we have
+        # actually placed, so info_collector fills this field outright for an
+        # employer with a placement on file and the question is never put.
+        #
+        # The old wording, "Is this your first time hiring a domestic helper?",
+        # asked the wrong thing twice over. It asked about their whole hiring
+        # history when what the agency needs to know is whether they are OUR
+        # client, and it asked a returning client something our own records
+        # already answered. Live, 2026-09-03: a client mid-transfer said
+        # "Meanwhile I want to hire new helper" and was asked whether he had
+        # ever hired a helper before — while telling us about the helper he
+        # currently employs.
         Field(
             "first_time_hire",
-            "whether this is their first time hiring",
-            "Is this your first time hiring a domestic helper?",
+            "whether they have hired through us before",
+            "Have you hired a helper through our agency before, or will this be your "
+            "first time hiring with us?",
             max_asks=2,
             group="who they are",
-            options=("first time hiring", "hired before"),
+            options=("hired through us before", "first time with us"),
         ),
         # --- What they need ---
         #

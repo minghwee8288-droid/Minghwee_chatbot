@@ -142,6 +142,34 @@ async def find_active_case(employer_id: str) -> str | None:
         return None
 
 
+async def count_prior_hires(employer_id: str | None) -> int:
+    """How many helpers this employer has actually been placed with, by us.
+
+    `placements` is the only table that answers "did they hire THROUGH US".
+    `employers` means the portal holds their details; `leads` means they once
+    enquired. Neither is a hire, and treating either as one would tell a
+    first-time client we have placed someone with them before.
+
+    Archived rows are excluded — an archived placement is a correction, not a
+    placement. Any failure returns 0, which routes the client to the question
+    rather than to a wrong claim about their own history.
+    """
+    if not employer_id:
+        return 0
+    try:
+        result = await db.execute(
+            db.table("placements")
+            .select("id", count="exact")
+            .eq("employer_id", employer_id)
+            .is_("archived_at", "null")
+            .limit(1)
+        )
+    except Exception:  # noqa: BLE001 - history is a nicety; the reply is not
+        logger.exception("Prior-hire lookup failed for employer %s", employer_id)
+        return 0
+    return int(result.count or 0)
+
+
 async def identify(phone: str) -> dict[str, Any]:
     """Resolve a WhatsApp number to a platform record.
 

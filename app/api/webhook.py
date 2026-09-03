@@ -808,6 +808,15 @@ async def _process_locked(
         else None
     )
 
+    # Has this number hired through us before? Read per turn rather than stored,
+    # for the same reason blocked_topics is: a placement created in the portal
+    # this morning must count this afternoon. Only for a number that matched an
+    # employer master record — nobody else can have a placement — so the extra
+    # read costs an unknown caller nothing.
+    prior_hires = await contact_service.count_prior_hires(
+        conversation.get("matched_employer_id")
+    )
+
     # Topics a human is already working on this thread — read fresh every
     # turn (never persisted on the checkpoint) so a ticket closing anywhere
     # unblocks its topic on the very next message, with no extra sync step.
@@ -823,6 +832,7 @@ async def _process_locked(
         "matched_candidate_id": conversation.get("matched_candidate_id"),
         "matched_supplier_id": conversation.get("matched_supplier_id"),
         "matched_case_id": conversation.get("matched_case_id"),
+        "prior_hires": prior_hires,
         "recent_tickets": recent_tickets,
         # Lead columns do not exist on wp_chat_conversations, so an open lead is
         # read per turn rather than stored on the row.
