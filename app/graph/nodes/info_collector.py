@@ -156,22 +156,46 @@ def _prior_hires(state: ConversationState) -> int:
 def _known_fields(state: ConversationState) -> dict[str, str]:
     known: dict[str, str] = {}
 
-    # Whether they are a returning client is a matter of record, not a question.
-    # The webhook counts their non-archived `placements` rows every turn; a
-    # positive count fills the field here so first_time_hire is never asked of
-    # someone we have already placed a helper with.
+    # Whether they are a returning client is a matter of record, not a question,
+    # and as of 2026-09-04 it is NEVER asked either way. The webhook counts this
+    # number's non-archived `placements` rows every turn and the answer is
+    # filled from that count, so the field reaches the ticket without a question
+    # ever going out.
     #
-    # Only a POSITIVE count is evidence. Zero covers three different things —
-    # they hired elsewhere, the portal has no placement for them yet, and we
-    # have never seen this number — none of which is "first time with us". Those
-    # still get the question, which is why it is now worded about US rather than
-    # about hiring in general.
+    # Zero is read as "first time with us" on the client's explicit instruction:
+    # not being in the database IS the answer, and asking a brand-new client
+    # whether they have hired with us before is a question whose answer we
+    # already have. The cost, accepted knowingly: someone who hired through us
+    # under a different number, or long enough ago that no placement was
+    # recorded, is filed as a first-timer. The agent sees the wording below and
+    # can tell the two apart — "no placement on record" is a statement about our
+    # records, not about the client.
     prior_hires = _prior_hires(state)
     if prior_hires:
         known["first_time_hire"] = (
             f"hired through us before - {prior_hires} placement"
             f"{'s' if prior_hires > 1 else ''} on record"
         )
+    else:
+        known["first_time_hire"] = "first time with us - no placement on record"
+
+    # The helper on their file, when our records name exactly one. Ahead of the
+    # lead below because a placement is a harder fact than an enquiry: `leads`
+    # records what somebody once said they wanted, `placements` records a helper
+    # we actually placed. Both are filtered by allowed_keys at the call site, so
+    # this only ever reaches a flow that asks about the employer's own helper
+    # (passport_renewal, replacement, transfer_employer) — never new_hiring,
+    # which has no helper_name, and never a candidate flow, where the contact is
+    # the helper and matched_employer_id is None.
+    placed = state.get("placed_helper")
+    if isinstance(placed, dict):
+        for field_key, value in placed.items():
+            text = str(value or "").strip()
+            if not text:
+                continue
+            if field_key == "nationality":
+                text = _NATIONALITY_NAMES.get(text, text)
+            known.setdefault(field_key, text[:300])
 
     lead = state.get("matched_lead")
     if not isinstance(lead, dict):
@@ -752,7 +776,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # cannot repeat on later turns of the same service. Skipping the question
     # silently would read as us not knowing them at all.
     returning_note = ""
-    if "first_time_hire" in known:
+    if _prior_hires(state) and "first_time_hire" in known:
         returning_note = (
             "\n\nOur own records show they have hired a helper through us before, so "
             "that is already established and you must never ask it. Open this message "

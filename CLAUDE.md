@@ -173,6 +173,9 @@ because the lead is opened early and the ticket is created much later.
 | NRIC never reaches the LLM | `utils.redact_nric` | Applied to the batch text; the raw body is still stored in the DB. |
 | Assault: keyword override, no LLM confidence | `intent_classifier.ASSAULT_PATTERNS` | **English-only — see §9.** |
 | A transfer is never asked the first-time-hire question | `intent_classifier._TRANSFER_PATTERN` | "transfer" beside maid/helper/employer/permit/service, or "change employer", forces `transfer`. Does not fire while another service is mid-collection. English-only (§9.2). |
+| A passport renewal never asks for a case ID | `SERVICE_FIELDS["passport_renewal"]` | `_case_id()` deliberately absent. Client instruction, 2026-09-04. |
+| Nobody is asked whether they have hired with us before | `info_collector._known_fields` | Filled from `prior_hires` either way now — zero reads as "first time with us". |
+| An existing client is not asked for a helper we placed | `contact.get_placed_helper` | Only when there is exactly ONE live placement naming a candidate. |
 | A volunteered requirement is acknowledged, not silently filed | `info_collector._VOLUNTEERED_REQUIREMENT` | Adds a note to the collector instruction. Narrow on purpose — "can't"/"don't" excluded. |
 | A service filter never starves an answerable question | `rag_retriever` (widening retry) | Below the soft floor, retries with no service filter. Nationality is kept. |
 | A returning client is never asked if they have hired before | `info_collector._known_fields` | Filled from non-archived `placements`. Only a POSITIVE count is evidence — 0 also means "unknown number". |
@@ -212,6 +215,18 @@ counts the non-archived rows and the webhook puts the number on every turn as
 `prior_hires`, which is what stops the hiring flow asking a returning client whether they
 have hired before. `cases.case_type` also carries a label like `First-time hire`, but its
 full vocabulary is unconfirmed (one row exists), so nothing reads it.
+
+**There is NO passport data in this database.** Checked across `candidates`,
+`placements` and `cases` on 2026-09-04: no passport number, expiry or issue-date column
+exists anywhere. `candidates` carries `full_name`, `nationality`, `date_of_birth`,
+`availability` and biodata, and nothing else about her travel documents. So "check the
+database before asking for the passport expiry" cannot be honoured — the expiry is asked
+of every client, new or existing, until the portal starts recording it.
+
+**`placements.candidate_id` is null on most rows** — 2 of 6, live 2026-09-04 — and one
+employer holds 4 placements with a single candidate among them. That is why
+`get_placed_helper()` returns a helper only when there is exactly one live placement AND
+it names a candidate: naming the wrong helper on a ticket is worse than asking.
 
 **The bot never closes a ticket.** No code path writes `cb_tickets.status` after insert.
 The portal owns resolution.
@@ -402,6 +417,35 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-04** — **Ask the database, not the client.** Six changes from one written
+  spec. (A) **`passport_renewal` no longer asks for a case ID** — `_case_id()` removed
+  from that flow entirely. Live, it was the *first* question a client got and the honest
+  answer was "I don't have any case ID"; the number identifies them, a reference does
+  not. (B) **The urgency question is gone** ("How soon does she need the new passport?").
+  An expiring passport IS the urgency, the answer is always "as soon as possible", and
+  the expiry date we already collect says it more precisely. (C) **"Have you hired with
+  us before?" is never asked**, of anyone. `_known_fields` now fills `first_time_hire`
+  from the `placements` count in **both** directions — a positive count reads "hired
+  through us before - N placements on record", zero reads "first time with us - no
+  placement on record". This reverses yesterday's "only a POSITIVE count is evidence" on
+  the client's explicit instruction: not being in the database *is* the answer. The
+  accepted cost is that a client who hired with us under a different number is filed as a
+  first-timer; the wording keeps that legible to the agent, since "no placement on
+  record" is a statement about our records rather than about the client. `returning_note`
+  had to be re-keyed onto the count, since the field is now always present.
+  (D) **`get_placed_helper()`** fills the helper's name and nationality from
+  `placements` → `candidates`, so an existing client is not asked for someone already on
+  their own file. Measured: an employer with one linked placement now skips two of five
+  passport-renewal questions. Deliberately conservative — it returns nothing unless there
+  is exactly ONE live placement AND it names a candidate, because `candidate_id` is null
+  on 4 of 6 rows and one employer has 4 placements with a single candidate among them.
+  (E) **The languages question stopped hiding four of its options.** The field already
+  offered seven, but the question was a bare "What languages are spoken at home?" and the
+  model picked three to show ("such as English, Mandarin or Tamil?"). The question now
+  names the list and invites more than one, and `other` was added to the options.
+  (F) **NOT DONE, and not doable: reading the passport expiry from the database.** No
+  passport column exists in any shared table (§6). The expiry is still asked of everyone.
 
 - **2026-09-03** — **Replacement collects five more things; a parked service no longer
   starves retrieval; a volunteered requirement is acknowledged.** (A) **`replacement`

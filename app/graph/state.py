@@ -218,6 +218,11 @@ class ConversationState(TypedDict, total=False):
     # actually placed with them. 0 means "we have no record", NOT "first time" —
     # an unknown number is also 0. Only a positive count is evidence.
     prior_hires: int
+    # The one helper our records place with this employer, when there is exactly
+    # one and the row names her: {"helper_name": ..., "nationality": ...}. None
+    # whenever there is any doubt. There is NO passport data in the database to
+    # go with it — see contact.get_placed_helper.
+    placed_helper: dict[str, Any] | None
     # Their last few cb_tickets rows (newest first), shown to a returning
     # employer's prompt so it can flag a topic that looks different from what
     # they raised before instead of silently starting a fresh collection.

@@ -360,7 +360,9 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         Field(
             "languages",
             "languages spoken at home",
-            "What languages are spoken at home?",
+            "What languages are spoken at home? You can name more than one — "
+            "English, Mandarin, Malay, Hokkien, Teochew, Cantonese, Tamil, or "
+            "anything else.",
             max_asks=2,
             group="their household",
             options=(
@@ -371,6 +373,7 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
                 "Teochew",
                 "Cantonese",
                 "Tamil",
+                "other",
             ),
         ),
         # --- Their preferences ---
@@ -696,8 +699,13 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             max_asks=2,
         ),
     ],
+    # No _case_id() here, deliberately. A passport renewal is opened by the
+    # employer, not by anyone holding a reference number, and the client's
+    # instruction (2026-09-04) is that this flow must NEVER ask for one: live,
+    # the very first question a client got was "May I have your case ID?" and
+    # the honest answer was "I don't have any case ID". We identify them from
+    # the phone number instead — see contact.identify().
     "passport_renewal": [
-        _case_id(),
         Field("helper_name", "helper's name", "May I know your helper's name?", max_asks=2),
         Field(
             "nationality",
@@ -733,13 +741,11 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             max_asks=2,
             optional=True,
         ),
-        Field(
-            "timeline",
-            "how urgent",
-            "How soon does she need the new passport?",
-            max_asks=2,
-            optional=True,
-        ),
+        # The urgency question ("How soon does she need the new passport?") was
+        # removed on 2026-09-04 at the client's instruction: a passport that is
+        # expiring IS the urgency, the answer is always "as soon as possible",
+        # and the expiry date we already hold says it more precisely than the
+        # client can. It bought a turn of the client's patience for nothing.
     ],
     # §10, §11 — only ever asked for what the client has not already stated.
     "fee_enquiry": [

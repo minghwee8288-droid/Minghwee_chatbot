@@ -817,6 +817,15 @@ async def _process_locked(
         conversation.get("matched_employer_id")
     )
 
+    # And WHICH helper, when our records leave no doubt (one live placement,
+    # naming a candidate). Fills her name and nationality so an existing client
+    # is not asked for details already on their own file — the passport-renewal
+    # flow was opening with "May I know your helper's name?" to someone we
+    # placed her with. Read per turn for the same reason as the count above.
+    placed_helper = await contact_service.get_placed_helper(
+        conversation.get("matched_employer_id")
+    )
+
     # Topics a human is already working on this thread — read fresh every
     # turn (never persisted on the checkpoint) so a ticket closing anywhere
     # unblocks its topic on the very next message, with no extra sync step.
@@ -833,6 +842,7 @@ async def _process_locked(
         "matched_supplier_id": conversation.get("matched_supplier_id"),
         "matched_case_id": conversation.get("matched_case_id"),
         "prior_hires": prior_hires,
+        "placed_helper": placed_helper,
         "recent_tickets": recent_tickets,
         # Lead columns do not exist on wp_chat_conversations, so an open lead is
         # read per turn rather than stored on the row.

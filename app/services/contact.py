@@ -170,6 +170,61 @@ async def count_prior_hires(employer_id: str | None) -> int:
     return int(result.count or 0)
 
 
+async def get_placed_helper(employer_id: str | None) -> dict[str, str] | None:
+    """The helper we placed with this employer, when there is exactly one.
+
+    Lets the passport-renewal and replacement flows fill her name and
+    nationality from our own records instead of asking an existing client for
+    details we already hold (client instruction, 2026-09-04: "always check the
+    database before asking the user for information that may already exist").
+
+    Deliberately conservative — it returns something only when the employer has
+    ONE non-archived placement AND that row carries a candidate_id. Confirmed
+    live 2026-09-04: of 6 placement rows only 2 name a candidate, and one
+    employer has 4 placements with a single candidate among them. Guessing which
+    of four helpers a client means, and then putting that name on a ticket, is
+    worse than asking.
+
+    NOTE: `candidates` holds full_name and nationality and NOTHING about a
+    passport — there is no passport number, expiry or issue-date column anywhere
+    in this database (checked across candidates, placements and cases on
+    2026-09-04). The passport expiry therefore still has to be asked, for
+    existing and new clients alike, until the portal starts recording it.
+    """
+    if not employer_id:
+        return None
+    try:
+        placements = await db.select_many(
+            "placements", "candidate_id,archived_at", employer_id=employer_id
+        )
+    except Exception:  # noqa: BLE001 - a nicety; never break the reply over it
+        logger.exception("Placement lookup failed for employer %s", employer_id)
+        return None
+
+    live = [row for row in placements if not row.get("archived_at")]
+    if len(live) != 1 or not live[0].get("candidate_id"):
+        return None
+
+    try:
+        candidate = await db.select_one(
+            "candidates", "full_name,nationality", id=live[0]["candidate_id"]
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Candidate lookup failed for employer %s", employer_id)
+        return None
+    if not candidate:
+        return None
+
+    helper: dict[str, str] = {}
+    name = str(candidate.get("full_name") or "").strip()
+    nationality = str(candidate.get("nationality") or "").strip()
+    if name:
+        helper["helper_name"] = name[:300]
+    if nationality:
+        helper["nationality"] = nationality[:100]
+    return helper or None
+
+
 async def identify(phone: str) -> dict[str, Any]:
     """Resolve a WhatsApp number to a platform record.
 
