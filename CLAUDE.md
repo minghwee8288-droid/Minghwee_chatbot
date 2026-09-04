@@ -470,6 +470,25 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-09-04** — **An empty extraction was being retried as a parse failure, and the
+  opening message said three things where two would do.** (A) `complete_json` tested
+  `if parsed:` — and `{}` is falsy. The extractor returns `{}` whenever the client's
+  message fills no field, which is most of a conversation, so a **correct** result was
+  logged as `JSON-mode response was unparseable` and the entire call re-run. Live: the
+  warning fired on 5 of the first 6 turns of one passport renewal, doubling the LLM cost
+  of each of those turns for an identical empty answer. Not a Luna problem and not a JSON
+  problem. `try_parse_json()` now returns `None` for a genuine failure and `{}` for "it
+  said nothing", and `complete_json` only retries on `None`. (B) The first message was
+  *"Hi Vaidik, I'm Claire, Ming Hwee's AI assistant, and I'll bring in one of our
+  consultants whenever needed. Passport renewal timing depends on your helper's
+  nationality and embassy. May I know your helper's name?"* — the introduction, a
+  briefing, and the question. The middle sentence said nothing, because on turn one we do
+  not know the nationality it depends on, and the next thing we did was ask for it. The
+  small-ticket briefing now waits one turn (`brief_on_turn`, exactly one turn per
+  conversation either way), and the note tells it to **say nothing rather than something
+  amounting to "it depends"** — if the records make the answer conditional on something
+  we have not been told, there is no answer to give yet.
+
 - **2026-09-04** — **HOTFIX: the bot stopped replying entirely.** `intro_note = ... if
   first_contact else ""` was placed eighty lines ABOVE `first_contact = ...`, so
   `info_collector` raised `UnboundLocalError` on every turn from the 14:02 deploy onward.

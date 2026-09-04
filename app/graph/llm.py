@@ -102,8 +102,15 @@ async def complete_json(
             max_tokens=max_tokens,
             json_mode=True,
         )
-        parsed = parse_json(raw, default=None)
-        if parsed:
+        parsed = try_parse_json(raw)
+        if parsed is not None:
+            # An EMPTY dict is a real answer, not a failure: the extractor
+            # returns {} whenever the client's message fills no field, which is
+            # most of a conversation. `if parsed:` treated that as unparseable
+            # and re-ran the whole call — a duplicate LLM round trip on nearly
+            # every turn, logged as a warning, for a result that came back
+            # identically empty. Live 2026-09-04: the warning fired on 5 of the
+            # first 6 turns of a passport renewal.
             return parsed
         logger.warning("JSON-mode response was unparseable, retrying without it")
     except Exception as exc:  # noqa: BLE001
@@ -122,6 +129,19 @@ async def complete_json(
 
 
 def parse_json(raw: str, *, default: dict | None = None) -> dict:
+    """Parse, falling back to ``default`` when nothing usable comes back."""
+    parsed = try_parse_json(raw)
+    if parsed is not None:
+        return parsed
+    logger.warning("Could not parse LLM JSON output: %s", (raw or "")[:300])
+    return dict(default or {})
+
+
+def try_parse_json(raw: str) -> dict | None:
+    """The parse itself. ``None`` means it failed; ``{}`` means it said nothing.
+
+    Keeping those two apart is the whole point — see complete_json.
+    """
     text = (raw or "").strip()
     if text.startswith("```"):
         text = text.strip("`")
@@ -144,5 +164,4 @@ def parse_json(raw: str, *, default: dict | None = None) -> dict:
         except json.JSONDecodeError:
             pass
 
-    logger.warning("Could not parse LLM JSON output: %s", raw[:300])
-    return dict(default or {})
+    return None

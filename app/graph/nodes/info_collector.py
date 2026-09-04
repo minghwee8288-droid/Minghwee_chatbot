@@ -883,8 +883,17 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # instruction to invent one; ungrounded_figures would bin the reply and the
     # client would get the bare question anyway. Load the fee into the KB and
     # this starts quoting it with no code change.
+    # NOT on the same turn as the introduction. Live 2026-09-04 19:40, the
+    # opening message was "Hi Vaidik, I'm Claire, Ming Hwee's AI assistant, and
+    # I'll bring in one of our consultants whenever needed. Passport renewal
+    # timing depends on your helper's nationality and embassy. May I know your
+    # helper's name?" — three things at once, and the middle one said nothing,
+    # because on turn one we do not yet know the nationality it depends on. The
+    # briefing waits a turn; by then an answer or two is in and it can be
+    # concrete.
     small_ticket_note = ""
-    if service_type in _SMALL_TICKET_SERVICES and not any(asked.values()):
+    brief_on_turn = 1 if _is_first_contact(state) else 0
+    if service_type in _SMALL_TICKET_SERVICES and sum(asked.values()) == brief_on_turn:
         small_ticket_note = (
             f"{chr(10)}{chr(10)}This is a short, well-defined job we handle end to end, not "
             "something to hand straight to a colleague. Before your question, tell "
@@ -893,6 +902,14 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "nothing about it, just ask your question and add nothing. Never "
             "estimate a price, a duration or a document list that is not written "
             "there."
+            f"{chr(10)}{chr(10)}And say nothing at all rather than something that "
+            "amounts "
+            "to \"it depends\". If the records make the answer conditional on "
+            "something you have not been told yet — her nationality, where she is "
+            "— then you do not have an answer to give: skip the sentence and ask "
+            "your question. A client who is told the timing depends on the "
+            "nationality, and is then asked for the nationality, has been given "
+            "nothing and made to read a sentence for it."
         )
 
     # The very first thing this client has ever heard from us. Rule 1 and the
