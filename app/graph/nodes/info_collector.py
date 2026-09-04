@@ -11,7 +11,10 @@ import re
 from typing import Any
 
 from app.graph.guards import (
+    COST_DEFERRAL_REPLY,
+    COST_WITHHELD_SERVICES,
     clamp_reply,
+    quotes_hiring_package_cost,
     is_degenerate,
     last_bot_line,
     leaks_internal_reasoning,
@@ -152,7 +155,7 @@ _VOLUNTEERED_REQUIREMENT = re.compile(
 # connect with you shortly" as the only thing they ever learn. Client
 # instruction, 2026-09-04: "provide relevant information instead of immediately
 # pushing the customer to a live agent".
-_SMALL_TICKET_SERVICES = frozenset({"renewal", "passport_renewal"})
+_SMALL_TICKET_SERVICES = frozenset({"renewal", "passport_renewal", "insurance"})
 
 
 def _prior_hires(state: ConversationState) -> int:
@@ -952,6 +955,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             max_sentences=3
             if (answer_first or first_contact or small_ticket_note)
             else 2,
+            withhold_cost=service_type in COST_WITHHELD_SERVICES,
         )
         counts[next_field.key] = 1
         logger.info(
@@ -1031,6 +1035,7 @@ async def _write(
     instruction: str,
     fallback: str = "",
     max_sentences: int = 2,
+    withhold_cost: bool = False,
 ) -> str:
     system_prompt = build_system_prompt(
         prompt_state,
@@ -1091,6 +1096,16 @@ async def _write(
     if invented:
         logger.warning("Collector reply quoted unstated figure(s) %s — using the plain question", invented)
         return fallback or FALLBACK_QUESTION
+
+    # Grounded is not the same as wanted. The knowledge base really does hold
+    # "approximately S$14,000-17,500" and the $1,568 service fee off Form A, so
+    # ungrounded_figures passes them happily — and the client's instruction
+    # (2026-09-04) is that a new hire's cost is never put in front of anyone
+    # before a salesperson has. Small-ticket services are the opposite and are
+    # not in COST_WITHHELD_SERVICES.
+    if withhold_cost and quotes_hiring_package_cost(reply):
+        logger.info("Collector reply priced the hire — deferring the cost to a consultant instead")
+        return COST_DEFERRAL_REPLY
 
     # "Our consultant will share the package details" is a handover announcement.
     reply = clamp_reply(strip_handover_talk(reply), max_sentences=max_sentences)

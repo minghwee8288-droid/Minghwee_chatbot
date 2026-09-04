@@ -130,6 +130,7 @@ SERVICE_LABELS = {
     "transfer": "a helper transfer",
     "transfer_employer": "a helper transfer",
     "renewal": "a work permit renewal",
+    "insurance": "helper insurance",
     "home_leave": "home leave for their helper",
     "passport_renewal": "a passport renewal",
     "fee_enquiry": "our fees",
@@ -163,6 +164,16 @@ CANDIDATE_HIRING = "candidate_new_hiring"
 # topic and answered "a live agent will connect with you shortly" forever
 # without ever collecting anything. Live, 2026-09-02 18:34-18:45. A separate key
 # keeps the corrected employer-side questions AND its own ticket.
+# Helper insurance. Named by the client (2026-09-04) as a small-ticket service
+# alongside work permit and passport renewal — one we quote, explain and carry
+# forward rather than hand straight to a consultant. Its own service key, not a
+# remap onto `renewal`, for the reason spelled out above TRANSFER_EMPLOYER: the
+# blocked-topic key IS the service key, so folding it into renewal would make an
+# insurance question read as a follow-up on an already-parked permit renewal.
+# cb_tkt_service_check does not allow 'insurance', so TICKET_SERVICE_FALLBACK
+# files it under 'renewal' with the true key in captured_info.topic_key.
+INSURANCE = "insurance"
+
 TRANSFER_EMPLOYER = "transfer_employer"
 
 # What the classifier calls a helper offering herself for placement. It is an
@@ -232,6 +243,12 @@ _HAS_PETS = Gate(
     # "no pets" and "no, I don't have any" both contain a match term. Checked
     # first, so a negative answer closes the gate rather than opening it.
     excludes=("no pet", "none", "nope", "don't", "dont", "do not", "haven't", "havent"),
+)
+
+_RENEWING_POLICY = Gate(
+    "insurance_need",
+    ("renew", "renewal", "existing", "expiring", "expire", "current policy"),
+    excludes=("new", "first", "buying", "just checking", "not sure"),
 )
 
 _WAS_REFERRED = Gate(
@@ -679,6 +696,39 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     # (a helper rarely knows her employer's case reference), which is how a
     # ticket ended up reading "passport renewal" and nothing else. The helper's
     # name and the relevant expiry date let an agent find the case either way.
+    # Deliberately three questions and two of them optional. This is a
+    # small-ticket service: the knowledge base already answers what is legally
+    # required and what a policy costs, so the job here is to establish which of
+    # the two situations they are in and get it to the desk — not to qualify.
+    INSURANCE: [
+        Field(
+            "insurance_need",
+            "what they need",
+            "Are you buying insurance for a new helper, or renewing an existing "
+            "policy?",
+            max_asks=2,
+            options=(
+                "a new policy",
+                "renewing an existing policy",
+                "just checking what is required",
+            ),
+        ),
+        Field(
+            "helper_name",
+            "helper's name",
+            "May I know your helper's name?",
+            max_asks=2,
+            optional=True,
+        ),
+        Field(
+            "policy_expiry",
+            "when the current policy ends",
+            "When does her current policy end?",
+            max_asks=1,
+            optional=True,
+            gate=_RENEWING_POLICY,
+        ),
+    ],
     # No _case_id(), for the same reason passport_renewal has none: the client
     # grouped work permit renewal WITH passport renewal as a small-ticket
     # service, and their standing rule is that a reference number is never asked
@@ -823,6 +873,7 @@ TICKET_SERVICE_TYPES = {
 TICKET_SERVICE_FALLBACK = {
     CANDIDATE_HIRING: "new_hiring",
     TRANSFER_EMPLOYER: "transfer",
+    INSURANCE: "renewal",
     CANDIDATE_REGISTRATION: "new_hiring",
     "media_received": "transfer",
     "general_question": "transfer",
@@ -1233,6 +1284,8 @@ _DETAIL_LABELS = {
     "cooking": "Cooking",
     "rest_day": "Rest day",
     "additional_notes": "Also mentioned",
+    "insurance_need": "Insurance needed for",
+    "policy_expiry": "Current policy ends",
     "helper_tenure": "Current helper's time with them",
     "helper_from_us": "Current helper placed by us",
     "current_helper_exit": "Current helper going",

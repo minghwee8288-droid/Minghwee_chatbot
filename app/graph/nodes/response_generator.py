@@ -8,6 +8,8 @@ from typing import Any
 
 from app.config import settings
 from app.graph.guards import (
+    COST_DEFERRAL_REPLY,
+    COST_WITHHELD_SERVICES,
     clamp_reply,
     holding_reply,
     is_degenerate,
@@ -15,6 +17,7 @@ from app.graph.guards import (
     leaks_internal_reasoning,
     looks_like_document,
     near_duplicate,
+    quotes_hiring_package_cost,
     recent_bot_lines,
     strip_handover_talk,
     strip_meta_commentary,
@@ -218,6 +221,21 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
             reply[:200],
         )
         reply = ""
+    elif state.get("service_type") in COST_WITHHELD_SERVICES and quotes_hiring_package_cost(
+        reply
+    ):
+        # Grounded, and still not to be sent. The knowledge base holds the
+        # S$14,000-17,500 first-year figure and Form A's $1,568 service fee, so
+        # ungrounded_figures waves them through — but a new hire's cost is not
+        # put in front of a client before a salesperson has spoken to them
+        # (client instruction, 2026-09-04). Salary, levy and the security bond
+        # are deliberately not caught; see quotes_hiring_package_cost.
+        logger.info(
+            "Conversation %s: reply priced the hire — deferring the cost to a consultant",
+            state.get("conversation_id"),
+        )
+        reply = COST_DEFERRAL_REPLY
+        token_present = True
     else:
         # Two sentences. A third almost always turns out to be padding — the
         # explanation after the answer, or the offer of further help — and it is

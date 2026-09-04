@@ -174,6 +174,7 @@ because the lead is opened early and the ticket is created much later.
 | Assault: keyword override, no LLM confidence | `intent_classifier.ASSAULT_PATTERNS` | **English-only — see §9.** |
 | A transfer is never asked the first-time-hire question | `intent_classifier._TRANSFER_PATTERN` | "transfer" beside maid/helper/employer/permit/service, or "change employer", forces `transfer`. Does not fire while another service is mid-collection. English-only (§9.2). |
 | A client is TOLD what we recognised, not just silently spared the question | `info_collector` (`recognised_note`) | Fires once, off `placed_helper`. Suppresses `returning_note`, which says the opposite. |
+| A new hire's cost is never quoted before a salesperson speaks to them | `guards.quotes_hiring_package_cost` + `COST_WITHHELD_SERVICES` | Salary, levy and the $5,000 bond deliberately still go out. |
 | A small-ticket service explains itself before it collects | `info_collector._SMALL_TICKET_SERVICES` | `renewal`, `passport_renewal`. Opening turn only; strictly grounded in `rag_context`. |
 | A renewal never asks for a case ID | `SERVICE_FIELDS["passport_renewal"]`, `["renewal"]` | `_case_id()` deliberately absent. Client instruction, 2026-09-04. |
 | Nobody is asked whether they have hired with us before | `info_collector._known_fields` | Filled from `prior_hires` either way now — zero reads as "first time with us". |
@@ -425,6 +426,32 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-04** — **Insurance becomes a service; a new hire's cost stops being quoted.**
+  (A) **`insurance` did not exist** — no field list, no intent, nothing — yet the client
+  names it a small-ticket service beside permit and passport renewal. It now has its own
+  service key (three questions, two optional), sits in `_SMALL_TICKET_SERVICES` and
+  `EMPLOYER_LEAD_SERVICES`, and is filed under `renewal` by `TICKET_SERVICE_FALLBACK`
+  since `cb_tkt_service_check` does not allow the value. Its own key, not a remap onto
+  `renewal`, for the TRANSFER_EMPLOYER reason: the blocked-topic key IS the service key.
+  In both alias tables `insuran` is matched **before** `renew`, so "renew my helper's
+  insurance" is insurance. The knowledge base already answers it — *"A combined 14-month
+  policy costs S$280-350; a 26-month policy costs S$400-520"*, retrieval 0.63-0.73 — so
+  the cost requirement is met with no new content.
+  (B) **The hiring cost is now withheld.** `ungrounded_figures` was passing the total
+  happily, because it is genuinely in the records: *"approximately S$14,000-17,500"* and
+  Form A's **$1,568** service fee. Grounded is not the same as wanted — the client's rule
+  is that a new hire's price never reaches anyone before a salesperson has spoken to them.
+  `quotes_hiring_package_cost` catches a total/package/placement-or-service-fee framing
+  next to a figure and swaps in `COST_DEFERRAL_REPLY`, wired into both write paths.
+  **Salary ($600-800), the levy ($300) and the $5,000 security bond are deliberately NOT
+  caught** — they are not what a client means by "the cost", and withholding them would
+  make the bot evasive about facts they are entitled to. Scoped to `new_hiring`,
+  `direct_hiring` and `fee_enquiry`; small-ticket services quote freely.
+  **KB contradictions found and NOT fixed** (we do not know which is right): one row says
+  medical insurance minimum **S$15,000**/year and another says **S$60,000**/year (MOM's
+  actual figure is $15,000, so the second looks wrong); and Form A prices insurance at
+  **$590** while the FAQ says **$280-350 / $400-520**. The bot may quote either.
 
 - **2026-09-04** — **Work permit renewal: no case ID, and it explains itself.** Thomas
   groups WPR with passport renewal and insurance as a *small-ticket* service — one we do

@@ -99,6 +99,7 @@ _INTENT_ALIASES: tuple[tuple[re.Pattern[str], str], ...] = (
      ), "candidate_registration"),
     (re.compile(r"introduc|about\s+(you|your|the\s+agency)|who\s+are\s+you", re.I), "agency_info"),
     (re.compile(r"replace|replacement", re.I), "replacement"),
+    (re.compile(r"insuran", re.I), "insurance"),
     (re.compile(r"renew", re.I), "renewal"),
     (re.compile(r"transfer", re.I), "transfer"),
     (re.compile(r"home\s*leave|vacation|going home", re.I), "home_leave"),
@@ -125,6 +126,9 @@ _INTENT_ALIASES: tuple[tuple[re.Pattern[str], str], ...] = (
 # collection answer for a new request.
 _NAMED_SERVICE = (
     (re.compile(r"\btransfer\b", re.I), "transfer"),
+    # Before renewal: "renew my insurance" names both, and the one the client
+    # actually asked for is the insurance.
+    (re.compile(r"\binsuran", re.I), "insurance"),
     (re.compile(r"\brenew", re.I), "renewal"),
     (re.compile(r"\breplace", re.I), "replacement"),
     (re.compile(r"\bpassport\b", re.I), "passport_renewal"),

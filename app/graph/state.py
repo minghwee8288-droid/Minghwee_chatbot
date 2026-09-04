@@ -37,6 +37,7 @@ SERVICE_INTENTS = {
     "renewal",
     "home_leave",
     "passport_renewal",
+    "insurance",
 }
 
 ENQUIRY_INTENTS = {"fee_enquiry", "salary_enquiry"}

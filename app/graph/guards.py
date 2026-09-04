@@ -34,6 +34,52 @@ def _digit_forms(text: str) -> set[str]:
     return forms
 
 
+# Services where the client has told us NOT to put a price in front of anyone
+# before a salesperson has spoken to them. Their reasoning, 2026-09-04: a new
+# hire is a high-ticket commitment ("approximately S$14,000-17,500" for the
+# first year, per the knowledge base), and a number that size landing in a
+# WhatsApp message with no consultant attached loses the client rather than
+# informing them. The small-ticket services are the deliberate opposite — a
+# renewal, a passport, an insurance policy are quoted freely.
+COST_WITHHELD_SERVICES = frozenset({"new_hiring", "direct_hiring", "fee_enquiry"})
+
+# A figure presented as the cost of the engagement, rather than a figure that
+# happens to be money. The pairing is what matters: a bare "$650" is a salary
+# and must still go out, and "the $5,000 security bond" is a legal fact a client
+# is entitled to. What is caught is a total, a package, or one of our own fees
+# with an amount beside it.
+_PACKAGE_COST_TERMS = (
+    r"total|altogether|all[- ]?in|overall|upfront|first[- ]?year|package|"
+    r"placement\s+fee|service\s+fee|agency\s+fee|our\s+fee|deposit"
+)
+_PACKAGE_COST = re.compile(
+    rf"(?:{_PACKAGE_COST_TERMS})[^.!?]{{0,90}}?[$]\s?[\d,]{{3,}}"
+    rf"|[$]\s?[\d,]{{3,}}[^.!?]{{0,90}}?(?:{_PACKAGE_COST_TERMS})",
+    re.IGNORECASE,
+)
+
+
+# Sent instead of a price when the guard above fires. Vetted, so it bypasses
+# nothing: no figure, no named colleague, no promised time, and it does not
+# claim the cost is unknowable — only that a person will do the costing.
+COST_DEFERRAL_REPLY = (
+    "The cost depends on nationality, experience and how the package is put "
+    "together, so I would rather one of our consultants take you through the "
+    "full breakdown than give you half a figure. I will get that arranged."
+)
+
+
+def quotes_hiring_package_cost(reply: str) -> bool:
+    """Whether the reply puts a price on the hire itself.
+
+    Only meaningful for COST_WITHHELD_SERVICES — the caller decides. Salary
+    figures, the levy and the security bond are deliberately NOT caught: they
+    are not what the client meant by "the cost", and withholding them would
+    make the bot evasive about facts a client is entitled to.
+    """
+    return bool(_PACKAGE_COST.search(reply or ""))
+
+
 def ungrounded_figures(reply: str, *contexts: str) -> list[str]:
     """Figures in the reply that appear in none of the given contexts.
 
