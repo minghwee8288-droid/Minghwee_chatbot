@@ -174,6 +174,8 @@ because the lead is opened early and the ticket is created much later.
 | Assault: keyword override, no LLM confidence | `intent_classifier.ASSAULT_PATTERNS` | **English-only — see §9.** |
 | A transfer is never asked the first-time-hire question | `intent_classifier._TRANSFER_PATTERN` | "transfer" beside maid/helper/employer/permit/service, or "change employer", forces `transfer`. Does not fire while another service is mid-collection. English-only (§9.2). |
 | A client is TOLD what we recognised, not just silently spared the question | `info_collector` (`recognised_note`) | Fires once, off `placed_helper`. Suppresses `returning_note`, which says the opposite. |
+| An employer looking FOR a transfer helper is never asked her name | `_TAKING_ON_TRANSFER` / `_RELEASING_HELPER` gates | Everything after the direction question is gated on it. |
+| A helper asking to be transferred keeps the helper flow | `intent_classifier._HELPER_SPEAKING` | Beats the employer fallback for `transfer`. "transfer my helper" excluded by lookahead. |
 | The employer flow asks what the candidate form profiles | `SERVICE_FIELDS["new_hiring"]` | `helper_room`, `helper_profile`, `special_duties` come straight from `candidates.biodata.commitments`. |
 | A new hire's cost is never quoted before a salesperson speaks to them | `guards.quotes_hiring_package_cost` + `COST_WITHHELD_SERVICES` | Salary, levy and the $5,000 bond deliberately still go out. |
 | A small-ticket service explains itself before it collects | `info_collector._SMALL_TICKET_SERVICES` | `renewal`, `passport_renewal`. Opening turn only; strictly grounded in `rag_context`. |
@@ -438,6 +440,28 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-04** — **Transfer: an employer looking FOR a helper stops being asked her
+  name, and a helper asking for herself stops being run as an employer.** The client's
+  definition: a transfer helper is one already in Singapore, available because the
+  previous employer or recruitment arrangement ended — and **either side can start it**.
+  (A) `transfer_employer` asked `helper_name` and `reason` unconditionally, so *"I'm
+  looking for a transfer helper"* was answered *"May I know the helper's name?"* — of
+  someone who has not met her. (Their analogy: you would not ask the developer's name of
+  somebody looking to hire a developer.) Everything after the direction question is now
+  gated: **`_RELEASING_HELPER`** opens the helper's name and the reason,
+  **`_TAKING_ON_TRANSFER`** opens a short requirement set instead — what they need help
+  with, preferred nationality, household, budget. All four keys are in
+  `_PORTABLE_ACROSS_SERVICES`, so an employer who answered them in a hiring flow is not
+  asked twice, and a first-time employer gets requirement questions rather than questions
+  about a helper they do not have. The gate is *undecided* until the direction is
+  answered, which means the name can never be asked before we know which of the two they
+  mean. (B) **`_HELPER_SPEAKING`** overrides `_CONTACT_FALLBACK_BY_INTENT["transfer"] =
+  "employer"` when the message is written in the first person about herself — "transfer
+  me", "my employer", "find me a new employer". *"I want to transfer my helper"* is
+  excluded by a lookahead, so the employer half is untouched. Verified against 6 helper
+  and 6 employer phrasings. The KB already defines the term (retrieval 0.64-0.77 on
+  "what is a transfer helper"), so no content was needed.
 
 - **2026-09-04** — **The employer flow now asks what the candidate form profiles.** The
   client's instruction was to stop asking arbitrary questions and take the requirement set

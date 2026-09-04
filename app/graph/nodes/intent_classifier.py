@@ -259,11 +259,35 @@ _CONTACT_FALLBACK_BY_INTENT = {
 }
 
 
-def _detected_contact_type(intent: str, raw: Any) -> str | None:
+# A TRANSFER request written in the first person by the helper herself.
+# "Transfer" falls back to employer when we cannot tell (see
+# _CONTACT_FALLBACK_BY_INTENT), which is right for most numbers and wrong
+# for this one: the client is explicit that a transfer can be initiated by
+# either side, and a helper routed into the employer flow is asked what kind
+# of care SHE is looking for. The tell is who the sentence is about — "my
+# employer" and "transfer me" can only come from her, while "transfer my
+# helper" is the employer and is excluded by the lookahead.
+_HELPER_SPEAKING = re.compile(
+    r"\btransfer\s+me\b"
+    r"|\bi\s+(?:want|need|would\s+like|am\s+looking)\s+(?:to\s+)?(?:be\s+)?"
+    r"transfer(?:red)?\b(?!\s+(?:my|our|the)\b)"
+    r"|\bmy\s+(?:current\s+)?(?:employer|boss)\b"
+    r"|\b(?:find|get)\s+me\s+(?:a\s+)?(?:new\s+)?employer\b"
+    r"|\blooking\s+for\s+(?:a\s+)?new\s+employer\b",
+    re.IGNORECASE,
+)
+
+
+def _detected_contact_type(intent: str, raw: Any, message: str = "") -> str | None:
     """Who the classifier thinks this is, or None while it cannot tell."""
     by_intent = _CONTACT_BY_INTENT.get(intent)
     if by_intent:
         return by_intent
+    # Ahead of the model's own answer AND of the employer fallback below: a
+    # helper asking to be transferred is the half of "transfer" that the
+    # fallback gets wrong, and she says so in the first person.
+    if intent == "transfer" and _HELPER_SPEAKING.search(message or ""):
+        return "candidate"
     value = str(raw or "").strip().lower()
     if value in _CONTACT_TYPES:
         return value
@@ -537,7 +561,9 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
         for key in ("matched_employer_id", "matched_candidate_id", "matched_supplier_id")
     )
     if not has_master_record:
-        detected = _detected_contact_type(intent, result.get("contact_type"))
+        detected = _detected_contact_type(
+            intent, result.get("contact_type"), state.get("incoming_text") or ""
+        )
         if detected:
             update["detected_contact_type"] = detected
             stored = (state.get("contact_type") or "unknown").strip()

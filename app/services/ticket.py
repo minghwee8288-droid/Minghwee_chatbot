@@ -245,6 +245,31 @@ _HAS_PETS = Gate(
     excludes=("no pet", "none", "nope", "don't", "dont", "do not", "haven't", "havent"),
 )
 
+# The two opposite things an employer means by "transfer", as answered by
+# transfer_direction. Everything after that first question is gated on it.
+#
+# Live complaint, 2026-09-04: "I'm looking for a transfer helper" was answered
+# "May I know the helper's name?" — of someone who has not met her yet. The
+# client's analogy: you would not ask for the developer's name from somebody who
+# said they were looking to hire a developer. So the helper's name and the
+# reason are asked ONLY of an employer releasing their own helper, and someone
+# taking one on gets requirement questions instead.
+_TAKING_ON_TRANSFER = Gate(
+    "transfer_direction",
+    ("taking on", "take on", "looking for", "looking to hire", "hire", "find",
+     "want a transfer", "need a transfer", "new helper", "transfer helper", "take over"),
+    excludes=("releas", "let her go", "let go", "my current", "transfer out",
+              "send her", "my helper", "existing helper", "my own"),
+)
+
+_RELEASING_HELPER = Gate(
+    "transfer_direction",
+    ("releas", "let her go", "let go", "my current", "transfer out", "send her",
+     "my helper", "existing helper", "my own", "move her"),
+    excludes=("taking on", "take on", "looking for", "looking to hire",
+              "want a transfer helper", "need a transfer helper"),
+)
+
 _RENEWING_POLICY = Gate(
     "insurance_need",
     ("renew", "renewal", "existing", "expiring", "expire", "current policy"),
@@ -708,12 +733,14 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
                 "releasing my current helper",
             ),
         ),
+        # --- Releasing their own helper: these are about HER ---
         Field(
             "helper_name",
             "helper's name",
             "May I know the helper's name?",
             max_asks=2,
             optional=True,
+            gate=_RELEASING_HELPER,
         ),
         Field(
             "reason",
@@ -721,7 +748,68 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             "What is the reason for the transfer?",
             max_asks=2,
             optional=True,
+            gate=_RELEASING_HELPER,
         ),
+        # --- Taking one on: these are about WHAT THEY NEED ---
+        #
+        # A transfer helper is already in Singapore and available because the
+        # previous arrangement ended; the client may never have hired anyone
+        # before and certainly does not know her name yet. So this half is a
+        # short requirement set, not a questionnaire about an existing helper.
+        # Every key here is in _PORTABLE_ACROSS_SERVICES, so an employer who
+        # already answered them in a hiring flow is not asked twice.
+        Field(
+            "requirement",
+            "what they need help with",
+            "What would you mainly need help with — childcare, eldercare, or "
+            "general housework and cooking?",
+            max_asks=2,
+            group="what they need",
+            options=(
+                "childcare",
+                "eldercare",
+                "general housework and cooking",
+                "all of the above",
+            ),
+            gate=_TAKING_ON_TRANSFER,
+        ),
+        Field(
+            "preferred_nationality",
+            "nationality preference",
+            "Do you have a preferred nationality?",
+            max_asks=2,
+            group="what they need",
+            options=("Filipino", "Indonesian", "Myanmar", "no preference"),
+            gate=_TAKING_ON_TRANSFER,
+        ),
+        Field(
+            "household",
+            "household size",
+            "How many people live in your household?",
+            max_asks=1,
+            optional=True,
+            group="what they need",
+            options=("1-2", "3-4", "5-6", "7 or more"),
+            gate=_TAKING_ON_TRANSFER,
+        ),
+        Field(
+            "budget",
+            "monthly salary budget",
+            "Do you have a monthly salary budget in mind?",
+            max_asks=1,
+            optional=True,
+            group="what they need",
+            options=(
+                "below $500",
+                "$500-600",
+                "$600-700",
+                "$700-800",
+                "above $800",
+                "not sure yet",
+            ),
+            gate=_TAKING_ON_TRANSFER,
+        ),
+        # --- Both directions ---
         Field(
             "timeline",
             "timeline",
