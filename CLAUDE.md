@@ -174,6 +174,7 @@ because the lead is opened early and the ticket is created much later.
 | Assault: keyword override, no LLM confidence | `intent_classifier.ASSAULT_PATTERNS` | **English-only — see §9.** |
 | A transfer is never asked the first-time-hire question | `intent_classifier._TRANSFER_PATTERN` | "transfer" beside maid/helper/employer/permit/service, or "change employer", forces `transfer`. Does not fire while another service is mid-collection. English-only (§9.2). |
 | A client is TOLD what we recognised, not just silently spared the question | `info_collector` (`recognised_note`) | Fires once, off `placed_helper`. Suppresses `returning_note`, which says the opposite. |
+| The employer flow asks what the candidate form profiles | `SERVICE_FIELDS["new_hiring"]` | `helper_room`, `helper_profile`, `special_duties` come straight from `candidates.biodata.commitments`. |
 | A new hire's cost is never quoted before a salesperson speaks to them | `guards.quotes_hiring_package_cost` + `COST_WITHHELD_SERVICES` | Salary, levy and the $5,000 bond deliberately still go out. |
 | A small-ticket service explains itself before it collects | `info_collector._SMALL_TICKET_SERVICES` | `renewal`, `passport_renewal`. Opening turn only; strictly grounded in `rag_context`. |
 | A renewal never asks for a case ID | `SERVICE_FIELDS["passport_renewal"]`, `["renewal"]` | `_case_id()` deliberately absent. Client instruction, 2026-09-04. |
@@ -236,6 +237,17 @@ has the number; the client does not need to be told it.
 employer holds 4 placements with a single candidate among them. That is why
 `get_placed_helper()` returns a helper only when there is exactly one live placement AND
 it names a candidate: naming the wrong helper on a ticket is worse than asking.
+
+**`candidates.biodata` IS the matching form.** Its `commitments` block holds the 19
+things every helper is profiled on — `share_room`, `no_offday`, `window_clean`,
+`wash_car`, `gardening`, `go_marketing`, `hand_wash`, `handle_pork`, `handle_beef`,
+`care_newborn`/`children`/`elderly`/`disabled`/`bedridden`, `cook_family`, `long_hours`,
+`pet_care`, `use_appliances`, `general_house` — plus `skills` in three groups
+(housework, infant_child, elderly_disabled) and `languages` with proficiency. The
+`candidates` columns add `age`, `experience_years`, `english_level`, `religion`,
+`off_days_per_month`, `asking_salary_cents` and `candidate_type`. **When asked what the
+employer flow should collect, this is the form to read** — it is what the office actually
+filters on.
 
 **The bot never closes a ticket.** No code path writes `cb_tickets.status` after insert.
 The portal owns resolution.
@@ -426,6 +438,23 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-04** — **The employer flow now asks what the candidate form profiles.** The
+  client's instruction was to stop asking arbitrary questions and take the requirement set
+  from the existing forms. The form is `candidates.biodata`: every helper answers 19
+  `commitments` and 22 `skills`, and the `candidates` columns add age, experience_years,
+  english_level and religion. Mapping the employer flow against it found **nine matching
+  attributes with no employer-side question at all** — `share_room`, `window_clean`,
+  `wash_car`, `gardening`, `go_marketing`, `hand_wash`, `handle_pork`/`handle_beef`,
+  `age`, `experience_years`. Closed in **three questions and one rewording**, using the
+  form's own wording so the extractor maps cleanly: **`helper_room`** (own room vs
+  sharing — a hard filter, plenty of helpers will not share, and it was simply absent);
+  **`helper_profile`** (age and experience in one question, since they are one thought);
+  **`special_duties`** (the five extra-duty commitments in one question rather than five);
+  and **`cooking`** widened to ask whether she would need to handle pork or beef. 20 → 23
+  fields, two of the three optional. Still unresolved and NOT a code problem: D also
+  requires that "a salesperson should engage with the customer first", and §9.1 means
+  every ticket is still created **unassigned**.
 
 - **2026-09-04** — **Insurance becomes a service; a new hire's cost stops being quoted.**
   (A) **`insurance` did not exist** — no field list, no intent, nothing — yet the client

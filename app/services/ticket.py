@@ -358,6 +358,23 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
                 "landed",
             ),
         ),
+        # commitments.share_room on the candidate form. A hard filter, not a
+        # preference: every helper is profiled on whether she will share a room,
+        # and plenty will not. Asking the employer nothing about it left the
+        # matching side missing one of its three big constraints.
+        Field(
+            "helper_room",
+            "her sleeping arrangement",
+            "Will she have her own room, or would she be sharing?",
+            max_asks=2,
+            group="their household",
+            options=(
+                "own room",
+                "sharing with a child",
+                "sharing with an elderly family member",
+                "shared space, not a separate room",
+            ),
+        ),
         Field(
             "pets",
             "whether they have pets",
@@ -406,6 +423,26 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             group="their preferences",
             options=("Filipino", "Indonesian", "Myanmar", "no preference"),
         ),
+        # candidates.age and candidates.experience_years are both columns the
+        # office filters on; neither had an employer-side counterpart, so a
+        # consultant had to ring back for them before shortlisting anyone. One
+        # question, because they are one thought.
+        Field(
+            "helper_profile",
+            "the age and experience they want",
+            "Any preference on her age or how much experience she should have?",
+            max_asks=1,
+            optional=True,
+            group="their preferences",
+            options=(
+                "no preference",
+                "younger, 21-30",
+                "30-40",
+                "40 and above",
+                "at least 2 years experience",
+                "experienced with Singapore employers",
+            ),
+        ),
         Field(
             "hire_source",
             "transfer or new hire",
@@ -418,8 +455,9 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         ),
         Field(
             "cooking",
-            "cooking requirements",
-            "Any particular cooking you would want her to handle?",
+            "cooking requirements, including whether she would need to handle pork or beef",
+            "Any particular cooking you would want her to handle, and would she need "
+            "to handle pork or beef?",
             max_asks=1,
             optional=True,
             group="their preferences",
@@ -430,7 +468,32 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
                 "Western",
                 "halal kitchen",
                 "vegetarian",
+                "no pork",
+                "no beef",
                 "no specific requirement",
+            ),
+        ),
+        # commitments.window_clean / wash_car / gardening / go_marketing /
+        # hand_wash. Every candidate answers all five on her own form; the
+        # employer was asked none of them, so five of the nineteen matching
+        # commitments had nothing to match against. One question rather than
+        # five, in the form's own wording so the extractor maps them cleanly.
+        Field(
+            "special_duties",
+            "duties beyond ordinary housework",
+            "Beyond the usual cleaning and cooking, would she need to do things "
+            "like high-rise window cleaning, car washing, gardening, grocery "
+            "marketing, or hand-washing laundry?",
+            max_asks=1,
+            optional=True,
+            group="their preferences",
+            options=(
+                "window cleaning (high-rise)",
+                "car washing",
+                "gardening / plant care",
+                "marketing / grocery shopping",
+                "laundry - hand wash",
+                "none of these",
             ),
         ),
         Field(
@@ -1278,6 +1341,9 @@ _DETAIL_LABELS = {
     "household": "Household size",
     "home_type": "Home",
     "pets": "Pets",
+    "helper_room": "Her room",
+    "helper_profile": "Age / experience wanted",
+    "special_duties": "Extra duties",
     "pet_detail": "Pet details",
     "languages": "Languages at home",
     "hire_source": "Transfer or new hire",
