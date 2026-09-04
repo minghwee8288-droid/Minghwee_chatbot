@@ -155,6 +155,28 @@ _VOLUNTEERED_REQUIREMENT = re.compile(
 # connect with you shortly" as the only thing they ever learn. Client
 # instruction, 2026-09-04: "provide relevant information instead of immediately
 # pushing the customer to a live agent".
+# Why we are about to ask a run of questions, per flow. Said once, at the top of
+# a qualification, because a question-answer-question-answer march with no
+# reason given reads as an interrogation and is the single biggest driver of
+# people simply not replying — the client's own feedback, 2026-09-04: "this
+# feels like an interrogation and will increase the drop-off rate".
+#
+# The PURPOSE is supplied, never the wording. A fixed sentence used at the top
+# of every conversation becomes the formula that the no-repeat rules exist to
+# stop, so the model is told what the reason is and left to say it in its voice.
+_COLLECTION_PURPOSE = {
+    "new_hiring": "so we can match a helper who actually suits their household",
+    "candidate_new_hiring": "so we can put her in front of the right employers",
+    "direct_hiring": "so we can check the paperwork is in order before it goes to MOM",
+    "replacement": "so the right person picks this up and we find a suitable replacement",
+    "transfer_employer": "so we can shortlist transfer helpers who actually fit",
+    # The helper's own transfer. Six questions about her permit, her employer's
+    # consent and her availability is exactly the march this note exists for,
+    # and she has less patience for it than an employer does.
+    "transfer": "so we can find you an employer who suits",
+}
+
+
 _SMALL_TICKET_SERVICES = frozenset({"renewal", "passport_renewal", "insurance"})
 
 
@@ -851,6 +873,22 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "there."
         )
 
+    # Opening a qualification: say why, once. Gated on nothing having been asked
+    # yet, the same test the small-ticket briefing uses — and the two sets are
+    # disjoint, so a flow gets one or the other, never both.
+    purpose_note = ""
+    purpose = _COLLECTION_PURPOSE.get(service_type or "")
+    if purpose and not any(asked.values()):
+        purpose_note = (
+            f"{chr(10)}{chr(10)}This is the first of several questions, and a client "
+            "marched through question after question with no reason given stops "
+            "replying — that is the most common way these conversations die. Before "
+            "you ask, give them the reason in one short clause: you are asking "
+            f"{purpose}. Put it in your own words, not those ones, and say it ONCE "
+            "— here, at the top. Never explain yourself again in this conversation, "
+            "and never turn it into a preamble you attach to every question."
+        )
+
     # They stated a requirement rather than answering; say so before asking the
     # next thing. Not conditional on the extractor having found a home for it —
     # the failure this fixes is conversational, and a client whose requirement
@@ -931,6 +969,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             + dropped_note
             + recognised_note
             + small_ticket_note
+            + purpose_note
             + returning_note
             + requirement_note
             + follow_up_notes.get(next_field.key, "")
@@ -953,7 +992,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             # Answering their question and then asking ours does not fit in two,
             # and neither does introducing yourself before asking anything.
             max_sentences=3
-            if (answer_first or first_contact or small_ticket_note)
+            if (answer_first or first_contact or small_ticket_note or purpose_note)
             else 2,
             withhold_cost=service_type in COST_WITHHELD_SERVICES,
         )

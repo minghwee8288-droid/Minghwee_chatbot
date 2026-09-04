@@ -17,7 +17,10 @@ import importlib
 import app.services.ticket as t
 from app.graph.guards import quotes_hiring_package_cost as q
 ic = importlib.import_module("app.graph.nodes.intent_classifier")
-S = importlib.import_module("app.graph.nodes.info_collector")._SMALL_TICKET_SERVICES
+ico = importlib.import_module("app.graph.nodes.info_collector")
+S = ico._SMALL_TICKET_SERVICES
+P = ico._COLLECTION_PURPOSE
+from app.graph.prompts.system import RULES
 D = chr(36)
 take = [f.key for f in t.applicable_fields("transfer_employer", {"transfer_direction": "taking on a transfer helper"})]
 rel  = [f.key for f in t.applicable_fields("transfer_employer", {"transfer_direction": "releasing my current helper"})]
@@ -35,6 +38,12 @@ rows = [
  ("new_hiring field count", len(t.SERVICE_FIELDS["new_hiring"]), 23),
  ("passport_renewal asks case id", any(f.key == "case_id" for f in t.SERVICE_FIELDS["passport_renewal"]), False),
  ("renewal asks case id", any(f.key == "case_id" for f in t.SERVICE_FIELDS["renewal"]), False),
+ ("NO flow asks for a case id",
+  [s for s, fl in t.SERVICE_FIELDS.items() if any(f.key == "case_id" for f in fl)], []),
+ ("every long flow explains why it asks",
+  [s for s, fl in t.SERVICE_FIELDS.items()
+   if len(fl) > 4 and s not in P and s not in S], []),
+ ("prompt tells Claire to use their name", "1c." in RULES and "Hi Thomas" in RULES, True),
 ]
 bad = 0
 for label, got, want in rows:

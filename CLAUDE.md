@@ -174,6 +174,9 @@ because the lead is opened early and the ticket is created much later.
 | Assault: keyword override, no LLM confidence | `intent_classifier.ASSAULT_PATTERNS` | **English-only — see §9.** |
 | A transfer is never asked the first-time-hire question | `intent_classifier._TRANSFER_PATTERN` | "transfer" beside maid/helper/employer/permit/service, or "change employer", forces `transfer`. Does not fire while another service is mid-collection. English-only (§9.2). |
 | A client is TOLD what we recognised, not just silently spared the question | `info_collector` (`recognised_note`) | Fires once, off `placed_helper`. Suppresses `returning_note`, which says the opposite. |
+| No flow anywhere asks for a case ID | `SERVICE_FIELDS` | All four removed. The case is found from the phone by `contact.find_active_case()`. Asserted by `scripts/selfcheck_flows.py`. |
+| A run of questions always says why it is asking | `info_collector._COLLECTION_PURPOSE` | Once, on the opening turn. Every flow with more than 4 fields has an entry, and that is asserted. |
+| Claire uses the client's name when she knows it | prompt rule 1c | The positive half of 1b, which only ever said which name NOT to use. |
 | An employer looking FOR a transfer helper is never asked her name | `_TAKING_ON_TRANSFER` / `_RELEASING_HELPER` gates | Everything after the direction question is gated on it. |
 | A helper asking to be transferred keeps the helper flow | `intent_classifier._HELPER_SPEAKING` | Beats the employer fallback for `transfer`. "transfer my helper" excluded by lookahead. |
 | The employer flow asks what the candidate form profiles | `SERVICE_FIELDS["new_hiring"]` | `helper_room`, `helper_profile`, `special_duties` come straight from `candidates.biodata.commitments`. |
@@ -453,6 +456,29 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-04** — **Stop interrogating people.** Three changes from the client's
+  strongest piece of feedback. (A) **The case ID question is gone from every flow.**
+  `passport_renewal` and `renewal` lost it earlier today; `home_leave` and `replacement`
+  lose it now. Their objection is general — clients do not remember a reference from a
+  case opened months or years ago — and `contact.find_active_case()` already finds it from
+  the phone number, which is what they asked for. `_case_id()` is kept but uncalled: the
+  objection is to *asking*, not to the concept, and a volunteered one is still recorded.
+  `scripts/selfcheck_flows.py` asserts no flow ever gains one back. (B) **Rule 1c: use
+  their name.** 1b was entirely negative — never call them Claire, use no name if you do
+  not know theirs — with nothing saying to use the name when we DO have it, which we
+  usually do (`employers.display_name`, the lead, or the WhatsApp push name). Once, at the
+  top of the conversation, not sprinkled through every reply. (C) **`_COLLECTION_PURPOSE`
+  — every qualification now says why before it starts.** Their words: *"question, answer,
+  question, answer... feels like an interrogation and will increase the drop-off rate"*,
+  and `new_hiring` is 23 fields deep. The note fires once, on the opening turn, gated on
+  the same "nothing asked yet" test as the small-ticket briefing (the two sets are
+  disjoint, so a flow gets one or the other). **The purpose is supplied, never the
+  wording** — a fixed opening sentence is exactly the formula the no-repeat rules exist to
+  prevent, so the model is told the reason and left to say it in its own voice, once,
+  never again in that conversation. All six qualification flows are covered including
+  `transfer` (the helper's own, six questions, and she has less patience than an employer);
+  the self-check fails if any flow over four fields is left without one.
 
 - **2026-09-04** — **Transfer: an employer looking FOR a helper stops being asked her
   name, and a helper asking for herself stops being run as an employer.** The client's

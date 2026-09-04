@@ -212,6 +212,10 @@ _CONTACT_NUMBER = Field(
 )
 
 # A case ID the client does not have must not block the flow (§23.5).
+# No flow calls this any more (2026-09-04). Kept, not deleted: the client's
+# objection is to ASKING for a case ID, not to the concept — a client who
+# volunteers one is still recorded, and a future flow may want it back. The
+# case itself is found from the phone number by contact.find_active_case().
 def _case_id() -> Field:
     return Field("case_id", "case ID", "May I have your case ID?", max_asks=1, optional=True)
 
@@ -669,7 +673,6 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     # decides who in the office picks the case up. Added at the client's request,
     # 2026-09-03.
     "replacement": [
-        _case_id(),
         Field("helper_name", "helper's name", "May I know your current helper's name?", max_asks=2),
         Field(
             "helper_tenure",
@@ -894,7 +897,6 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         ),
     ],
     "home_leave": [
-        _case_id(),
         Field("helper_name", "helper's name", "May I know your helper's name?", max_asks=2),
         Field(
             "leave_dates",
