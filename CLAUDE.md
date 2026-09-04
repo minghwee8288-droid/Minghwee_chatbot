@@ -216,12 +216,18 @@ counts the non-archived rows and the webhook puts the number on every turn as
 have hired before. `cases.case_type` also carries a label like `First-time hire`, but its
 full vocabulary is unconfirmed (one row exists), so nothing reads it.
 
-**There is NO passport data in this database.** Checked across `candidates`,
-`placements` and `cases` on 2026-09-04: no passport number, expiry or issue-date column
-exists anywhere. `candidates` carries `full_name`, `nationality`, `date_of_birth`,
-`availability` and biodata, and nothing else about her travel documents. So "check the
-database before asking for the passport expiry" cannot be honoured — the expiry is asked
-of every client, new or existing, until the portal starts recording it.
+**Passport data lives inside `candidates.biodata`, not in a column.** There is no
+passport column on any table — which is exactly why an audit by column name concluded
+the data did not exist at all, and was wrong. `biodata` is a jsonb blob the portal
+writes, holding `passportExpiry` (ISO, e.g. `2033-09-27`) and `passportNo`, alongside
+health, skills, family, education and languages. All 6 candidate rows carry both,
+confirmed 2026-09-04. **When you need a field that is not a column, look in `biodata`
+before concluding it is missing.**
+
+`contact._passport_expiry()` reads **only** the expiry. `passportNo` is deliberately
+never read: anything returned there lands in `collected_info`, which goes into the
+model's prompt, and Rule 4a keeps the Singpass block off WhatsApp. The office already
+has the number; the client does not need to be told it.
 
 **`placements.candidate_id` is null on most rows** — 2 of 6, live 2026-09-04 — and one
 employer holds 4 placements with a single candidate among them. That is why
@@ -444,8 +450,17 @@ Append here, newest first. One entry per behavioural change.
   offered seven, but the question was a bare "What languages are spoken at home?" and the
   model picked three to show ("such as English, Mandarin or Tamil?"). The question now
   names the list and invites more than one, and `other` was added to the options.
-  (F) **NOT DONE, and not doable: reading the passport expiry from the database.** No
-  passport column exists in any shared table (§6). The expiry is still asked of everyone.
+  (F) **The passport expiry IS read from the database** — from
+  `candidates.biodata.passportExpiry`, a jsonb blob, not a column. An earlier pass on
+  this same commit audited the schema by COLUMN NAME, found no passport column anywhere,
+  and reported the requirement as impossible; the client corrected it. All 6 candidate
+  rows carry the expiry. Only the expiry is read — `passportNo` sits in the same blob and
+  is deliberately left there, because anything returned lands in `collected_info` and so
+  in the prompt, and Rule 4a keeps the Singpass block off WhatsApp. The stored ISO date
+  is reformatted to "27 September 2033" since the model reads it back to the client and
+  09/27 vs 27/09 is a real ambiguity here. Measured: an existing client with a linked
+  placement now answers **2** passport-renewal questions instead of 7 — name, country and
+  expiry come off their file, and the case ID and urgency questions are gone entirely.
 
 - **2026-09-03** — **Replacement collects five more things; a parked service no longer
   starves retrieval; a volunteered requirement is acknowledged.** (A) **`replacement`

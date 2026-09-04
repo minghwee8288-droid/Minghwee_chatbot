@@ -7,7 +7,9 @@ assignment rule.
 
 from __future__ import annotations
 
+import json
 import logging
+from datetime import date
 from typing import Any
 
 from app.db.supabase import db
@@ -170,6 +172,35 @@ async def count_prior_hires(employer_id: str | None) -> int:
     return int(result.count or 0)
 
 
+def _passport_expiry(biodata: Any) -> str | None:
+    """`biodata.passportExpiry` as a date a person would read, or None.
+
+    The column is jsonb, so it arrives as a dict; a str is tolerated because
+    nothing stops the portal writing one. ONLY the expiry is read — never
+    `passportNo`, which sits in the same blob. See get_placed_helper.
+
+    The stored form is ISO ("2033-09-27"). It is reformatted to "27 September
+    2033" because this value goes to the model, which reads it back to the
+    client, and 09/27 versus 27/09 is a real ambiguity in Singapore. Anything
+    that does not parse is passed through as written rather than dropped — an
+    odd-looking date on the ticket beats asking a client for something we hold.
+    """
+    if isinstance(biodata, str):
+        try:
+            biodata = json.loads(biodata)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(biodata, dict):
+        return None
+    raw = str(biodata.get("passportExpiry") or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw[:10]).strftime("%d %B %Y").lstrip("0")
+    except ValueError:
+        return raw[:100]
+
+
 async def get_placed_helper(employer_id: str | None) -> dict[str, str] | None:
     """The helper we placed with this employer, when there is exactly one.
 
@@ -185,11 +216,16 @@ async def get_placed_helper(employer_id: str | None) -> dict[str, str] | None:
     of four helpers a client means, and then putting that name on a ticket, is
     worse than asking.
 
-    NOTE: `candidates` holds full_name and nationality and NOTHING about a
-    passport — there is no passport number, expiry or issue-date column anywhere
-    in this database (checked across candidates, placements and cases on
-    2026-09-04). The passport expiry therefore still has to be asked, for
-    existing and new clients alike, until the portal starts recording it.
+    The passport expiry comes out of `candidates.biodata`, a jsonb blob the
+    portal writes — there is no passport COLUMN on any table, which is what an
+    earlier pass concluded from the column names alone and got wrong. All 6
+    candidate rows carry `biodata.passportExpiry` (confirmed 2026-09-04).
+
+    `biodata.passportNo` sits right beside it and is deliberately NOT read.
+    Rule 4a keeps the whole Singpass block off WhatsApp, and anything returned
+    here lands in `collected_info`, which goes into the model's prompt — a
+    passport number in the prompt is a passport number one bad turn away from
+    being sent to a client. The renewal does not need it; the office has it.
     """
     if not employer_id:
         return None
@@ -207,7 +243,7 @@ async def get_placed_helper(employer_id: str | None) -> dict[str, str] | None:
 
     try:
         candidate = await db.select_one(
-            "candidates", "full_name,nationality", id=live[0]["candidate_id"]
+            "candidates", "full_name,nationality,biodata", id=live[0]["candidate_id"]
         )
     except Exception:  # noqa: BLE001
         logger.exception("Candidate lookup failed for employer %s", employer_id)
@@ -222,6 +258,9 @@ async def get_placed_helper(employer_id: str | None) -> dict[str, str] | None:
         helper["helper_name"] = name[:300]
     if nationality:
         helper["nationality"] = nationality[:100]
+    expiry = _passport_expiry(candidate.get("biodata"))
+    if expiry:
+        helper["passport_expiry"] = expiry
     return helper or None
 
 
