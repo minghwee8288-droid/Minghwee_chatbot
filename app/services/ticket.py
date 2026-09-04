@@ -192,13 +192,36 @@ CANDIDATE_SERVICES = {CANDIDATE_HIRING, "transfer"}
 # It stays optional and max_asks=1, so it is offered once at the end and dropped
 # without complaint — by then the client has answered everything that qualifies
 # them, and the lead is already open on their name and number regardless.
-_EMAIL = Field(
-    "email",
-    "email address",
-    "Do you have an email I can note down for updates?",
+# Only ask for an address once they have said they want updates by email.
+# Agency feedback, 2026-09-04: the bot asked "do you have an email I can note
+# down?" and the client answered "please update through this phone number
+# whatsapp" — we had chosen the channel for them, then asked for the one detail
+# that channel needs. Their suggested wording is the field below.
+_WANTS_EMAIL = Gate(
+    "update_channel",
+    ("email", "e-mail", "mail"),
+    excludes=("whatsapp", "whats app", "here", "this number", "phone", "text", "chat"),
+)
+
+# Which channel first, then the address only if they picked email.
+_UPDATE_CHANNEL = Field(
+    "update_channel",
+    "how they would like to be kept updated",
+    "Would you prefer updates by email, or here on WhatsApp?",
     max_asks=1,
     optional=True,
     group="staying in touch",
+    options=("email", "WhatsApp"),
+)
+
+_EMAIL = Field(
+    "email",
+    "email address",
+    "Perfect — what email should I send them to?",
+    max_asks=1,
+    optional=True,
+    group="staying in touch",
+    gate=_WANTS_EMAIL,
 )
 
 # §5 step 3 read with §0: the number is already known, so the question is
@@ -575,7 +598,12 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         Field(
             "additional_notes",
             "any other requirements, house rules or preferences about the helper "
-            "(e.g. no smoking, no drinking, no boyfriend, must be able to swim)",
+            # No "must be able to swim" here. It was written as an illustration of
+            # the SHAPE of a requirement and reached a client verbatim — "...or
+            # swimming ability?" — which the agency flagged as nonsense. An example
+            # in a label is read as something to offer, so only requirements the
+            # office really hears belong in one.
+            "(e.g. no smoking, no drinking, no boyfriend, phone use during work)",
             "Anything else I should note down before I pull this together?",
             max_asks=1,
             optional=True,
@@ -606,6 +634,7 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             group="how they found us",
             gate=_WAS_REFERRED,
         ),
+        _UPDATE_CHANNEL,
         _EMAIL,
     ],
     # §3 — candidate lead flow. Separate from new_hiring: a job seeker is never
@@ -659,6 +688,7 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             max_asks=2,
         ),
         Field("availability", "availability", "When would you be able to start?", max_asks=2),
+        _UPDATE_CHANNEL,
         _EMAIL,
     ],
     # §6 — collects nothing at all.
@@ -1420,6 +1450,7 @@ _DETAIL_LABELS = {
     "full_name": "Name",
     "helper_name": "Helper",
     "email": "Email",
+    "update_channel": "Prefers updates by",
     "contact_number": "Contact number",
     "nationality": "Nationality",
     "preferred_nationality": "Preferred nationality",

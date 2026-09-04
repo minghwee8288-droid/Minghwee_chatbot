@@ -35,7 +35,7 @@ rows = [
  ("small-ticket services", sorted(S), ["insurance", "passport_renewal", "renewal"]),
  ("blocks the hiring total", q(f"The total first-year cost is S{D}14,000-17,500."), True),
  ("still quotes salary", q(f"Salaries range from {D}600 to {D}800."), False),
- ("new_hiring field count", len(t.SERVICE_FIELDS["new_hiring"]), 23),
+ ("new_hiring field count", len(t.SERVICE_FIELDS["new_hiring"]), 24),
  ("passport_renewal asks case id", any(f.key == "case_id" for f in t.SERVICE_FIELDS["passport_renewal"]), False),
  ("renewal asks case id", any(f.key == "case_id" for f in t.SERVICE_FIELDS["renewal"]), False),
  ("NO flow asks for a case id",
@@ -44,6 +44,17 @@ rows = [
   [s for s, fl in t.SERVICE_FIELDS.items()
    if len(fl) > 4 and s not in P and s not in S], []),
  ("prompt tells Claire to use their name", "1c." in RULES and "Hi Thomas" in RULES, True),
+ ("chose WhatsApp -> not asked for an email",
+  any(f.key == "email" for f in t.applicable_fields("new_hiring", {"update_channel": "WhatsApp"})),
+  False),
+ ("chose email -> asked for an email",
+  any(f.key == "email" for f in t.applicable_fields("new_hiring", {"update_channel": "email"})),
+  True),
+ ("no field mentions swimming",
+  [f.key for fl in t.SERVICE_FIELDS.values() for f in fl
+   if "swim" in (f.label + f.question).lower()], []),
+ ("first message is told to introduce Claire",
+  "introduction is NOT optional" in ico.COLLECTOR_INTRO_NOTE, True),
 ]
 bad = 0
 for label, got, want in rows:

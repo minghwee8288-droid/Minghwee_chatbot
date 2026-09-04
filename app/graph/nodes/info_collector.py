@@ -164,6 +164,15 @@ _VOLUNTEERED_REQUIREMENT = re.compile(
 # The PURPOSE is supplied, never the wording. A fixed sentence used at the top
 # of every conversation becomes the formula that the no-repeat rules exist to
 # stop, so the model is told what the reason is and left to say it in its voice.
+COLLECTOR_INTRO_NOTE = (
+    f"{chr(10)}{chr(10)}This is the client's first message and your introduction is "
+    "NOT optional: before anything else, say who you are — Claire, Ming Hwee's AI "
+    "assistant — and that you bring in one of our consultants whenever one is needed. "
+    "One sentence, your own words, then the rest of your reply. Do not skip it "
+    "because you have an answer to give; give the answer after it."
+)
+
+
 _COLLECTION_PURPOSE = {
     "new_hiring": "so we can match a helper who actually suits their household",
     "candidate_new_hiring": "so we can put her in front of the right employers",
@@ -873,6 +882,17 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "there."
         )
 
+    # The very first thing this client has ever heard from us. Rule 1 and the
+    # stage line in build_system_prompt both call for the introduction, but on a
+    # collector turn they compete with COLLECTOR_INSTRUCTION's "ask for that one
+    # detail and nothing else", and the introduction is what loses. Live,
+    # 2026-09-04 19:39: a first message ("which nationality is the cheapest to
+    # hire") was answered with the salary range and the next question, no
+    # introduction at all, and the agency flagged that we never declared what we
+    # are. Repeating it here, in the instruction that is actually winning, is
+    # what makes it stick.
+    intro_note = COLLECTOR_INTRO_NOTE if first_contact else ""
+
     # Opening a qualification: say why, once. Gated on nothing having been asked
     # yet, the same test the small-ticket briefing uses — and the two sets are
     # disjoint, so a flow gets one or the other, never both.
@@ -967,6 +987,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
                 previous_message=previous or "(this is your first message)",
             )
             + dropped_note
+            + intro_note
             + recognised_note
             + small_ticket_note
             + purpose_note
@@ -991,7 +1012,11 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             fallback=next_field.question,
             # Answering their question and then asking ours does not fit in two,
             # and neither does introducing yourself before asking anything.
-            max_sentences=3
+            # Four only where all three are genuinely required: the
+            # introduction, the answer to what they asked, and our question.
+            max_sentences=4
+            if (first_contact and answer_first)
+            else 3
             if (answer_first or first_contact or small_ticket_note or purpose_note)
             else 2,
             withhold_cost=service_type in COST_WITHHELD_SERVICES,

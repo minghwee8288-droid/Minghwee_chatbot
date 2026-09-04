@@ -174,6 +174,8 @@ because the lead is opened early and the ticket is created much later.
 | Assault: keyword override, no LLM confidence | `intent_classifier.ASSAULT_PATTERNS` | **English-only — see §9.** |
 | A transfer is never asked the first-time-hire question | `intent_classifier._TRANSFER_PATTERN` | "transfer" beside maid/helper/employer/permit/service, or "change employer", forces `transfer`. Does not fire while another service is mid-collection. English-only (§9.2). |
 | A client is TOLD what we recognised, not just silently spared the question | `info_collector` (`recognised_note`) | Fires once, off `placed_helper`. Suppresses `returning_note`, which says the opposite. |
+| The channel is chosen before the address is asked for | `_WANTS_EMAIL` gate | `update_channel` first; `email` only if they picked email. |
+| The AI introduction survives a first-turn answer | `info_collector.COLLECTOR_INTRO_NOTE` | Repeated in the instruction that wins over the system prompt on a collector turn. |
 | No flow anywhere asks for a case ID | `SERVICE_FIELDS` | All four removed. The case is found from the phone by `contact.find_active_case()`. Asserted by `scripts/selfcheck_flows.py`. |
 | A run of questions always says why it is asking | `info_collector._COLLECTION_PURPOSE` | Once, on the opening turn. Every flow with more than 4 fields has an entry, and that is asserted. |
 | Claire uses the client's name when she knows it | prompt rule 1c | The positive half of 1b, which only ever said which name NOT to use. |
@@ -456,6 +458,28 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-04** — **Three fixes from the agency's own testing.** (A) **"or swimming
+  ability?"** went out to a client. It came from `additional_notes`' label, where
+  *"must be able to swim"* had been written on 2026-09-03 as an illustration of the SHAPE
+  of a volunteered requirement — and an example in a label is read as something to offer.
+  Replaced with "phone use during work", which the office actually hears. **An example in
+  a field label is a suggestion the client will be read; only put real ones there.**
+  (B) **The bot picked the update channel for the client and then asked for the one detail
+  that channel needs.** *"Do you have an email I can note down for updates?"* → *"please
+  update through this phone number whatsapp"*. New `update_channel` field asks which they
+  want, and `email` is gated behind choosing email — so a WhatsApp client is never asked
+  for one. Agency's own suggested wording. (C) **Claire skipped her own introduction.**
+  Live 19:39: a first message ("which nationality is the cheapest to hire") was answered
+  with the salary range and the next question, no introduction at all. Rule 1 and
+  `build_system_prompt`'s stage line both call for it, but on a collector turn they lose to
+  `COLLECTOR_INSTRUCTION`'s "ask for that one detail and nothing else".
+  `COLLECTOR_INTRO_NOTE` repeats it in the instruction that is actually winning, and the
+  sentence budget goes to **4** for the one case that needs all three — introduction,
+  answer, question. `response_generator` also clamped a first message to 2, which pushed
+  the introduction off the end there; it gets 3 on first contact now. `new_hiring` is 24
+  fields. `scripts/selfcheck_flows.py` is 18 assertions and **caught the field-count change
+  itself** on the first run after this edit, which is what it is for.
 
 - **2026-09-04** — **Stop interrogating people.** Three changes from the client's
   strongest piece of feedback. (A) **The case ID question is gone from every flow.**

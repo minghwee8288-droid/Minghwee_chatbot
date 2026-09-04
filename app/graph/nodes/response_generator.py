@@ -240,7 +240,13 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         # Two sentences. A third almost always turns out to be padding — the
         # explanation after the answer, or the offer of further help — and it is
         # what makes the thread read as a chatbot rather than a consultant.
-        reply = clamp_reply(reply, max_sentences=2)
+        #
+        # Except on the first message, where the introduction ("I'm Claire, Ming
+        # Hwee's AI assistant") is a required sentence that the answer would
+        # otherwise push off the end. A first enquiry can arrive here rather than
+        # at the collector, and it was going out with no introduction at all.
+        first_message = not (state.get("history_text") or "").strip()
+        reply = clamp_reply(reply, max_sentences=3 if first_message else 2)
 
     if not reply:
         reply = fallback
