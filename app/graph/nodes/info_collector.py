@@ -167,9 +167,14 @@ _VOLUNTEERED_REQUIREMENT = re.compile(
 COLLECTOR_INTRO_NOTE = (
     f"{chr(10)}{chr(10)}This is the client's first message and your introduction is "
     "NOT optional: before anything else, say who you are — Claire, Ming Hwee's AI "
-    "assistant — and that you bring in one of our consultants whenever one is needed. "
-    "One sentence, your own words, then the rest of your reply. Do not skip it "
-    "because you have an answer to give; give the answer after it."
+    "assistant. One short sentence, your own words, then the rest of your reply. Do "
+    "not skip it because you have an answer to give; give the answer after it."
+    f"{chr(10)}{chr(10)}"
+    "Do NOT promise a consultant, a colleague or a live agent in this message. "
+    "Nobody has asked for one and nothing has gone wrong yet, so offering one "
+    "unprompted reads as hedging before you have even started — the client called "
+    "it weird. Rule 1 already covers what to say if they ask what you are, and a "
+    "real handover is announced when it actually happens."
 )
 
 

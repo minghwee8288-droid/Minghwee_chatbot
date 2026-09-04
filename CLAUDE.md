@@ -470,6 +470,26 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-09-04** — **Two tone fixes, both prompts I had written badly.** (A) **The
+  opening no longer promises a consultant.** `COLLECTOR_INTRO_NOTE` made Claire say *"and
+  I'll bring in one of our consultants whenever needed"* on the first message; the client
+  called it weird, and they are right — nobody has asked for a human and nothing has gone
+  wrong, so offering one unprompted is hedging before the conversation starts. Rule 1
+  already carries that line for when a client asks what she is, and a real handover is
+  announced when it happens. The introduction is now the AI disclosure alone. (Thomas's
+  original spec asked for both halves in the greeting; this drops one of them, so say if
+  it should go back.) (B) **A question no longer lands with nothing said to the person who
+  just answered.** *"Her name is Shushi"* → *"Which country is Shushi's passport from?"* →
+  *"When does her passport expire?"* is three questions in a row and reads as a form
+  advancing a field. `COLLECTOR_INSTRUCTION` was the cause: its no-echo rule ended with
+  *"Most of the time just ask. If a short reaction is genuinely warranted..."*, which the
+  model read as "do not acknowledge" — and it overrode `style.py`, which has said all
+  along to vary "Noted"/"Got it"/"Sure"/"Okay". Rewritten to require a short varied
+  acknowledgement and to name the actual ban: **repeating their answer** ("Noted, her name
+  is Shushi. Which country...") is out; **reacting to it** ("Got it — which country is her
+  passport from?") is what we want. `strip_repeated_opener` already enforces the variety,
+  so the guard and the prompt now pull the same way instead of opposite ways.
+
 - **2026-09-04** — **An empty extraction was being retried as a parse failure, and the
   opening message said three things where two would do.** (A) `complete_json` tested
   `if parsed:` — and `{}` is falsy. The extractor returns `{}` whenever the client's
