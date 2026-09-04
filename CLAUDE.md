@@ -174,7 +174,8 @@ because the lead is opened early and the ticket is created much later.
 | Assault: keyword override, no LLM confidence | `intent_classifier.ASSAULT_PATTERNS` | **English-only — see §9.** |
 | A transfer is never asked the first-time-hire question | `intent_classifier._TRANSFER_PATTERN` | "transfer" beside maid/helper/employer/permit/service, or "change employer", forces `transfer`. Does not fire while another service is mid-collection. English-only (§9.2). |
 | A client is TOLD what we recognised, not just silently spared the question | `info_collector` (`recognised_note`) | Fires once, off `placed_helper`. Suppresses `returning_note`, which says the opposite. |
-| A passport renewal never asks for a case ID | `SERVICE_FIELDS["passport_renewal"]` | `_case_id()` deliberately absent. Client instruction, 2026-09-04. |
+| A small-ticket service explains itself before it collects | `info_collector._SMALL_TICKET_SERVICES` | `renewal`, `passport_renewal`. Opening turn only; strictly grounded in `rag_context`. |
+| A renewal never asks for a case ID | `SERVICE_FIELDS["passport_renewal"]`, `["renewal"]` | `_case_id()` deliberately absent. Client instruction, 2026-09-04. |
 | Nobody is asked whether they have hired with us before | `info_collector._known_fields` | Filled from `prior_hires` either way now — zero reads as "first time with us". |
 | An existing client is not asked for a helper we placed | `contact.get_placed_helper` | Only when there is exactly ONE live placement naming a candidate. |
 | A volunteered requirement is acknowledged, not silently filed | `info_collector._VOLUNTEERED_REQUIREMENT` | Adds a note to the collector instruction. Narrow on purpose — "can't"/"don't" excluded. |
@@ -424,6 +425,26 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-04** — **Work permit renewal: no case ID, and it explains itself.** Thomas
+  groups WPR with passport renewal and insurance as a *small-ticket* service — one we do
+  end to end rather than qualify and hand off. (A) **`renewal` lost `_case_id()`**, same
+  reasoning as passport_renewal, and `helper_name` now fills from `placed_helper`, so a
+  recognised client answers **one** question (permit expiry) instead of three.
+  (B) **`_SMALL_TICKET_SERVICES`** makes the opening collector turn lead with what the
+  job involves before asking anything, and widens that turn's sentence budget to 3. The
+  records already carry it: retrieval on "I want to renew my helper's work permit" scores
+  **0.82** and returns *"you need an updated employment contract, current insurance
+  coverage, a recent medical examination, and a renewal application submitted through
+  MOM's e-Service portal. Ming Hwee handles the entire process. Total time on your end:
+  less than 1 hour over 4 weeks."* — process, documents and duration in one row. The note
+  is strictly grounded ("ONLY what the records above actually state... if the records say
+  nothing, just ask") because there is **no agency fee for either service in the KB**
+  (checked 2026-09-04): instructing it to quote a cost would be instructing it to invent
+  one, and `ungrounded_figures` would bin the reply. Load the fee and it quotes it with no
+  code change. Also confirmed while checking: 84 of 275 KB rows carry their text in
+  `question`/`answer` with `content` NULL, and `rag._format_match` handles that correctly
+  — not a bug, recorded so the next audit does not re-raise it.
 
 - **2026-09-04** — **The bot says what it recognises.** Filling a field from the client's
   own file and saying nothing is indistinguishable, from their side, from never having

@@ -145,6 +145,16 @@ _VOLUNTEERED_REQUIREMENT = re.compile(
 )
 
 
+# Services the client calls "small-ticket": short, well-defined jobs we can
+# describe end to end rather than qualify and hand off. For these the first
+# collector message leads with what the records say the work involves, instead
+# of opening on a question and leaving the client with "a live agent will
+# connect with you shortly" as the only thing they ever learn. Client
+# instruction, 2026-09-04: "provide relevant information instead of immediately
+# pushing the customer to a live agent".
+_SMALL_TICKET_SERVICES = frozenset({"renewal", "passport_renewal"})
+
+
 def _prior_hires(state: ConversationState) -> int:
     """Placements on file for this number, coerced safely to an int."""
     try:
@@ -816,6 +826,28 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "how many, we are not showing them their file — and then ask your question."
         )
 
+    # A small-ticket service, on its opening turn: say what the job involves
+    # before asking about it. Gated on nothing having been asked yet, so it
+    # happens once and does not turn every turn into a briefing.
+    #
+    # Strictly grounded — the model is told to use the records or say nothing.
+    # There is no agency fee for either service in the knowledge base (checked
+    # 2026-09-04), so a "tell them the cost" instruction here would be an
+    # instruction to invent one; ungrounded_figures would bin the reply and the
+    # client would get the bare question anyway. Load the fee into the KB and
+    # this starts quoting it with no code change.
+    small_ticket_note = ""
+    if service_type in _SMALL_TICKET_SERVICES and not any(asked.values()):
+        small_ticket_note = (
+            f"{chr(10)}{chr(10)}This is a short, well-defined job we handle end to end, not "
+            "something to hand straight to a colleague. Before your question, tell "
+            "them in one sentence what the process involves or how long it takes — "
+            "but ONLY what the records above actually state. If the records say "
+            "nothing about it, just ask your question and add nothing. Never "
+            "estimate a price, a duration or a document list that is not written "
+            "there."
+        )
+
     # They stated a requirement rather than answering; say so before asking the
     # next thing. Not conditional on the extractor having found a home for it —
     # the failure this fixes is conversational, and a client whose requirement
@@ -895,6 +927,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             )
             + dropped_note
             + recognised_note
+            + small_ticket_note
             + returning_note
             + requirement_note
             + follow_up_notes.get(next_field.key, "")
@@ -916,7 +949,9 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             fallback=next_field.question,
             # Answering their question and then asking ours does not fit in two,
             # and neither does introducing yourself before asking anything.
-            max_sentences=3 if (answer_first or first_contact) else 2,
+            max_sentences=3
+            if (answer_first or first_contact or small_ticket_note)
+            else 2,
         )
         counts[next_field.key] = 1
         logger.info(

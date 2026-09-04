@@ -679,8 +679,11 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     # (a helper rarely knows her employer's case reference), which is how a
     # ticket ended up reading "passport renewal" and nothing else. The helper's
     # name and the relevant expiry date let an agent find the case either way.
+    # No _case_id(), for the same reason passport_renewal has none: the client
+    # grouped work permit renewal WITH passport renewal as a small-ticket
+    # service, and their standing rule is that a reference number is never asked
+    # for when the phone number already identifies the client. 2026-09-04.
     "renewal": [
-        _case_id(),
         Field("helper_name", "helper's name", "May I know your helper's name?", max_asks=2),
         Field(
             "permit_expiry",
