@@ -173,6 +173,7 @@ because the lead is opened early and the ticket is created much later.
 | NRIC never reaches the LLM | `utils.redact_nric` | Applied to the batch text; the raw body is still stored in the DB. |
 | Assault: keyword override, no LLM confidence | `intent_classifier.ASSAULT_PATTERNS` | **English-only — see §9.** |
 | A transfer is never asked the first-time-hire question | `intent_classifier._TRANSFER_PATTERN` | "transfer" beside maid/helper/employer/permit/service, or "change employer", forces `transfer`. Does not fire while another service is mid-collection. English-only (§9.2). |
+| A client is TOLD what we recognised, not just silently spared the question | `info_collector` (`recognised_note`) | Fires once, off `placed_helper`. Suppresses `returning_note`, which says the opposite. |
 | A passport renewal never asks for a case ID | `SERVICE_FIELDS["passport_renewal"]` | `_case_id()` deliberately absent. Client instruction, 2026-09-04. |
 | Nobody is asked whether they have hired with us before | `info_collector._known_fields` | Filled from `prior_hires` either way now — zero reads as "first time with us". |
 | An existing client is not asked for a helper we placed | `contact.get_placed_helper` | Only when there is exactly ONE live placement naming a candidate. |
@@ -423,6 +424,17 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-04** — **The bot says what it recognises.** Filling a field from the client's
+  own file and saying nothing is indistinguishable, from their side, from never having
+  asked: they see a bot that opened on question three. `recognised_note` now makes the
+  collector open by naming the helper and the passport expiry we hold, on the one turn
+  the records fill them — the same say-once mechanism `returning_note` uses (`known`
+  carries only what was filled *this* turn). It **suppresses** `returning_note`, which
+  instructs the opposite ("no details of who, when or how many, we are not showing them
+  their file"); the specific note wins. The model is explicitly told to state the date and
+  **not** to call it urgent or expiring soon — Liza Fernandez's passport runs to 2033, and
+  the spec's own example phrasing ("expiring next May") is exactly the invention to avoid.
 
 - **2026-09-04** — **Ask the database, not the client.** Six changes from one written
   spec. (A) **`passport_renewal` no longer asks for a case ID** — `_case_id()` removed

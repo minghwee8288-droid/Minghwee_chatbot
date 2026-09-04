@@ -775,8 +775,40 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # only carries a field the collected state does not already hold, so this
     # cannot repeat on later turns of the same service. Skipping the question
     # silently would read as us not knowing them at all.
+    # We recognised their helper off their own file. Say so out loud, on the one
+    # turn it becomes true. Filling the fields silently — which is all this did
+    # at first — is indistinguishable from never having asked: the client sees a
+    # bot that skipped straight to question three and has no idea we know who
+    # they are. Client instruction, 2026-09-04: "recognize the client by their
+    # phone number and say something like 'Hi Thomas, I can see that your
+    # helper's passport is expiring next May'".
+    #
+    # `known` holds only what the records filled THIS turn, so this cannot
+    # repeat on later turns of the same service — the same say-once mechanism
+    # returning_note relies on.
+    recognised = {
+        key: known[key]
+        for key in ("helper_name", "passport_expiry", "permit_expiry")
+        if known.get(key)
+    }
+    recognised_note = ""
+    if recognised and isinstance(state.get("placed_helper"), dict):
+        facts = "; ".join(f"{key.replace('_', ' ')} {value}" for key, value in recognised.items())
+        recognised_note = (
+            f"\n\nOur records already answer this, off their own file: {facts}. Open "
+            "this message by telling them what we can see — name the helper and the "
+            "date plainly — so they know we recognise them, then ask your question. "
+            "Keep it to two sentences. State the date as it is and do NOT describe it "
+            "as expiring soon, urgent, or coming up unless the date itself says so; "
+            "the client can read a year as well as you can. Never ask them for "
+            "anything listed here."
+        )
+
+    # Suppressed when we are already showing them something off their file —
+    # the two notes give opposite instructions about how much to reveal, and
+    # the specific one wins.
     returning_note = ""
-    if _prior_hires(state) and "first_time_hire" in known:
+    if _prior_hires(state) and "first_time_hire" in known and not recognised_note:
         returning_note = (
             "\n\nOur own records show they have hired a helper through us before, so "
             "that is already established and you must never ask it. Open this message "
@@ -862,6 +894,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
                 previous_message=previous or "(this is your first message)",
             )
             + dropped_note
+            + recognised_note
             + returning_note
             + requirement_note
             + follow_up_notes.get(next_field.key, "")
