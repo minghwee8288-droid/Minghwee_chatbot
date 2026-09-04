@@ -425,7 +425,8 @@ docker compose exec chatbot grep -c created_lead_kind /app/app/graph/state.py
 docker compose logs chatbot | grep "Safety gate"
 
 # diagnostics (all read-only)
-python scripts/selfcheck_flows.py      # 11 behavioural assertions; also runs IN the container:
+python scripts/smoke_nodes.py          # RUNS each node with the LLM and DB stubbed. Run this FIRST.
+python scripts/selfcheck_flows.py      # behavioural assertions; also runs IN the container:
                                        #   docker compose exec chatbot python /app/scripts/selfcheck_flows.py
                                        # Verifies BEHAVIOUR, not grep counts — see the note below.
 python scripts/preflight.py            # go-live gate: KB, agents, branch, portal bridge
@@ -435,6 +436,16 @@ python scripts/watch_conversation.py --follow
 # DESTRUCTIVE — test numbers only
 python scripts/reset_conversation.py +6591234567
 ```
+
+**`selfcheck_flows.py` reads data; `smoke_nodes.py` runs code. You need both.**
+2026-09-04: `selfcheck_flows.py` passed all 18 assertions inside the running container
+while `info_collector` raised `UnboundLocalError` on **every single turn** — the intro
+note read `first_contact` eighty lines above the line that assigned it. Nothing caught
+it: it compiles, no linter is installed, and the graph swallowed it as `bot_confused` and
+handed each message to a human, so the symptom the client saw was the bot silently not
+replying. `smoke_nodes.py` executes each node against seven stub states with the LLM and
+`_open_lead_early` patched out, and fails all seven on that bug. **Run it before every
+deploy.**
 
 **Verify a deploy by behaviour, not by grep counts.** `grep -c` counts matching LINES,
 and a predicted count is a guess about how many times a token was written — it goes wrong
@@ -458,6 +469,19 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-04** — **HOTFIX: the bot stopped replying entirely.** `intro_note = ... if
+  first_contact else ""` was placed eighty lines ABOVE `first_contact = ...`, so
+  `info_collector` raised `UnboundLocalError` on every turn from the 14:02 deploy onward.
+  The graph caught it as `bot_confused` and handed each message to a human, which is why
+  the symptom was silence rather than an error — a client sent the same message twice and
+  got nothing. `first_contact` is now `_is_first_contact(state)`, one function used by
+  both sites, so the two can neither drift nor be ordered wrongly. **The lesson is the
+  test, not the typo:** `selfcheck_flows.py` passed all 18 of its assertions in the
+  running container while this was live, because it reads data structures and never
+  executes a node. New `scripts/smoke_nodes.py` runs `info_collector` against seven states
+  with the LLM and `_open_lead_early` stubbed — no network, no database — and fails all
+  seven on this bug (verified by reintroducing it). Run it before every deploy.
 
 - **2026-09-04** — **Three fixes from the agency's own testing.** (A) **"or swimming
   ability?"** went out to a client. It came from `additional_notes`' label, where

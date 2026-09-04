@@ -189,6 +189,19 @@ _COLLECTION_PURPOSE = {
 _SMALL_TICKET_SERVICES = frozenset({"renewal", "passport_renewal", "insurance"})
 
 
+def _is_first_contact(state: ConversationState) -> bool:
+    """Whether we have never said anything to this client before.
+
+    A function rather than a local, because it was a local: the intro note read
+    `first_contact` eighty lines above the line that assigned it, and every
+    single turn raised UnboundLocalError. Live 2026-09-04 14:02, and the graph
+    caught it as "bot_confused" and handed each message to a human, so the
+    client got silence rather than an error — the failure looked like the bot
+    ignoring them.
+    """
+    return not (state.get("history_text") or "").strip()
+
+
 def _prior_hires(state: ConversationState) -> int:
     """Placements on file for this number, coerced safely to an int."""
     try:
@@ -891,7 +904,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # introduction at all, and the agency flagged that we never declared what we
     # are. Repeating it here, in the instruction that is actually winning, is
     # what makes it stick.
-    intro_note = COLLECTOR_INTRO_NOTE if first_contact else ""
+    intro_note = COLLECTOR_INTRO_NOTE if _is_first_contact(state) else ""
 
     # Opening a qualification: say why, once. Gated on nothing having been asked
     # yet, the same test the small-ticket briefing uses — and the two sets are
@@ -974,7 +987,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # It is a coin flip on punctuation: written "Good Evening, I'm Claire..."
     # that is one sentence and the question survives; written with an
     # exclamation mark it is two and clamp_reply cuts the question off.
-    first_contact = not (state.get("history_text") or "").strip()
+    first_contact = _is_first_contact(state)
 
     if missing:
         next_field = missing[0]
