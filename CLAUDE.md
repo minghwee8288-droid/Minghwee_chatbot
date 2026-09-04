@@ -420,6 +420,9 @@ docker compose exec chatbot grep -c created_lead_kind /app/app/graph/state.py
 docker compose logs chatbot | grep "Safety gate"
 
 # diagnostics (all read-only)
+python scripts/selfcheck_flows.py      # 11 behavioural assertions; also runs IN the container:
+                                       #   docker compose exec chatbot python /app/scripts/selfcheck_flows.py
+                                       # Verifies BEHAVIOUR, not grep counts — see the note below.
 python scripts/preflight.py            # go-live gate: KB, agents, branch, portal bridge
 python scripts/check_retrieval.py      # retrieval calibration; tunes RAG_SOFT_FLOOR
 python scripts/watch_conversation.py --follow
@@ -427,6 +430,16 @@ python scripts/watch_conversation.py --follow
 # DESTRUCTIVE — test numbers only
 python scripts/reset_conversation.py +6591234567
 ```
+
+**Verify a deploy by behaviour, not by grep counts.** `grep -c` counts matching LINES,
+and a predicted count is a guess about how many times a token was written — it goes wrong
+often enough to be worse than useless, because a wrong prediction looks like a failed
+deploy. `scripts/selfcheck_flows.py` asserts the things that actually matter (an employer
+taking on a transfer is not asked the helper's name; a helper-initiated transfer reads as
+a candidate; the hiring total is blocked while salary is not; neither renewal flow asks
+for a case ID) and exits non-zero on any failure. Note `scripts/` is NOT in the image, so
+it needs `docker compose cp scripts chatbot:/app/scripts` first — and that copy lives
+only in the running container's writable layer, so it is lost on the next recreate.
 
 **Resetting test data.** `reset_conversation.py` deliberately never deletes from `leads`.
 Because of §1B a reset number therefore keeps its lead and will not produce a new one —
