@@ -723,8 +723,246 @@ ROWS: list[dict[str, Any]] = [
             "she is settling in."
         ),
     },
+    # --- 2026-09-08: direct hire, documents and the full process ------------
+    #
+    # Same treatment as the new-hiring rows above and the same two gaps: no
+    # document checklist at all, and a process that stopped at "we take her
+    # details". Rewritten from the client's side - the source routes a ticket
+    # to sales/admin, warns staff that a filing error costs two weeks, and
+    # names the internal owner of each step. None of that is the client's
+    # business and none of it may enter the KB.
+    #
+    # THE BRANCH IS WHERE SHE IS, and unlike new hiring it changes the
+    # TIMELINE, not just the paperwork: a helper already in Singapore on a
+    # valid permit skips the embassy and the flight entirely (2 to 3 weeks)
+    # while one overseas goes through both (4 to 6 weeks). `direct_hiring`
+    # already collects `helper_location`, so the route is derivable and no new
+    # question was added - and info_collector._LOCATION_DEPENDENT stops the
+    # model committing to one route before it has been told which applies.
+    # Answering the wrong one is a delivery date the client will plan around.
+    #
+    # NO INSURANCE MINIMUMS IN ANY ROW BELOW, deliberately. The source states
+    # medical insurance at a minimum of $15,000/yr, and that is the figure MOM
+    # used BEFORE October 2023; the current minimum is $60,000/yr, with
+    # $15,000 surviving as the co-payment threshold. Ming Hwee's own Client
+    # Service Agreement says $60,000 and one FAQ row still says $15,000, so
+    # the KB already disagrees with itself three ways. Writing either number
+    # here would pick a side in a legal minimum on the agency's behalf. The
+    # rows say "MOM's minimum coverage" and defer the figure to a consultant
+    # until Ming Hwee confirms it. See CLAUDE.md section 9.
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - documents from the employer",
+        "question": "What documents do I need to provide for a direct hire?",
+        "answer": (
+            "From you we need a copy of your NRIC or identity document and proof of your "
+            "income - either your Income Tax Assessment or a declaration of your monthly "
+            "income. If you are a foreigner working here, that becomes your Employment "
+            "Pass or S Pass with a copy of your passport, or a letter from your company "
+            "together with your tenancy agreement. From the helper we need a copy of her "
+            "passport, her medical report and her school certificate. If she is already "
+            "in Singapore on a work permit we also need her current permit details. "
+            "Everything else is paperwork we prepare for you to sign."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - documents we prepare",
+        "question": "What documents does Ming Hwee prepare for a direct hire?",
+        "answer": (
+            "The Service Agreement and the Service and Fee Schedule at the direct-hire "
+            "rate, the agency fee package form, an Authorisation Form so we can transact "
+            "with MOM on your behalf, an Employer Particulars form, the last page of the "
+            "helper's biodata, and the Job Offer Form. If you are employing a helper for "
+            "the first time there is a levy GIRO form as well, and if she has worked in "
+            "Singapore before we prepare her employment history form. We tell you what "
+            "to sign and when."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - documents from the helper",
+        "question": "What documents are needed from the helper for a direct hire?",
+        "answer": (
+            "A copy of her passport, her medical report and her school certificate. If "
+            "she is already in Singapore on a valid work permit we also need her "
+            "existing permit details, because her application then follows a different "
+            "route from a helper coming in from overseas. Her medical fitness has to be "
+            "confirmed before the work permit application is filed."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - helper already in Singapore",
+        "question": "The helper I want is already in Singapore, what do you need from her?",
+        "answer": (
+            "Her current work permit details, on top of the usual copy of her passport, "
+            "her medical report and her school certificate. It matters because a helper "
+            "already here on a valid permit does not go through her embassy and does not "
+            "need to travel, so her application runs the shorter of the two routes."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - the steps",
+        "question": "What is the direct hire process step by step?",
+        "answer": (
+            "There are six steps. First we confirm which helper you have in mind and "
+            "where she is, since a helper already in Singapore on a valid permit follows "
+            "a shorter route than one coming from overseas. Second, you authorise us "
+            "through Singpass to deal with MOM on your behalf. Third, we collect your "
+            "documents, prepare the set for you to sign, and confirm she is medically "
+            "fit. Fourth, we file the work permit application with MOM. Fifth, we "
+            "arrange the security bond and the insurance MOM requires, and coordinate "
+            "her medical examination. Sixth, once approval is issued she either goes "
+            "through her embassy and travels in, or if she is already here we go "
+            "straight to her work permit. Tell us which step you would like more detail "
+            "on."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - after you confirm the helper",
+        "question": "What happens after I tell you which helper I want to direct hire?",
+        "answer": (
+            "You authorise us through Singpass to transact with MOM on your behalf. We "
+            "collect your documents, prepare the set for you to sign, and confirm your "
+            "helper is medically fit. Then we file the work permit application with MOM "
+            "and arrange the security bond and the insurance MOM requires. We keep you "
+            "posted at each point rather than leaving you to chase it."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - timing, helper already here",
+        "question": "How long does a direct hire take if the helper is already in Singapore?",
+        "answer": (
+            "Usually about 2 to 3 weeks. A helper already here on a valid work permit "
+            "transfers across without going through her embassy and without travelling, "
+            "which is what makes it the shorter of the two routes. It is an estimate - "
+            "it moves with how quickly the documents come back and with MOM's own "
+            "processing."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - timing, helper overseas",
+        "question": "How long does a direct hire take if the helper is overseas?",
+        "answer": (
+            "Usually about 4 to 6 weeks. A helper coming from overseas goes through her "
+            "own country's embassy once the approval is issued and then has to travel, "
+            "which is what makes it longer than bringing across someone already here. It "
+            "is an estimate - it moves with embassy appointment availability, with how "
+            "quickly documents come back, and with MOM's own processing."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - after approval, helper overseas",
+        "question": "What happens after approval if the helper is overseas?",
+        "answer": (
+            "Her papers go through her own country's embassy, and what that involves "
+            "depends on her nationality - the Philippines, Indonesia and Myanmar each "
+            "run it differently. Once that is done we coordinate her travel and her "
+            "arrival and her work permit is issued. She then registers for the "
+            "Settling-In Programme within seven days of arriving, and we arrange her "
+            "transport to the training centre."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - after approval, helper already here",
+        "question": "What happens after approval if the helper is already in Singapore?",
+        "answer": (
+            "There is no embassy step and no travel to arrange. Her work permit is "
+            "issued directly, and she registers for the Settling-In Programme within the "
+            "required seven days if she has not already completed it. We then go through "
+            "the handover with you, which is why this route is noticeably shorter than "
+            "bringing someone in from overseas."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - bond and insurance",
+        "question": "What insurance and security bond are needed for a direct hire?",
+        "answer": (
+            "MOM requires a security bond of $5,000 for a helper who is not Malaysian, "
+            "and we arrange it as an insured bond so you are not putting the money up "
+            "yourself. She also needs medical insurance and personal accident insurance "
+            "meeting MOM's minimum coverage, which we arrange to MOM's specifications "
+            "alongside her medical examination. A consultant will confirm the current "
+            "minimums and what the cover costs."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - the Settling-In Programme",
+        "question": "What is the Settling-In Programme?",
+        "answer": (
+            "It is a short course run for helpers arriving to work in Singapore, "
+            "covering their rights, their safety and living here. She has to be "
+            "registered for it within seven days of arriving. We handle the "
+            "registration and arrange her transport to the training centre, so it is "
+            "not something you have to organise."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - handover and close",
+        "question": "What happens at the end of a direct hire?",
+        "answer": (
+            "We go through the employment contract to make sure it covers everything MOM "
+            "requires - salary, rest days, duties and termination terms - so nothing is "
+            "left vague. Then we complete the handover pack and the orientation "
+            "checklist with you and your helper, collect her work permit card and pass "
+            "it to you, and close the case."
+        ),
+    },
 ]
 
+
+# Rows that already exist and whose answer has been SUPERSEDED. ROWS above is
+# purely additive and skips on question + service_type, which is right for new
+# material and wrong for a row that has become untrue - leaving both in place
+# puts a contradiction in front of the model and it will quote either one.
+#
+# Every entry states why. Nothing goes here to reword a row; only to correct
+# one whose facts have changed or arrived.
+UPDATES: list[dict[str, Any]] = [
+    {
+        "service_type": "direct_hiring",
+        "question": "How long does a direct hire take?",
+        # Written on 2026-09-07, when the agency had given no direct-hire
+        # timeline and inventing one would have been binned by
+        # ungrounded_figures. It said outright "there is no fixed timeline".
+        # The agency supplied the timeline on 2026-09-08 - 2 to 3 weeks for a
+        # helper already here, 4 to 6 for one overseas - so the old row now
+        # contradicts the two new ones and denies an answer we hold.
+        "reason": "the agency supplied the direct-hire timeline on 2026-09-08",
+        "answer": (
+            "It depends on where she is. If she is already in Singapore on a valid work "
+            "permit, usually about 2 to 3 weeks - she transfers across without an "
+            "embassy step and without travelling. If she is coming from overseas, "
+            "usually about 4 to 6 weeks, because her papers go through her own country's "
+            "embassy once approval is issued and she then has to travel. Both are "
+            "estimates, and they move with document turnaround, embassy appointments and "
+            "MOM's own processing."
+        ),
+    },
+]
 
 async def _existing_shape() -> tuple[set[str], str | None]:
     """Confirm the live column set and namespace instead of assuming them."""
@@ -789,8 +1027,50 @@ async def main(dry_run: bool) -> None:
         logger.info("WROTE  service=%s nat=%s", row["service_type"], row["nationality"])
         written += 1
 
+    # Corrections come after the inserts, so a row added this run can also be
+    # corrected this run if it ever needs to be.
+    updated = 0
+    for row in UPDATES:
+        existing = await db.select_one(
+            KB_TABLE,
+            "id,answer",
+            question=row["question"],
+            service_type=row["service_type"],
+        )
+        if not existing:
+            logger.warning(
+                "UPDATE target missing, nothing to correct: %s", row["question"]
+            )
+            continue
+        if (existing.get("answer") or "").strip() == row["answer"].strip():
+            logger.info("SKIP  (already correct) %s", row["question"])
+            continue
+        if dry_run:
+            logger.info("WOULD UPDATE  %s  (%s)", row["question"], row["reason"])
+            updated += 1
+            continue
+        content = f"{row['question']}\n{row['answer']}"
+        await db.update(
+            KB_TABLE,
+            {
+                "answer": row["answer"],
+                "content": content,
+                # Re-embedded, or the row would still be retrieved on the old
+                # wording and answer with the new text - or worse, not be
+                # retrieved at all for the question it now answers.
+                "embedding": await embed_query(content),
+            },
+            id=existing["id"],
+        )
+        logger.info("UPDATED  %s  (%s)", row["question"], row["reason"])
+        updated += 1
+
     verb = "would write" if dry_run else "wrote"
-    logger.info("Done — %s %d row(s), skipped %d already present.", verb, written, skipped)
+    logger.info(
+        "Done — %s %d row(s), skipped %d already present, %s %d row(s).",
+        verb, written, skipped,
+        "would correct" if dry_run else "corrected", updated,
+    )
     if not dry_run and written:
         logger.info(
             "Now run:  python scripts/check_retrieval.py   "

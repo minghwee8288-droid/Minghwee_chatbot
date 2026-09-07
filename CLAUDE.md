@@ -205,6 +205,7 @@ because the lead is opened early and the ticket is created much later.
 | A process or documents question may answer in steps | `guards.asks_for_process` + `PROCESS_INSTRUCTION` | Both halves required: the detector AND retrieved records. Without records it stays on the two-sentence path. |
 | A numbered list is not counted as double the sentences | `guards.clamp_reply` (`_LIST_MARKER`) | `1.` used to end a sentence, so a six-step answer scored twelve and half was cut. Slicing now, so line breaks survive a clamp. |
 | A numbered list is a document everywhere except where it was asked for | `guards.looks_like_document(allow_steps=)` | Headings, bold and bullets stay banned on every path. |
+| A direct-hire answer never commits to a route we have not established | `info_collector._LOCATION_DEPENDENT` + `_known_helper_location` | A helper already in Singapore skips the embassy and the flight (2-3 weeks); one overseas does not (4-6). Both routes are filed under `direct_hiring`, so the filter does not separate them. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -423,6 +424,20 @@ Ordered by what will hurt first.
     `service_type` on the checkpoint and strand the live collection.
 11. **Unbounded in-memory caches** with no TTL: `_LOCKS` (webhook),
     `_AUTO_REPLY_VERDICTS` (message), `_MISSING_COLUMNS` (contact), `_vocabularies` (rag).
+12. **The KB states three different medical-insurance minimums, and the note that
+    used to sit here was wrong.** Two rows say medical insurance must cover at least
+    **S$60,000/yr** (one of them sourced from Ming Hwee's own Client Service Agreement)
+    and one says **S$15,000/yr**; the direct-hire flow the agency sent on 2026-09-08 also
+    says $15,000. The earlier entry claimed "MOM's actual figure is $15,000, so the second
+    looks wrong" — that is the pre-October-2023 minimum. MOM raised the medical minimum to
+    $60,000/yr, and $15,000 survives as the **co-payment threshold** (claims above it are
+    co-paid 75/25), which is almost certainly where the confusion started. Personal
+    accident insurance is separately $60,000/yr, so a row naming both $15,000 and $60,000
+    is not necessarily self-contradictory — it depends which policy each refers to.
+    **Not fixed in code, because it is a legal minimum and Ming Hwee has to confirm it.**
+    The 2026-09-08 direct-hire rows deliberately carry **no insurance figure at all** and
+    defer it to a consultant; `scripts/load_service_notes.py` asserts that mechanically.
+    The older rows are untouched and the bot may still quote either.
 
 ---
 
@@ -482,6 +497,56 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **Direct hire: the document checklist, the full process, and the
+  route branch that decides the timeline.** The format work was already done that
+  morning (`asks_for_process`, `PROCESS_INSTRUCTION`, the clamp and `allow_steps`), so
+  this is content plus one guard.
+  (A) **13 knowledge-base rows.** Four cover documents — what the employer provides,
+  what we prepare for signature, what comes from the helper, and the extra a helper
+  already in Singapore needs — and nine cover the process: the six steps, what happens
+  after the client confirms, the two timelines, the two post-approval routes, the bond
+  and insurance, the Settling-In Programme, and the handover. Rewritten from the
+  client's side as before: the source routes a ticket to sales/admin, warns staff that
+  a filing error costs two weeks, and names an internal owner per step, none of which is
+  the client's business. Retrieval through the real path: **0.595 to 0.777, all 17
+  probes above the floor**.
+  (B) **`How long does a direct hire take?` was corrected, not duplicated.** That row
+  said outright *"There is no fixed timeline for a direct hire"* — written on 2026-09-07
+  because none had been given and inventing one would have been binned by
+  `ungrounded_figures`. The agency has now supplied it, so leaving the old row in place
+  would have put a flat contradiction in front of the model, which quotes either. The
+  loader gained an **`UPDATES`** list for exactly this: keyed on question + service_type,
+  it rewrites the answer, the content and **the embedding** (re-embedding matters — a row
+  updated without it is still retrieved on its old wording), skips when already correct,
+  and requires a stated `reason` per entry. It is for facts that have changed or arrived,
+  never for rewording.
+  (C) **The branch is where she is, and unlike the passport branch it changes the
+  TIMELINE.** A helper already in Singapore on a valid permit skips the embassy and the
+  flight (2 to 3 weeks); one overseas goes through both (4 to 6). Both routes are filed
+  under `direct_hiring`, so the service filter does not separate them and whichever
+  phrasing scores best wins. Quoting "2 to 3 weeks" to an employer whose helper is still
+  in Manila is a delivery date they will plan around. `_LOCATION_DEPENDENT` +
+  `_known_helper_location` mirror the passport `nationality_note`, with **timing words
+  added to the pattern** — that is the whole reason it is a separate regex.
+  `direct_hiring` already asks `helper_location`, so **no new question was added**.
+  Verified by capturing the instruction actually built: present for a timing and a
+  process question with the location unknown, absent once it is known, absent on an
+  ordinary answer, and absent for another service.
+  (D) **No insurance minimum was written into any row, deliberately** — see §9.12. The
+  source states medical insurance at $15,000/yr, which is the pre-October-2023 figure,
+  while Ming Hwee's own Service Agreement says $60,000. Picking a side in a legal
+  minimum is not this repo's call, so the rows say "MOM's minimum coverage" and defer
+  the figure. The vetting script asserts no row states one.
+  **Also carried over without a figure:** the MOM application fee. **Carried over with
+  one:** the $5,000 security bond, already documented as quotable — phrased to keep it
+  clear of `quotes_hiring_package_cost`, which fires on a package term within 90
+  characters of a figure ("cash deposit" beside it would have swapped the whole reply
+  for the deferral line).
+  `selfcheck_flows.py` is 60 assertions; `smoke_nodes.py` is 19 states.
+  **Worth confirming with Ming Hwee:** the seven-day Settling-In Programme window in
+  their flow. MOM's own requirement for a first-time helper is tighter than that, and
+  the rows repeat the agency's figure.
 
 - **2026-09-08** — **The new-hiring document checklist and the full hiring process,
   and the format needed to deliver them.** The agency supplied both. Loading the content

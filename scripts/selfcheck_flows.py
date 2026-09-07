@@ -194,6 +194,26 @@ rows = [
   gd.looks_like_document(STEPPED), True),
  ("headings are a document even on the stepped path",
   gd.looks_like_document("### Where to Find\n**Plumbers**\n- one", allow_steps=True), True),
+ # --- 2026-09-08: direct hire branches on where she is --------------------
+ # Unlike the passport branch this changes the TIMELINE as well as the
+ # paperwork - 2 to 3 weeks against 4 to 6 - so committing to a route before
+ # being told which applies hands the client a date they will plan around.
+ ("a direct-hire timing question is route-dependent",
+  bool(ico._LOCATION_DEPENDENT.search("how long does it take")), True),
+ ("so is a process question",
+  bool(ico._LOCATION_DEPENDENT.search("what is the process")), True),
+ ("an ordinary answer is not",
+  bool(ico._LOCATION_DEPENDENT.search("her number is 98765432")), False),
+ ("location unknown -> caveat needed",
+  ico._known_helper_location({"collected_info": {}}), None),
+ ("location known -> no caveat needed",
+  ico._known_helper_location(
+      {"collected_info": {"helper_location": "already in Singapore"}}),
+  "already in Singapore"),
+ # direct_hiring already asks where she is, so the route is derivable and no
+ # new question was added for it.
+ ("direct_hiring still asks where she is",
+  any(f.key == "helper_location" for f in t.SERVICE_FIELDS["direct_hiring"]), True),
  # A field whose written question spells its options out is asking for all of
  # them; the generic "drop two or three in" rule was overriding that.
  ("enumerated options are named in full",

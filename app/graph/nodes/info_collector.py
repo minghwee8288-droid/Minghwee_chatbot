@@ -224,6 +224,34 @@ _NATIONALITY_DEPENDENT = re.compile(
 )
 
 
+# A direct hire runs two routes and the client's question almost never says
+# which. A helper already in Singapore on a valid permit skips the embassy and
+# the flight entirely; one overseas goes through both. Unlike the passport
+# branch this changes the TIMELINE as well as the paperwork - 2 to 3 weeks
+# against 4 to 6 - so answering the wrong one hands the client a delivery date
+# they will plan around. Timing words are in this pattern and not in
+# _NATIONALITY_DEPENDENT for exactly that reason.
+_LOCATION_DEPENDENT = re.compile(
+    r"\b(process|procedure|step|steps|document|documents|paperwork|form|forms|"
+    r"requirement|requirements|need(?:ed)?|require[ds]?|submit|sign|embassy|"
+    r"contract|travel|flight|ticket|arrive|arrival|"
+    r"how\s+long|how\s+soon|how\s+quickly|when\s+can|when\s+would|timeline|"
+    r"time\s?frame|duration|how\s+does\s+it\s+work|what\s+happens)\b",
+    re.IGNORECASE,
+)
+
+
+def _known_helper_location(state: ConversationState) -> str | None:
+    """Which of the two direct-hire routes applies, if we have been told yet.
+
+    Read straight off the collected field rather than guessed from the message:
+    `direct_hiring` asks "Where is she at the moment", so the answer is either
+    on the record or it is not.
+    """
+    value = str((state.get("collected_info") or {}).get("helper_location") or "").strip()
+    return value or None
+
+
 def _known_nationality(state: ConversationState) -> str | None:
     """The PH/ID/MM code this conversation is about, if we have it yet.
 
@@ -1037,6 +1065,29 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "is from. Once you know it you can be specific."
         )
 
+    # Same shape as nationality_note above, one service along. The retrieval
+    # filter does not separate the two direct-hire routes - both are filed
+    # under direct_hiring - so with the location unknown the transfer rows and
+    # the overseas rows compete, and the top one is whichever phrasing scored
+    # best. Quoting "2 to 3 weeks" to an employer whose helper is still in
+    # Manila is a promise we cannot keep.
+    location_note = ""
+    if (
+        service_type == "direct_hiring"
+        and not _known_helper_location(state)
+        and _LOCATION_DEPENDENT.search(state.get("incoming_text") or "")
+    ):
+        location_note = (
+            f"{chr(10)}{chr(10)}The records above describe TWO different routes, "
+            "because a helper already in Singapore on a valid work permit skips "
+            "the embassy and the travel while one coming from overseas does not "
+            "- and you have not been told which applies here. Do not pick one. "
+            "Do not quote a timeline, an embassy step or a travel arrangement "
+            "that belongs to only one of them. Give only what is true for both, "
+            "say plainly that it depends on where she is at the moment, and ask. "
+            "Once you know, you can be specific."
+        )
+
     # The very first thing this client has ever heard from us. Rule 1 and the
     # stage line in build_system_prompt both call for the introduction, but on a
     # collector turn they compete with COLLECTOR_INSTRUCTION's "ask for that one
@@ -1146,6 +1197,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             + recognised_note
             + small_ticket_note
             + nationality_note
+            + location_note
             + purpose_note
             + returning_note
             + requirement_note
@@ -1174,7 +1226,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             if (first_contact and answer_first)
             else 3
             if (answer_first or first_contact or small_ticket_note or purpose_note
-                or nationality_note)
+                or nationality_note or location_note)
             else 2,
             withhold_cost=service_type in COST_WITHHELD_SERVICES,
         )

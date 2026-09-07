@@ -104,6 +104,18 @@ CASES = [
      {"service_type": "direct_hiring", "intent": "direct_hiring",
       "incoming_text": "I already found a helper, can you process her",
       "collected_info": {"employment_status": "currently employed"}}),
+    ("info_collector", "direct hire, location unknown",
+     {"service_type": "direct_hiring", "intent": "direct_hiring",
+      "incoming_text": "how long does it take",
+      "collected_info": {"helper_name": "Ruru"},
+      "asked_field_counts": {"helper_name": 1},
+      "history_text": "bot: May I know the full name of the helper?"}),
+    ("info_collector", "direct hire, location known",
+     {"service_type": "direct_hiring", "intent": "direct_hiring",
+      "incoming_text": "how long does it take",
+      "collected_info": {"helper_name": "Ruru", "helper_location": "already in Singapore"},
+      "asked_field_counts": {"helper_name": 1},
+      "history_text": "bot: Where is she at the moment?"}),
     # --- response_generator ------------------------------------------------
     # The stepped-answer path: both halves of the trigger, then each half on
     # its own, then neither. A process question with NO records must stay on
