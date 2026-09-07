@@ -414,7 +414,7 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         Field(
             "household",
             "household size",
-            "How many people live in your household?",
+            "How many people live in your household - 1-2, 3-4, 5-6, or 7 or more?",
             max_asks=2,
             group="their household",
             options=("1-2", "3-4", "5-6", "7 or more"),
@@ -984,7 +984,7 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         Field(
             "household",
             "household size",
-            "How many people live in your household?",
+            "How many people live in your household - 1-2, 3-4, 5-6, or 7 or more?",
             max_asks=1,
             optional=True,
             group="what they need",
@@ -1009,13 +1009,15 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             gate=_TAKING_ON_TRANSFER,
         ),
         # --- Both directions ---
-        Field(
-            "timeline",
-            "timeline",
-            "When are you hoping to have this sorted?",
-            max_asks=2,
-            optional=True,
-        ),
+        #
+        # `timeline` deliberately absent. The agency's instruction, 2026-09-07:
+        # "A person looking for Transfer helpers are naturally urgent to seek
+        # for help urgently. This question asked is not required. In fact, it
+        # should be asking for preferred nationality and needs and household
+        # requirements." Asking a client in a hurry when they want it produces
+        # "ASAP" every time, which tells an agent nothing they had not already
+        # assumed. Same treatment as _case_id() on 2026-09-04 - the objection
+        # is to ASKING, and a volunteered date is still in the transcript.
     ],
     # §5 — candidate flow. A HELPER transferring herself to a new employer.
     "transfer": [

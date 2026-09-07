@@ -208,6 +208,7 @@ because the lead is opened early and the ticket is created much later.
 | A direct-hire answer never commits to a route we have not established | `info_collector._LOCATION_DEPENDENT` + `_known_helper_location` | A helper already in Singapore skips the embassy and the flight (2-3 weeks); one overseas does not (4-6). Both routes are filed under `direct_hiring`, so the filter does not separate them. |
 | A step both hiring flows share is filed once, not copied | `service_type = 'general'` + `load_service_notes._SHARED_WITH_DIRECT_HIRE` | The match function passes `service_type in (filter, 'general')`. Sourcing, matching and interviews stay on `new_hiring` — they are the only difference. |
 | An answer that opens no gate has not answered the question | `info_collector._undecidable_gate_keys` | `Gate.state()` closes on an unrecognised value, so two opposing gates on one field both close and every gated field goes with them. Blanked and re-asked, bounded by `max_asks`. |
+| A transfer client is never asked when they want it sorted | `SERVICE_FIELDS["transfer_employer"]` | `timeline` deliberately absent. Asking someone in a hurry produces "ASAP" every time. Agency instruction, 2026-09-07. |
 | An answer to our own question is never routed away from the collection that asked it | `guards.answering_our_question` + `route_after_rag` | The classifier's stickiness fixes `service_type` but not `intent`, and the money branch reads `intent`. |
 | Every employer flow asks the client's name | `SERVICE_FIELDS[...]["full_name"]` | `transfer_employer` had none, so rule 1c had nothing to use and the lead carried only a phone number. |
 
@@ -501,6 +502,29 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **Transfer, round 2 after the client's retest.** The 2026-09-08 gate
+  fix worked: the same conversation that produced CB-2026-0004's two useless fields now
+  produces `requirement: childcare, preferred_nationality: Myanmar, household: 5,
+  budget: $500, full_name: Vaidik Dubey` — an agent can actually match against that. Two
+  things the agency had already asked for were still not honoured, and the retest
+  transcript showed a third.
+  (A) **The timing question is gone from `transfer_employer`.** Their instruction on
+  2026-09-07 was explicit — *"A person looking for Transfer helpers are naturally urgent
+  to seek for help urgently. This question asked is not required."* — and the retest
+  still ended *"When are you hoping to have this sorted?"* → *"ASAP"*, which is the
+  answer they said was worthless. Removed from the list, not the codebase, the same way
+  `_case_id()` was on 2026-09-04: the objection is to **asking**, and a volunteered date
+  is still in the transcript and the ticket's `bot_note`.
+  (B) **The household question showed three of its four brackets** — *"roughly 1 to 2, 3
+  to 4, or 5 to 6?"* — so a household of seven is told the largest bracket is 5-6. The
+  written question named none of its options, so `_field_guidance`'s general "drop two or
+  three in as examples" rule applied. Identical to the `languages` defect they flagged on
+  2026-09-07 and fixed the same way: the options go into the question, and the
+  enumerated-options rule takes over. Fixed in **both** definitions, `new_hiring` and
+  `transfer_employer`.
+  `transfer_employer` is 8 fields; a take-on client answers four after the direction is
+  known. `selfcheck_flows.py` is 88 assertions.
 
 - **2026-09-08** — **Passport renewal: the per-nationality checklist, the fee at last,
   and the first submission that CONTRADICTED rows already loaded.** 4 new rows, 6

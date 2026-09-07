@@ -270,9 +270,21 @@ rows = [
       "transfer_employer",
       {"full_name": "Thomas", "transfer_direction": "taking on a transfer helper"})][:2],
   ["requirement", "preferred_nationality"]),
- ("the timing question is last and optional",
-  (t.SERVICE_FIELDS["transfer_employer"][-1].key,
-   t.SERVICE_FIELDS["transfer_employer"][-1].optional), ("timeline", True)),
+ # Agency, 2026-09-07: "This question asked is not required." Asking a client
+ # in a hurry when they want it produces "ASAP" every time.
+ ("transfer never asks when they want it sorted",
+  any(f.key == "timeline" for f in t.SERVICE_FIELDS["transfer_employer"]), False),
+ ("transfer ends on what they need, not when",
+  [f.key for f in t.missing_fields(
+      "transfer_employer",
+      {"full_name": "V", "transfer_direction": "looking for a transfer helper"})],
+  ["requirement", "preferred_nationality", "household", "budget"]),
+ # A household of seven was told the largest bracket was 5-6, because the
+ # written question named none of its four options so the generic "drop two or
+ # three in as examples" rule applied. Same defect as `languages`, same fix.
+ ("the household question names all four brackets",
+  all(o in next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "household").question
+      for o in ("1-2", "3-4", "5-6", "7 or more")), True),
  # "Bot doesn't ask for my name or addresses me if it knows."
  ("transfer_employer asks the client's name",
   t.SERVICE_FIELDS["transfer_employer"][0].key, "full_name"),
