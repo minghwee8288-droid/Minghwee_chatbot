@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 from app.config import settings
-from app.graph.guards import last_bot_line
+from app.graph.guards import FEE_STATED_SERVICES, last_bot_line
 from app.graph.state import ConversationState, effective_contact_type
 from app.services import contact as contact_service
 from app.services import rag
@@ -31,7 +31,19 @@ _SUBJECTLESS_INTENTS = {
     "process_question",
     "document_question",
     "general_question",
+    # Joined 2026-09-08. "fee enquiry" names the shape of the question exactly
+    # as "process question" did - what it is a price FOR is the service in
+    # flight. `salary_enquiry` deliberately stays OUT: what a helper earns is
+    # about the helper, not about the service, and service-tagging it measured
+    # WORSE (0.505 -> 0.446 on "what salary should I budget", swapping a direct
+    # answer for a general one).
+    "fee_enquiry",
 }
+
+# A money question whose service is ALSO money is the whole conversation, and
+# there is no other subject to tag it with - tagging it "(fee enquiry)" tags it
+# with itself, which is the defect this set exists to fix.
+_MONEY_SERVICES = {"fee_enquiry", "salary_enquiry"}
 
 
 def _search_query(state: ConversationState) -> str:
@@ -76,6 +88,8 @@ def _search_query(state: ConversationState) -> str:
         # full. fee_enquiry and salary_enquiry stay out of this set - money IS
         # a subject, and _MONEY_TALK below already widens those turns.
         topic = state.get("service_type") or ""
+        if topic in _MONEY_SERVICES and intent in _MONEY_SERVICES:
+            topic = ""
         if not topic:
             return message
 
@@ -119,6 +133,17 @@ _MONEY_FIELDS = {"budget", "salary_expectation", "salary", "fee"}
 
 def _service_filter(state: ConversationState) -> str | None:
     """Which service to narrow retrieval to — None means search everything."""
+    # Widening a money question is right when the figures live somewhere else
+    # (see below) and wrong when THIS service states its own price: the widened
+    # search then hands back another service's fee, which is not a vague answer
+    # but a false one. Measured 2026-09-08, "how much does it cost" inside a
+    # passport renewal returned the WORK PERMIT renewal row - $695 to a client
+    # whose answer is $450 - and the same on "what is the fee" and "how much do
+    # you charge". None of these flows collects a money field, so the two rules
+    # below cannot want the filter dropped here either.
+    if state.get("service_type") in FEE_STATED_SERVICES:
+        return state.get("service_type")
+
     if _MONEY_TALK.search(state.get("incoming_text") or ""):
         return None
 

@@ -220,6 +220,9 @@ because the lead is opened early and the ticket is created much later.
 | Home leave asks which country she is from | `SERVICE_FIELDS["home_leave"]` | It asked her name and the travel dates only, so there was nothing to route on. The agency's own step 1 is "confirm nationality and intended travel dates". |
 | A replacement question is answered from the flow, not from the contract | `load_service_notes` replacement rows | Clause 3.1 of the Client Service Agreement was the top match for seven different questions, five of them **above** the floor, so the widening retry never fired. |
 | A `general` row is vetted against the cost guard too | `selfcheck_flows.py` | `general` is retrieved from inside `new_hiring` and `direct_hiring`, where `quotes_hiring_package_cost` runs on the reply. |
+| A fee is quoted only where the agency gave us one | `guards.FEE_STATED_SERVICES` vs `COST_WITHHELD_SERVICES` | Exact opposites, asserted disjoint. Renewal/passport/home leave state it; hiring, direct hire, replacement and both transfers defer to a consultant. |
+| A price question is a question about the SERVICE | `rag_retriever._SUBJECTLESS_INTENTS` (+`fee_enquiry`) | "How much does it cost" inside a renewal returned Form A's **hiring** schedule. `salary_enquiry` stays out — what a helper earns is about the helper. |
+| A service that states its own fee is not widened | `_service_filter` (`FEE_STATED_SERVICES` first) | Widening returned the **work permit** fee ($695) inside a **passport** renewal ($450). A wrong price is worse than a vague one. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -511,6 +514,59 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **The consolidated cost + timeline table: the last content gap
+  closed, three stale rows corrected, and the money-question defect that would have
+  quoted the wrong price anyway.** 7 rows, 3 corrections, 2 code changes.
+  (A) **The work permit renewal fee exists: $695.** *"No agency fee for work permit
+  renewal anywhere in the KB"* has been the standing gap since 2026-09-04 and is why a
+  cost question on that service could only ever be deferred. `renewal` is a small-ticket
+  service and is not in `COST_WITHHELD_SERVICES`, so it goes straight out. **That was the
+  last content gap.**
+  (B) **A fee is stated only where the agency stated one.** Their instruction: *"the
+  service which do not have the timeline and cost that means we dont have to open that
+  live agent will handle that"*. New hiring, direct hiring, replacement and transfer get
+  no figure — the first two were already withheld mechanically, and `replacement`,
+  `transfer` and **`transfer_employer`** joined `COST_WITHHELD_SERVICES`. The employer
+  key matters: an employer transfer runs under its own service key, so leaving it out
+  would have withheld nothing on the half that actually asks about cost. Deferral rows
+  were written for replacement, transfer and direct hire so the bot says *why* rather
+  than going quiet.
+  (C) **Three existing rows ANSWERED these questions with different numbers, and were
+  corrected rather than stacked.** *"How long does it take to hire a domestic helper"*
+  said **6-8 weeks** overseas and **3-4 weeks** for a transfer already here; the table
+  says **4-6 weeks**, and that 3-4 also disagreed with the transfer rows (1-2 weeks).
+  *"How do I renew my helper's work permit"* said **4 weeks**; the table says about a
+  week, ~3 days processing. *"How long does a transfer take"* gave only the MOM approval
+  window (1-3 working days) as the answer to how long a transfer takes, which understates
+  it — the client is asking about interview-to-deployment, which is 1-2 weeks. Direct
+  hire (2-3 / 4-6 weeks) and passport renewal already matched and were left alone.
+  (D) **Loading the fees would not have worked on its own.** Measured after loading,
+  before any code change: a bare *"how much does it cost"* returned **Form A's hiring fee
+  schedule** (0.472) as the top record **inside every service** — renewal, passport
+  renewal and home leave included, none of which withholds a price. Two causes, both
+  already documented here in another form.
+  First, `_search_query` tagged the query *"(fee enquiry)"* — **tagging it with itself**,
+  exactly the 2026-09-07 `process_question` defect. The money intents were deliberately
+  excluded from that fix on the grounds that "money IS a subject", and that is half
+  right: *what we charge for X* is a question about X. `fee_enquiry` is now in
+  `_SUBJECTLESS_INTENTS`; **`salary_enquiry` is not**, because what a helper earns is
+  about the helper, and service-tagging it measured **worse** (0.505 → 0.446 on *"what
+  salary should I budget"*, swapping a direct answer for a general one). A fee question
+  with nothing else in flight still searches bare.
+  Second, `_service_filter` drops the filter on any money turn — right when the figures
+  live somewhere else (the 2026-09-02 salary case), wrong when this service states its
+  own price. Unfiltered, *"how much does it cost"* inside a **passport** renewal returned
+  the **work permit** renewal row: **$695 quoted where the answer is $450**, and the same
+  on *"what is the fee"* and *"how much do you charge"*. That is not a vague answer, it
+  is a false one. `FEE_STATED_SERVICES` keeps the filter for those three; none of them
+  collects a money field, so the other two widening rules cannot want it dropped either.
+  After both: every service returns its own cost row — renewal 0.466, passport renewal
+  0.486, home leave 0.588, replacement 0.603, transfer 0.595, transfer_employer 0.626,
+  direct hire 0.668 — **16 probes, none below the floor**, and the salary probes unmoved.
+  `selfcheck_flows.py` is 130 assertions. **No content gap remains.** Still open and
+  needing Ming Hwee, not code: the medical insurance minimum (§9.12), the Settling-In
+  Programme window, the Myanmar passport route, and who receives leads (§9.1).
 
 - **2026-09-08** — **Replacement: the document checklist and the nine steps, and the
   contract clause that was answering every question in their place.** 9 rows plus 1

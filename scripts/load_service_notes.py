@@ -1541,6 +1541,120 @@ ROWS: list[dict[str, Any]] = [
             "will confirm the coverage figures for you."
         ),
     },
+
+    # --- 2026-09-08: the consolidated cost + timeline table -------------------
+    #
+    # The agency's summary of what every service costs and how long it takes.
+    # Two kinds of entry, and they are handled differently.
+    #
+    # WHERE A FEE IS STATED it goes in: work permit renewal $695, and this
+    # closes the last standing content gap - "no agency fee for work permit
+    # renewal anywhere in the KB" has been open since 2026-09-04. Passport
+    # renewal ($450) and home leave ($400 / $250) were already loaded and match.
+    #
+    # WHERE A FEE IS NOT STATED nothing is invented. Their instruction: "the
+    # service which do not have the timeline and cost that means we dont have to
+    # open that live agent will handle that". New hiring, direct hiring,
+    # replacement and transfer therefore defer to a consultant, and the three
+    # that were not already withheld mechanically joined COST_WITHHELD_SERVICES
+    # in the same change.
+    #
+    # Three EXISTING rows contradicted the table and were corrected rather than
+    # stacked - see UPDATES at the foot of this file.
+    {
+        "service_type": "renewal",
+        "nationality": "all",
+        "section_heading": "Work permit renewal - cost",
+        "question": "How much does it cost to renew my helper's work permit?",
+        "answer": (
+            "Work permit renewal is $695. That covers us handling the whole thing for "
+            "you - the authorisation, the declaration, the insurance arrangement and "
+            "the submission to MOM. Your helper's insurance premium and her medical "
+            "examination are separate, since those are paid to the insurer and the "
+            "clinic rather than to us."
+        ),
+    },
+    {
+        "service_type": "renewal",
+        "nationality": "all",
+        "section_heading": "Work permit renewal - how long it takes",
+        "question": "How long does a work permit renewal take?",
+        "answer": (
+            "About a week from the point we have what we need from you, and often "
+            "faster - the processing itself usually runs around 3 days. The part "
+            "worth planning around is not the processing but the start: MOM sends you "
+            "the Renewal Notification roughly 8 weeks before the permit expires, and "
+            "the sooner we have that and your authorisation, the more room there is."
+        ),
+    },
+    {
+        "service_type": "replacement",
+        "nationality": "all",
+        "section_heading": "Replacement - how long it takes",
+        "question": "How long does a replacement take?",
+        "answer": (
+            "Around 4 to 6 weeks if the replacement helper is coming from overseas, "
+            "which covers the matching and interviews, the MOM application, her "
+            "insurance and bond, and her travel and arrival. A helper already in "
+            "Singapore is quicker, because there is no embassy stage and no flight. "
+            "The biggest variable at the front is how quickly you settle on a "
+            "candidate."
+        ),
+    },
+    {
+        "service_type": "replacement",
+        "nationality": "all",
+        "section_heading": "Replacement - cost",
+        "question": "How much does a replacement cost?",
+        "answer": (
+            "That depends on your original agreement and the circumstances, so a "
+            "consultant will confirm it rather than have me give you half a picture. "
+            "What I can tell you is that a replacement within your guarantee period "
+            "carries no additional agency service fee, and that you sign a Replacement "
+            "Services and Fees form rather than the full new-hire schedule. Government "
+            "and third-party costs such as insurance and the medical are separate "
+            "either way."
+        ),
+    },
+    {
+        "service_type": "transfer",
+        "nationality": "all",
+        "section_heading": "Transfer - how long it takes",
+        "question": "How long does it take from interview to my helper starting?",
+        "answer": (
+            "Around 1 to 2 weeks from the interview to her starting work. Inside that, "
+            "the MOM approval itself usually takes 1 to 3 working days, and once it is "
+            "approved we purchase the required insurance and she can start the "
+            "following day. It stretches if MOM asks for additional documents."
+        ),
+    },
+    {
+        "service_type": "transfer",
+        "nationality": "all",
+        "section_heading": "Transfer - cost",
+        "question": "How much does a transfer cost?",
+        "answer": (
+            "There is a transfer fee, and a consultant will confirm the amount for "
+            "your situation rather than have me quote you something that turns out not "
+            "to apply. It is a good deal less involved than a full overseas "
+            "recruitment, since there is no embassy stage and no flight. Government "
+            "and third-party costs such as the insurance are separate."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - cost",
+        "question": "How much does a direct hire cost compared to hiring through the agency?",
+        "answer": (
+            "A direct hire costs less than a full recruitment, because you have "
+            "already found the helper yourself and there is no sourcing, matching or "
+            "interviewing for us to do. What you are paying for is the processing - "
+            "the MOM application, the documents, the insurance and bond, and getting "
+            "her here and settled. A consultant will confirm the exact figure for your "
+            "case."
+        ),
+    },
 ]
 
 
@@ -1795,6 +1909,59 @@ UPDATES += [
             "and the processing. Sixth the renewed passport comes back and we return "
             "it to you. Tell us her nationality and we can be specific about the "
             "documents and the timing."
+        )},
+    },
+]
+
+
+# --- 2026-09-08: the consolidated cost + timeline table corrects three rows ---
+#
+# All three ANSWER the question the table answers, and all three answer it with
+# a different number. Leaving them alongside puts a flat contradiction in front
+# of a model that quotes either, which is the reason UPDATES exists.
+UPDATES += [
+    {
+        "where": {"question": "How long does it take to hire a domestic helper in "
+                              "Singapore?",
+                  "service_type": "new_hiring"},
+        "reason": "the agency's table gives 4-6 weeks; this row said 6-8 for an "
+                  "overseas hire and 3-4 for a transfer already here, and the "
+                  "transfer figure now disagrees with the transfer rows too (1-2 wks)",
+        "set": {"answer": (
+            "About 4 to 6 weeks from signing with us to your helper's first day, "
+            "including the overseas processing. That covers shortlisting and "
+            "interviews, the Work Permit application, her travel, and the medical and "
+            "Settling-In Programme after she arrives. A helper already in Singapore is "
+            "faster, because there is no embassy stage and no flight - tell us which "
+            "you are considering and we can be more precise."
+        )},
+    },
+    {
+        "where": {"question": "How do I renew my helper's work permit?",
+                  "service_type": "renewal"},
+        "reason": "the agency's table gives about a week, ~3 days processing; this "
+                  "row said 4 weeks, and it is the top answer to the renewal question",
+        "set": {"answer": (
+            "You need an updated employment contract, current insurance coverage, a "
+            "recent medical examination, and the renewal submitted to MOM - and Ming "
+            "Hwee handles all of it. What we need from you is the Renewal Notification "
+            "MOM sends you, your authorisation through Singpass and a signature, which "
+            "is well under an hour of your time. Once we have those it usually takes "
+            "about a week, and the processing itself runs around 3 days."
+        )},
+    },
+    {
+        "where": {"question": "How long does a transfer take and what is the process?",
+                  "service_type": "transfer"},
+        "reason": "it gave only the MOM approval window (1-3 working days) as the "
+                  "answer to how long a transfer takes; the agency's table gives 1-2 "
+                  "weeks from interview to deployment, which is what a client is asking",
+        "set": {"answer": (
+            "Around 1 to 2 weeks from the interview to her starting work with the new "
+            "employer. The MOM approval inside that usually takes 1 to 3 working days, "
+            "unless MOM asks for additional documents to be uploaded, which adds to "
+            "the wait. Once MOM approves it we purchase the required insurance, and "
+            "after the insurance is transmitted she can start the following day."
         )},
     },
 ]

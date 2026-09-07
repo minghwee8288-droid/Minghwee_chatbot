@@ -41,7 +41,34 @@ def _digit_forms(text: str) -> set[str]:
 # WhatsApp message with no consultant attached loses the client rather than
 # informing them. The small-ticket services are the deliberate opposite — a
 # renewal, a passport, an insurance policy are quoted freely.
-COST_WITHHELD_SERVICES = frozenset({"new_hiring", "direct_hiring", "fee_enquiry"})
+# `replacement`, `transfer` and `transfer_employer` joined on 2026-09-08, when
+# the agency sent the consolidated cost + timeline table. It states a fee for
+# work permit renewal ($695), passport renewal ($450) and home leave ($400 /
+# $250) and explicitly does NOT state one for these three or for hiring - their
+# instruction: "the service which do not have the timeline and cost ... live
+# agent will handle that". The knowledge base is not empty of figures for them
+# (the Client Service Agreement's refund clauses sit under `replacement`, and
+# the $5,000 bond under `transfer`), so a mechanical net is worth having on top
+# of the deferral rows. The bond and the salary are still not caught - see
+# quotes_hiring_package_cost.
+COST_WITHHELD_SERVICES = frozenset({
+    "new_hiring", "direct_hiring", "fee_enquiry",
+    "replacement", "transfer", "transfer_employer",
+})
+
+# The other half of the agency's 2026-09-08 cost table: the services whose fee
+# they DID give us, and which therefore quote it. The two sets are exact
+# opposites and must stay disjoint - a service cannot both withhold its price
+# and state it - which selfcheck_flows.py asserts.
+#
+# rag_retriever reads this as well, and that is the point. A price question
+# inside one of these is a question about THAT service's price, so the service
+# filter is kept rather than dropped. Measured 2026-09-08, unfiltered: "how
+# much does it cost" inside a PASSPORT renewal returned the WORK PERMIT renewal
+# row (0.510) - $695 quoted to a client whose answer is $450 - on all three
+# phrasings tried. Filtered it returns the right row every time (0.419-0.486).
+FEE_STATED_SERVICES = frozenset({"renewal", "passport_renewal", "home_leave"})
+
 
 # A figure presented as the cost of the engagement, rather than a figure that
 # happens to be money. The pairing is what matters: a bare "$650" is a salary

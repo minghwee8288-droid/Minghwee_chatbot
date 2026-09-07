@@ -351,11 +351,15 @@ rows = [
   {"What documents do I need to renew my helper's work permit?",
    "What are the steps to renew my helper's work permit?"}
   <= {r["question"] for r in lsn.ROWS if r["service_type"] == "renewal"}, True),
- # renewal is a small-ticket service and may quote costs, but there is still no
- # agency fee for it anywhere in the KB - so no row may invent one.
- ("no renewal row names an agency fee",
-  any("agency fee" in r["answer"].lower()
-      for r in lsn.ROWS if r["service_type"] == "renewal"), False),
+ # This asserted the OPPOSITE until 2026-09-08 - "there is still no agency fee
+ # for work permit renewal anywhere in the KB", open since 2026-09-04. The
+ # agency's consolidated table closed it. renewal is a small-ticket service and
+ # is not in COST_WITHHELD_SERVICES, so the figure goes out as written.
+ ("the work permit renewal fee is in the KB at last",
+  any(f"{D}695" in r["answer"]
+      for r in lsn.ROWS if r["service_type"] == "renewal"), True),
+ ("and a $695 quote is not withheld as a package cost",
+  q("Work permit renewal is $695. That covers us handling the whole thing."), False),
  # --- 2026-09-08: the passport-renewal checklist supersedes 2026-09-07 -----
  # First submission that CONTRADICTED rows already loaded. Two differences with
  # consequences at an embassy counter: the Philippines needs the ORIGINAL
@@ -404,6 +408,74 @@ rows = [
   "returning client - placed with us before"),
  ("a first-timer still is",
   ico._known_fields({"prior_hires": 0}).get("referral_source"), None),
+ # A price question names the shape of the question, not its subject - the
+ # same defect fixed for process_question/document_question on 2026-09-07,
+ # with the money intents deliberately left out then. Measured: a bare "how
+ # much does it cost" inside a renewal returned Form A's HIRING schedule
+ # (0.472); tagged with the service it returns the renewal's own row.
+ ("a fee question takes the service as its subject",
+  "fee_enquiry" in rr._SUBJECTLESS_INTENTS, True),
+ # What a helper EARNS is about the helper, not the service. Service-tagging
+ # it measured worse (0.505 -> 0.446), so it stays out.
+ ("a salary question does not",
+  "salary_enquiry" in rr._SUBJECTLESS_INTENTS, False),
+ ("a fee question with nothing else in flight still searches bare",
+  rr._search_query({"incoming_text": "how much does it cost",
+                    "intent": "fee_enquiry", "service_type": "fee_enquiry"}),
+  "how much does it cost"),
+ ("and inside a service it is tagged with that service",
+  rr._search_query({"incoming_text": "how much does it cost",
+                    "intent": "fee_enquiry", "service_type": "home_leave"}),
+  "how much does it cost\n(home leave)"),
+ # Widening a money question is right when the figures live elsewhere and
+ # WRONG when this service states its own price - the widened search then
+ # returns another service's fee, which is false rather than merely vague.
+ # Live measurement: "how much does it cost" inside a PASSPORT renewal
+ # returned the WORK PERMIT row, $695 where the answer is $450.
+ ("a service that states its own fee keeps the filter",
+  [rr._service_filter({"incoming_text": "how much does it cost",
+                       "service_type": svc})
+   for svc in ("renewal", "passport_renewal", "home_leave")],
+  ["renewal", "passport_renewal", "home_leave"]),
+ ("a service that withholds its fee still widens",
+  rr._service_filter({"incoming_text": "how much does it cost",
+                      "service_type": "new_hiring"}), None),
+ ("the two cost sets are exact opposites",
+  gd.FEE_STATED_SERVICES & gd.COST_WITHHELD_SERVICES, frozenset()),
+ # --- the consolidated cost + timeline table, 2026-09-08 --------------
+ # A fee is stated where the agency stated one and deferred where they did
+ # not: "the service which do not have the timeline and cost that means we
+ # dont have to open that live agent will handle that".
+ ("a fee is withheld on every service the table left blank",
+  {"new_hiring", "direct_hiring", "replacement", "transfer", "transfer_employer"}
+  <= gd.COST_WITHHELD_SERVICES, True),
+ ("and quoted on every service it filled in",
+  {"renewal", "passport_renewal", "home_leave"} & gd.COST_WITHHELD_SERVICES, set()),
+ # An employer transfer runs under its OWN service key, so leaving it out
+ # would have withheld nothing on the half that actually asks about cost.
+ ("the employer half of a transfer is covered too",
+  "transfer_employer" in gd.COST_WITHHELD_SERVICES, True),
+ ("replacement and transfer defer the fee to a person",
+  all(any("consultant will confirm" in r["answer"] for r in lsn.ROWS
+          if r["service_type"] == svc and "cost" in r["question"].lower())
+      for svc in ("replacement", "transfer")), True),
+ # Three rows ANSWERED the question the table answers, with a different
+ # number. Stacking them would put a flat contradiction in front of a model
+ # that quotes either.
+ ("the stale new-hiring timeline is corrected, not stacked",
+  any("4 to 6 weeks" in u["set"].get("answer", "")
+      for u in lsn.UPDATES
+      if u["where"]["question"].startswith("How long does it take to hire")), True),
+ ("so is the renewal one",
+  any("around 3 days" in u["set"].get("answer", "")
+      for u in lsn.UPDATES
+      if u["where"]["question"] == "How do I renew my helper's work permit?"), True),
+ ("and the transfer one, which gave only the MOM window",
+  any("1 to 2 weeks" in u["set"].get("answer", "")
+      for u in lsn.UPDATES
+      if u["where"]["question"].startswith("How long does a transfer take")), True),
+ ("every correction still states why",
+  all(u.get("reason") for u in lsn.UPDATES), True),
  # --- replacement, 2026-09-08 -----------------------------------------
  # Fourteen rows carried service_type='replacement' and NONE of them said how
  # one is done: two FAQ answers and twelve raw Client Service Agreement
