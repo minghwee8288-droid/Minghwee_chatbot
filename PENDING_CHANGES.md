@@ -21,9 +21,9 @@ this file describes what we still intend to change.
 - [ ] **Missing knowledge-base content — needs Ming Hwee, not code.** The bot will
       quote each of these the day the row exists, with no code change. The service
       process + timeline table landed 2026-09-07 and closed the process half; what is
-      still absent is: the **document list** for passport renewal ("what documents are
-      needed" retrieves nothing at all — measured 0.000), and the **agency fee** for
-      passport renewal and for work permit renewal. Also unresolved, and we do not know
+      still absent is the **agency fee** for passport renewal and for work permit
+      renewal. (The passport-renewal **document list** landed 2026-09-07 from the FDW
+      process flow — 0.000 to 0.557.) Also unresolved, and we do not know
       which side is right: medical insurance minimum reads S$15,000/year in one row and
       S$60,000/year in another (MOM's own figure is $15,000), and Form A prices
       insurance at $590 while the FAQ says $280-350 / $400-520. The bot may quote

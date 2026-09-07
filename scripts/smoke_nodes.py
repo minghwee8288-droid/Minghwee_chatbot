@@ -67,6 +67,24 @@ CASES = [
      {"service_type": "transfer_employer", "intent": "transfer",
       "incoming_text": "I'm looking for a transfer helper"}),
     ("info_collector  insurance", {"service_type": "insurance", "intent": "insurance"}),
+    # Exercises nationality_note: passport renewal, a route-dependent question,
+    # nationality NOT yet collected. The branch selfcheck can only inspect.
+    ("info_collector  passport, no nationality",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "what documents are needed",
+      "collected_info": {"helper_name": "Shushi"},
+      "asked_field_counts": {"helper_name": 1},
+      "history_text": "bot: May I know your helper's name?"}),
+    ("info_collector  passport, nationality known",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "what documents are needed",
+      "collected_info": {"helper_name": "Shushi", "nationality": "Myanmar"},
+      "asked_field_counts": {"helper_name": 1, "nationality": 1},
+      "history_text": "bot: Which country is her passport from?"}),
+    ("info_collector  direct hire",
+     {"service_type": "direct_hiring", "intent": "direct_hiring",
+      "incoming_text": "I already found a helper, can you process her",
+      "collected_info": {"employment_status": "currently employed"}}),
 ]
 
 

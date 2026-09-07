@@ -194,6 +194,49 @@ _COLLECTION_PURPOSE = {
 _SMALL_TICKET_SERVICES = frozenset({"renewal", "passport_renewal", "insurance"})
 
 
+# A passport-renewal question whose ANSWER changes with the helper's
+# nationality. The agency's process flow (2026-09-07) is explicit that the
+# routes genuinely differ and that the bot must not assume one fits all:
+#
+#     Philippines  -> holds an embassy contract; SHE reports to the embassy
+#                     herself and meets the runner there
+#     Indonesia    -> holds an embassy contract; the runner collects her from
+#                     the employer's home and brings her back
+#     Myanmar      -> NO embassy contract, so three more forms are signed
+#                     first; runner collects her from the home
+#
+# Retrieval cannot protect us here on its own. The nationality filter is
+# dropped when we do not know the nationality — deliberately, because for most
+# services a nationality-labelled row is still useful — so every route is in
+# scope at once. Measured 2026-09-07 with nationality unknown: "what is the
+# process" returned the MYANMAR row top (0.472) and "does someone go with her
+# to the embassy" returned the FILIPINO one (0.609). Answer either confidently
+# to an employer of the other nationality and we have told them to prepare the
+# wrong forms.
+#
+# So when the route matters and we do not yet know which route it is, the model
+# is told to say so and ask, rather than pick whichever row scored highest.
+_NATIONALITY_DEPENDENT = re.compile(
+    r"\b(process|procedure|step|steps|document|documents|paperwork|form|forms|"
+    r"requirement|requirements|need(?:ed)?|require[ds]?|submit|sign|embassy|"
+    r"contract|appointment|how\s+does\s+it\s+work|what\s+happens)\b",
+    re.IGNORECASE,
+)
+
+
+def _known_nationality(state: ConversationState) -> str | None:
+    """The PH/ID/MM code this conversation is about, if we have it yet.
+
+    Same source and same normalisation as rag_retriever._nationality, so the
+    note below fires on exactly the turns where the retrieval filter was
+    dropped. 'none' is "no preference", which is the absence of an answer, not
+    an answer.
+    """
+    collected = state.get("collected_info") or {}
+    code = lead_service.nationality_code(str(collected.get("nationality") or ""))
+    return code if code and code != "none" else None
+
+
 def _is_first_contact(state: ConversationState) -> bool:
     """Whether we have never said anything to this client before.
 
@@ -918,6 +961,30 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "nothing and made to read a sentence for it."
         )
 
+    # Passport renewal branches on nationality and the branches are not
+    # cosmetic: a Myanmar helper holds no embassy contract, so three forms a
+    # Filipino employer never sees have to be signed before anything is
+    # submitted. With the nationality unknown the retrieval filter is dropped
+    # and all three routes compete, so the top row is whichever phrasing
+    # happened to score best — the Myanmar one, measured, for a bare "what is
+    # the process". Naming the route we have not established is how an employer
+    # ends up preparing the wrong paperwork.
+    nationality_note = ""
+    if (
+        service_type == "passport_renewal"
+        and not _known_nationality(state)
+        and _NATIONALITY_DEPENDENT.search(state.get("incoming_text") or "")
+    ):
+        nationality_note = (
+            f"{chr(10)}{chr(10)}The records above describe MORE THAN ONE route, "
+            "because the paperwork and the embassy visit differ by the helper's "
+            "nationality — and you have not been told hers yet. Do not pick one. "
+            "Do not name a nationality, an embassy, or a form that only one route "
+            "needs. Give only what is true for all of them, say plainly that the "
+            "exact documents depend on her nationality, and ask which country she "
+            "is from. Once you know it you can be specific."
+        )
+
     # The very first thing this client has ever heard from us. Rule 1 and the
     # stage line in build_system_prompt both call for the introduction, but on a
     # collector turn they compete with COLLECTOR_INSTRUCTION's "ask for that one
@@ -1026,6 +1093,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             + intro_note
             + recognised_note
             + small_ticket_note
+            + nationality_note
             + purpose_note
             + returning_note
             + requirement_note
@@ -1053,7 +1121,8 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             max_sentences=4
             if (first_contact and answer_first)
             else 3
-            if (answer_first or first_contact or small_ticket_note or purpose_note)
+            if (answer_first or first_contact or small_ticket_note or purpose_note
+                or nationality_note)
             else 2,
             withhold_cost=service_type in COST_WITHHELD_SERVICES,
         )

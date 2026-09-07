@@ -74,6 +74,20 @@ rows = [
  # question could not tell a first-timer from someone with two contracts
  # behind her, which is a different person at a different salary.
  ("new_hiring offers all four experience types", len(hire_src.options) >= 4, True),
+ # --- FDW passport renewal process flow, 2026-09-07 -------------------
+ # The routes genuinely differ (Myanmar holds no embassy contract, so three
+ # more forms), and with the nationality unknown the retrieval filter is
+ # dropped and all three compete. Measured: a bare "what is the process"
+ # returned the MYANMAR row top. Naming a route we have not established is
+ # how an employer prepares the wrong paperwork.
+ ("process question fires the nationality caveat",
+  bool(ico._NATIONALITY_DEPENDENT.search("what documents are needed")), True),
+ ("an ordinary answer does not",
+  bool(ico._NATIONALITY_DEPENDENT.search("her name is Shushi")), False),
+ ("nationality known -> no caveat needed",
+  ico._known_nationality({"collected_info": {"nationality": "Myanmar"}}), "MM"),
+ ("nationality unknown -> caveat needed",
+  ico._known_nationality({"collected_info": {}}), None),
  ("new_hiring asks bedrooms / bathrooms",
   any(f.key == "home_size" for f in t.SERVICE_FIELDS["new_hiring"]), True),
 ]

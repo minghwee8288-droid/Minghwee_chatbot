@@ -1,7 +1,8 @@
 """Load the agency's transfer + passport-renewal service notes into the KB.
 
 Ming Hwee sent these timings on 2026-09-03, and the service process +
-timeline table (transfer, passport renewal, new hiring, direct hiring) on
+timeline table (transfer, passport renewal, new hiring, direct hiring) and the
+FDW passport renewal process flow (documents, embassy contract route, runner) on
 2026-09-07. Until they are IN the knowledge
 base the bot cannot say them: every figure is checked against the retrieved
 records by guards.ungrounded_figures, so an unretrieved "6 to 8 weeks" is
@@ -261,6 +262,159 @@ ROWS: list[dict[str, Any]] = [
             "is available, and whether she has a notice period or clearance to "
             "complete before she can leave her current job. Once we have those details "
             "we can give you a proper estimate rather than a guess."
+        ),
+    },
+    # --- 2026-09-07: the FDW passport renewal process flow -----------------
+    #
+    # The document list. This is the gap that had been open since 2026-09-04
+    # and was measured at **0.000** the same day the process rows went in:
+    # "what documents are needed", asked under service=passport_renewal with
+    # nationality=PH, matched NOTHING in the whole knowledge base, so a client
+    # asking the single most practical question about a renewal got the holding
+    # line.
+    #
+    # The branch that matters is the embassy contract, and it is decided by
+    # nationality, not by asking:
+    #
+    #     Philippines  -> holds an embassy contract
+    #     Indonesia    -> holds an embassy contract
+    #     Myanmar      -> does NOT, so three more forms are signed first
+    #
+    # `passport_renewal` already collects `nationality`, so the route is
+    # derivable and no new question is added for it. Asking an employer whether
+    # their helper holds an embassy contract would be exactly the interrogation
+    # the agency objected to on 2026-09-04.
+    #
+    # NO DURATIONS IN ANY ROW BELOW. The source flow is explicit that it
+    # provides the process and NOT a processing time, and warns against
+    # inventing one from it. The timings the bot may quote are the separate
+    # 2026-09-03 rows above, which came from the agency's own timing table.
+    # If a figure appears here that is not in those rows, guards.ungrounded_
+    # figures will bin the whole reply and the client gets a holding line -
+    # so adding a plausible-sounding number here makes the bot WORSE, not
+    # more helpful.
+    {
+        "service_type": "passport_renewal",
+        "nationality": "all",
+        "section_heading": "Passport renewal - documents required",
+        "question": "What documents are needed to renew my helper's passport?",
+        "answer": (
+            "It depends on whether she holds a valid embassy contract - a Filipino or "
+            "Indonesian helper normally does, a Myanmar helper does not. If she holds "
+            "one, what goes to the embassy is the Application for Passport Renewal "
+            "Form she completes, her embassy contract, a copy of your IC, a copy of "
+            "her passport, her Singapore work pass and her work permit. If she does "
+            "not hold one, three further forms have to be signed first - the "
+            "Undertaking of Employer Form, the Standard Employment Contract and the "
+            "Information Sheet of Employer - and those go in alongside the same "
+            "application form and copies."
+        ),
+    },
+    {
+        "service_type": "passport_renewal",
+        "nationality": "all",
+        "section_heading": "Passport renewal - no embassy contract",
+        "question": "What extra forms are needed if my helper has no embassy contract?",
+        "answer": (
+            "Three, and they are signed before anything goes to the embassy. The "
+            "Undertaking of Employer Form is signed by you. The Standard Employment "
+            "Contract and the Information Sheet of Employer are each signed by both "
+            "you and your helper. Those three then go to the embassy together with "
+            "the Application for Passport Renewal Form, a copy of your IC, a copy of "
+            "her passport, her Singapore work pass and her work permit. This is the "
+            "route a Myanmar helper takes, since Myanmar helpers do not hold an "
+            "embassy contract."
+        ),
+    },
+    {
+        "service_type": "passport_renewal",
+        "nationality": "all",
+        "section_heading": "Passport renewal - embassy contract by nationality",
+        "question": "Does my helper have an embassy contract?",
+        "answer": (
+            "Filipino and Indonesian helpers hold an embassy contract. Myanmar "
+            "helpers do not. It matters because it decides the paperwork: with a "
+            "contract the renewal application goes in with the contract itself and "
+            "the usual copies, and without one the Undertaking of Employer Form, the "
+            "Standard Employment Contract and the Information Sheet of Employer have "
+            "to be signed first."
+        ),
+    },
+    {
+        "service_type": "passport_renewal",
+        "nationality": "all",
+        "section_heading": "Passport renewal - what the employer does",
+        "question": "What do I need to do as the employer for my helper's passport renewal?",
+        "answer": (
+            "Mostly signing and providing copies. We need a copy of your IC. If your "
+            "helper does not hold an embassy contract, which is the case for a "
+            "Myanmar helper, you also sign the Undertaking of Employer Form, and you "
+            "and she both sign the Standard Employment Contract and the Information "
+            "Sheet of Employer. The embassy trip itself is handled by a runner: for "
+            "an Indonesian or Myanmar helper he collects her from your home and "
+            "brings her back, and a Filipino helper reports to the embassy herself "
+            "and meets him there. We let you know once the renewal is done."
+        ),
+    },
+    {
+        "service_type": "passport_renewal",
+        "nationality": "all",
+        "section_heading": "Passport renewal - going to the embassy",
+        "question": "Does someone go with my helper to the embassy?",
+        "answer": (
+            "Yes, a runner assists her. For an Indonesian or a Myanmar helper the "
+            "runner collects her from your home, takes her to the embassy and brings "
+            "her back afterwards. A Filipino helper has to report to the embassy in "
+            "person herself, and meets the runner there. Either way the runner tells "
+            "us as soon as it is done and we update you on the status."
+        ),
+    },
+    {
+        "service_type": "passport_renewal",
+        "nationality": "PH",
+        "section_heading": "Passport renewal - Filipino helper, documents and visit",
+        "question": "What documents does a Filipino helper need for passport renewal, and how does the embassy visit work?",
+        "answer": (
+            "She holds an embassy contract, so the paperwork is the Application for "
+            "Passport Renewal Form she completes, her embassy contract, a copy of "
+            "your IC, a copy of her passport, her Singapore work pass and her work "
+            "permit, all submitted to the Philippine embassy. She is required to "
+            "report to the embassy in person - she makes her own way there and meets "
+            "our runner at the embassy, who assists her through it. Afterwards the "
+            "runner sees her back to your home where that applies, tells us it is "
+            "complete, and we update you."
+        ),
+    },
+    {
+        "service_type": "passport_renewal",
+        "nationality": "ID",
+        "section_heading": "Passport renewal - Indonesian helper, documents and visit",
+        "question": "What documents does an Indonesian helper need for passport renewal, and how does the embassy visit work?",
+        "answer": (
+            "She holds an embassy contract, so the paperwork is the Application for "
+            "Passport Renewal Form she completes, her embassy contract, a copy of "
+            "your IC, a copy of her passport, her Singapore work pass and her work "
+            "permit, all submitted to the Indonesian embassy. Our runner collects her "
+            "from your home, takes her to the embassy for the renewal and brings her "
+            "back afterwards, so she is accompanied both ways. The runner then tells "
+            "us it is complete and we update you."
+        ),
+    },
+    {
+        "service_type": "passport_renewal",
+        "nationality": "MM",
+        "section_heading": "Passport renewal - Myanmar helper, documents and visit",
+        "question": "What documents does a Myanmar helper need for passport renewal, and how does the embassy visit work?",
+        "answer": (
+            "Myanmar helpers do not hold an embassy contract, so three forms are "
+            "signed first: the Undertaking of Employer Form, which you sign, and the "
+            "Standard Employment Contract and Information Sheet of Employer, which "
+            "you and she both sign. Those go to the embassy along with the "
+            "Application for Passport Renewal Form, a copy of your IC, a copy of her "
+            "passport, her Singapore work pass and her work permit. Our runner "
+            "collects her from your home, takes her to the embassy and brings her "
+            "back afterwards. The runner then tells us it is complete and we update "
+            "you."
         ),
     },
 ]

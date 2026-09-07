@@ -195,6 +195,7 @@ because the lead is opened early and the ticket is created much later.
 | A generic question mid-collection is searched with the service as its subject | `rag_retriever._search_query` | `intent=other` used to send the message bare. "what is the process" then scored **0.000 filtered and unfiltered**. |
 | A direct hire collects something | `SERVICE_FIELDS["direct_hiring"]` | Was an empty list, so the ticket said only "wants us to process a helper they have already chosen". Ten fields now; asserted. |
 | The notice-period question is only put about a helper who is still employed | `_STILL_EMPLOYED` gate | `excludes` first, so "free to take a new job" and "between jobs" do not match on the word they contain. |
+| A passport-renewal answer never names a route we have not established | `info_collector._NATIONALITY_DEPENDENT` + `_known_nationality` | The paperwork differs by nationality and the retrieval filter is DROPPED when the nationality is unknown, so all three routes compete. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -472,6 +473,42 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-07** — **The FDW passport renewal process flow: documents, the embassy
+  contract branch, and a guard against answering for the wrong nationality.** (A) **The
+  document list existed nowhere.** This had been the open gap since 2026-09-04 and was
+  measured at **0.000** the same morning the process rows went in — *"what documents are
+  needed"*, asked under `service=passport_renewal` with `nationality=PH`, matched nothing
+  in the entire knowledge base, so the single most practical question about a renewal got
+  the holding line. Eight rows now carry it. After: 0.000 → **0.557**.
+  (B) **The branch is the embassy contract, and it is decided by nationality, not by
+  asking.** Philippines and Indonesia hold one; **Myanmar does not**, so three further
+  forms — Undertaking of Employer, Standard Employment Contract, Information Sheet of
+  Employer — are signed before anything is submitted. The visit differs too: a Filipino
+  helper reports to the embassy **herself** and meets the runner there, while an
+  Indonesian or Myanmar helper is collected from the employer's home and brought back.
+  `passport_renewal` already collects `nationality`, so **no new question was added** —
+  asking an employer whether their helper holds an embassy contract would be exactly the
+  interrogation the agency objected to on 2026-09-04.
+  (C) **The real risk was answering confidently for the wrong route**, and it is not
+  hypothetical. The nationality filter is *dropped* when the nationality is unknown
+  (deliberate — for most services a nationality-labelled row is still useful), so all
+  three routes compete at once. Measured with nationality unknown: a bare *"what is the
+  process"* returned the **Myanmar** row top at 0.472, and *"does someone go with her to
+  the embassy"* returned the **Filipino** one at 0.609. Answer either to an employer of
+  the other nationality and we have told them to prepare the wrong forms.
+  `nationality_note` fires on a route-dependent question while `nationality` is unknown
+  and tells the model to give only what is true for all three, say the documents depend
+  on her nationality, and ask. Verified by capturing the instruction actually built: it is
+  present for two process phrasings, absent once the nationality is known, absent on an
+  ordinary answer, and absent for another service. The trigger is 10 phrasings firing and
+  10 ordinary answers staying quiet. **`ungrounded_figures` is the second lock**: the
+  source flow states outright that it gives the process and NOT a duration and warns
+  against inventing one, so none of the eight rows contains a number or a duration word —
+  asserted mechanically before they were loaded. The timings the bot may quote remain the
+  separate 2026-09-03 rows from the agency's own timing table.
+  `selfcheck_flows.py` is 27 assertions; `smoke_nodes.py` is 10 states, three of them new
+  and covering this branch and the direct-hire flow.
 
 - **2026-09-07** — **The agency's service process + timeline table, added end to end.**
   Purely additive: nothing was removed or reworded except where a question could not
