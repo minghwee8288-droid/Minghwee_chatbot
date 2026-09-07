@@ -1341,6 +1341,206 @@ ROWS: list[dict[str, Any]] = [
             "employment contract says."
         ),
     },
+
+    # --- 2026-09-08: replacement ----------------------------------------------
+    #
+    # Fourteen rows already carried service_type='replacement' and not one of
+    # them described how a replacement is actually done. Two are FAQ answers
+    # (the guarantee, and what to do about performance) and TWELVE are raw
+    # clauses lifted from the Client Service Agreement - refund percentages,
+    # entitlement tables, "subject to the conditions in Clause 4".
+    #
+    # So clause 3.1 - "the Employer is entitled to two (2) replacement(s) of MDW
+    # within a period of six (6) months" - was the TOP match for seven different
+    # questions, measured 2026-09-08 under service=replacement: "what is the
+    # process" 0.417, "what documents are needed" 0.443, "what forms do i have
+    # to sign" 0.438, "how does a replacement work" 0.483, "what happens when
+    # she arrives" 0.489, "how long does a replacement take" 0.484. Five of
+    # those clear the 0.40 floor, so _answerable() read True and the widening
+    # retry never fired: a client asking what paperwork to gather would have
+    # been read a refund-entitlement clause, confidently.
+    #
+    # The incoming candidate's half MIRRORS NEW HIRING, in the agency's own
+    # words, and the shared MOM steps were moved to 'general' on 2026-09-08 for
+    # direct hire - so they are already reachable from here (measured: "what is
+    # an IPA" 0.530, "what is the Settling-In Programme" 0.554). Nothing is
+    # duplicated for that reason. Only what is genuinely replacement-specific
+    # is below: the two forms that replace the new-hire fee schedule, the
+    # document checklist, and the nine steps.
+    #
+    # Kept OUT as internal: creating and attaching the employer account, the
+    # dashboard that shows the matched profiles, the partnering agent by that
+    # name, notifying the transport company, and case closure. Those describe
+    # our own workflow to the person it is being run on.
+    #
+    # NO replacement fee is stated. The source names a "Replacement Services &
+    # Fees form" but gives no amount, and the existing FAQ row already says a
+    # replacement inside the guarantee period carries no additional agency
+    # service fee. Inventing a figure to sit beside that is how the KB ends up
+    # contradicting itself.
+    {
+        "service_type": "replacement",
+        "nationality": "all",
+        "section_heading": "Replacement - what it is",
+        "question": "What is a replacement and how does it work?",
+        "answer": (
+            "A replacement is swapping the helper you have now for a different one, "
+            "usually because she is not the right fit for your household. For the "
+            "incoming helper it runs like a new hire - we shortlist candidates against "
+            "your revised requirements, you interview and confirm one, and we handle "
+            "the Work Permit application, the insurance and security bond, her medical "
+            "and her arrival. What differs is the paperwork at your end: you sign a "
+            "Replacement form and a Replacement Services and Fees form rather than the "
+            "full new-hire fee schedule."
+        ),
+    },
+    {
+        "service_type": "replacement",
+        "nationality": "all",
+        "section_heading": "Replacement - documents from the employer",
+        "question": "What documents are needed for a replacement?",
+        "answer": (
+            "From you we need a copy of your NRIC and proof of income - either your "
+            "Income Tax Assessment or a Declaration of Monthly Income. If you are a "
+            "foreign employer that is your Employment Pass or S Pass together with "
+            "your passport, or a company letter together with your tenancy agreement. "
+            "If this would be an additional helper we also need identification copies "
+            "for the children or elderly in your care. For the incoming helper we need "
+            "her passport copy, her medical report and her school certificate, and "
+            "those come to us through her agency rather than from you."
+        ),
+    },
+    {
+        "service_type": "replacement",
+        "nationality": "all",
+        "section_heading": "Replacement - forms we prepare",
+        "question": "What forms does Ming Hwee prepare for a replacement?",
+        "answer": (
+            "Seven, and we prepare all of them for you to sign electronically: the "
+            "Replacement form, the Replacement Services and Fees form, the "
+            "Authorisation Form, the Employer Particulars form, the last page of the "
+            "helper's biodata, the Job Offer Form, and her Employment History if she "
+            "has worked in Singapore before. You do not have to source any of these "
+            "yourself."
+        ),
+    },
+    {
+        "service_type": "replacement",
+        "nationality": "all",
+        "section_heading": "Replacement - process",
+        "question": "What is the process for replacing my helper?",
+        "answer": (
+            "There are nine steps. First we go through your household again and your "
+            "revised requirements, since whatever is not working usually changes them. "
+            "Second we shortlist the closest matching candidates and arrange a video "
+            "interview so you can meet them. Third, once you confirm the one you want, "
+            "you sign the Replacement form. Fourth you authorise us through Singpass "
+            "to deal with MOM on your behalf and give us your personal details. Fifth "
+            "we prepare the rest of the set for you to sign electronically. Sixth we "
+            "send the Job Offer Form to her agency for her to sign, collect her "
+            "passport copy, medical report and school certificate, and confirm she is "
+            "medically fit. Seventh we submit the application to MOM, and once the IPA "
+            "is issued both you and she sign it and we upload it, which is what allows "
+            "the Work Permit to be issued. Eighth we arrange her insurance and the "
+            "security bond and check when you are free to collect her. Ninth she "
+            "arrives, has her medical and her Settling-In Programme, and we hand over "
+            "to you."
+        ),
+    },
+    {
+        "service_type": "replacement",
+        "nationality": "all",
+        "section_heading": "Replacement - what the employer does",
+        "question": "What do I need to do myself for a replacement?",
+        "answer": (
+            "Five things. Tell us what needs to change about the requirements, so we "
+            "are not matching you against the same brief. Sit in on the video "
+            "interviews and confirm the helper you want. Authorise us through Singpass "
+            "so we can transact with MOM for you. Sign the set we prepare, including "
+            "the Replacement form and the IPA when it is issued. And be available to "
+            "collect her when she arrives. We do the rest."
+        ),
+    },
+    {
+        "service_type": "replacement",
+        "nationality": "all",
+        "section_heading": "Replacement - after you confirm the candidate",
+        "question": "What happens after I choose the replacement helper?",
+        "answer": (
+            "You sign the Replacement form, then authorise us through Singpass to "
+            "transact with MOM on your behalf and give us your personal details. We "
+            "prepare the rest of the documents for you to sign electronically, send "
+            "the Job Offer Form to her agency for her to sign, and collect her "
+            "passport copy, medical report and school certificate to confirm she is "
+            "medically fit. Then the application goes to MOM."
+        ),
+    },
+    {
+        "service_type": "replacement",
+        "nationality": "all",
+        "section_heading": "Replacement - how it differs from a new hire",
+        "question": "How is a replacement different from hiring a new helper?",
+        "answer": (
+            "For the incoming helper it is the same job - matching, the interview, the "
+            "MOM application, the insurance and security bond, the medical, the "
+            "Settling-In Programme and the handover all run exactly as they do for a "
+            "new hire. The difference is what you sign: a Replacement form and a "
+            "Replacement Services and Fees form instead of the full new-hire fee "
+            "schedule. We also start from your revised requirements rather than a "
+            "blank brief, since we already know your household."
+        ),
+    },
+    {
+        "service_type": "replacement",
+        "nationality": "all",
+        "section_heading": "Replacement - interviewing",
+        "question": "Do I get to interview the replacement helper?",
+        "answer": (
+            "Yes. We shortlist the candidates who most closely match your revised "
+            "requirements and arrange a video interview so you can meet them before "
+            "deciding. If none of them is right we go back to the requirements and "
+            "look again rather than pressing you to take one."
+        ),
+    },
+    {
+        "service_type": "replacement",
+        "nationality": "all",
+        "section_heading": "Replacement - the incoming helper's documents",
+        "question": "What do you need from the incoming replacement helper?",
+        "answer": (
+            "Her passport copy, her medical report and her school certificate, and a "
+            "signed Job Offer Form. Those come to us through her agency, so there is "
+            "nothing for you to chase. We confirm she is medically fit before the "
+            "application goes to MOM."
+        ),
+    },
+    # Shared with every service that brings a helper in on a new Work Permit,
+    # so filed as 'general' rather than copied - the same decision as the eight
+    # rows moved there on 2026-09-08, and for the same reason (§9.8: duplicated
+    # constants diverge). Measured before this row existed: "do i need to buy
+    # insurance" scored 0.000 under service=replacement - nothing in the whole
+    # knowledge base matched it, because the only row that answers it is
+    # phrased "for a direct hire" and the filter excluded it.
+    #
+    # No insurance MINIMUM is stated - see CLAUDE.md §9.12, the KB disagrees
+    # with itself three ways and it is Ming Hwee's call, not this script's. The
+    # $5,000 bond is documented as quotable and is phrased the way the existing
+    # direct-hire row phrases it, deliberately clear of the words
+    # quotes_hiring_package_cost fires on.
+    {
+        "service_type": "general",
+        "nationality": "all",
+        "section_heading": "Insurance and security bond",
+        "question": "Do I need to buy insurance and a security bond for my helper?",
+        "answer": (
+            "Both are required and we arrange both for you. MOM requires a security "
+            "bond of $5,000 for a helper who is not Malaysian, and we put it in place "
+            "as an insured bond so you are not laying the money out yourself. She also "
+            "needs medical insurance and personal accident insurance at the coverage "
+            "MOM sets, and we buy those before the Work Permit is issued. A consultant "
+            "will confirm the coverage figures for you."
+        ),
+    },
 ]
 
 

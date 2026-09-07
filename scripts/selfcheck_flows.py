@@ -404,6 +404,44 @@ rows = [
   "returning client - placed with us before"),
  ("a first-timer still is",
   ico._known_fields({"prior_hires": 0}).get("referral_source"), None),
+ # --- replacement, 2026-09-08 -----------------------------------------
+ # Fourteen rows carried service_type='replacement' and NONE of them said how
+ # one is done: two FAQ answers and twelve raw Client Service Agreement
+ # clauses. So clause 3.1 - the two-replacements-in-six-months entitlement -
+ # was the top match for seven different questions, five of them ABOVE the
+ # 0.40 floor, which is why the widening retry never fired. A client asking
+ # what paperwork to gather would have been read a refund clause.
+ ("a replacement states its own document checklist",
+  any("Income Tax Assessment" in r["answer"]
+      for r in lsn.ROWS if r["service_type"] == "replacement"), True),
+ ("and the forms we prepare, including the two that replace the fee schedule",
+  all(term in "".join(r["answer"] for r in lsn.ROWS
+                      if r["service_type"] == "replacement")
+      for term in ("Replacement form", "Replacement Services and Fees form",
+                   "Job Offer Form", "Authorisation Form")), True),
+ ("and the nine steps",
+  any("nine steps" in r["answer"]
+      for r in lsn.ROWS if r["service_type"] == "replacement"), True),
+ # The incoming candidate's half mirrors new hiring in the agency's own words,
+ # and those steps live in 'general' since 2026-09-08 - reachable from every
+ # service. Copying them under 'replacement' is how two copies drift (§9.8).
+ ("the shared MOM steps are not duplicated under replacement",
+  any(w in r["answer"] for r in lsn.ROWS if r["service_type"] == "replacement"
+      for w in ("IPA is issued",)), True),
+ ("no replacement fee is invented",
+  any(D in r["answer"] for r in lsn.ROWS if r["service_type"] == "replacement"), False),
+ # 'general' is retrieved from INSIDE a new_hiring or direct_hiring
+ # conversation, where quotes_hiring_package_cost runs on the reply. A general
+ # row that trips it would swap the whole answer for the cost-deferral line.
+ ("no 'general' row trips the cost guard",
+  [r["question"] for r in lsn.ROWS
+   if r["service_type"] == "general" and q(r["answer"])], []),
+ ("insurance and the bond are answerable from any service",
+  any(r["service_type"] == "general" and "security bond" in r["answer"]
+      for r in lsn.ROWS), True),
+ ("and still state no insurance minimum",
+  any(f"{D}15,000" in r["answer"] or f"{D}60,000" in r["answer"]
+      for r in lsn.ROWS if r["service_type"] == "general"), False),
  # --- home leave, 2026-09-08 ------------------------------------------
  # The nationality decides the documents, the lead time AND the price - PH
  # needs her ORIGINAL passport plus a ticket itinerary, 4 weeks, $400; ID

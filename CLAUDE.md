@@ -218,6 +218,8 @@ because the lead is opened early and the ticket is created much later.
 | A home leave never quotes a route we have not established | `info_collector._ROUTE_BY_NATIONALITY` | The nationality changes the documents, the lead time **and** the price (PH original passport + itinerary, 4 weeks, $400; ID copies, 2 weeks, $250). |
 | The home-leave caveat catches money and timing; the passport one deliberately does not | `_HOME_LEAVE_ROUTE_DEPENDENT` vs `_NATIONALITY_DEPENDENT` | A passport renewal is $450 either way, so suppressing that answer would help nobody. |
 | Home leave asks which country she is from | `SERVICE_FIELDS["home_leave"]` | It asked her name and the travel dates only, so there was nothing to route on. The agency's own step 1 is "confirm nationality and intended travel dates". |
+| A replacement question is answered from the flow, not from the contract | `load_service_notes` replacement rows | Clause 3.1 of the Client Service Agreement was the top match for seven different questions, five of them **above** the floor, so the widening retry never fired. |
+| A `general` row is vetted against the cost guard too | `selfcheck_flows.py` | `general` is retrieved from inside `new_hiring` and `direct_hiring`, where `quotes_hiring_package_cost` runs on the reply. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -509,6 +511,55 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **Replacement: the document checklist and the nine steps, and the
+  contract clause that was answering every question in their place.** 9 rows plus 1
+  shared.
+  (A) **Fourteen rows already carried `service_type='replacement'` and not one of them
+  said how a replacement is done.** Two are FAQ answers (the guarantee, and what to do
+  about performance); the other **twelve are raw clauses lifted from the Client Service
+  Agreement** — refund percentages, entitlement tables, *"subject to the conditions in
+  Clause 4"*. With nothing operational to compete, **clause 3.1 was the top match for
+  seven different questions**, measured under `service=replacement` before anything was
+  loaded: *"what is the process"* 0.417, *"what documents are needed"* 0.443, *"what
+  forms do I have to sign"* 0.438, *"how does a replacement work"* 0.483, *"what happens
+  when she arrives"* 0.489, *"how long does a replacement take"* 0.484. **Five of those
+  clear the 0.40 floor**, so `_answerable()` read True and the widening retry never ran —
+  a client asking what paperwork to gather would have been read a refund-entitlement
+  clause, confidently. This is the 2026-09-08 direct-hire defect again with a worse
+  source: not a wrong row, a *legal* row.
+  After: **0.427–0.805, all 23 probes above the floor**, every one of the seven now
+  returning a real replacement row, and the four service controls unmoved (new hiring
+  0.473, direct hire 0.661, passport 0.502, home leave 0.623).
+  (B) **Nothing shared was copied.** The agency's own line is that the incoming
+  candidate's half *"mirrors New Hiring"*, and those steps were moved to `general` on
+  2026-09-08 for direct hire — so they are already reachable here, verified rather than
+  assumed (*"what is an IPA"* 0.530, *"what is the Settling-In Programme"* 0.554, both
+  unchanged by this load). Only what is genuinely replacement-specific was written: the
+  two forms that stand in for the new-hire fee schedule, the document checklist, and the
+  nine steps.
+  (C) **One `general` row added, because a real gap showed up while measuring.** *"Do I
+  need to buy insurance"* scored **0.000** under `replacement` — nothing in the entire
+  knowledge base matched it, because the only row that answers it is phrased *"for a
+  direct hire"* and the service filter excluded it. Filed as `general` rather than copied
+  three ways (§9.8). It is now top for that question under `direct_hiring`, `new_hiring`
+  **and** `replacement`, with the direct-hire-specific row still second at 0.512, so
+  nothing was displaced out of the set the model receives. **No insurance minimum is
+  stated** (§9.12); the $5,000 bond is phrased the way the existing direct-hire row
+  phrases it, deliberately clear of the words `quotes_hiring_package_cost` fires on.
+  (D) **That exposed a hole in the vetting.** A `general` row is retrieved from inside a
+  `new_hiring` or `direct_hiring` conversation, where the cost guard runs on the reply —
+  but the row checks only tested `COST_WITHHELD_SERVICES` rows, because until now no row
+  was deliberately written into `general`. `selfcheck_flows.py` now asserts no `general`
+  row trips it, and that none states an insurance minimum.
+  Kept OUT as internal: creating and attaching the employer account, the dashboard that
+  shows the matched profiles, the partnering agent by that name, notifying the transport
+  company, and case closure. **No replacement fee is stated** — the source names a
+  "Replacement Services & Fees form" but gives no amount, and the existing FAQ row
+  already says a replacement inside the guarantee period carries no additional agency
+  service fee; a figure invented beside that is how the KB starts contradicting itself.
+  `selfcheck_flows.py` is 114 assertions. **Remaining KB gap: the agency fee for work
+  permit renewal.**
 
 - **2026-09-08** — **Home leave: the per-nationality checklist, the fees, the process,
   and the question the whole service turns on.** 12 rows, one new field, one guard.
