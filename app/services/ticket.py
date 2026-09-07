@@ -908,6 +908,19 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     # None of these is the helper's own permit or her employer's consent — the
     # employer cannot answer those, which is what four testers flagged.
     TRANSFER_EMPLOYER: [
+        # Client feedback, 2026-09-07: "Bot doesn't ask for my name or
+        # addresses me if it knows." This flow was the only employer service
+        # with no `full_name` at all, so there was nothing for rule 1c to use
+        # and nothing to put on the lead but a WhatsApp number. It is portable
+        # and it is also filled from the WhatsApp push name when that is
+        # plainly a person's name, so a client we already know is never asked.
+        Field(
+            "full_name",
+            "name",
+            "May I know your name?",
+            max_asks=2,
+            group="staying in touch",
+        ),
         Field(
             "transfer_direction",
             "what they need",

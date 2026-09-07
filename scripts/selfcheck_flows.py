@@ -242,6 +242,58 @@ rows = [
   set(lsn._RELOCATED.values()), {"general"}),
  ("every correction states a reason",
   all(u.get("reason") for u in lsn.UPDATES), True),
+ # --- 2026-09-07 client testing round: the transfer flow -----------------
+ # Ticket CB-2026-0004 reached an agent carrying two fields and nothing else,
+ # because "I'm looking for a transfer helper" was extracted as
+ # transfer_direction='transfer' - a value matching NEITHER gate, so both
+ # closed and the only ungated field left was `timeline`. One question, then
+ # completion, then handover.
+ ("a direction that opens no branch is not an answer",
+  ico._undecidable_gate_keys("transfer_employer",
+                             {"transfer_direction": "transfer"}),
+  ["transfer_direction"]),
+ ("a direction that opens the take-on branch is",
+  ico._undecidable_gate_keys("transfer_employer",
+                             {"transfer_direction": "taking on a transfer helper"}), []),
+ ("so is one that opens the release branch",
+  ico._undecidable_gate_keys("transfer_employer",
+                             {"transfer_direction": "releasing my current helper"}), []),
+ ("an unanswered gate key is left alone",
+  ico._undecidable_gate_keys("transfer_employer", {}), []),
+ ("an ungated service is never touched",
+  ico._undecidable_gate_keys("passport_renewal", {"nationality": "Myanmar"}), []),
+ # With the direction answered, the client is asked what they NEED - the
+ # client's own words: it "should be asking for preferred nationality and
+ # needs and household requirements", not when they want it arranged.
+ ("taking on a transfer opens the requirement set",
+  [f.key for f in t.missing_fields(
+      "transfer_employer",
+      {"full_name": "Thomas", "transfer_direction": "taking on a transfer helper"})][:2],
+  ["requirement", "preferred_nationality"]),
+ ("the timing question is last and optional",
+  (t.SERVICE_FIELDS["transfer_employer"][-1].key,
+   t.SERVICE_FIELDS["transfer_employer"][-1].optional), ("timeline", True)),
+ # "Bot doesn't ask for my name or addresses me if it knows."
+ ("transfer_employer asks the client's name",
+  t.SERVICE_FIELDS["transfer_employer"][0].key, "full_name"),
+ # "i stated my request and it replied me with the correct follow up question
+ # of residence type, but once i respond it asks me for what my request is."
+ ("a bare answer to our question is an answer",
+  gd.answering_our_question(
+      "Client: hi\nYou: How many people live in your household, 1-2, 3-4?", "3-4"), True),
+ ("a question back at us is not",
+  gd.answering_our_question("You: How many people live in your household?",
+                            "What is MDW?"), False),
+ ("nor is anything, if we did not ask",
+  gd.answering_our_question("You: I have passed this to our team.", "3-4"), False),
+ ("an answer is never diverted away from its own collection",
+  g.route_after_rag({**money_on_top,
+                     "history_text": "You: How many people live in your household, 1-2, 3-4?",
+                     "incoming_text": "3-4"}), "info_collector"),
+ ("a real money question still is",
+  g.route_after_rag({**money_on_top,
+                     "history_text": "You: How many people live in your household, 1-2, 3-4?",
+                     "incoming_text": "how much does it cost?"}), "response_generator"),
  # A field whose written question spells its options out is asking for all of
  # them; the generic "drop two or three in" rule was overriding that.
  ("enumerated options are named in full",

@@ -116,6 +116,18 @@ CASES = [
       "collected_info": {"helper_name": "Ruru", "helper_location": "already in Singapore"},
       "asked_field_counts": {"helper_name": 1},
       "history_text": "bot: Where is she at the moment?"}),
+    ("info_collector", "transfer, direction opens no branch",
+     {"service_type": "transfer_employer", "intent": "transfer",
+      "incoming_text": "Hi I'm looking for a transfer helper",
+      "collected_info": {"transfer_direction": "transfer"},
+      "history_text": ""}),
+    ("info_collector", "transfer, direction answered",
+     {"service_type": "transfer_employer", "intent": "transfer",
+      "incoming_text": "taking one on",
+      "collected_info": {"full_name": "Thomas",
+                         "transfer_direction": "taking on a transfer helper"},
+      "asked_field_counts": {"transfer_direction": 1},
+      "history_text": "You: Are you taking on a transfer helper, or releasing yours?"}),
     # --- response_generator ------------------------------------------------
     # The stepped-answer path: both halves of the trigger, then each half on
     # its own, then neither. A process question with NO records must stay on

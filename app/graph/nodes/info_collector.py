@@ -286,6 +286,50 @@ def _prior_hires(state: ConversationState) -> int:
         return 0
 
 
+def _undecidable_gate_keys(service_type: str, collected: dict[str, Any]) -> list[str]:
+    """Gate keys holding a value that opens NOTHING. The question was not answered.
+
+    A disambiguating question exists to open one of two branches. Gate.state()
+    ends `return "open" if _mentions(value, matches) else "closed"`, so a value
+    matching neither list CLOSES the gate - and where two opposing gates key off
+    the same field, a value recognised by neither closes BOTH and the flow has
+    nowhere left to go.
+
+    Live, 2026-09-07, ticket CB-2026-0004. "Hi I'm looking for a transfer
+    helper" was extracted as transfer_direction='transfer' - true, useless, and
+    matching neither _TAKING_ON_TRANSFER nor _RELEASING_HELPER. Both gates
+    closed, which shut all six of the fields that would have qualified the
+    request, and the only ungated field left in transfer_employer was
+    `timeline`. So the entire conversation was "when are you hoping to have the
+    transfer arranged?" -> "Asap" -> collection complete -> live agent, and the
+    ticket that reached the agent read:
+
+        {'timeline': 'as soon as possible - within 2 weeks',
+         'transfer_direction': 'transfer'}
+
+    Nothing about what the client needs, their household, or a nationality -
+    the client's own words: "Live agent won't be able to do any candidate
+    matching just based on [that]".
+
+    This is deliberately generic: every gated service (transfer_employer,
+    insurance, direct_hiring, new_hiring) can hit it the moment the extractor
+    returns a plausible-sounding value the gate does not recognise.
+    """
+    gated: dict[str, list[Any]] = {}
+    for field in ticket_service.fields_for(service_type):
+        if field.gate:
+            gated.setdefault(field.gate.field, []).append(field.gate)
+
+    stuck = []
+    for key, gates in gated.items():
+        value = str((collected or {}).get(key) or "").strip()
+        if not value or value.lower() == ticket_service.UNANSWERED:
+            continue  # genuinely unanswered - the gates are undecided, which is right
+        if not any(gate.state(collected) == "open" for gate in gates):
+            stuck.append(key)
+    return stuck
+
+
 def _known_fields(state: ConversationState) -> dict[str, str]:
     known: dict[str, str] = {}
 
@@ -1128,6 +1172,24 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "promising anything about it — then ask. Do not let it pass without a word, "
             "and do not claim to have read it while responding to something else."
         )
+
+    # An answer that opened no branch is not an answer. Blanked so the
+    # disambiguating question is put again rather than the flow collapsing to
+    # whatever field happens to be ungated - see _undecidable_gate_keys.
+    # Bounded by max_asks through the normal path, so it cannot loop: once the
+    # question has been asked its limit it is left alone and the flow moves on.
+    for key in _undecidable_gate_keys(service_type, collected):
+        field = next(
+            (f for f in ticket_service.fields_for(service_type) if f.key == key), None
+        )
+        if field and asked.get(key, 0) >= field.max_asks:
+            continue
+        logger.info(
+            "Conversation %s: %s=%r opens no branch - asking it again rather than "
+            "letting every gated field close",
+            state.get("conversation_id"), key, collected.get(key),
+        )
+        collected.pop(key, None)
 
     missing = ticket_service.missing_fields(service_type, collected)
 

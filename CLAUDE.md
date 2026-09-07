@@ -207,6 +207,9 @@ because the lead is opened early and the ticket is created much later.
 | A numbered list is a document everywhere except where it was asked for | `guards.looks_like_document(allow_steps=)` | Headings, bold and bullets stay banned on every path. |
 | A direct-hire answer never commits to a route we have not established | `info_collector._LOCATION_DEPENDENT` + `_known_helper_location` | A helper already in Singapore skips the embassy and the flight (2-3 weeks); one overseas does not (4-6). Both routes are filed under `direct_hiring`, so the filter does not separate them. |
 | A step both hiring flows share is filed once, not copied | `service_type = 'general'` + `load_service_notes._SHARED_WITH_DIRECT_HIRE` | The match function passes `service_type in (filter, 'general')`. Sourcing, matching and interviews stay on `new_hiring` — they are the only difference. |
+| An answer that opens no gate has not answered the question | `info_collector._undecidable_gate_keys` | `Gate.state()` closes on an unrecognised value, so two opposing gates on one field both close and every gated field goes with them. Blanked and re-asked, bounded by `max_asks`. |
+| An answer to our own question is never routed away from the collection that asked it | `guards.answering_our_question` + `route_after_rag` | The classifier's stickiness fixes `service_type` but not `intent`, and the money branch reads `intent`. |
+| Every employer flow asks the client's name | `SERVICE_FIELDS[...]["full_name"]` | `transfer_employer` had none, so rule 1c had nothing to use and the lead carried only a phone number. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -498,6 +501,53 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **The transfer flow collected one field and handed over. Three
+  defects from the agency's testing, all reproduced from the live ticket before being
+  touched.**
+  (A) **A gate deadlock emptied the whole flow.** `Gate.state()` ends
+  `return "open" if _mentions(value, matches) else "closed"` — an unrecognised value
+  **closes** the gate. `transfer_employer` puts two *opposing* gates on one field, so a
+  value neither recognises closes **both**, and with it all six fields that qualify the
+  request. The only ungated field left is `timeline`. Live: *"Hi I'm looking for a
+  transfer helper"* was extracted as `transfer_direction='transfer'` — true, useless,
+  matching neither gate — so the entire conversation was *"when are you hoping to have
+  the transfer arranged?"* → *"Asap"* → complete → live agent, and **ticket CB-2026-0004
+  reached the agent reading exactly**:
+  `{'timeline': 'as soon as possible - within 2 weeks', 'transfer_direction': 'transfer'}`.
+  The client's own words: *"Live agent won't be able to do any candidate matching just
+  base on"* that. `_undecidable_gate_keys` now treats a value that opens **no** branch as
+  not an answer: it is blanked and the disambiguating question is put again, bounded by
+  `max_asks` so it cannot loop. Deliberately generic — every gated service
+  (`insurance`, `direct_hiring`, `new_hiring`) can hit this the moment the extractor
+  returns a plausible-sounding value the gate does not know.
+  (B) **An answer to our own question was answered with "what is your question about?"**
+  Mid-intake the bot asked the household-size question, the client replied **"3-4"**, and
+  got back *"Hi, I'm Claire, Ming Hwee's AI assistant. Could you share what your question
+  is about?"* — a re-introduction and a request for the question, in reply to the answer
+  we had just asked for. The client had to retype their request to restart the intake.
+  Cause: the classifier misread a bare "3-4" as a money intent; its stickiness rule
+  correctly put `service_type` back to `new_hiring` but **does not touch `intent`**, and
+  the 2026-09-07 money branch in `route_after_rag` reads `intent` — so the correction
+  never reached the routing, the turn went to `response_generator`, and its "nothing
+  asked yet" path invited a fresh question. `guards.answering_our_question` (our last
+  line ended in `?`, theirs does not) now blocks that diversion. It is the mirror of the
+  rule `closure.needs_no_reply()` has held from the start. **Two theories were checked
+  and disproved first** — a split conversation (one row, one thread) and the webhook
+  payload overwriting `service_type` (it does not send it).
+  (C) **`transfer_employer` never asked the client's name.** The only employer flow with
+  no `full_name`, so rule 1c had nothing to use and the lead carried a phone number and
+  nothing else. Added first, portable, and filled from the WhatsApp push name — so a
+  client we already know is still never asked.
+  **Order now matches what the agency asked for**: name, direction, then *what they
+  need* — requirement, nationality, household, budget — with `timeline` last and
+  optional. Their objection (*"A person looking for Transfer helpers are naturally
+  urgent... this question is not required"*) was really that timing was the only thing
+  asked; it was the only ungated field. It is kept, asked once, at the end.
+  `selfcheck_flows.py` is 78 assertions, thirteen of them on this; `smoke_nodes.py` is 21
+  states. **Still open, seen again on CB-2026-0002:** the client's name recorded as
+  `claire` — the bot's own name written into the data. Rule 1b covers the reply text but
+  not the extraction layer.
 
 - **2026-09-08** — **Direct hire mirrors new hiring after sourcing, so the shared steps
   are filed once instead of twice.** The agency's own line: *"No candidate sourcing,

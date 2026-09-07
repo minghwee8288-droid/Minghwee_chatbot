@@ -552,6 +552,39 @@ def asks_for_process(text: str) -> bool:
     return bool(_ASKS_FOR_PROCESS.search(body))
 
 
+# Our own last line ended in a question, and what came back is not itself a
+# question - so it is an ANSWER to us, whatever the classifier made of it.
+#
+# Live, 2026-09-07 (client screenshot). Mid new-hiring intake the bot asked
+# "How many people live in your household, roughly 1-2, 3-4, 5-6, or 7 or
+# more?" and the client replied "3-4". That turn came back:
+#
+#     "Hi, I'm Claire, Ming Hwee's AI assistant. Could you share what your
+#      question is about?"
+#
+# - a re-introduction and a request for the question, in answer to the answer
+# we had just asked for. The client had to retype "i would like to hire an
+# helper" to restart the intake, and wrote: "chatbot seems to be glitching
+# because i stated my request and it replied me with the correct follow up
+# question of residence type, but once i respond it asks me for what my
+# request is".
+#
+# closure.needs_no_reply() has held the mirror image of this rule from the
+# start - it never silences a bare yes/no when our own last line contained a
+# question mark. This is the same fact used the other way round.
+def answering_our_question(history_text: str, message: str) -> bool:
+    """Whether this message is an answer to a question we just asked."""
+    previous = last_bot_line(history_text or "")
+    if "?" not in (previous or ""):
+        return False
+    body = (message or "").strip()
+    if not body:
+        return False
+    # A question back at us is a question, not an answer. Those are already
+    # handled: the collector answers and then re-asks (ANSWER_THEN_ASK).
+    return "?" not in body
+
+
 # A numbered list marker at the start of a line. Only the marker's own full
 # stop is masked, and only while counting sentences.
 _LIST_MARKER = re.compile(r"(?m)^(\s*\d+)\.(\s)")

@@ -10,6 +10,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from app.config import settings
+from app.graph.guards import answering_our_question
 from app.graph.nodes.blocked_topic_responder import asks_general_info, blocked_topic_responder
 from app.graph.nodes.handover_executor import handover_executor
 from app.graph.nodes.info_collector import info_collector
@@ -146,7 +147,24 @@ def route_after_rag(state: ConversationState) -> str:
     #
     # An agent asked the price mid-job answers the price. Only a money question
     # that opens a conversation qualifies anything.
-    if intent in ENQUIRY_INTENTS and _other_service_established(state):
+    # ... but only when it really is a QUESTION. The classifier misreads a bare
+    # answer often enough to matter - live, "3-4" (the client's answer to our
+    # own household-size question) came back as a money intent, this branch
+    # diverted it to response_generator, and response_generator's "nothing
+    # asked yet" path replied "Could you share what your question is about?".
+    # The stickiness rule in intent_classifier had already corrected
+    # service_type back to the live service; it does not touch `intent`, which
+    # is what this branch reads, so the correction never reached the routing.
+    #
+    # An answer to a question we just asked belongs to the collection that
+    # asked it, whatever label the turn was given.
+    if (
+        intent in ENQUIRY_INTENTS
+        and _other_service_established(state)
+        and not answering_our_question(
+            state.get("history_text") or "", state.get("incoming_text") or ""
+        )
+    ):
         return "response_generator"
 
     if (
