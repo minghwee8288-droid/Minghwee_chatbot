@@ -1078,6 +1078,77 @@ ROWS: list[dict[str, Any]] = [
             "being part of the submission itself."
         ),
     },
+    # --- 2026-09-08: passport renewal, the per-nationality checklist --------
+    #
+    # The agency's own quick-reference and document checklist. Additions only
+    # here; the rows it CONTRADICTS are corrected in UPDATES below.
+    #
+    # The fee finally exists. "No agency fee for passport renewal anywhere in
+    # the KB" has been the standing gap since 2026-09-04, and it is why a cost
+    # question on this service could only ever be deferred. $450 for a Filipino
+    # and for an Indonesian helper. NO Myanmar fee was given, so none is
+    # stated - passport_renewal is a small-ticket service and is not in
+    # COST_WITHHELD_SERVICES, so what is here goes out, and inventing the
+    # missing third would go out too.
+    #
+    # Kept OUT as internal: "always confirm the appointment date with the
+    # runner first" and "check available appointment dates with the runner
+    # before advising the client". Those instruct our staff. The client-facing
+    # fact underneath - that we confirm the appointment before committing to a
+    # date - is in the row below, which is the part that affects them.
+    {
+        "service_type": "passport_renewal",
+        "nationality": "all",
+        "section_heading": "Passport renewal - cost",
+        "question": "How much does it cost to renew my helper's passport?",
+        "answer": (
+            "It is $450 for a Filipino helper and $450 for an Indonesian helper. That "
+            "covers us handling the embassy paperwork, the forms and the runner who "
+            "takes her through the appointment. If your helper is of another "
+            "nationality, tell us and a consultant will confirm the cost for her "
+            "embassy."
+        ),
+    },
+    {
+        "service_type": "passport_renewal",
+        "nationality": "all",
+        "section_heading": "Passport renewal - original passport or a copy",
+        "question": "Do you need my helper's original passport?",
+        "answer": (
+            "It depends on her nationality. For a Filipino helper, yes - the embassy "
+            "requires her ORIGINAL passport, not a copy, so we will need to hold it "
+            "for the renewal. For an Indonesian helper a copy of the passport is "
+            "enough. Either way we also need a copy of your NRIC and a copy of her "
+            "work permit."
+        ),
+    },
+    {
+        "service_type": "passport_renewal",
+        "nationality": "all",
+        "section_heading": "Passport renewal - when to start",
+        "question": "When should I start my helper's passport renewal?",
+        "answer": (
+            "For a Filipino helper, start about 2 months before you need the new "
+            "passport - the embassy appointment and the processing together take that "
+            "sort of time. For an Indonesian helper it is quicker, but the appointment "
+            "still has to be available. We check the appointment dates before giving "
+            "you a date to work to, rather than promising one and moving it."
+        ),
+    },
+    {
+        "service_type": "passport_renewal",
+        "nationality": "all",
+        "section_heading": "Passport renewal - forms we prepare",
+        "question": "What forms does Ming Hwee prepare for my helper's passport renewal?",
+        "answer": (
+            "For a Filipino helper we prepare the embassy set - the contract, the "
+            "Undertaking Form, Annex A, the passport renewal form and the OFW "
+            "Information Sheet - and return them to the embassy with original "
+            "signatures on them, so those cannot be signed electronically or "
+            "photocopied. For an Indonesian helper we provide the passport form for "
+            "completing and signing. You do not have to source any of these yourself."
+        ),
+    },
 ]
 
 
@@ -1211,6 +1282,127 @@ UPDATES += [
             "within the window MOM allows if she has not already completed it. We "
             "then go through the handover with you, which is why this route is "
             "noticeably shorter than bringing someone in from overseas."
+        )},
+    },
+]
+
+
+# --- 2026-09-08: the passport-renewal checklist supersedes the 2026-09-07 rows
+#
+# The agency sent a per-nationality document checklist that CONTRADICTS what
+# was loaded on 2026-09-07 from their process-flow document. Two real
+# differences, both with consequences at an embassy counter:
+#
+#   * The Philippines needs the helper's ORIGINAL passport. The old rows said
+#     "a copy of her passport" for every nationality. Turning up with a copy
+#     when the original is required wastes the appointment, and a Filipino
+#     appointment is roughly 2 months out.
+#
+#   * The old rows made the Undertaking of Employer Form exclusive to helpers
+#     WITHOUT an embassy contract - i.e. Myanmar. The new checklist lists an
+#     Undertaking Form among the PHILIPPINES embassy documents, alongside
+#     Annex A and the OFW Information Sheet, which the old rows never mentioned
+#     at all.
+#
+# The newer document is the explicit per-nationality checklist, so it is taken
+# as authoritative for PH and ID. Myanmar is NOT covered by it, so the Myanmar
+# rows are left exactly as they were - but the rows that claimed those forms
+# belong ONLY to the no-contract route are corrected, because that claim is now
+# contradicted for the Philippines.
+#
+# Flagged for Ming Hwee rather than resolved here: whether the Myanmar
+# three-form route still stands as the 2026-09-07 document described it.
+UPDATES += [
+    {
+        "where": {"question": "What documents are needed to renew my helper's passport?",
+                  "service_type": "passport_renewal"},
+        "reason": "the per-nationality checklist supersedes the embassy-contract framing",
+        "set": {"answer": (
+            "It depends on her nationality. For a Filipino helper we need a copy of "
+            "your NRIC, a copy of her work permit and her ORIGINAL passport, plus the "
+            "embassy set we prepare - the contract, the Undertaking Form, Annex A, the "
+            "passport renewal form and the OFW Information Sheet, all returned with "
+            "original signatures. For an Indonesian helper we need a copy of your "
+            "NRIC, a copy of her work permit and a copy of her passport, plus the "
+            "passport form we provide for her to complete and sign. Tell us her "
+            "nationality and we can be exact."
+        )},
+    },
+    {
+        "where": {"question": "What documents does a Filipino helper need for passport "
+                              "renewal, and how does the embassy visit work?",
+                  "service_type": "passport_renewal"},
+        "reason": "PH needs the ORIGINAL passport and a wider embassy set than was loaded",
+        "set": {"answer": (
+            "From you we need a copy of your NRIC and a copy of her work permit, and "
+            "we need her ORIGINAL passport rather than a copy. We prepare the embassy "
+            "set - the contract, the Undertaking Form, Annex A, the passport renewal "
+            "form and the OFW Information Sheet - and these must go back with original "
+            "signatures on them. She is required to report to the Philippine embassy "
+            "in person, so she makes her own way there and meets our runner at the "
+            "embassy, who takes her through it. Afterwards the runner tells us it is "
+            "done and we update you."
+        )},
+    },
+    {
+        "where": {"question": "What documents does an Indonesian helper need for passport "
+                              "renewal, and how does the embassy visit work?",
+                  "service_type": "passport_renewal"},
+        "reason": "ID needs a passport copy and our own passport form, not the old generic set",
+        "set": {"answer": (
+            "From you we need a copy of your NRIC, a copy of her work permit and a "
+            "copy of her passport - the original is not required. We provide the "
+            "passport form for her to complete and sign. Our runner collects her from "
+            "your home, takes her to the Indonesian embassy for the renewal and brings "
+            "her back afterwards, so she is accompanied both ways. The runner then "
+            "tells us it is complete and we update you."
+        )},
+    },
+    {
+        "where": {"question": "Does my helper have an embassy contract?",
+                  "service_type": "passport_renewal"},
+        "reason": "the Undertaking Form is not exclusive to the no-contract route",
+        "set": {"answer": (
+            "Filipino and Indonesian helpers hold an embassy contract; Myanmar helpers "
+            "do not. It matters because the paperwork differs by nationality rather "
+            "than being one list for everybody - a Filipino renewal goes in with the "
+            "contract, the Undertaking Form, Annex A, the passport renewal form and "
+            "the OFW Information Sheet, an Indonesian one with the passport form we "
+            "provide, and a helper with no embassy contract needs the Undertaking of "
+            "Employer Form, the Standard Employment Contract and the Information Sheet "
+            "of Employer signed first. Tell us her nationality and we can be exact."
+        )},
+    },
+    {
+        "where": {"question": "What do I need to do as the employer for my helper's "
+                              "passport renewal?",
+                  "service_type": "passport_renewal"},
+        "reason": "the employer's part is now nationality-specific, and PH hands over the original passport",
+        "set": {"answer": (
+            "Not much, and most of it is providing copies. We need a copy of your NRIC "
+            "and a copy of her work permit. If she is Filipino we also need her "
+            "ORIGINAL passport, and the embassy forms we prepare have to come back "
+            "with original signatures; if she is Indonesian a copy of her passport is "
+            "enough. The embassy trip itself is handled by a runner - he collects an "
+            "Indonesian or Myanmar helper from your home and brings her back, and a "
+            "Filipino helper reports to the embassy herself and meets him there. We "
+            "let you know once the renewal is done."
+        )},
+    },
+    {
+        "where": {"question": "What is the process for renewing my helper's passport?",
+                  "service_type": "passport_renewal"},
+        "reason": "the agency supplied the full six-step process on 2026-09-08",
+        "set": {"answer": (
+            "Six steps. First we confirm her nationality and when her current passport "
+            "expires, since the paperwork and the timing both follow from that. Second "
+            "we check what embassy appointments are actually available before giving "
+            "you a date. Third we ask you for the documents her embassy needs. Fourth "
+            "we prepare the embassy forms and get the signatures they require. Fifth "
+            "our runner submits everything to the embassy and we track the appointment "
+            "and the processing. Sixth the renewed passport comes back and we return "
+            "it to you. Tell us her nationality and we can be specific about the "
+            "documents and the timing."
         )},
     },
 ]

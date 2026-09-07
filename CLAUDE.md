@@ -502,6 +502,42 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-09-08** — **Passport renewal: the per-nationality checklist, the fee at last,
+  and the first submission that CONTRADICTED rows already loaded.** 4 new rows, 6
+  corrections.
+  (A) **The conflict.** The agency's document checklist disagrees with their own
+  process-flow document loaded on 2026-09-07, in two places that both bite at an embassy
+  counter. The Philippines needs the helper's **ORIGINAL passport**; the old rows said
+  *"a copy of her passport"* for every nationality, and turning up with a copy wastes an
+  appointment that is roughly 2 months out. And the old rows made the **Undertaking of
+  Employer Form exclusive to helpers WITHOUT an embassy contract** — i.e. Myanmar — while
+  the new checklist lists an Undertaking Form among the **Philippines** embassy
+  documents, alongside Annex A and the OFW Information Sheet, neither of which appeared
+  anywhere before. The newer document is the explicit per-nationality checklist, so it is
+  taken as authoritative for PH and ID and the conflicting rows were **corrected rather
+  than stacked** — leaving both would put a flat contradiction in front of a model that
+  quotes either. Myanmar is not covered by the new document, so the Myanmar rows are
+  untouched; only the claims that those forms belong *only* to the no-contract route were
+  rewritten. **For Ming Hwee, not resolvable here: whether the Myanmar three-form route
+  still stands as the 2026-09-07 document described it.**
+  (B) **The fee exists.** *"No agency fee for passport renewal anywhere in the KB"* has
+  been the standing gap since 2026-09-04 and is why a cost question on this service could
+  only ever be deferred. **$450** for a Filipino and for an Indonesian helper. No Myanmar
+  fee was given, so none is stated — `passport_renewal` is a small-ticket service and is
+  not in `COST_WITHHELD_SERVICES`, so whatever is here goes out, and an invented third
+  would go out too. Verified the quote does not trip `quotes_hiring_package_cost`.
+  (C) **Three more rows**: original-passport-or-copy (the difference PH/ID that decides
+  whether we hold her passport), when to start, and the forms we prepare. The process row
+  was corrected to the agency's six steps.
+  Kept OUT as internal: *"always confirm the appointment date with the runner first"* and
+  *"check available appointment dates with the runner before advising the client"* —
+  those instruct our staff. The client-facing fact underneath, that we confirm the
+  appointment before committing to a date, is in the when-to-start row.
+  Retrieval: **0.496–0.628, all 9 probes above the floor**, and every correction verified
+  present in the stored text rather than assumed. `selfcheck_flows.py` is 86 assertions.
+  **Remaining KB gap: the agency fee for work permit renewal.** Passport renewal's half
+  of that long-standing pair is now closed.
+
 - **2026-09-08** — **Work permit renewal: the document checklist and the full process,
   10 rows.** Same treatment as the new-hiring and direct-hire sets. The KB already held
   general FAQ material on renewals — permit validity, what happens if one lapses, the

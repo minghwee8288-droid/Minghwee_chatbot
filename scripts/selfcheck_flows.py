@@ -310,6 +310,26 @@ rows = [
  ("no renewal row names an agency fee",
   any("agency fee" in r["answer"].lower()
       for r in lsn.ROWS if r["service_type"] == "renewal"), False),
+ # --- 2026-09-08: the passport-renewal checklist supersedes 2026-09-07 -----
+ # First submission that CONTRADICTED rows already loaded. Two differences with
+ # consequences at an embassy counter: the Philippines needs the ORIGINAL
+ # passport (the old rows said "a copy" for everyone), and the Undertaking Form
+ # is NOT exclusive to helpers without an embassy contract.
+ ("the passport fee is in the KB at last",
+  any("$450" in r["answer"] for r in lsn.ROWS
+      if r["service_type"] == "passport_renewal"), True),
+ ("a $450 quote is not withheld as a package cost",
+  gd.quotes_hiring_package_cost(
+      "It is $450 for a Filipino helper and $450 for an Indonesian helper."), False),
+ ("the PH correction demands the ORIGINAL passport",
+  any("ORIGINAL" in u["set"].get("answer", "")
+      for u in lsn.UPDATES if "Filipino helper need" in u["where"]["question"]), True),
+ ("the ID correction says a copy is enough",
+  any("original is not required" in u["set"].get("answer", "")
+      for u in lsn.UPDATES if "Indonesian helper need" in u["where"]["question"]), True),
+ ("no Myanmar passport fee was invented",
+  any("Myanmar" in r["answer"] and "$" in r["answer"] for r in lsn.ROWS
+      if r["service_type"] == "passport_renewal"), False),
  # A field whose written question spells its options out is asking for all of
  # them; the generic "drop two or three in" rule was overriding that.
  ("enumerated options are named in full",
