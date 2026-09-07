@@ -919,6 +919,165 @@ ROWS: list[dict[str, Any]] = [
             "it to you, and close the case."
         ),
     },
+    # --- 2026-09-08: work permit renewal, documents and the full process ----
+    #
+    # Filed under `renewal`, which is the work-permit-renewal service key.
+    #
+    # The KB already held general FAQ material on renewals - validity, what
+    # happens if it lapses, the 6-monthly medical - but not the agency's own
+    # checklist, and in particular not the MOM RENEWAL NOTIFICATION, which the
+    # source calls essential to apply at all. An employer who does not know to
+    # look for it cannot start.
+    #
+    # Rewritten from the client's side as before. Dropped as internal: creating
+    # and attaching the user account, and the instruction to buy insurance
+    # before 5pm so it clears overnight. The overnight wait itself is kept,
+    # because it is why the submission happens the following day and that is
+    # the client's business; the 5pm cutoff is ours.
+    #
+    # Every figure here is small (8 weeks, 1 week, 2 weeks, 6-monthly), so none
+    # trips ungrounded_figures, and all of them come from the agency's own
+    # flow. `renewal` is a small-ticket service and is NOT in
+    # COST_WITHHELD_SERVICES, so it may quote costs freely - but there is still
+    # no agency fee for work permit renewal anywhere in the KB, so none of
+    # these rows names one. Load the fee and it will quote it with no code
+    # change.
+    {
+        "service_type": "renewal",
+        "nationality": "all",
+        "section_heading": "Work permit renewal - documents from the employer",
+        "question": "What documents do I need to renew my helper's work permit?",
+        "answer": (
+            "Five things from you: a copy of your NRIC, the Renewal Notification MOM "
+            "sends you before the permit expires, your helper's passport, her new "
+            "salary, and the number of rest days she will have. You also authorise us "
+            "through the MOM website so we can submit on your behalf. The Renewal "
+            "Declaration form is ours to prepare - you only sign it."
+        ),
+    },
+    {
+        "service_type": "renewal",
+        "nationality": "all",
+        "section_heading": "Work permit renewal - the Renewal Notification",
+        "question": "What is the Renewal Notification for a work permit?",
+        "answer": (
+            "It is the notice MOM sends you roughly 8 weeks before your helper's work "
+            "permit expires, and the renewal cannot be applied for without it. When it "
+            "arrives, send us a copy and we can start. If you think it is due and you "
+            "have not seen it, tell us and we will look into it rather than leaving it "
+            "to the last minute."
+        ),
+    },
+    {
+        "service_type": "renewal",
+        "nationality": "all",
+        "section_heading": "Work permit renewal - documents we prepare",
+        "question": "What documents does Ming Hwee prepare for a work permit renewal?",
+        "answer": (
+            "The Renewal Declaration form, which you sign electronically. We complete "
+            "it, add the new insurance policy number and its expiry date once the "
+            "insurance is in place, and upload it to MOM with the submission. "
+            "Everything else on the renewal is paperwork you already hold rather than "
+            "anything you have to draw up."
+        ),
+    },
+    {
+        "service_type": "renewal",
+        "nationality": "all",
+        "section_heading": "Work permit renewal - the steps",
+        "question": "What are the steps to renew my helper's work permit?",
+        "answer": (
+            "There are six. First, MOM sends you the Renewal Notification before the "
+            "permit expires and you pass us a copy. Second, we collect what we need "
+            "from you - your NRIC copy, her passport, her new salary and her number of "
+            "rest days. Third, we send you an authorisation request to approve on the "
+            "MOM site so we can act for you. Fourth, you sign the Renewal Declaration. "
+            "Fifth, we arrange her insurance, add the new policy details to the "
+            "declaration and submit the renewal to MOM. Sixth, the renewal "
+            "confirmation and a temporary work permit come through and we send them "
+            "to you. Tell us which step you would like more detail on."
+        ),
+    },
+    {
+        "service_type": "renewal",
+        "nationality": "all",
+        "section_heading": "Work permit renewal - when to start",
+        "question": "When should I start renewing my helper's work permit?",
+        "answer": (
+            "As soon as the Renewal Notification arrives, which MOM sends roughly 8 "
+            "weeks before the permit expires. Starting then leaves room for the "
+            "authorisation, the insurance and the submission without anything being "
+            "rushed. Letting a permit lapse is not a small thing - it leaves your "
+            "helper working illegally - so it is worth acting on the notice rather "
+            "than filing it."
+        ),
+    },
+    {
+        "service_type": "renewal",
+        "nationality": "all",
+        "section_heading": "Work permit renewal - the authorisation",
+        "question": "What is the e-authorisation for a work permit renewal?",
+        "answer": (
+            "It is how you give us permission to submit the renewal to MOM on your "
+            "behalf. We send you a request, and you approve it on the MOM website. The "
+            "link stays valid for 1 week, so it is worth doing when it arrives - if it "
+            "lapses we simply send a new one. Once you have authorised it, there is a "
+            "2-week window to get the renewal completed, which is comfortably enough "
+            "for the rest of it."
+        ),
+    },
+    {
+        "service_type": "renewal",
+        "nationality": "all",
+        "section_heading": "Work permit renewal - after you authorise",
+        "question": "What happens after I authorise the work permit renewal?",
+        "answer": (
+            "You sign the Renewal Declaration, and we arrange your helper's insurance. "
+            "That processes overnight, so the renewal transaction goes through the "
+            "following day. We add the new policy number and expiry date to the signed "
+            "declaration, upload it to the MOM website and submit. The temporary work "
+            "permit and the renewal confirmation are generated on submission, and we "
+            "send the confirmation on to you."
+        ),
+    },
+    {
+        "service_type": "renewal",
+        "nationality": "all",
+        "section_heading": "Work permit renewal - confirmation",
+        "question": "How do I know my helper's work permit renewal has gone through?",
+        "answer": (
+            "A renewal confirmation and a temporary work permit are generated the "
+            "moment the submission goes in, and we forward the confirmation to you so "
+            "you have it in writing. The temporary permit covers her while the new card "
+            "is produced. You do not need to chase us for it."
+        ),
+    },
+    {
+        "service_type": "renewal",
+        "nationality": "all",
+        "section_heading": "Work permit renewal - what the employer does",
+        "question": "What do I need to do myself for my helper's work permit renewal?",
+        "answer": (
+            "Four things, and none of them takes long. Send us the Renewal "
+            "Notification when MOM sends it to you, along with a copy of your NRIC and "
+            "your helper's passport. Tell us her new salary and how many rest days she "
+            "will have. Approve the authorisation request on the MOM site within the "
+            "week it stays valid. Then sign the Renewal Declaration we prepare. We "
+            "handle the insurance, the submission and the confirmation."
+        ),
+    },
+    {
+        "service_type": "renewal",
+        "nationality": "all",
+        "section_heading": "Work permit renewal - the medical examination",
+        "question": "Does my helper need a medical examination for the work permit renewal?",
+        "answer": (
+            "Your helper has a medical examination every 6 months throughout her "
+            "employment, and we coordinate it for you as it falls due rather than "
+            "leaving you to track the dates. It runs alongside the renewal rather than "
+            "being part of the submission itself."
+        ),
+    },
 ]
 
 

@@ -502,6 +502,31 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-09-08** — **Work permit renewal: the document checklist and the full process,
+  10 rows.** Same treatment as the new-hiring and direct-hire sets. The KB already held
+  general FAQ material on renewals — permit validity, what happens if one lapses, the
+  6-monthly medical — but not the agency's own checklist, and **not the MOM Renewal
+  Notification**, which the source calls essential to apply at all. An employer who does
+  not know to look for it cannot start, so it now has a row of its own alongside the
+  documents, the steps, when to start, the e-authorisation and its two windows, what
+  happens after authorising, the confirmation, what the employer personally does, and
+  the medical. Retrieval through the real path: **0.464–0.724, all 15 probes above the
+  floor**, with the new rows top for 13 of them.
+  Dropped as internal: creating and attaching the user account, and the instruction to
+  buy the insurance before 5pm so it clears overnight. The overnight wait itself is
+  kept, because it is why the submission happens the following day and that is the
+  client's business; the cutoff is ours.
+  **No existing row was corrected.** The older FAQ answer to *"How do I renew my
+  helper's work permit?"* frames it as what MOM requires (updated contract, insurance,
+  medical, application) while the new rows say what we need **from the employer** —
+  checked in context and they complement rather than contradict, with the new checklist
+  inside the top 4 for that question.
+  `renewal` is a small-ticket service and is not in `COST_WITHHELD_SERVICES`, so it may
+  quote costs freely — but there is **still no agency fee for work permit renewal
+  anywhere in the KB**, so no row names one and `selfcheck_flows.py` asserts none does.
+  Load the fee and it will quote it with no code change. `selfcheck_flows.py` is 81
+  assertions.
+
 - **2026-09-08** — **The transfer flow collected one field and handed over. Three
   defects from the agency's testing, all reproduced from the live ticket before being
   touched.**

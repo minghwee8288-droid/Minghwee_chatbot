@@ -294,6 +294,22 @@ rows = [
   g.route_after_rag({**money_on_top,
                      "history_text": "You: How many people live in your household, 1-2, 3-4?",
                      "incoming_text": "how much does it cost?"}), "response_generator"),
+ # --- 2026-09-08: work permit renewal documents + process ----------------
+ # The Renewal Notification is the one thing an employer cannot start without,
+ # and it was nowhere in the KB. MOM sends it before expiry; without a copy
+ # there is no application to make.
+ ("the renewal rows name the Renewal Notification",
+  any("Renewal Notification" in r["answer"]
+      for r in lsn.ROWS if r["service_type"] == "renewal"), True),
+ ("renewal collects documents and the steps",
+  {"What documents do I need to renew my helper's work permit?",
+   "What are the steps to renew my helper's work permit?"}
+  <= {r["question"] for r in lsn.ROWS if r["service_type"] == "renewal"}, True),
+ # renewal is a small-ticket service and may quote costs, but there is still no
+ # agency fee for it anywhere in the KB - so no row may invent one.
+ ("no renewal row names an agency fee",
+  any("agency fee" in r["answer"].lower()
+      for r in lsn.ROWS if r["service_type"] == "renewal"), False),
  # A field whose written question spells its options out is asking for all of
  # them; the generic "drop two or three in" rule was overriding that.
  ("enumerated options are named in full",
