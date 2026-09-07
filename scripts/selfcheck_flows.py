@@ -32,6 +32,9 @@ rr = importlib.import_module("app.graph.nodes.rag_retriever")
 from app.graph.prompts.style import STYLE_BLOCK
 import app.graph.guards as gd
 import app.graph.prompts.templates as tpl
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location("lsn", str(Path(__file__).resolve().parent / "load_service_notes.py"))
+lsn = _ilu.module_from_spec(_spec); _spec.loader.exec_module(lsn)
 lang_f = next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "languages")
 money_on_top = {"intent": "fee_enquiry", "service_type": "passport_renewal",
                 "collected_service": "passport_renewal", "blocked_topics": {}}
@@ -214,6 +217,31 @@ rows = [
  # new question was added for it.
  ("direct_hiring still asks where she is",
   any(f.key == "helper_location" for f in t.SERVICE_FIELDS["direct_hiring"]), True),
+ # --- 2026-09-08: what direct hire shares with new hiring -----------------
+ # The agency's own line: "No candidate sourcing, matching or interviews.
+ # Everything else mirrors New Hiring." The shared steps are filed as
+ # 'general', which the match function lets through for every service, so
+ # neither flow needs a duplicate copy that can drift.
+ ("the shared steps are the MOM ones",
+  {"What is an IPA?",
+   "What happens before my helper flies to Singapore?",
+   "What happens when my helper arrives in Singapore?"}
+  <= set(lsn._SHARED_WITH_DIRECT_HIRE) | {"What is the Settling-In Programme?"}, True),
+ ("sourcing and matching are NOT shared",
+  any(q in lsn._SHARED_WITH_DIRECT_HIRE for q in (
+      "How do you match me with a helper?",
+      "Can I interview the helper before I decide?",
+      "What are the stages of hiring a helper from start to finish?")), False),
+ # A relocated row is no longer where ROWS says it is, and the skip check keys
+ # on question + service_type. Deriving the map from UPDATES is what stops the
+ # loader re-inserting all eight as duplicates on its second run.
+ ("the relocation map is derived from UPDATES",
+  lsn._RELOCATED == {u["where"]["question"]: u["set"]["service_type"]
+                     for u in lsn.UPDATES if "service_type" in u["set"]}, True),
+ ("every relocated row lands in a bucket both flows can see",
+  set(lsn._RELOCATED.values()), {"general"}),
+ ("every correction states a reason",
+  all(u.get("reason") for u in lsn.UPDATES), True),
  # A field whose written question spells its options out is asking for all of
  # them; the generic "drop two or three in" rule was overriding that.
  ("enumerated options are named in full",

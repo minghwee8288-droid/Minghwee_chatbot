@@ -873,9 +873,10 @@ ROWS: list[dict[str, Any]] = [
             "Her papers go through her own country's embassy, and what that involves "
             "depends on her nationality - the Philippines, Indonesia and Myanmar each "
             "run it differently. Once that is done we coordinate her travel and her "
-            "arrival and her work permit is issued. She then registers for the "
-            "Settling-In Programme within seven days of arriving, and we arrange her "
-            "transport to the training centre."
+            "arrival and her work permit is issued. We then register her for the "
+            "Settling-In Programme within the window MOM allows and arrange her "
+            "transport to the training centre, so it is not something you have to "
+            "organise."
         ),
     },
     {
@@ -885,10 +886,10 @@ ROWS: list[dict[str, Any]] = [
         "question": "What happens after approval if the helper is already in Singapore?",
         "answer": (
             "There is no embassy step and no travel to arrange. Her work permit is "
-            "issued directly, and she registers for the Settling-In Programme within the "
-            "required seven days if she has not already completed it. We then go through "
-            "the handover with you, which is why this route is noticeably shorter than "
-            "bringing someone in from overseas."
+            "issued directly, and we register her for the Settling-In Programme "
+            "within the window MOM allows if she has not already completed it. We "
+            "then go through the handover with you, which is why this route is "
+            "noticeably shorter than bringing someone in from overseas."
         ),
     },
     {
@@ -908,19 +909,6 @@ ROWS: list[dict[str, Any]] = [
     {
         "service_type": "direct_hiring",
         "nationality": "all",
-        "section_heading": "Direct hire - the Settling-In Programme",
-        "question": "What is the Settling-In Programme?",
-        "answer": (
-            "It is a short course run for helpers arriving to work in Singapore, "
-            "covering their rights, their safety and living here. She has to be "
-            "registered for it within seven days of arriving. We handle the "
-            "registration and arrange her transport to the training centre, so it is "
-            "not something you have to organise."
-        ),
-    },
-    {
-        "service_type": "direct_hiring",
-        "nationality": "all",
         "section_heading": "Direct hire - handover and close",
         "question": "What happens at the end of a direct hire?",
         "answer": (
@@ -934,35 +922,148 @@ ROWS: list[dict[str, Any]] = [
 ]
 
 
-# Rows that already exist and whose answer has been SUPERSEDED. ROWS above is
+# Rows that already exist and need CHANGING rather than adding. ROWS above is
 # purely additive and skips on question + service_type, which is right for new
-# material and wrong for a row that has become untrue - leaving both in place
-# puts a contradiction in front of the model and it will quote either one.
+# material and wrong for a row that has become untrue, or that is filed where
+# only one of the two services that need it can see it.
 #
-# Every entry states why. Nothing goes here to reword a row; only to correct
-# one whose facts have changed or arrived.
+# `where` locates the row; `set` is what changes. Every entry states why.
+# Nothing goes here to reword a row.
+#
+# Idempotent in both directions: if `set` moves the row's service_type, a
+# re-run looks for it under the NEW value too and skips when it is already
+# there, so this can be run as often as ROWS can.
 UPDATES: list[dict[str, Any]] = [
     {
-        "service_type": "direct_hiring",
-        "question": "How long does a direct hire take?",
+        "where": {"question": "How long does a direct hire take?",
+                  "service_type": "direct_hiring"},
         # Written on 2026-09-07, when the agency had given no direct-hire
         # timeline and inventing one would have been binned by
         # ungrounded_figures. It said outright "there is no fixed timeline".
-        # The agency supplied the timeline on 2026-09-08 - 2 to 3 weeks for a
-        # helper already here, 4 to 6 for one overseas - so the old row now
-        # contradicts the two new ones and denies an answer we hold.
+        # The agency supplied it on 2026-09-08 - 2 to 3 weeks for a helper
+        # already here, 4 to 6 for one overseas - so the old row contradicted
+        # the two new ones and denied an answer we hold.
         "reason": "the agency supplied the direct-hire timeline on 2026-09-08",
-        "answer": (
-            "It depends on where she is. If she is already in Singapore on a valid work "
-            "permit, usually about 2 to 3 weeks - she transfers across without an "
-            "embassy step and without travelling. If she is coming from overseas, "
-            "usually about 4 to 6 weeks, because her papers go through her own country's "
-            "embassy once approval is issued and she then has to travel. Both are "
-            "estimates, and they move with document turnaround, embassy appointments and "
-            "MOM's own processing."
-        ),
+        "set": {
+            "answer": (
+                "It depends on where she is. If she is already in Singapore on a valid "
+                "work permit, usually about 2 to 3 weeks - she transfers across without "
+                "an embassy step and without travelling. If she is coming from "
+                "overseas, usually about 4 to 6 weeks, because her papers go through "
+                "her own country's embassy once approval is issued and she then has to "
+                "travel. Both are estimates, and they move with document turnaround, "
+                "embassy appointments and MOM's own processing."
+            ),
+        },
     },
 ]
+
+# The agency's own statement of the difference, 2026-09-08: "No candidate
+# sourcing, matching or interviews. Everything else - MOM submission, bond,
+# insurance, medical, embassy (overseas only), SIP, handover - mirrors New
+# Hiring."
+#
+# Those shared steps were all filed under `new_hiring`, and the match function
+# filters `service_type in (filter, 'general')` - so from inside a direct-hire
+# conversation they were INVISIBLE. Measured before this change, with the
+# filter set to direct_hiring: "what is an IPA" 0.474, "do I need to attend a
+# course" 0.499, "what happens at the embassy after the IPA" 0.551, "what
+# happens when she arrives" 0.702. Every one of them clears the 0.40 floor, so
+# `_answerable()` read True and the widening retry in rag_retriever - which
+# only fires BELOW the floor - never ran. The bot would have answered
+# confidently from whichever direct_hiring row happened to score best: the top
+# match for "what happens when she arrives" was "How long does a direct hire
+# take?".
+#
+# Filed as 'general' rather than duplicated under direct_hiring. Duplication is
+# how two copies drift apart (see CLAUDE.md section 9.8), and these are MOM
+# steps that will change for both services at once when they change at all.
+# 'general' is an established bucket, 95 rows before this.
+#
+# Deliberately NOT moved, because they are exactly what direct hire does not
+# have: "How do you match me with a helper?", "Can I interview the helper
+# before I decide?", "What are the stages of hiring a helper from start to
+# finish?", "What is the process for hiring a new helper?", and "What do I need
+# to do myself when hiring a helper?" - the last because its wording turns on
+# choosing from a shortlist we sent.
+_SHARED_WITH_DIRECT_HIRE = [
+    "What is an IPA?",
+    "Do I need to attend a course before hiring a helper?",
+    "What happens at the embassy stage after the IPA is issued?",
+    "What happens after the IPA for a Filipino helper?",
+    "What happens after the IPA for an Indonesian helper?",
+    "What happens after the IPA for a Myanmar helper?",
+    "What happens before my helper flies to Singapore?",
+    "What happens when my helper arrives in Singapore?",
+]
+
+UPDATES += [
+    {
+        "where": {"question": q, "service_type": "new_hiring"},
+        "reason": "direct hire mirrors new hiring after sourcing (agency, 2026-09-08)",
+        "set": {"service_type": "general"},
+    }
+    for q in _SHARED_WITH_DIRECT_HIRE
+]
+
+
+
+# The Settling-In Programme row already existed under new_hiring, better
+# written than the one added here on 2026-09-08 and without a deadline we
+# cannot verify. The duplicate was deleted; this shares the survivor.
+UPDATES.append(
+    {
+        "where": {"question": "What is the Settling-In Programme?",
+                  "service_type": "new_hiring"},
+        "reason": "SIP is one of the steps direct hire shares with new hiring",
+        "set": {"service_type": "general"},
+    }
+)
+
+# The agency's flow states a SEVEN-DAY Settling-In Programme window. MOM's own
+# requirement for a first-time helper is tighter, and a missed SIP registration
+# is a penalty on the employer - so this is a regulatory deadline stated as
+# fact to the person who would be penalised, on a figure nobody here has
+# confirmed. Removed rather than corrected: we register her either way, so
+# "within the window MOM allows" is true whatever the number turns out to be
+# and costs the client nothing. Put the figure back once Ming Hwee confirms it.
+UPDATES += [
+    {
+        "where": {"question": "What happens after approval if the helper is overseas?",
+                  "service_type": "direct_hiring"},
+        "reason": "the seven-day SIP window is unconfirmed and the penalty falls on the employer",
+        "set": {"answer": (
+            "Her papers go through her own country's embassy, and what that involves "
+            "depends on her nationality - the Philippines, Indonesia and Myanmar each "
+            "run it differently. Once that is done we coordinate her travel and her "
+            "arrival and her work permit is issued. We then register her for the "
+            "Settling-In Programme within the window MOM allows and arrange her "
+            "transport to the training centre, so it is not something you have to "
+            "organise."
+        )},
+    },
+    {
+        "where": {"question": "What happens after approval if the helper is already in Singapore?",
+                  "service_type": "direct_hiring"},
+        "reason": "the seven-day SIP window is unconfirmed and the penalty falls on the employer",
+        "set": {"answer": (
+            "There is no embassy step and no travel to arrange. Her work permit is "
+            "issued directly, and we register her for the Settling-In Programme "
+            "within the window MOM allows if she has not already completed it. We "
+            "then go through the handover with you, which is why this route is "
+            "noticeably shorter than bringing someone in from overseas."
+        )},
+    },
+]
+
+# Where each relocated row now lives, derived from UPDATES so the two can
+# never disagree. Keyed by question, which is what the ROWS skip check has.
+_RELOCATED: dict[str, str] = {
+    u["where"]["question"]: u["set"]["service_type"]
+    for u in UPDATES
+    if "service_type" in u["set"]
+}
+
 
 async def _existing_shape() -> tuple[set[str], str | None]:
     """Confirm the live column set and namespace instead of assuming them."""
@@ -989,6 +1090,18 @@ async def main(dry_run: bool) -> None:
         already = await db.select_one(
             KB_TABLE, "id", question=row["question"], service_type=row["service_type"]
         )
+        # A row this script later RELOCATES is no longer where ROWS says it is,
+        # and the skip check keys on question + service_type. Live, 2026-09-08:
+        # the second run of this script re-inserted all eight relocated rows as
+        # duplicates, because they had moved to 'general' and so did not match
+        # the 'new_hiring' the ROWS entry still declares. Look where the row
+        # was MOVED to as well, or "idempotent" holds for exactly one run.
+        if not already and row["question"] in _RELOCATED:
+            already = await db.select_one(
+                KB_TABLE, "id",
+                question=row["question"],
+                service_type=_RELOCATED[row["question"]],
+            )
         if already:
             logger.info("SKIP  (already present) %s", row["question"])
             skipped += 1
@@ -1031,38 +1144,40 @@ async def main(dry_run: bool) -> None:
     # corrected this run if it ever needs to be.
     updated = 0
     for row in UPDATES:
-        existing = await db.select_one(
-            KB_TABLE,
-            "id,answer",
-            question=row["question"],
-            service_type=row["service_type"],
-        )
+        where, changes = row["where"], row["set"]
+        existing = await db.select_one(KB_TABLE, "id,question,answer,service_type", **where)
+
+        if not existing and "service_type" in changes:
+            # Already moved on an earlier run. Look for it where it now lives
+            # rather than reporting a missing target every time.
+            moved = {**where, "service_type": changes["service_type"]}
+            if await db.select_one(KB_TABLE, "id", **moved):
+                logger.info("SKIP  (already applied) %s", where["question"])
+                continue
         if not existing:
-            logger.warning(
-                "UPDATE target missing, nothing to correct: %s", row["question"]
-            )
+            logger.warning("UPDATE target missing: %s", where["question"])
             continue
-        if (existing.get("answer") or "").strip() == row["answer"].strip():
-            logger.info("SKIP  (already correct) %s", row["question"])
+        if all((existing.get(k) or "") == v for k, v in changes.items()):
+            logger.info("SKIP  (already correct) %s", where["question"])
             continue
         if dry_run:
-            logger.info("WOULD UPDATE  %s  (%s)", row["question"], row["reason"])
+            logger.info(
+                "WOULD UPDATE  %s -> %s  (%s)",
+                where["question"], sorted(changes), row["reason"],
+            )
             updated += 1
             continue
-        content = f"{row['question']}\n{row['answer']}"
-        await db.update(
-            KB_TABLE,
-            {
-                "answer": row["answer"],
-                "content": content,
-                # Re-embedded, or the row would still be retrieved on the old
-                # wording and answer with the new text - or worse, not be
-                # retrieved at all for the question it now answers.
-                "embedding": await embed_query(content),
-            },
-            id=existing["id"],
-        )
-        logger.info("UPDATED  %s  (%s)", row["question"], row["reason"])
+
+        payload = dict(changes)
+        if "answer" in changes:
+            # Re-embedded on the new text, or the row is still retrieved on its
+            # old wording and then answers with the new - or is not retrieved
+            # at all for the question it now answers.
+            content = f"{existing['question']}\n{changes['answer']}"
+            payload["content"] = content
+            payload["embedding"] = await embed_query(content)
+        await db.update(KB_TABLE, payload, id=existing["id"])
+        logger.info("UPDATED  %s -> %s  (%s)", where["question"], sorted(changes), row["reason"])
         updated += 1
 
     verb = "would write" if dry_run else "wrote"

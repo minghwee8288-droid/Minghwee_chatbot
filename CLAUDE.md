@@ -206,6 +206,7 @@ because the lead is opened early and the ticket is created much later.
 | A numbered list is not counted as double the sentences | `guards.clamp_reply` (`_LIST_MARKER`) | `1.` used to end a sentence, so a six-step answer scored twelve and half was cut. Slicing now, so line breaks survive a clamp. |
 | A numbered list is a document everywhere except where it was asked for | `guards.looks_like_document(allow_steps=)` | Headings, bold and bullets stay banned on every path. |
 | A direct-hire answer never commits to a route we have not established | `info_collector._LOCATION_DEPENDENT` + `_known_helper_location` | A helper already in Singapore skips the embassy and the flight (2-3 weeks); one overseas does not (4-6). Both routes are filed under `direct_hiring`, so the filter does not separate them. |
+| A step both hiring flows share is filed once, not copied | `service_type = 'general'` + `load_service_notes._SHARED_WITH_DIRECT_HIRE` | The match function passes `service_type in (filter, 'general')`. Sourcing, matching and interviews stay on `new_hiring` — they are the only difference. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -497,6 +498,50 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **Direct hire mirrors new hiring after sourcing, so the shared steps
+  are filed once instead of twice.** The agency's own line: *"No candidate sourcing,
+  matching or interviews. Everything else — MOM submission, bond, insurance, medical,
+  embassy (overseas only), SIP, handover — mirrors New Hiring."*
+  (A) **Those steps were invisible from inside a direct-hire conversation.** They were
+  all filed under `new_hiring`, and the match function filters
+  `service_type in (filter, 'general')`. Measured with the filter set to
+  `direct_hiring`: *"what is an IPA"* **0.474**, *"do I need to attend a course"*
+  **0.499**, *"what happens at the embassy after the IPA"* **0.551**, *"what happens
+  when she arrives"* **0.702**. **Every one clears the 0.40 floor**, so `_answerable()`
+  read True and the widening retry — which only fires BELOW the floor — never ran. The
+  bot would have answered confidently from whichever `direct_hiring` row scored best:
+  the top match for the arrival question was *"How long does a direct hire take?"*.
+  A filter burying an answerable question is the 2026-09-03 defect again, except this
+  time it does not even trigger the widening. Eight rows moved to **`general`**, the
+  established catch-all (95 rows before this). After: **0.558–0.762**, and the
+  sourcing/matching/interview rows verified as still NOT reachable from direct hire.
+  Filed as `general` rather than duplicated under `direct_hiring` because duplication is
+  how two copies drift apart (§9.8), and these are MOM steps that change for both
+  services at once.
+  (B) **The loader's "idempotent" claim held for exactly one run, and it inserted eight
+  duplicates proving it.** The ROWS skip check keys on question + service_type; once a
+  row moves to `general` it no longer matches the `new_hiring` its ROWS entry still
+  declares, so the second run re-inserted all eight. Found by running the script twice
+  rather than once. The duplicates were deleted (identical content, verified before
+  deleting), and `_RELOCATED` — derived FROM `UPDATES`, so the two cannot disagree — now
+  makes the skip check look where a row was moved to. Two consecutive runs are now a
+  no-op. **A script that claims idempotency must be run twice, not once.**
+  (C) **`UPDATES` generalised** from `{question, service_type, answer}` to
+  `{where, set, reason}`, so it can change any field. It re-embeds whenever `answer`
+  changes — a row updated without that is still retrieved on its old wording — and
+  skips when already applied, in either the old or the new bucket.
+  (D) **A duplicate Settling-In Programme row I added was removed.** One already existed
+  under `new_hiring`, better written; it was moved to `general` instead.
+  (E) **The seven-day SIP deadline was taken back out of both rows that stated it.** The
+  agency's flow gives seven days; MOM's requirement for a first-time helper is tighter,
+  and a missed registration is a penalty **on the employer** — so this was an unverified
+  regulatory deadline stated as fact to the person who would pay for it being wrong.
+  Replaced with "within the window MOM allows", which is true whatever the number turns
+  out to be and costs the client nothing, since we register her either way. Put the
+  figure back once Ming Hwee confirms it.
+  `selfcheck_flows.py` is 65 assertions, five of them fixing the sharing boundary and
+  the relocation map in place.
 
 - **2026-09-08** — **Direct hire: the document checklist, the full process, and the
   route branch that decides the timeline.** The format work was already done that
