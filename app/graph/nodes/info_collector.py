@@ -1037,8 +1037,22 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # Suppressed when we are already showing them something off their file —
     # the two notes give opposite instructions about how much to reveal, and
     # the specific one wins.
+    # Fired off `first_time_hire` alone until 2026-09-08, and that key only
+    # exists in new_hiring's field list - `known` is filtered to the current
+    # service's own keys - so a returning client asking about a transfer, a
+    # renewal or a passport got no acknowledgement at all that we had met them
+    # before. The agency's instruction was explicit: "if user is existing then
+    # greet them by name and then ask further questions accordingly."
+    #
+    # The opening-turn test is the same one purpose_note uses, so this still
+    # says it ONCE per collection rather than every turn - which is what the
+    # `known` test was doing the work of before.
     returning_note = ""
-    if _prior_hires(state) and "first_time_hire" in known and not recognised_note:
+    if (
+        _prior_hires(state)
+        and not recognised_note
+        and ("first_time_hire" in known or not any(asked.values()))
+    ):
         returning_note = (
             "\n\nOur own records show they have hired a helper through us before, so "
             "that is already established and you must never ask it. Open this message "

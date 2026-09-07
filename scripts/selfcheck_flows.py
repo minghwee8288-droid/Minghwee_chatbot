@@ -52,6 +52,16 @@ STEPPED = (
     "5. She arrives and we hand her over."
 )
 
+# An employer we have met before: the portable keys carry over from an earlier
+# enquiry, so a transfer request does not march them through it all again.
+_RETURNING = {
+    "full_name": "Vaidik Dubey", "requirement": "childcare", "household": "3-4",
+    "home_type": "condo", "home_size": "3 bed 2 bath", "languages": "English",
+    "preferred_nationality": "Filipino", "budget": "$600-700",
+    "email": "v@example.com", "referral_source": "Google search",
+    "transfer_direction": "looking for a transfer helper",
+}
+
 rows = [
  ("transfer TAKE-ON asks her name", "helper_name" in take, False),
  ("transfer RELEASE asks her name", "helper_name" in rel, True),
@@ -265,20 +275,43 @@ rows = [
  # With the direction answered, the client is asked what they NEED - the
  # client's own words: it "should be asking for preferred nationality and
  # needs and household requirements", not when they want it arranged.
- ("taking on a transfer opens the requirement set",
+ ("taking on a transfer opens with what they need",
   [f.key for f in t.missing_fields(
       "transfer_employer",
-      {"full_name": "Thomas", "transfer_direction": "taking on a transfer helper"})][:2],
-  ["requirement", "preferred_nationality"]),
+      {"full_name": "Thomas", "transfer_direction": "taking on a transfer helper"})][0],
+  "requirement"),
  # Agency, 2026-09-07: "This question asked is not required." Asking a client
  # in a hurry when they want it produces "ASAP" every time.
  ("transfer never asks when they want it sorted",
   any(f.key == "timeline" for f in t.SERVICE_FIELDS["transfer_employer"]), False),
- ("transfer ends on what they need, not when",
+ # Agency, 2026-09-08: "if user is new then ask every question that is related
+ # and needed for the hiring ... not end conversation in 4 questions only."
+ ("a new take-on client is asked more than four things",
+  len(t.missing_fields(
+      "transfer_employer",
+      {"full_name": "V", "transfer_direction": "looking for a transfer helper"})) > 10,
+  True),
+ # ... while an EXISTING one is not marched through it again. Ten of these keys
+ # are portable, so anything answered in an earlier enquiry carries over.
+ ("an existing client is asked materially fewer",
+  len(t.missing_fields("transfer_employer", _RETURNING)) <
+  len(t.missing_fields("transfer_employer",
+                       {"full_name": "V",
+                        "transfer_direction": "looking for a transfer helper"})) - 5,
+  True),
+ ("releasing a helper is still short",
   [f.key for f in t.missing_fields(
       "transfer_employer",
-      {"full_name": "V", "transfer_direction": "looking for a transfer helper"})],
-  ["requirement", "preferred_nationality", "household", "budget"]),
+      {"full_name": "V", "transfer_direction": "releasing my current helper"})],
+  ["helper_name", "reason"]),
+ # Reused from new_hiring, not copied - a reworded question must land in both.
+ ("the take-on questions are new_hiring's own",
+  next(f.question for f in t.SERVICE_FIELDS["transfer_employer"] if f.key == "household")
+  == next(f.question for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "household"),
+  True),
+ ("no timing question crept back in",
+  any(f.key in ("timeline", "start_timeline")
+      for f in t.SERVICE_FIELDS["transfer_employer"]), False),
  # A household of seven was told the largest bracket was 5-6, because the
  # written question named none of its four options so the generic "drop two or
  # three in as examples" rule applied. Same defect as `languages`, same fix.

@@ -209,6 +209,8 @@ because the lead is opened early and the ticket is created much later.
 | A step both hiring flows share is filed once, not copied | `service_type = 'general'` + `load_service_notes._SHARED_WITH_DIRECT_HIRE` | The match function passes `service_type in (filter, 'general')`. Sourcing, matching and interviews stay on `new_hiring` — they are the only difference. |
 | An answer that opens no gate has not answered the question | `info_collector._undecidable_gate_keys` | `Gate.state()` closes on an unrecognised value, so two opposing gates on one field both close and every gated field goes with them. Blanked and re-asked, bounded by `max_asks`. |
 | A transfer client is never asked when they want it sorted | `SERVICE_FIELDS["transfer_employer"]` | `timeline` deliberately absent. Asking someone in a hurry produces "ASAP" every time. Agency instruction, 2026-09-07. |
+| The take-on transfer questions ARE new_hiring's questions | `ticket._hiring_field` | Reused via `dataclasses.replace`, not copied, so a reworded question lands in both flows (§9.8). |
+| A returning client is welcomed back on every flow | `info_collector.returning_note` | Fired off `first_time_hire`, which only `new_hiring` defines, so transfer/renewal/passport got nothing. Now also fires on the opening turn. |
 | An answer to our own question is never routed away from the collection that asked it | `guards.answering_our_question` + `route_after_rag` | The classifier's stickiness fixes `service_type` but not `intent`, and the money branch reads `intent`. |
 | Every employer flow asks the client's name | `SERVICE_FIELDS[...]["full_name"]` | `transfer_employer` had none, so rule 1c had nothing to use and the lead carried only a phone number. |
 
@@ -502,6 +504,43 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **The take-on transfer branch asks what a hire actually needs.**
+  Agency, after retesting: *"if user is new then ask every question that is related and
+  needed for the hiring ... if user is existing then greet them by name and then ask
+  further questions accordingly, not end conversation in 4 questions only ... after
+  raising the ticket user should be satisfied that yaa i have provided enough details."*
+  (A) **4 questions became 18 for a new client.** Working out which helper suits a
+  household is the same job whether she is a transfer or a new hire, and the office
+  filters on the same form (`candidates.biodata`), so the take-on branch now asks what
+  `new_hiring` asks: who the care is for and their ages, the home and its size, her own
+  room or sharing, pets, languages at home, nationality, age and experience wanted,
+  cooking, extra duties, budget, rest days, anything else, and how to stay in touch.
+  **Reused, not copied** — `_hiring_field()` takes `new_hiring`'s own `Field` and swaps
+  the gate via `dataclasses.replace`, because duplicated constants that then diverge are
+  already a live problem here (§9.8) and both `languages` and `household` have been
+  reworded once each. Left out are the three things a transfer has already settled:
+  `hire_source` (choosing a transfer IS the answer), `start_timeline` (the agency's own
+  2026-09-07 instruction that asking a transfer client when they want it is not
+  required), and `first_time_hire` (never asked of anyone).
+  (B) **An existing client is asked 9, not 18**, six of them optional — ten of the keys
+  are in `_PORTABLE_ACROSS_SERVICES`, so anything answered in an earlier enquiry carries
+  over untouched.
+  (C) **`returning_note` now fires on every flow.** It was gated on `first_time_hire`
+  being in `known`, and `known` is filtered to the current service's own field keys — so
+  a key only `new_hiring` defines meant a returning client asking about a transfer, a
+  renewal or a passport was never welcomed back. It now also fires on the opening turn,
+  which is the same say-once test `purpose_note` uses. Verified: new client gets the
+  purpose note and no welcome-back, an existing one gets both, and neither repeats
+  mid-collection.
+  (D) **A releasing client is untouched** — still 2 questions. The dependent fields
+  (`children_detail` off `requirement`, `pet_detail` off `pets`, `email` off
+  `update_channel`) keep their own gate rather than `_TAKING_ON_TRANSFER`; their parents
+  are take-on fields, so for a releasing client those gates stay *undecided* and the
+  questions are never asked. One gate per field is all the dataclass allows, and this is
+  why it is enough.
+  `transfer_employer` is 25 fields defined. `selfcheck_flows.py` is 92 assertions;
+  `smoke_nodes.py` is 23 states.
 
 - **2026-09-08** — **Transfer, round 2 after the client's retest.** The 2026-09-08 gate
   fix worked: the same conversation that produced CB-2026-0004's two useless fields now

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -908,18 +908,22 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     # None of these is the helper's own permit or her employer's consent — the
     # employer cannot answer those, which is what four testers flagged.
     TRANSFER_EMPLOYER: [
+        # Only the fields that are peculiar to a transfer live here. The
+        # take-on half is appended below from new_hiring's own list, because it
+        # is the same question - which helper suits this household - answered
+        # against the same form.
+        #
         # Client feedback, 2026-09-07: "Bot doesn't ask for my name or
-        # addresses me if it knows." This flow was the only employer service
-        # with no `full_name` at all, so there was nothing for rule 1c to use
-        # and nothing to put on the lead but a WhatsApp number. It is portable
-        # and it is also filled from the WhatsApp push name when that is
-        # plainly a person's name, so a client we already know is never asked.
+        # addresses me if it knows." This was the only employer flow with no
+        # `full_name`, so rule 1c had nothing to use and the lead carried a
+        # phone number and nothing else. Portable, and filled from the WhatsApp
+        # push name, so a client we already know is never asked.
         Field(
             "full_name",
             "name",
             "May I know your name?",
             max_asks=2,
-            group="staying in touch",
+            group="who they are",
         ),
         Field(
             "transfer_direction",
@@ -949,75 +953,6 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             optional=True,
             gate=_RELEASING_HELPER,
         ),
-        # --- Taking one on: these are about WHAT THEY NEED ---
-        #
-        # A transfer helper is already in Singapore and available because the
-        # previous arrangement ended; the client may never have hired anyone
-        # before and certainly does not know her name yet. So this half is a
-        # short requirement set, not a questionnaire about an existing helper.
-        # Every key here is in _PORTABLE_ACROSS_SERVICES, so an employer who
-        # already answered them in a hiring flow is not asked twice.
-        Field(
-            "requirement",
-            "what they need help with",
-            "What would you mainly need help with — childcare, eldercare, or "
-            "general housework and cooking?",
-            max_asks=2,
-            group="what they need",
-            options=(
-                "childcare",
-                "eldercare",
-                "general housework and cooking",
-                "all of the above",
-            ),
-            gate=_TAKING_ON_TRANSFER,
-        ),
-        Field(
-            "preferred_nationality",
-            "nationality preference",
-            "Do you have a preferred nationality?",
-            max_asks=2,
-            group="what they need",
-            options=("Filipino", "Indonesian", "Myanmar", "no preference"),
-            gate=_TAKING_ON_TRANSFER,
-        ),
-        Field(
-            "household",
-            "household size",
-            "How many people live in your household - 1-2, 3-4, 5-6, or 7 or more?",
-            max_asks=1,
-            optional=True,
-            group="what they need",
-            options=("1-2", "3-4", "5-6", "7 or more"),
-            gate=_TAKING_ON_TRANSFER,
-        ),
-        Field(
-            "budget",
-            "monthly salary budget",
-            "Do you have a monthly salary budget in mind?",
-            max_asks=1,
-            optional=True,
-            group="what they need",
-            options=(
-                "below $500",
-                "$500-600",
-                "$600-700",
-                "$700-800",
-                "above $800",
-                "not sure yet",
-            ),
-            gate=_TAKING_ON_TRANSFER,
-        ),
-        # --- Both directions ---
-        #
-        # `timeline` deliberately absent. The agency's instruction, 2026-09-07:
-        # "A person looking for Transfer helpers are naturally urgent to seek
-        # for help urgently. This question asked is not required. In fact, it
-        # should be asking for preferred nationality and needs and household
-        # requirements." Asking a client in a hurry when they want it produces
-        # "ASAP" every time, which tells an agent nothing they had not already
-        # assumed. Same treatment as _case_id() on 2026-09-04 - the objection
-        # is to ASKING, and a volunteered date is still in the transcript.
     ],
     # §5 — candidate flow. A HELPER transferring herself to a new employer.
     "transfer": [
@@ -1346,6 +1281,77 @@ def applicable_fields(
         if state == "open" or (include_undecided and state == "undecided"):
             applicable.append(field)
     return applicable
+
+
+
+def _hiring_field(key: str, **overrides: Any) -> Field:
+    """One of new_hiring's own fields, reused rather than copied.
+
+    Duplicated constants that then diverge is a live problem in this codebase
+    (§9.8), and a reworded question is exactly the kind of thing that would
+    drift: the agency has already had `languages` and `household` rewritten
+    once each. Taking the Field itself means a rewording lands in both flows.
+    """
+    source = next(f for f in SERVICE_FIELDS["new_hiring"] if f.key == key)
+    return replace(source, **overrides)
+
+
+# The take-on half of an employer transfer. Agency instruction, 2026-09-08:
+# "if user is new then ask every question that is related and needed for the
+# hiring ... not end conversation in 4 questions only ... after raising the
+# ticket user should be satisfied that yaa i have provided enough details".
+#
+# It is the same job as a new hire - work out which helper suits this household
+# - and the office filters on the same form, candidates.biodata. The only
+# things left out are the ones a transfer has already settled:
+#
+#   * `hire_source` (first-timer / ex-Singapore / ex-abroad / transfer). They
+#     have chosen a transfer helper; that IS the answer.
+#   * `start_timeline`. The agency's 2026-09-07 instruction was that asking a
+#     transfer client when they want it is not required - they are urgent by
+#     definition and the answer is always "ASAP".
+#   * `first_time_hire`, which is never asked of anyone and is filled from the
+#     placements count.
+#
+# A NEW client answers most of this. An EXISTING one answers far less: ten of
+# these keys are in _PORTABLE_ACROSS_SERVICES, so anything they told us in an
+# earlier enquiry carries over and is not asked twice, and returning_note has
+# the collector welcome them back by name before its first question.
+#
+# The dependent fields keep their OWN gate rather than _TAKING_ON_TRANSFER, and
+# that is deliberate: children_detail keys off `requirement`, pet_detail off
+# `pets`, email off `update_channel` - all of which are themselves take-on
+# fields. For a client releasing their helper those parents are never filled,
+# so the gates stay "undecided" and the questions are never asked. One gate per
+# field is all the dataclass allows, and this is why it is enough.
+SERVICE_FIELDS[TRANSFER_EMPLOYER] += [
+    # --- what they need ---
+    _hiring_field("requirement", gate=_TAKING_ON_TRANSFER),
+    _hiring_field("children_detail"),
+    _hiring_field("elderly_detail"),
+    # --- their household ---
+    _hiring_field("household", gate=_TAKING_ON_TRANSFER),
+    _hiring_field("home_type", gate=_TAKING_ON_TRANSFER),
+    _hiring_field("home_size", gate=_TAKING_ON_TRANSFER),
+    _hiring_field("helper_room", gate=_TAKING_ON_TRANSFER),
+    _hiring_field("pets", gate=_TAKING_ON_TRANSFER),
+    _hiring_field("pet_detail"),
+    _hiring_field("languages", gate=_TAKING_ON_TRANSFER),
+    # --- their preferences ---
+    _hiring_field("preferred_nationality", gate=_TAKING_ON_TRANSFER),
+    _hiring_field("helper_profile", gate=_TAKING_ON_TRANSFER),
+    _hiring_field("cooking", gate=_TAKING_ON_TRANSFER),
+    _hiring_field("special_duties", gate=_TAKING_ON_TRANSFER),
+    _hiring_field("budget", gate=_TAKING_ON_TRANSFER),
+    _hiring_field("rest_day", gate=_TAKING_ON_TRANSFER),
+    # --- anything else ---
+    _hiring_field("additional_notes", gate=_TAKING_ON_TRANSFER),
+    # --- how they found us / staying in touch ---
+    _hiring_field("referral_source", gate=_TAKING_ON_TRANSFER),
+    _hiring_field("referrer_name"),
+    _hiring_field("update_channel", gate=_TAKING_ON_TRANSFER),
+    _hiring_field("email"),
+]
 
 
 def missing_fields(service_type: str | None, collected: dict[str, Any]) -> list[Field]:

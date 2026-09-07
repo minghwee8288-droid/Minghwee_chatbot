@@ -128,6 +128,19 @@ CASES = [
                          "transfer_direction": "taking on a transfer helper"},
       "asked_field_counts": {"transfer_direction": 1},
       "history_text": "You: Are you taking on a transfer helper, or releasing yours?"}),
+    ("info_collector", "transfer take-on, NEW client",
+     {"service_type": "transfer_employer", "intent": "transfer",
+      "incoming_text": "hi i am looking for a transfer helper",
+      "collected_info": {"full_name": "Vaidik",
+                         "transfer_direction": "looking for a transfer helper"},
+      "history_text": ""}),
+    ("info_collector", "transfer take-on, EXISTING client",
+     {"service_type": "transfer_employer", "intent": "transfer",
+      "incoming_text": "hi i am looking for a transfer helper",
+      "prior_hires": 2,
+      "collected_info": {"full_name": "Vaidik",
+                         "transfer_direction": "looking for a transfer helper"},
+      "history_text": ""}),
     # --- response_generator ------------------------------------------------
     # The stepped-answer path: both halves of the trigger, then each half on
     # its own, then neither. A process question with NO records must stay on
