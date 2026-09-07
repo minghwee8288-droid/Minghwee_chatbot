@@ -30,11 +30,24 @@ hire_src = next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "hire_sour
 import app.graph.graph as g
 rr = importlib.import_module("app.graph.nodes.rag_retriever")
 from app.graph.prompts.style import STYLE_BLOCK
+import app.graph.guards as gd
+import app.graph.prompts.templates as tpl
 lang_f = next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "languages")
 money_on_top = {"intent": "fee_enquiry", "service_type": "passport_renewal",
                 "collected_service": "passport_renewal", "blocked_topics": {}}
 money_alone = {"intent": "fee_enquiry", "service_type": "fee_enquiry",
                "collected_service": None, "blocked_topics": {}}
+
+# A stepped answer, the shape a process question now gets back. Written here
+# rather than inline because two assertions compare against it.
+STEPPED = (
+    "Here is how it runs:\n"
+    "1. We go through what your household needs.\n"
+    "2. We shortlist helpers and you interview them.\n"
+    "3. We apply to MOM for her work pass.\n"
+    "4. Her embassy paperwork and medical are done.\n"
+    "5. She arrives and we hand her over."
+)
 
 rows = [
  ("transfer TAKE-ON asks her name", "helper_name" in take, False),
@@ -130,6 +143,57 @@ rows = [
  # The tag belongs on the first mention only; it went out six times in one
  # intake and read like a case file being processed.
  ("MDW tag is first-mention only", "first mention only" in STYLE_BLOCK, True),
+ # --- 2026-09-08: process and documents answered in steps ----------------
+ # "What is the process" and "what documents do I need" are the two questions
+ # whose honest answer does not fit in two sentences. Both halves are needed:
+ # without records there is nothing to lay out, and a long reply improvised
+ # from nothing is the worst of the three outcomes.
+ ("a process question is recognised",
+  gd.asks_for_process("What is the further process?"), True),
+ ("a documents question is recognised",
+  gd.asks_for_process("what documents are needed"), True),
+ ("process as a VERB is not a process question",
+  gd.asks_for_process("can you help me process her paperwork"), False),
+ ("an ordinary answer is not a process question",
+  gd.asks_for_process("her name is Shushi"), False),
+ # clamp_reply used to score "1." as a sentence of its own, so a six-step
+ # answer cost twelve sentences and half of it was deleted before sending.
+ ("a numbered list is not counted twice",
+  gd.clamp_reply(STEPPED, 10), STEPPED),
+ ("clamping keeps the line breaks",
+  "\n" in gd.clamp_reply(STEPPED, 3), True),
+ ("prose is still clamped exactly as before",
+  gd.clamp_reply("One. Two. Three.", 2), "One. Two."),
+ # The instruction has to change too. Widening the clamp while
+ # RESPONDER_INSTRUCTION still says "one or two sentences - answer the
+ # question and stop" is two prompts pulling opposite ways, which is how the
+ # 2026-09-07 languages defect happened.
+ ("a stepped answer has its own instruction",
+  "number the steps" in tpl.PROCESS_INSTRUCTION.lower(), True),
+ ("the stepped instruction forbids invented figures",
+  "do not invent a duration" in tpl.PROCESS_INSTRUCTION.lower(), True),
+ ("the stepped instruction keeps our internals out of it",
+  "internal" in tpl.PROCESS_INSTRUCTION.lower(), True),
+ ("a parked topic can still answer in steps",
+  "numbered" in tpl.PROCESS_ADDENDUM.lower(), True),
+ ("the addendum does not reopen the parked topic",
+  "leave that where it is" in tpl.PROCESS_ADDENDUM, True),
+ # A determiner settles noun-vs-verb; the word after it does not. Testing the
+ # verb first rejected "the full process for hiring a helper" - the most
+ # natural phrasing of the very question the detector exists for.
+ ("the noun survives a following 'for'",
+  gd.asks_for_process("what is the full process for hiring a helper"), True),
+ ("a bare verb usage is still excluded",
+  gd.asks_for_process("can you process the documents for me"), False),
+ # A numbered list IS the requested format on the stepped path, and is still a
+ # document everywhere else. The first build of this change was binned by
+ # looks_like_document on every process question and handed to a human.
+ ("steps are allowed where they were asked for",
+  gd.looks_like_document(STEPPED, allow_steps=True), False),
+ ("steps are still a document elsewhere",
+  gd.looks_like_document(STEPPED), True),
+ ("headings are a document even on the stepped path",
+  gd.looks_like_document("### Where to Find\n**Plumbers**\n- one", allow_steps=True), True),
  # A field whose written question spells its options out is asking for all of
  # them; the generic "drop two or three in" rule was overriding that.
  ("enumerated options are named in full",

@@ -366,6 +366,20 @@ Otherwise reply normally, without the token. One or two sentences — answer the
 and stop."""
 
 
+PROCESS_INSTRUCTION = """The client has asked how something works - the process, the stages involved, or the documents they will have to produce. This is one of the very few replies allowed to run long, because a two-line summary of a five-stage process tells them nothing they did not already know.
+
+Answer as a short ordered list, grounded ONLY in our records above:
+
+- Number the steps, or name the stages, in the order they actually happen.
+- One short line each: what happens at that point, and what the client themselves has to do. Keep the whole reply to about eight lines at most.
+- Where our records set out documents, list the documents rather than saying "the required documents".
+- Do NOT invent a duration, a fee, or a figure of any kind. If our records give a timing you may give it; if they do not, say the timing depends on the case and a consultant will confirm it. A figure that is not in the records above gets the whole reply thrown away, and the client gets nothing.
+- Write it from the CLIENT's side of the desk. Say what they will be asked for and what they will receive. Never name our internal teams, our internal stages, or who inside Ming Hwee does what: "we submit the application to MOM" is right, "the case coordinator submits it to MOM" is not.
+- Close with one short offer to go into any step in more detail.
+
+If our records above do not actually set out the process for what they asked, do not improvise one. Say you will confirm the details and come back to them, and start that reply with the exact token {handover_token} on its own first line."""
+
+
 CONTACT_DISCOVERY_INSTRUCTION = """This number is not in our records and it is not \
 yet clear who you are speaking to — an employer looking to hire, a helper looking \
 for work, or an agency offering us candidates.
@@ -447,6 +461,11 @@ figure, and never invent a document list.
 Say nothing about the case itself — no figures, dates or decisions specific to what the \
 team is working on, and do not promise a time. Never name the agent, and never mention \
 tickets or systems. Maximum two short sentences."""
+
+
+PROCESS_ADDENDUM = """
+
+They have asked how something works, or what documents are involved. Set it out as a short numbered list drawn ONLY from the records above - the steps in the order they happen, one short line each, about eight lines at most, and name the actual documents where the records name them. Do not invent a duration, a fee or any figure. Describe it from the client's side: what they will be asked for and what they will receive, never our internal teams or stages. This does not reopen the topic that is already with an agent - answer the question and leave that where it is."""
 
 
 CASE_INSTRUCTION = """The client is asking about their existing case with us.

@@ -289,8 +289,28 @@ def is_degenerate(text: str) -> bool:
 _MARKDOWN = re.compile(r"^#{1,6}\s|\*\*|^\s*[-*•]\s+|^\s*\d+\.\s+", re.MULTILINE)
 
 
-def looks_like_document(text: str) -> bool:
-    return len(_MARKDOWN.findall(text or "")) >= 2
+# The same test with numbered steps permitted, and nothing else. A stepped
+# answer IS a numbered list - it is exactly what PROCESS_INSTRUCTION asks for -
+# so on that one path the numbered branch is dropped while headings, bold runs
+# and bullets stay banned.
+#
+# Live, 2026-09-08: the first build of the stepped answer was caught by
+# looks_like_document on every process question and handed to a human instead,
+# which is the opposite of the change's whole purpose. smoke_nodes.py surfaced
+# it before it shipped, on the run that first executed response_generator.
+_MARKDOWN_NO_STEPS = re.compile(r"^#{1,6}\s|\*\*|^\s*[-*\u2022]\s+", re.MULTILINE)
+
+
+def looks_like_document(text: str, allow_steps: bool = False) -> bool:
+    """Whether the reply is formatted like a document rather than a message.
+
+    `allow_steps` is passed ONLY by the callers that asked for a numbered list.
+    Everywhere else a numbered list is still a document: the guard exists
+    because a plumber directory headed "### Where to Find..." went out to a
+    client during testing.
+    """
+    pattern = _MARKDOWN_NO_STEPS if allow_steps else _MARKDOWN
+    return len(pattern.findall(text or "")) >= 2
 
 
 # --- Repetitive openers ----------------------------------------------------
@@ -470,6 +490,73 @@ def strip_repeated_opener(reply: str, *previous: str) -> str:
     return stripped[0].upper() + stripped[1:]
 
 
+# "How does this actually run, and what will I have to produce?" - the one
+# question whose honest answer does not fit in two sentences. A new hire runs
+# through five stages over several weeks, and "we handle the MOM application and
+# then the embassy" is not an answer to it, it is a summary of one that leaves
+# the client no better informed than before they asked. The callers use this to
+# widen the sentence budget, and ONLY ever alongside retrieved records - an
+# unanswerable process question still gets the holding line rather than a long
+# improvisation.
+_ASKS_FOR_PROCESS = re.compile(
+    r"\bprocess\b|\bprocedure\b|\bsteps?\b|\bstages?\b|\bphases?\b"
+    r"|\bwalk\s+me\s+through\b|\bstep[-\s]?by[-\s]?step\b"
+    r"|\bwhat\s+happens\b|\bhow\s+does\s+it\s+(?:work|go)\b"
+    r"|\bwhat\s+(?:documents?|papers?|paperwork|forms?)\b"
+    r"|\bdocuments?\s+(?:are\s+)?(?:needed|required)\b"
+    r"|\bwhat\s+do\s+i\s+need\s+to\s+(?:do|provide|prepare|submit|bring|sign)\b",
+    re.IGNORECASE,
+)
+
+# "process" is a verb far more often than a noun in this inbox - "can you help
+# me process her paperwork" is a direct-hire request, not a question about how
+# a hire runs. Excludes are tested FIRST, the same way _STILL_EMPLOYED does it,
+# so a message cannot match on the very word that disqualifies it.
+_PROCESS_AS_VERB = re.compile(
+    r"\bprocess(?:ing|ed|es)?\s+(?:her|him|his|my|the|this|that|it|them|"
+    r"a\b|an\b|for\b)",
+    re.IGNORECASE,
+)
+
+
+# A determiner in front of it makes "process" a noun whatever follows, which
+# is what separates "the process for hiring a helper" from "please process her
+# application". Tested first, so the verb exclusion below cannot claim it.
+_PROCESS_AS_NOUN = re.compile(
+    r"\b(?:the|a|any|full|whole|entire|complete|further|next|overall|"
+    r"hiring|application|renewal|transfer)\s+process\b",
+    re.IGNORECASE,
+)
+
+
+def asks_for_process(text: str) -> bool:
+    """Whether the client asked how something runs, or what they must produce.
+
+    Narrow on purpose. It decides only whether a reply may run past the
+    two-sentence cap, and the caller additionally requires that we actually
+    retrieved something - so a false positive costs a slightly longer answer,
+    never an invented one.
+
+    The noun test runs BEFORE the verb test, because a determiner settles the
+    question and the word after it does not: "the full process for hiring a
+    helper" is a noun that happens to be followed by "for", and testing the
+    verb first threw it out. Caught by smoke_nodes on 2026-09-08 - the most
+    natural phrasing of the very question this function exists for was the one
+    phrasing it rejected.
+    """
+    body = text or ""
+    if _PROCESS_AS_NOUN.search(body):
+        return True
+    if _PROCESS_AS_VERB.search(body):
+        return False
+    return bool(_ASKS_FOR_PROCESS.search(body))
+
+
+# A numbered list marker at the start of a line. Only the marker's own full
+# stop is masked, and only while counting sentences.
+_LIST_MARKER = re.compile(r"(?m)^(\s*\d+)\.(\s)")
+
+
 def clamp_reply(text: str, max_sentences: int = 2) -> str:
     """Trim self-directed notes and runaway length from an otherwise good reply.
 
@@ -482,14 +569,27 @@ def clamp_reply(text: str, max_sentences: int = 2) -> str:
     """
     original = (text or "").strip()
     body = _TRAILING_NOTES.sub("", original).strip()
-    sentences = re.split(r"(?<=[.!?])\s+", body)
-    if len(sentences) > max_sentences:
-        body = " ".join(sentences[:max_sentences]).strip()
+
+    # "1. We prepare your documents." carries a full stop after the marker as
+    # well as at the end of the line, so a plain sentence split scores a
+    # six-step answer as twelve sentences and the clamp deletes half of it.
+    # Mask the marker's own dot for the COUNT only. The mask is the same length
+    # as what it replaces, so offsets into it are offsets into `body`.
+    masked = _LIST_MARKER.sub(lambda m: m.group(1) + " " + m.group(2), body)
+
+    # Sliced rather than re-joined: joining on " " flattened every newline out
+    # of a clamped reply, which turned a stepped answer into a wall of text on
+    # exactly the replies that most needed the line breaks.
+    breaks = [m.end() for m in re.finditer(r"(?<=[.!?])\s+", masked)]
+    if len(breaks) >= max_sentences:
+        cut = breaks[max_sentences - 1]
+        dropped = body[cut:].strip()
+        body = body[:cut].strip()
         logger.info(
             "Clamped reply to %d sentence(s): kept %r, dropped %r",
             max_sentences,
             body,
-            " ".join(sentences[max_sentences:]).strip(),
+            dropped,
         )
     return body
 

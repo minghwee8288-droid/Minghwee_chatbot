@@ -19,6 +19,7 @@ import re
 from typing import Any
 
 from app.graph.guards import (
+    asks_for_process,
     clamp_reply,
     is_degenerate,
     looks_like_document,
@@ -41,6 +42,7 @@ from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
     BLOCKED_TOPIC_ANSWER_INSTRUCTION,
     BLOCKED_TOPIC_INSTRUCTION,
+    PROCESS_ADDENDUM,
 )
 from app.graph.state import (
     CASE_INTENT,
@@ -453,13 +455,27 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
 
     label = ticket_service.service_types_label(ticket) if ticket.get("id") else service_label(topic_key)
     template = BLOCKED_TOPIC_ANSWER_INSTRUCTION if answering else BLOCKED_TOPIC_INSTRUCTION
+
+    # A process or documents question is answerable while a topic is parked, and
+    # is one of the few whose honest answer will not fit in the budget above.
+    # Appended rather than substituted: BLOCKED_TOPIC_ANSWER_INSTRUCTION is what
+    # keeps the parked topic parked, and that still applies.
+    stepped = answering and asks_for_process(state.get("incoming_text") or "")
+    if stepped:
+        logger.info(
+            "Conversation %s: process question against a parked topic - answering in steps",
+            state.get("conversation_id"),
+        )
+
     system_prompt = build_system_prompt(
         dict(state),
         # Only when answering. On the holding path the records must not be in
         # the prompt at all — the instruction says not to answer, and a model
         # looking at a page of fees will answer anyway.
         rag_context=state.get("rag_context", "") if answering else "",
-        extra_instructions=template.format(service_label=label),
+        extra_instructions=(
+            template.format(service_label=label) + (PROCESS_ADDENDUM if stepped else "")
+        ),
     )
     user_prompt = (
         f"Conversation so far:\n{state.get('history_text') or '(this is the first message)'}\n\n"
@@ -477,7 +493,7 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
                 system_prompt,
                 user_prompt,
                 temperature=0.5,
-                max_tokens=150 if answering else 90,
+                max_tokens=420 if stepped else 150 if answering else 90,
             )
         ).strip()
     except Exception:  # noqa: BLE001 - never leave the client without an answer
@@ -500,7 +516,7 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
             invented,
         )
         reply = FALLBACK_REPLY
-    elif is_degenerate(reply) or looks_like_document(reply):
+    elif is_degenerate(reply) or looks_like_document(reply, allow_steps=stepped):
         reply = FALLBACK_REPLY
     elif speaks_of_us_as_a_third_party(reply):
         # Claire is Ming Hwee, so a reply describing what "the agency" did with
@@ -516,7 +532,10 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
     else:
         # An answer carrying a figure plus the offer of further help does not
         # fit in two; a bare holding line still must not run past it.
-        reply = clamp_reply(strip_handover_talk(reply), max_sentences=3 if answering else 2)
+        reply = clamp_reply(
+            strip_handover_talk(reply),
+            max_sentences=10 if stepped else 3 if answering else 2,
+        )
     if not reply:
         reply = FALLBACK_REPLY
 

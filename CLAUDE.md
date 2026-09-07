@@ -202,6 +202,9 @@ because the lead is opened early and the ticket is created much later.
 | A live collection survives a turn that resolves to no service | `intent_classifier` (no-service rule) | A turn with no topic in it cannot be a new topic. Guarded on the topic not being parked. |
 | The (MDW) tag is used once, not every time | `style.py` | First mention only. |
 | An option list the question spells out is read in full | `info_collector._field_guidance` | Applies when the written question already names 3+ of its own options. |
+| A process or documents question may answer in steps | `guards.asks_for_process` + `PROCESS_INSTRUCTION` | Both halves required: the detector AND retrieved records. Without records it stays on the two-sentence path. |
+| A numbered list is not counted as double the sentences | `guards.clamp_reply` (`_LIST_MARKER`) | `1.` used to end a sentence, so a six-step answer scored twelve and half was cut. Slicing now, so line breaks survive a clamp. |
+| A numbered list is a document everywhere except where it was asked for | `guards.looks_like_document(allow_steps=)` | Headings, bold and bullets stay banned on every path. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -479,6 +482,68 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **The new-hiring document checklist and the full hiring process,
+  and the format needed to deliver them.** The agency supplied both. Loading the content
+  alone would not have worked: **three separate mechanisms silently prevented a stepped
+  answer from ever reaching a client**, and each had to be found by running the code.
+  (A) **18 knowledge-base rows** via `load_service_notes.py` (idempotent on question +
+  service_type; the 22 existing rows were skipped, not rewritten). Five cover documents —
+  what the employer provides, what we prepare for signature, what comes from the helper,
+  the foreign-employer set, and the additional-helper proof-of-care set — and thirteen
+  cover the process: the five stages, matching, interviewing, what happens after the
+  client confirms, what the employer personally has to do, the IPA, the EOP, the embassy
+  stage plus one row each for PH/ID/MM, pre-departure, and arrival. Retrieval measured
+  through the real path (`_search_query` + `_service_filter`, not `search()` — calling
+  `search()` directly is the mistake that produced three bogus 0.000 readings on
+  2026-09-07): documents 0.598–0.796, process 0.434–0.796, all 21 probes above the 0.40
+  floor, and the two controls unmoved (passport process 0.444, cost 0.460).
+  **Rewritten, not copied.** The source is staff-facing: it names an internal owner for
+  every phase, the internal system, the page count of the MOM form and a retention
+  target. None of that may enter the KB, because whatever is in the records is what the
+  model quotes — the recorded failure is a "what's the process" question retrieving the
+  internal pipeline brief and the bot reciting our own workflow to the person it is being
+  run on. A vetting script asserted all 40 rows before they were loaded: no internal
+  vocabulary, nothing over `rag_max_chunk_chars`, nothing tripping
+  `quotes_hiring_package_cost`, no ungrounded figure, and **no duration in any new_hiring
+  row** — the source gives none, so any would be invented and `ungrounded_figures` would
+  bin the whole reply. The MOM application fee is described **without its amount** on
+  purpose; the $5,000 security bond is carried over, being already documented as
+  quotable.
+  (B) **Two sentences cannot answer "what is the process".** `response_generator` clamped
+  to 2 and asked the model for "one or two sentences — answer the question and stop", and
+  `max_tokens=120` truncated anything longer regardless. `asks_for_process` +
+  `PROCESS_INSTRUCTION` now widen that turn to a numbered list, on both answering paths
+  (`response_generator`, and `blocked_topic_responder` via `PROCESS_ADDENDUM`, which
+  explicitly does not reopen the parked topic). **Both halves of the trigger are
+  required** — the detector AND retrieved records — because a long reply improvised from
+  nothing is the worst of the three outcomes; verified, a process question with no
+  records still gets the holding line.
+  (C) **`clamp_reply` counted a list marker as a sentence.** `re.split` on `[.!?]\s+`
+  ends a sentence at the `1.`, so a six-step answer scored twelve sentences and half of
+  it was deleted. It now masks the marker while counting, and **slices instead of
+  re-joining on `" "`** — the old join flattened every newline out of a clamped reply,
+  precisely on the replies that most needed line breaks. Prose clamps exactly as before.
+  (D) **`looks_like_document` binned every stepped reply and handed it to a human** —
+  `_MARKDOWN` matches `^\s*\d+\.\s+`, so the numbered list this change exists to
+  produce was read as a document dump. `allow_steps=` now drops that one branch for the
+  callers that asked for a list; headings, bold and bullets stay banned everywhere,
+  including on the stepped path.
+  (E) **`asks_for_process` rejected the most natural phrasing of its own question.**
+  "the full process **for** hiring a helper" matched the verb-usage exclusion on `for`.
+  A determiner settles noun-vs-verb and the following word does not, so `_PROCESS_AS_NOUN`
+  is tested first. 15 process phrasings fire, 12 ordinary messages stay quiet.
+  **(D) and (E) were both caught by `smoke_nodes.py`, not by review** — on the run that
+  first executed `response_generator`. Which is the real lesson: **this file had covered
+  exactly one node**, so both reply-writing paths had no execution cover at all, while
+  this change introduced a `process_question` flag read in three places — the same shape
+  as the 2026-09-04 `UnboundLocalError` that silenced the bot. `smoke_nodes.py` is now 17
+  states across three nodes; `selfcheck_flows.py` is 54 assertions.
+  **Known and deliberately not changed:** "what is the process" under `new_hiring` still
+  ranks the older 2026-09-07 requirements row top (0.473) ahead of the five-stages row
+  (0.433). Both are inside the top 5 the model receives, and the stepped instruction
+  orders it to lay out stages in sequence, so the fuller row is what gets used. Rewriting
+  a row the agency signed off a day earlier was not in scope.
 
 - **2026-09-07** — **Six defects from the agency's own testing round, five of them
   prompts or routing instructing the bad behaviour outright.** (A) **"(MDW)" after every

@@ -10,6 +10,7 @@ from app.config import settings
 from app.graph.guards import (
     COST_DEFERRAL_REPLY,
     COST_WITHHELD_SERVICES,
+    asks_for_process,
     clamp_reply,
     holding_reply,
     is_degenerate,
@@ -32,6 +33,7 @@ from app.graph.prompts.templates import (
     CASE_INSTRUCTION,
     CONTACT_DISCOVERY_INSTRUCTION,
     HANDOVER_TOKEN,
+    PROCESS_INSTRUCTION,
     RESPONDER_INSTRUCTION,
 )
 from app.graph.state import (
@@ -164,6 +166,25 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         CANDIDATE_INTENT: CANDIDATE_INSTRUCTION,
     }.get(intent, RESPONDER_INSTRUCTION)
 
+    # "What is the process?" and "what documents do I need?" are the two
+    # questions whose honest answer does not fit in two sentences. Both halves
+    # are required: without retrieved records there is nothing to lay out in
+    # steps, and a long reply improvised from nothing is the worst outcome of
+    # the three. RESPONDER_INSTRUCTION's own closing line ("one or two sentences
+    # - answer the question and stop") is what the swap is for; leaving it in
+    # place and only widening the clamp would tell the model one thing and the
+    # guard another, which is how the 2026-09-07 languages defect happened.
+    process_question = bool(
+        (state.get("rag_context") or "").strip()
+        and asks_for_process(state.get("incoming_text") or "")
+    )
+    if process_question:
+        logger.info(
+            "Conversation %s: process question with records - answering in steps",
+            state.get("conversation_id"),
+        )
+        instruction_template = PROCESS_INSTRUCTION
+
     # An unrecognised number whose type we still cannot read: find out who they
     # are before running any workflow, since the workflow depends on it.
     if needs_contact_discovery(state, intent):
@@ -190,7 +211,15 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         # Not lower than this: at 0.2 the model degenerated into repeating its
         # own instructions. Figures are kept honest by the grounding guard
         # below, not by a low temperature.
-        raw = await complete(system_prompt, user_prompt, temperature=0.45, max_tokens=120)
+        # 120 tokens is roughly two sentences, which is the whole point of it -
+        # except on a stepped answer, where it would truncate the list mid-item
+        # and the clamp would then have nothing whole to keep.
+        raw = await complete(
+            system_prompt,
+            user_prompt,
+            temperature=0.45,
+            max_tokens=420 if process_question else 120,
+        )
     except Exception:  # noqa: BLE001 - never leave the client without an answer
         logger.exception("Response generation failed on conversation %s", state.get("conversation_id"))
         return {
@@ -246,7 +275,17 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         # otherwise push off the end. A first enquiry can arrive here rather than
         # at the collector, and it was going out with no introduction at all.
         first_message = not (state.get("history_text") or "").strip()
-        reply = clamp_reply(reply, max_sentences=3 if first_message else 2)
+        # Eight steps plus an opening line and a closing offer. clamp_reply no
+        # longer counts a "1." marker as a sentence of its own, so this is eight
+        # actual steps rather than four.
+        reply = clamp_reply(
+            reply,
+            max_sentences=10
+            if process_question
+            else 3
+            if first_message
+            else 2,
+        )
 
     if not reply:
         reply = fallback
@@ -290,7 +329,7 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
     # A markdown-formatted answer is the model writing from its own knowledge
     # rather than from the records — it produced a plumber directory complete
     # with headings during testing.
-    if looks_like_document(reply):
+    if looks_like_document(reply, allow_steps=process_question):
         logger.warning(
             "Conversation %s: reply was formatted like a document — replaced with a handover",
             state.get("conversation_id"),

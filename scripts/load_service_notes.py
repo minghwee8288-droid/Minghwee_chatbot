@@ -417,6 +417,312 @@ ROWS: list[dict[str, Any]] = [
             "you."
         ),
     },
+    # --- 2026-09-08: the new-hiring document checklist and the full process --
+    #
+    # The agency sent both on 2026-09-08. Two separate gaps:
+    #
+    #   1. DOCUMENTS. Nothing in the KB told an employer what they personally
+    #      have to produce to hire a helper, so "what documents do I need"
+    #      under service=new_hiring had nothing to retrieve. It is the second
+    #      most practical question a first-time employer asks, after the cost.
+    #
+    #   2. THE PROCESS END TO END. The 2026-09-07 rows describe how we take
+    #      requirements and match helpers - stage one of five. Everything after
+    #      the client picks somebody (MOM, the IPA, the embassy, insurance and
+    #      the bond, travel, arrival) was absent, so "what happens next" after
+    #      a confirmed choice retrieved the requirements answer again.
+    #
+    # REWRITTEN FROM THE SOURCE, NOT COPIED. The agency's flow is written for
+    # staff: it names an internal owner for every phase, the internal system,
+    # the page count of the MOM form and a retention target. None of that may
+    # reach the KB, because whatever is in the records is what the model quotes
+    # back - the recorded failure is a "what's the process" question retrieving
+    # the internal pipeline brief and the bot reciting our own workflow to the
+    # person it is being run on. Every row below says what HAPPENS and what the
+    # CLIENT does, and names no internal team or stage.
+    #
+    # FIGURES: the only one carried over is the $5,000 security bond, which
+    # CLAUDE.md records as deliberately quotable. The MOM application fee is
+    # described WITHOUT its amount on purpose - a new hire's costs do not reach
+    # a client before a salesperson has spoken to them (client instruction,
+    # 2026-09-04), and guards.quotes_hiring_package_cost would swap the reply
+    # for the deferral line anyway. No duration appears anywhere below: the
+    # source gives none for new hiring, and inventing one gets the whole reply
+    # binned by ungrounded_figures.
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - documents from the employer",
+        "question": "What documents do I need to provide to hire a helper?",
+        "answer": (
+            "From you we need a copy of your NRIC or identity document, and proof of "
+            "your income - either your Income Tax Assessment or a declaration of your "
+            "monthly income. If you are a foreigner working here, we need your "
+            "Employment Pass or S Pass and a copy of your passport, and if you started "
+            "that job recently, a letter from your company confirming your position, "
+            "salary and appointment date, together with your tenancy agreement. If this "
+            "would be an additional helper rather than your first, we also need identity "
+            "documents for the children or elderly family members she would be caring "
+            "for, as proof of the care need. Everything else is paperwork we prepare for "
+            "you to sign."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - documents we prepare",
+        "question": "What documents does Ming Hwee prepare for me to sign?",
+        "answer": (
+            "Most of the paperwork is ours to prepare and yours only to sign: the "
+            "Service Agreement, the Service and Fee Schedule, the agency fee package "
+            "form, an Authorisation Form that lets us handle your work pass "
+            "transactions with MOM, an Employer Particulars form, the last page of the "
+            "helper's biodata, and the Job Offer Form, which you and the helper both "
+            "sign. If you are employing a helper for the first time there is a levy "
+            "GIRO form as well. If she has worked in Singapore before, we prepare her "
+            "employment history form too. We tell you what to sign and when, so nothing "
+            "is left for you to work out."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - documents from the helper",
+        "question": "What documents are needed from the helper herself?",
+        "answer": (
+            "A copy of her passport, her medical report and her school certificate. We "
+            "collect those through our overseas partner rather than asking you to chase "
+            "them. If she has worked in Singapore before, her employment history is "
+            "needed as well. Her medical fitness has to be confirmed before the "
+            "application goes to MOM."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - foreign employer",
+        "question": "I am a foreigner working in Singapore, what do I need to hire a helper?",
+        "answer": (
+            "We need your Employment Pass or S Pass together with a copy of your "
+            "passport. If you have only recently started that job we also need a letter "
+            "from your company stating your position, your salary and your date of "
+            "appointment, and a copy of your tenancy agreement. The usual employer "
+            "documents apply alongside those - proof of your monthly income, and your "
+            "identity document."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - additional helper",
+        "question": "I already employ a helper and want a second one, what extra documents are needed?",
+        "answer": (
+            "For an additional helper we need evidence that the care need is real, which "
+            "means identity documents for the children or elderly family members she "
+            "would be looking after. Everything else is the same as a first hire - your "
+            "identity document, proof of your monthly income, and the forms we prepare "
+            "for you to sign. A consultant will confirm whether your household qualifies "
+            "for a second helper before anything is submitted."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - the five stages",
+        "question": "What are the stages of hiring a helper from start to finish?",
+        "answer": (
+            "There are five. First we go through your household and what you need, and "
+            "shortlist helpers who genuinely suit it. Second, once you have chosen one "
+            "and confirmed her, we apply to MOM for her work pass and wait for the "
+            "In-Principle Approval. Third, her papers go through her own country's "
+            "embassy and she completes her medical. Fourth, we arrange her insurance and "
+            "her security bond, then book her flight once you and she have both "
+            "confirmed. Fifth, she arrives, we take her through her settling-in "
+            "formalities and hand her over to you, and we check in with you both "
+            "afterwards. Tell us which stage you would like more detail on."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - how matching works",
+        "question": "How do you match me with a helper?",
+        "answer": (
+            "We start with your household - who lives there, the ages of any children or "
+            "elderly family members, your home and how it is laid out, your budget, and "
+            "any language or cultural preferences. From that we shortlist a handful of "
+            "helpers who fit, usually three to five, and send you their profiles with "
+            "their experience, their skills, a video introduction and references. You "
+            "can interview the ones you like by video or phone, and we arrange "
+            "translation where it is needed. When you settle on one, confirming her is "
+            "what starts the application."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - interviewing candidates",
+        "question": "Can I interview the helper before I decide?",
+        "answer": (
+            "Yes. We arrange a video or phone interview with any helper on your "
+            "shortlist and provide translation if you need it. You are under no "
+            "obligation to take anyone you interview - if none of them feel right we go "
+            "back and shortlist again. Once you do choose, confirming her is what starts "
+            "the work pass application."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - after you confirm a helper",
+        "question": "What happens after I confirm the helper I want?",
+        "answer": (
+            "This part runs strictly in order and each step waits for the one before it. "
+            "You set up your Singpass and your MOM employer account, then authorise us "
+            "through Singpass to apply for her on your behalf. If this is your first "
+            "helper, you complete the Employers' Orientation Programme. We prepare your "
+            "document set for signing and collect her passport copy, medical report and "
+            "school certificate. Her medical fitness is confirmed, and we submit the "
+            "application to MOM and pay the application fee. When MOM issues the "
+            "In-Principle Approval we send it on, and that is what lets her embassy "
+            "paperwork begin."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - what the employer does",
+        "question": "What do I need to do myself when hiring a helper?",
+        "answer": (
+            "Less than most people expect. You tell us what your household needs and "
+            "choose from the helpers we shortlist. You set up your Singpass and MOM "
+            "employer account and authorise us to act for you, and if this is your first "
+            "helper you complete the Employers' Orientation Programme online. You sign "
+            "the document set we prepare, and give us your identity document and proof "
+            "of your income. You confirm when you are available to receive her so her "
+            "flight can be booked, and on handover day you sign the orientation "
+            "checklist. We handle the submissions, the embassy paperwork, the insurance "
+            "and the bond."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - the IPA",
+        "question": "What is an IPA?",
+        "answer": (
+            "The In-Principle Approval is MOM's approval in principle of your helper's "
+            "work permit application. It is issued after we submit the application. It "
+            "has to be signed by both you and your helper and uploaded back to MOM "
+            "before the Work Permit itself can be issued, and it is also what allows her "
+            "embassy paperwork and her travel to be arranged - so it is the point the "
+            "rest of the process waits on."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - the orientation programme",
+        "question": "Do I need to attend a course before hiring a helper?",
+        "answer": (
+            "Only if this is your first time employing a helper. In that case you "
+            "complete the Employers' Orientation Programme, which is done online at "
+            "eop.com.sg, and it has to be finished before your application can go to "
+            "MOM. If you have employed a helper before, you skip it. We will tell you "
+            "which applies to you and remind you when it is your turn in the sequence."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - the embassy stage",
+        "question": "What happens at the embassy stage after the IPA is issued?",
+        "answer": (
+            "It depends on her nationality, because each embassy runs it differently. A "
+            "Filipino helper signs her contract, it is submitted to her embassy online, "
+            "and she attends an accredited clinic for a fit-to-fly medical. An "
+            "Indonesian helper's job order goes through her embassy's portal, and once "
+            "it is approved you sign the employment contract copies that go in with it. "
+            "For a Myanmar helper the approval papers are signed by you and sent to our "
+            "partner there for her signature and her earliest departure date, along with "
+            "the security bond form her immigration clearance needs. Tell us her "
+            "nationality and we can be specific."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "PH",
+        "section_heading": "New hiring - Filipino helper after the IPA",
+        "question": "What happens after the IPA for a Filipino helper?",
+        "answer": (
+            "Her employment contract is printed, she signs it, and it is submitted to "
+            "her embassy through the Philippine online service. Once it comes back "
+            "stamped we hold it on file. She also attends a clinic accredited by the "
+            "Philippine Department of Health for her fit-to-fly medical, and that "
+            "certificate goes in with her papers. When both are done her travel can be "
+            "arranged."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "ID",
+        "section_heading": "New hiring - Indonesian helper after the IPA",
+        "question": "What happens after the IPA for an Indonesian helper?",
+        "answer": (
+            "A job order is submitted through the Indonesian embassy's portal. When it "
+            "is approved an employment contract is generated, and you sign three "
+            "original copies of it along with the IPA form. Those go to the embassy "
+            "together with a copy of your identity document and a copy of her passport, "
+            "taken over by our runner, and the approved contract comes back to us. Her "
+            "travel can be arranged once that is done."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "MM",
+        "section_heading": "New hiring - Myanmar helper after the IPA",
+        "question": "What happens after the IPA for a Myanmar helper?",
+        "answer": (
+            "We send you the IPA form to sign, then pass it to our partner in Myanmar "
+            "for your helper to sign and to confirm the earliest date she can travel. We "
+            "also obtain the security bond transmission form from MOM and send it "
+            "across, because her immigration clearance cannot be completed without it. "
+            "Once both are back her travel can be arranged."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - before she flies",
+        "question": "What happens before my helper flies to Singapore?",
+        "answer": (
+            "Four things. The IPA has to be signed by both you and her and uploaded to "
+            "MOM, which is what allows the Work Permit to be issued. We arrange her "
+            "insurance and the security bond of $5,000 that MOM requires, and confirm "
+            "the bond has been transmitted. We check when you are available to receive "
+            "her before any ticket is issued, and book the flight only once you and she "
+            "have both confirmed in writing. Then we arrange her airport pick-up and "
+            "prepare your handover set - the employment contract, the salary schedule, "
+            "the rest day form, the safety agreement, and her do's and don'ts."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - arrival and settling in",
+        "question": "What happens when my helper arrives in Singapore?",
+        "answer": (
+            "She is met at the airport and taken through her arrival formalities - her "
+            "Settling-In Programme, her medical examination and her fingerprinting - and "
+            "we register her for the programme within the window MOM allows. On handover "
+            "day you complete an orientation checklist together with her and with us, "
+            "and all three sign it. The placement fee is settled that day, by PayNow, "
+            "cash or cheque, and a consultant will have taken you through the figures "
+            "well before then. Her Work Permit card comes through afterwards and we pass "
+            "it to you. We call you and her within a week of her arrival to check how "
+            "she is settling in."
+        ),
+    },
 ]
 
 
