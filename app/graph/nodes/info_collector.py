@@ -356,6 +356,15 @@ def _known_fields(state: ConversationState) -> dict[str, str]:
     else:
         known["first_time_hire"] = "first time with us - no placement on record"
 
+    # ... and a client we have placed a helper for did not find us on Google.
+    # Asking them how they heard about us is the same question as asking
+    # whether they are returning, one step removed, and the client called it
+    # out on 2026-09-08. Only filled when there IS a placement: zero means "no
+    # placement on record", which is not evidence of how a first-timer found
+    # us, so a first-timer is still asked.
+    if prior_hires:
+        known["referral_source"] = "returning client - placed with us before"
+
     # The helper on their file, when our records name exactly one. Ahead of the
     # lead below because a placement is a harder fact than an enquiry: `leads`
     # records what somebody once said they wanted, `placements` records a helper

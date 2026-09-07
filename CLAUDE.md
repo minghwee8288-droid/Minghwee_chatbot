@@ -210,6 +210,8 @@ because the lead is opened early and the ticket is created much later.
 | An answer that opens no gate has not answered the question | `info_collector._undecidable_gate_keys` | `Gate.state()` closes on an unrecognised value, so two opposing gates on one field both close and every gated field goes with them. Blanked and re-asked, bounded by `max_asks`. |
 | A transfer client is never asked when they want it sorted | `SERVICE_FIELDS["transfer_employer"]` | `timeline` deliberately absent. Asking someone in a hurry produces "ASAP" every time. Agency instruction, 2026-09-07. |
 | The take-on transfer questions ARE new_hiring's questions | `ticket._hiring_field` | Reused via `dataclasses.replace`, not copied, so a reworded question lands in both flows (§9.8). |
+| An answer to our own question never switches the SERVICE | `intent_classifier` (answer rule) | The stickiness rules only rescue `other`/no-service/money. A different hard service simply wins, and a transfer drifted into `new_hiring` on "3 year experienced maid". |
+| Whether they are a returning client is never asked, nor offered as an answer | `referral_source` options + `_known_fields` | "returning client" as an option was read into the question, asking a man whose placements we count every turn. |
 | A returning client is welcomed back on every flow | `info_collector.returning_note` | Fired off `first_time_hire`, which only `new_hiring` defines, so transfer/renewal/passport got nothing. Now also fires on the opening turn. |
 | An answer to our own question is never routed away from the collection that asked it | `guards.answering_our_question` + `route_after_rag` | The classifier's stickiness fixes `service_type` but not `intent`, and the money branch reads `intent`. |
 | Every employer flow asks the client's name | `SERVICE_FIELDS[...]["full_name"]` | `transfer_employer` had none, so rule 1c had nothing to use and the lead carried only a phone number. |
@@ -504,6 +506,39 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **A transfer collection drifted into `new_hiring`, and "returning
+  client" was offered as an answer to a question our own database answers.** Both from
+  the client's retest of the expanded transfer flow.
+  (A) **The drift.** Deep into a `transfer_employer` collection the bot asked *"Any
+  preference on her age or how much experience she should have?"* and the client answered
+  *"yes i want 3 year experienced maid"*. "maid" beside a hiring preference classified as
+  `new_hiring` — a **hard `SERVICE_INTENT`**, so it simply won — and the very next
+  question was `new_hiring`'s own `hire_source`: *"Are you open to a first-timer, or would
+  you prefer someone who has worked in Singapore, worked abroad, or is a transfer helper
+  already here?"*, offering a transfer helper to a man who had opened with *"i am looking
+  for a transfer helper"*. He replied *"in starting i started with the query i want
+  transfer helper then why you asking me again ?"*. **`hire_source` is not in
+  `transfer_employer`'s field list at all**, which is what made it diagnosable: the only
+  way to be asked it is to no longer be in the transfer flow. The three existing
+  stickiness rules all rescue a turn the classifier *could not label* — `other`, no
+  service, or a money question — and none of them helps when it picks a different real
+  service. `guards.answering_our_question` (already in place from the "3-4" fix that
+  morning) now also holds the SERVICE: if our last line ended in a question and theirs is
+  not one, the live collection keeps the turn. Guarded on `_named_service`, so *"I also
+  want to renew my helper's passport"* is still a genuine switch — verified both ways.
+  (B) **"returning client" was one of `referral_source`'s options**, and the model read
+  the options into the question: *"How did you hear about Ming Hwee, such as through
+  Google, a friend or family member, social media, or are you a returning client?"* —
+  put to someone whose `placements` we count on every single turn. Offering it as an
+  **answer** is the same defect as asking it outright, which has been banned since
+  2026-09-04. Option removed.
+  (C) **A returning client is no longer asked how they heard about us at all.**
+  `_known_fields` fills `referral_source` from a positive `prior_hires`, the same way
+  `first_time_hire` has been filled since 2026-09-04. Only on a positive count: zero
+  means "no placement on record", which is not evidence of how a first-timer found us, so
+  they are still asked.
+  `selfcheck_flows.py` is 99 assertions.
 
 - **2026-09-08** — **The take-on transfer branch asks what a hire actually needs.**
   Agency, after retesting: *"if user is new then ask every question that is related and

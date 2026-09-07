@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from app.graph.closure import needs_no_reply
+from app.graph.guards import answering_our_question
 from app.graph.llm import complete_json
 from app.graph.prompts.templates import (
     ASSAULT_VERIFY_SYSTEM,
@@ -467,6 +468,48 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
             active_service,
         )
         service_type = active_service
+
+    # An ANSWER to a question we just asked cannot start a different service.
+    #
+    # The three rules above all rescue a turn the classifier could not label -
+    # 'other', no service at all, or a money question. None of them helps when
+    # the classifier picks a DIFFERENT hard service, because new_hiring is in
+    # SERVICE_INTENTS and simply wins.
+    #
+    # Live, 2026-09-08, the client's retest of the expanded transfer flow. Deep
+    # into a transfer_employer collection the bot asked "Any preference on her
+    # age or how much experience she should have?" and the client answered "yes
+    # i want 3 year experienced maid". The word "maid" beside a hiring
+    # preference reads as new_hiring, the service switched, and the very next
+    # question was new_hiring's own `hire_source`: "Are you open to a
+    # first-timer, or would you prefer someone who has worked in Singapore,
+    # worked abroad, or is a transfer helper already here?" - offering a
+    # transfer helper to a man who had opened with "i am looking for a transfer
+    # helper". He wrote: "in starting i started with the query i want transfer
+    # helper then why you asking me again ?".
+    #
+    # `hire_source` is not in transfer_employer's field list at all, which is
+    # what makes this diagnosable: the only way to be asked it is to no longer
+    # be in the transfer flow.
+    #
+    # Guarded on the topic not being parked, like the rules above, and on the
+    # client not NAMING a different service - "actually I want a passport
+    # renewal too" is a genuine switch and _named_service catches it.
+    if (
+        active_service
+        and service_type
+        and service_type != active_service
+        and active_service not in (state.get("blocked_topics") or {})
+        and not _named_service(message)
+        and answering_our_question(state.get("history_text") or "", message)
+    ):
+        logger.info(
+            "Conversation %s: %r is an answer to our own question - keeping %s "
+            "rather than switching to %s",
+            state.get("conversation_id"), message[:40], active_service, service_type,
+        )
+        service_type = active_service
+        intent = active_service if active_service in ALL_INTENTS else intent
 
     # A price question inside a live enquiry is part of that enquiry, not a new
     # one. Without this, "how much do you charge" halfway through new_hiring

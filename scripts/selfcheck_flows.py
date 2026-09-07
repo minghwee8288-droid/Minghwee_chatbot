@@ -32,6 +32,7 @@ rr = importlib.import_module("app.graph.nodes.rag_retriever")
 from app.graph.prompts.style import STYLE_BLOCK
 import app.graph.guards as gd
 import app.graph.prompts.templates as tpl
+from app.graph.nodes.intent_classifier import _named_service as _named_svc
 import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location("lsn", str(Path(__file__).resolve().parent / "load_service_notes.py"))
 lsn = _ilu.module_from_spec(_spec); _spec.loader.exec_module(lsn)
@@ -375,6 +376,34 @@ rows = [
  ("no Myanmar passport fee was invented",
   any("Myanmar" in r["answer"] and "$" in r["answer"] for r in lsn.ROWS
       if r["service_type"] == "passport_renewal"), False),
+ # --- 2026-09-08: the transfer collection drifted into new_hiring ---------
+ # "yes i want 3 year experienced maid", answering our own age/experience
+ # question, reclassified as new_hiring - a hard SERVICE_INTENT, so none of the
+ # stickiness rules applied - and the next question was new_hiring's own
+ # hire_source: "are you open to a first-timer, or ... a transfer helper
+ # already here?", put to a man who opened with "i am looking for a transfer
+ # helper".
+ ("hire_source is not a transfer question",
+  any(f.key == "hire_source" for f in t.SERVICE_FIELDS["transfer_employer"]), False),
+ ("the live turn reads as an answer, not a new topic",
+  gd.answering_our_question(
+      "You: Any preference on her age or experience, such as younger or at "
+      "least 2 years of experience?", "yes i want 3 year experienced maid"), True),
+ ("naming another service is still a real switch",
+  _named_svc("i also want to renew my helper passport"), "renewal"),
+ ("an ordinary answer names no service",
+  _named_svc("yes i want 3 year experienced maid"), None),
+ # "returning client" was offered as an ANSWER to how they heard about us, so
+ # the model read it into the question - asking a man whose placements we count
+ # every turn whether he is returning.
+ ("returning client is not an answer we offer",
+  any("returning client" in (f.options or ())
+      for fl in t.SERVICE_FIELDS.values() for f in fl), False),
+ ("a returning client is never asked how they found us",
+  ico._known_fields({"prior_hires": 2}).get("referral_source"),
+  "returning client - placed with us before"),
+ ("a first-timer still is",
+  ico._known_fields({"prior_hires": 0}).get("referral_source"), None),
  # A field whose written question spells its options out is asking for all of
  # them; the generic "drop two or three in" rule was overriding that.
  ("enumerated options are named in full",

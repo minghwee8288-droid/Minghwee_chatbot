@@ -673,11 +673,18 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             max_asks=1,
             optional=True,
             group="how they found us",
+            # "returning client" was an option until 2026-09-08, and the model
+            # read the options straight into the question: "How did you hear
+            # about Ming Hwee, such as through Google, a friend or family
+            # member, social media, or are you a returning client?" - put to a
+            # man whose placements we count on every single turn. Whether they
+            # are returning is a matter of record, and offering it as an ANSWER
+            # is the same defect as asking it outright, which has been banned
+            # since 2026-09-04.
             options=(
                 "Google search",
                 "friend or family referral",
                 "social media",
-                "returning client",
                 "staff referral",
             ),
         ),
