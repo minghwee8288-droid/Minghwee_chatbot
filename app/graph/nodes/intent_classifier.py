@@ -436,6 +436,38 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
         service_type = active_service
         intent = active_service if active_service in ALL_INTENTS else intent
 
+    # A live collection is not ended by a question that resolves to NO service
+    # at all. A turn the classifier cannot attach to any service cannot be a new
+    # topic - there is no topic in it - so the flow in progress is still the
+    # subject, and dropping it strands the question that was already on the
+    # table.
+    #
+    # Live, 2026-09-07, conversation 3766: mid direct-hire intake the bot asked
+    # "what is the best number to reach Ruru on?" and the client replied "What
+    # is MDW". That classified as general_question with service=None, so
+    # route_after_rag found no fields to collect, response_generator answered
+    # the definition and ended the turn - correct answer, but the pending
+    # question vanished and the client had to volunteer the number unprompted.
+    # With the service held, the collector answers AND asks (ANSWER_THEN_ASK),
+    # which is what a consultant does with a question mid-form.
+    #
+    # Guarded on the topic not being parked, for the same reason the money rule
+    # below is: once a human owns the topic, gluing a new question back onto it
+    # is how blocked_topic_responder's chase-dedup silently swallows it.
+    if (
+        active_service
+        and not service_type
+        and active_service not in (state.get("blocked_topics") or {})
+    ):
+        logger.info(
+            "Conversation %s: '%s' resolved to no service while %s is mid-collection "
+            "- keeping the live collection",
+            state.get("conversation_id"),
+            (state.get("incoming_text") or "")[:40],
+            active_service,
+        )
+        service_type = active_service
+
     # A price question inside a live enquiry is part of that enquiry, not a new
     # one. Without this, "how much do you charge" halfway through new_hiring
     # switches the service to fee_enquiry, whose two fields are already filled,

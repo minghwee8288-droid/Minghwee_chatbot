@@ -27,6 +27,15 @@ rel  = [f.key for f in t.applicable_fields("transfer_employer", {"transfer_direc
 dh_emp  = [f.key for f in t.applicable_fields("direct_hiring", {"employment_status": "currently employed"})]
 dh_free = [f.key for f in t.applicable_fields("direct_hiring", {"employment_status": "between jobs"})]
 hire_src = next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "hire_source")
+import app.graph.graph as g
+rr = importlib.import_module("app.graph.nodes.rag_retriever")
+from app.graph.prompts.style import STYLE_BLOCK
+lang_f = next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "languages")
+money_on_top = {"intent": "fee_enquiry", "service_type": "passport_renewal",
+                "collected_service": "passport_renewal", "blocked_topics": {}}
+money_alone = {"intent": "fee_enquiry", "service_type": "fee_enquiry",
+               "collected_service": None, "blocked_topics": {}}
+
 rows = [
  ("transfer TAKE-ON asks her name", "helper_name" in take, False),
  ("transfer RELEASE asks her name", "helper_name" in rel, True),
@@ -90,6 +99,41 @@ rows = [
   ico._known_nationality({"collected_info": {}}), None),
  ("new_hiring asks bedrooms / bathrooms",
   any(f.key == "home_size" for f in t.SERVICE_FIELDS["new_hiring"]), True),
+ # --- 2026-09-07 live testing round -----------------------------------
+ # A cost question on top of a service we are already handling is answered,
+ # never qualified. It used to start fee_enquiry's own intake, which asked a
+ # passport-renewal client "What kind of care would this be for?" twice.
+ ("cost question mid-service is answered, not collected",
+  g.route_after_rag(money_on_top), "response_generator"),
+ ("a cost question on its own still collects",
+  g.route_after_rag(money_alone), "info_collector"),
+ # The intent names the SHAPE of the question; the in-flight service is its
+ # subject. Tagging "what is the process" with "(process question)" scored
+ # under the floor and got the parked-agent line on a question the KB answers.
+ ("process question searches the service",
+  "(direct hiring)" in rr._search_query(
+      {"incoming_text": "What is the process", "intent": "process_question",
+       "service_type": "direct_hiring"}), True),
+ ("document question searches the service",
+  "(passport renewal)" in rr._search_query(
+      {"incoming_text": "What documents are needed", "intent": "document_question",
+       "service_type": "passport_renewal"}), True),
+ ("a greeting is still searched bare",
+  rr._search_query({"incoming_text": "hello", "intent": "greeting",
+                    "service_type": "new_hiring"}), "hello"),
+ # "I want to hire a helper" names no care type, so a care type extracted
+ # from it was invented. A volunteered one still lands.
+ ("bare enquiry states no care type",
+  ico._states_a_care_type("I want to hire a helper"), False),
+ ("a volunteered care type does",
+  ico._states_a_care_type("I need someone for my mum who is bedridden"), True),
+ # The tag belongs on the first mention only; it went out six times in one
+ # intake and read like a case file being processed.
+ ("MDW tag is first-mention only", "first mention only" in STYLE_BLOCK, True),
+ # A field whose written question spells its options out is asking for all of
+ # them; the generic "drop two or three in" rule was overriding that.
+ ("enumerated options are named in full",
+  "name them" in ico._field_guidance("new_hiring", {}, lang_f), True),
 ]
 bad = 0
 for label, got, want in rows:

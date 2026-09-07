@@ -23,6 +23,17 @@ logger = logging.getLogger(__name__)
 _SHORT_QUERY_WORDS = 6
 
 
+# Intents whose NAME describes the shape of a question rather than its subject.
+# For these the in-flight service is the subject, and without it the query goes
+# to the embedder effectively untagged. See the note inside _search_query.
+_SUBJECTLESS_INTENTS = {
+    "other",
+    "process_question",
+    "document_question",
+    "general_question",
+}
+
+
 def _search_query(state: ConversationState) -> str:
     """Bias the query with the last thing the client said plus the topic."""
     message = (state.get("incoming_text") or "").strip()
@@ -35,7 +46,7 @@ def _search_query(state: ConversationState) -> str:
         return message
 
     topic = intent
-    if intent == "other":
+    if intent in _SUBJECTLESS_INTENTS:
         # `other` is the classifier's shrug — a real question it could not
         # label. It used to mean the query went to the embedder completely
         # bare, and a short question then matched NOTHING: three questions into
@@ -48,6 +59,22 @@ def _search_query(state: ConversationState) -> str:
         # collection in flight IS the subject, and `_service_filter` below
         # already trusts `service_type` for exactly this reason. Measured
         # 2026-09-07 against the agency's process table.
+        #
+        # The same hole was open one level up, and it is why the SAME question
+        # was answered in one flow and refused in another on the same
+        # afternoon. `other` is not the only label that carries no subject:
+        # process_question, document_question and general_question name the
+        # SHAPE of the question, never what it is about. Tagging "what is the
+        # process" with "(process question)" is tagging it with itself - the
+        # embedder gets nothing, the score lands under the soft floor,
+        # _answerable() reads False and blocked_topic_responder answers "a live
+        # agent is handling this" to a question the records answer outright.
+        # Live, 2026-09-07: "What is the process" and "What are the documents
+        # needed?" both got the parked line inside direct_hiring and new_hiring
+        # (the rows they wanted score 0.661 and 0.473), while the identical
+        # words landed on `other` in a passport renewal and were answered in
+        # full. fee_enquiry and salary_enquiry stay out of this set - money IS
+        # a subject, and _MONEY_TALK below already widens those turns.
         topic = state.get("service_type") or ""
         if not topic:
             return message

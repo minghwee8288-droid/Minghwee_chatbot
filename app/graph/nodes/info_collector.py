@@ -603,14 +603,37 @@ def _field_guidance(
     )
 
     if field.options:
-        parts.append(
-            "\n\nThe answers the office works with here are: "
-            + ", ".join(field.options)
-            + ". Use them to shape the question — dropping two or three in as examples "
-            "is how a person asks it. Never read the whole set out, never number them, "
-            "and never present them as a menu to choose from. Whatever the client "
-            "answers is their answer, listed or not."
+        # A field whose own written question already spells the options out is
+        # asking for all of them ON PURPOSE, and the "drop two or three in"
+        # rule below silently undoes that. Live, 2026-09-07: `languages` was
+        # rewritten on 2026-09-04 precisely because the bot was "hiding four of
+        # its options", and it STILL went out as "such as English, Mandarin or
+        # Malay?" - because this instruction told it to. Two prompts pulling
+        # opposite ways, and the more specific one lost. Where the option set is
+        # something a client cannot guess at, naming them all IS the question: a
+        # Tamil-speaking household shown three Chinese and Malay options can
+        # only conclude we do not place Tamil speakers.
+        listed = sum(
+            1 for opt in field.options if opt.lower() in (field.question or "").lower()
         )
+        if listed >= 3:
+            parts.append(
+                "\n\nThe answers the office works with here are: "
+                + ", ".join(field.options)
+                + ". The written question above names them deliberately, so name them "
+                "all - the client cannot choose an option they were never shown. Keep "
+                "it one flowing sentence rather than a numbered menu, and make clear "
+                "they may give more than one, or something not on the list."
+            )
+        else:
+            parts.append(
+                "\n\nThe answers the office works with here are: "
+                + ", ".join(field.options)
+                + ". Use them to shape the question - dropping two or three in as "
+                "examples is how a person asks it. Never read the whole set out, never "
+                "number them, and never present them as a menu to choose from. "
+                "Whatever the client answers is their answer, listed or not."
+            )
 
     return "".join(parts)
 
@@ -685,6 +708,35 @@ async def _extract(
             logger.info(
                 "Conversation %s: ignoring '%s' for '%s' — it restates the enquiry "
                 "rather than naming a care type",
+                state.get("conversation_id"),
+                text[:40],
+                key,
+            )
+            continue
+        # ...and the same test against what the CLIENT actually wrote. The
+        # rule above only inspects the VALUE, so it catches a value that
+        # restates the enquiry ("hire a helper") and waves through one the
+        # extractor invented out of the same words. Live, 2026-09-07: the
+        # opening message was "I want to hire a helper" and nothing else, and
+        # `requirement` came back "household chores" - plausible, never said.
+        # The field was therefore never asked (the collector opened on question
+        # six, "how many people live at home"), and the agent was handed
+        # "Care type: household chores" as though the client had stated it.
+        # Matching a helper against a requirement nobody gave is worse than
+        # having no requirement at all.
+        #
+        # A volunteered care type still lands: the test is on the client's own
+        # words, and "I need someone for my mum who is bedridden" passes it
+        # while "looking for a maid" does not. Only applied when the field was
+        # never put to them - once asked, their answer is their answer.
+        if (
+            key in _CARE_TYPE_FIELDS
+            and not asked.get(key)
+            and not _states_a_care_type(state.get("incoming_text") or "")
+        ):
+            logger.info(
+                "Conversation %s: ignoring '%s' for '%s' - the client's message "
+                "named no care type, so the value was inferred rather than given",
                 state.get("conversation_id"),
                 text[:40],
                 key,

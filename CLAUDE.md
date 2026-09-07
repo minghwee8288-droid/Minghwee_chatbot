@@ -196,6 +196,12 @@ because the lead is opened early and the ticket is created much later.
 | A direct hire collects something | `SERVICE_FIELDS["direct_hiring"]` | Was an empty list, so the ticket said only "wants us to process a helper they have already chosen". Ten fields now; asserted. |
 | The notice-period question is only put about a helper who is still employed | `_STILL_EMPLOYED` gate | `excludes` first, so "free to take a new job" and "between jobs" do not match on the word they contain. |
 | A passport-renewal answer never names a route we have not established | `info_collector._NATIONALITY_DEPENDENT` + `_known_nationality` | The paperwork differs by nationality and the retrieval filter is DROPPED when the nationality is unknown, so all three routes compete. |
+| A cost question never starts a second intake | `graph.route_after_rag` + `_other_service_established` | `fee_enquiry`/`salary_enquiry` collect ONLY when nothing else is in hand. |
+| A question's SHAPE is not its subject | `rag_retriever._SUBJECTLESS_INTENTS` | `process_question`, `document_question`, `general_question` search under the in-flight service, as `other` already did. |
+| A care type is never inferred from a bare enquiry | `info_collector` (`_states_a_care_type` on the MESSAGE, not just the value) | "I want to hire a helper" fills nothing. A volunteered one still lands. |
+| A live collection survives a turn that resolves to no service | `intent_classifier` (no-service rule) | A turn with no topic in it cannot be a new topic. Guarded on the topic not being parked. |
+| The (MDW) tag is used once, not every time | `style.py` | First mention only. |
+| An option list the question spells out is read in full | `info_collector._field_guidance` | Applies when the written question already names 3+ of its own options. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -473,6 +479,59 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-07** — **Six defects from the agency's own testing round, five of them
+  prompts or routing instructing the bad behaviour outright.** (A) **"(MDW)" after every
+  mention.** `style.py` said *"use the format: Name (MDW). This is standard Ming Hwee
+  practice"* with no scope, so a direct-hire intake said "Ruru (MDW)" six times — it reads
+  like a case file being processed, not a person. First mention only now. (B) **A cost
+  question started a second intake inside somebody else's flow.** `fee_enquiry` and
+  `salary_enquiry` are real services with their own two fields (`nationality`,
+  `care_type`), and `route_after_rag` sent every money question to the collector. Live:
+  mid passport renewal, *"Ok and what is the cost"* came back *"I'll confirm the exact cost
+  and come back to you. What kind of care would this be for?"*; the client asked *"Care??"*,
+  the field was still empty so it asked **again**, and he wrote *"But I come here for
+  passport renewal not for care"*. The same defect, after a finished hiring intake,
+  produced *"For an Indonesian helper, the approximate salary is $550 to $600 ... Which
+  nationality are you looking at?"* — `salary_enquiry`'s own `nationality`, asked in the
+  same sentence as the answer that used it, because the hiring flow had stored it as
+  `preferred_nationality`. A money question now routes to `response_generator` whenever any
+  other service is in hand; a money question that IS the whole conversation still collects.
+  (C) **The intent's name is not the question's subject.** The 2026-09-07 `other` fallback
+  fixed one label and left three: `process_question`, `document_question` and
+  `general_question` describe the SHAPE of a question, so `_search_query` tagged "what is
+  the process" with "(process question)" — itself. Measured live at **0.394**, under the
+  0.40 floor, so `_answerable()` read False and `blocked_topic_responder` answered *"a live
+  agent is handling the direct hire process"* to a question the records answer at **0.680**.
+  The identical words landed on `other` in a passport renewal the same afternoon and were
+  answered in full — same question, opposite outcome, decided by a label. After: 0.680
+  (direct hire), 0.507 and 0.579 (documents), 0.442 (new hiring). `greeting`/`smalltalk`
+  still search bare, and the money intents stay out — money IS a subject.
+  (D) **A care type was invented and filed as fact.** `requirement` was never asked in a
+  25-field hiring intake (the collector opened on question six, 17 fields outstanding) yet
+  the ticket read **"Care type: household chores"**, from an opening message that said only
+  *"I want to hire a helper"*. `_states_a_care_type` existed for exactly this but was
+  applied to the extracted VALUE — "household chores" has real content, so it passed. It is
+  now applied to the CLIENT'S MESSAGE too, when the field was never asked: the bare enquiry
+  fills nothing, while *"I need someone for my mum who is bedridden"* still does. Matching a
+  helper against a requirement nobody gave is worse than having no requirement.
+  (E) **A question mid-collection stranded the question already on the table.** Asked *"what
+  is the best number to reach Ruru on?"*, the client replied *"What is MDW"* — classified
+  `general_question` with **service=None**, so routing found no fields, `response_generator`
+  answered the definition and ended. Correct answer, pending question gone, and the client
+  volunteered the number unprompted. A live, unparked collection now survives any turn that
+  resolves to no service at all, so the collector answers AND asks. (F) **The languages
+  question still showed three of seven options** — rewritten on 2026-09-04 precisely to stop
+  that, and still trimmed, because `_field_guidance` told it to: *"dropping two or three in
+  as examples is how a person asks it. Never read the whole set out."* Two prompts pulling
+  opposite ways and the general one won. Where the field's own written question already
+  names 3+ of its options, they are now all named — a Tamil-speaking household shown three
+  Chinese and Malay options can only conclude we do not place Tamil speakers.
+  `selfcheck_flows.py` is 36 assertions. **Not a bug, recorded so it is not re-raised:**
+  two tickets appeared to vanish mid-session (three tickets issued the number CB-2026-0003).
+  `reset_conversation.py` deletes `cb_tickets`/`cb_handovers` for the conversation and was
+  run between scenarios; ticket numbering is max+1, so a freed number is reissued. Nothing
+  is lost in a real conversation, where tickets are never deleted.
 
 - **2026-09-07** — **The FDW passport renewal process flow: documents, the embassy
   contract branch, and a guard against answering for the wrong nationality.** (A) **The

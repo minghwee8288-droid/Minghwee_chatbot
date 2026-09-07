@@ -101,6 +101,22 @@ def route_after_intent(state: ConversationState) -> str:
     return "rag_retriever"
 
 
+def _other_service_established(state: ConversationState) -> bool:
+    """Whether a real service is already in hand when a money question arrives.
+
+    "Real" deliberately excludes the money enquiries themselves: a client whose
+    whole conversation IS a fee question still gets fee_enquiry's two questions,
+    which is what makes an opening "how much do you charge?" collectible at all.
+    """
+    collected = state.get("collected_service")
+    if collected and collected not in ENQUIRY_INTENTS:
+        return True
+    service = state.get("service_type")
+    if service and service not in ENQUIRY_INTENTS and ticket_service.fields_for(service):
+        return True
+    return any(key not in ENQUIRY_INTENTS for key in (state.get("blocked_topics") or {}))
+
+
 def route_after_rag(state: ConversationState) -> str:
     """Collect the service's details, or answer the question outright."""
     intent = state.get("intent") or "other"
@@ -110,6 +126,28 @@ def route_after_rag(state: ConversationState) -> str:
     # and the only one that will not re-escalate a topic a human already owns.
     if _blocked_topic(state):
         return "blocked_topic_responder"
+
+    # A money question asked ON TOP of a service we are already handling is a
+    # QUESTION, not a second job to qualify. fee_enquiry and salary_enquiry are
+    # real services with their own two fields (nationality, care_type), so
+    # sending them to the collector starts a competing intake inside somebody
+    # else's flow. Live, 2026-09-07, one afternoon of testing produced both
+    # halves of the damage:
+    #   - mid passport renewal, "Ok and what is the cost" came back "I'll
+    #     confirm the exact cost and come back to you. What kind of care would
+    #     this be for?" - care_type, put to a man renewing a passport. He asked
+    #     "Care??", the field was still empty so it asked a SECOND time, and he
+    #     wrote "But I come here for passport renewal not for care".
+    #   - after a finished hiring intake, "any approximate salary range" came
+    #     back "For an Indonesian helper, the approximate salary is $550 to
+    #     $600 ... Which nationality are you looking at?" - salary_enquiry's own
+    #     `nationality`, asked in the same sentence as the answer that used it,
+    #     because the hiring flow had stored it as `preferred_nationality`.
+    #
+    # An agent asked the price mid-job answers the price. Only a money question
+    # that opens a conversation qualifies anything.
+    if intent in ENQUIRY_INTENTS and _other_service_established(state):
+        return "response_generator"
 
     if (
         intent in SERVICE_INTENTS
