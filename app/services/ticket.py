@@ -243,6 +243,30 @@ def _case_id() -> Field:
     return Field("case_id", "case ID", "May I have your case ID?", max_asks=1, optional=True)
 
 
+# Direct hire: the notice-period / clearance question only makes sense for a
+# helper who is still working for somebody. The agency's process note scopes it
+# to an overseas-employed helper, but a helper employed IN Singapore needs a
+# release just the same, so this keys off employment rather than location.
+# `excludes` is checked first, which is what keeps "free to take a new job" and
+# "between jobs" from matching on the word they contain.
+_STILL_EMPLOYED = Gate(
+    "employment_status",
+    ("employ", "working", "works", "still with", "yes", "has a job"),
+    excludes=(
+        "not working",
+        "no longer",
+        "free",
+        "between jobs",
+        "never",
+        "unemployed",
+        "finished",
+        "ended",
+        "back home",
+        "no job",
+    ),
+)
+
+
 # --- Gates on the employer flow --------------------------------------------
 #
 # Each keys off an answer already given, so the detail questions only appear
@@ -410,6 +434,22 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
                 "landed",
             ),
         ),
+        # "Understand house type, bedrooms and bathrooms" — the agency's own
+        # new-hiring process, 2026-09-07. `home_type` says what kind of place
+        # it is; this says how much of it there is to clean, which is the half
+        # a helper is actually matched on: a 5-bedroom landed house and a
+        # 2-bedroom condo are the same answer to `home_type` and completely
+        # different jobs. Optional and asked once — this is a 25-field flow and
+        # a client who has given the house type has usually said enough to
+        # shortlist, so it must never become another blocking question.
+        Field(
+            "home_size",
+            "how many bedrooms and bathrooms",
+            "How many bedrooms and bathrooms are there?",
+            max_asks=1,
+            optional=True,
+            group="their household",
+        ),
         # commitments.share_room on the candidate form. A hard filter, not a
         # preference: every helper is profiled on whether she will share a room,
         # and plenty will not. Asking the employer nothing about it left the
@@ -495,15 +535,31 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
                 "experienced with Singapore employers",
             ),
         ),
+        # The agency's process asks for the preferred EXPERIENCE type, and
+        # names four: first-timer, ex-Singapore, ex-abroad, transfer
+        # (2026-09-07). The old two-way question — "transfer, or a new hire
+        # from overseas?" — could not record the distinction the office
+        # actually filters on, because "new hire from overseas" collapses a
+        # helper who has never left home with one who has already worked two
+        # contracts in Hong Kong. Those are different people at different
+        # salaries. Same key, so nothing downstream moves; only the question
+        # and the option set widen.
         Field(
             "hire_source",
-            "transfer or new hire",
-            "Would you prefer a transfer helper already in Singapore, or a new hire "
-            "from overseas?",
+            "the kind of experience they want",
+            "Are you open to a first-timer, or would you rather someone with "
+            "experience - either she has worked in Singapore before, worked "
+            "abroad, or is a transfer helper already here?",
             max_asks=1,
             optional=True,
             group="their preferences",
-            options=("transfer", "new hire from overseas", "no preference"),
+            options=(
+                "first-timer",
+                "worked in Singapore before",
+                "worked abroad",
+                "transfer helper already in Singapore",
+                "no preference",
+            ),
         ),
         Field(
             "cooking",
@@ -691,8 +747,105 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         _UPDATE_CHANNEL,
         _EMAIL,
     ],
-    # §6 — collects nothing at all.
-    "direct_hiring": [],
+    # §6 — direct hire. Was an EMPTY LIST, which is not the same as "no
+    # questions": the intent routed to the collector, the collector found
+    # nothing to ask, `info_complete` fired on the first turn, and the ticket
+    # that reached an agent said "wants us to process a helper they have
+    # already chosen" and nothing else — not who she is, not where she is, not
+    # whether she is free to start. The agent had to begin the conversation
+    # again.
+    #
+    # The six helper questions are the agency's own list (service process
+    # table, 2026-09-07), in their order: who she is and how to reach her, then
+    # where she is, then what has to be unwound before she can start. Their
+    # note on the timeline is that there isn't one — it depends on her
+    # location, nationality, employment status, availability and any notice or
+    # clearance — which is exactly why all five are asked before anyone quotes
+    # a date. The answer to "how long will it take" lives in the knowledge base
+    # (Ming Hwee Service Notes), not here.
+    #
+    # `notice_clearance` is gated on her being employed: a helper already back
+    # in her home country has nothing to serve out, and asking reads as though
+    # we have not listened. Keys are deliberately `helper_`-prefixed so none of
+    # them collide with the candidate flow's own `nationality` / `availability`,
+    # which mean the opposite person.
+    "direct_hiring": [
+        Field("full_name", "name", "May I know your name?", group="who they are"),
+        Field(
+            "helper_name",
+            "the helper's full name",
+            "May I know the full name of the helper you would like to hire?",
+            max_asks=2,
+            group="the helper",
+        ),
+        Field(
+            "helper_contact",
+            "the helper's contact number",
+            "What is the best number to reach her on?",
+            max_asks=2,
+            group="the helper",
+        ),
+        Field(
+            "helper_nationality",
+            "the helper's nationality",
+            "Which country is she from?",
+            max_asks=2,
+            group="the helper",
+            options=(
+                "Philippines",
+                "Indonesia",
+                "Myanmar",
+                "India",
+                "Sri Lanka",
+                "other",
+            ),
+        ),
+        Field(
+            "helper_location",
+            "where the helper is now",
+            "Where is she at the moment - here in Singapore, back in her home "
+            "country, or working in another country?",
+            max_asks=2,
+            group="the helper",
+            options=(
+                "in Singapore",
+                "in her home country",
+                "working in another country",
+            ),
+        ),
+        Field(
+            "employment_status",
+            "her current employment status",
+            "Is she working for someone at the moment, or is she free to take "
+            "on a new job?",
+            max_asks=2,
+            group="the helper",
+            options=(
+                "currently employed",
+                "between jobs",
+                "never worked overseas before",
+            ),
+        ),
+        Field(
+            "helper_availability",
+            "when she can start",
+            "When would she be available to start?",
+            max_asks=2,
+            group="the helper",
+        ),
+        Field(
+            "notice_clearance",
+            "any notice period or clearance still to be completed",
+            "Does she still have a notice period to serve, or any clearance to "
+            "get from her current employer before she can leave?",
+            max_asks=1,
+            optional=True,
+            group="the helper",
+            gate=_STILL_EMPLOYED,
+        ),
+        _UPDATE_CHANNEL,
+        _EMAIL,
+    ],
     # §4
     # §4 — replacement. Four questions were not enough to shortlist anybody:
     # the agent got a name, a reason and a date, then had to start the
@@ -1467,7 +1620,8 @@ _DETAIL_LABELS = {
     "special_duties": "Extra duties",
     "pet_detail": "Pet details",
     "languages": "Languages at home",
-    "hire_source": "Transfer or new hire",
+    "hire_source": "Experience wanted",
+    "home_size": "Bedrooms / bathrooms",
     "cooking": "Cooking",
     "rest_day": "Rest day",
     "additional_notes": "Also mentioned",
@@ -1489,6 +1643,16 @@ _DETAIL_LABELS = {
     "passport_expiry": "Passport expires",
     "leave_dates": "Travel dates",
     "employer_consent": "Employer consent",
+    # Direct hire — every one of these is about the helper the employer has
+    # already chosen, so the headings say so. Without them the ticket falls
+    # back to the Field.label, which is written to sit inside a spoken
+    # question ("the helper's full name") and reads oddly as a heading.
+    "helper_contact": "Helper's number",
+    "helper_nationality": "Helper's nationality",
+    "helper_location": "Helper is",
+    "employment_status": "Her employment status",
+    "helper_availability": "She can start",
+    "notice_clearance": "Notice / clearance",
     "reason": "Reason",
     "issue_detail": "Issue",
     "issue_duration": "Ongoing for",

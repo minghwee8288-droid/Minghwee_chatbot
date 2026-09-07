@@ -18,6 +18,17 @@ this file describes what we still intend to change.
 
 ## Next
 
+- [ ] **Missing knowledge-base content — needs Ming Hwee, not code.** The bot will
+      quote each of these the day the row exists, with no code change. The service
+      process + timeline table landed 2026-09-07 and closed the process half; what is
+      still absent is: the **document list** for passport renewal ("what documents are
+      needed" retrieves nothing at all — measured 0.000), and the **agency fee** for
+      passport renewal and for work permit renewal. Also unresolved, and we do not know
+      which side is right: medical insurance minimum reads S$15,000/year in one row and
+      S$60,000/year in another (MOM's own figure is $15,000), and Form A prices
+      insurance at $590 while the FAQ says $280-350 / $400-520. The bot may quote
+      either. Add rows through `scripts/load_service_notes.py` — it is idempotent on
+      question + service_type, so it never rewrites what is already there.
 - [ ] **Seed assignment.** `cb_round_robin_state` is empty and no `wp_chat_users` row is
       bridged to a profile, so every ticket is created unassigned.
       `scripts/seed_assignment.sql` is written but blocked on two answers from Ming Hwee:

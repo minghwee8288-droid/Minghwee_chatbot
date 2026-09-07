@@ -24,22 +24,44 @@ _SHORT_QUERY_WORDS = 6
 
 
 def _search_query(state: ConversationState) -> str:
-    """Bias the query with the last thing the client said plus the intent."""
+    """Bias the query with the last thing the client said plus the topic."""
     message = (state.get("incoming_text") or "").strip()
     intent = state.get("intent") or ""
-    if intent in {"greeting", "smalltalk", "other"}:
+
+    # A greeting or a piece of small talk is searched as it stands: it is not a
+    # question, and biasing it towards whatever is in flight would go looking
+    # for an answer nobody asked for.
+    if intent in {"greeting", "smalltalk"}:
         return message
 
-    readable_intent = intent.replace("_", " ")
+    topic = intent
+    if intent == "other":
+        # `other` is the classifier's shrug — a real question it could not
+        # label. It used to mean the query went to the embedder completely
+        # bare, and a short question then matched NOTHING: three questions into
+        # a passport renewal, "what is the process" scored 0.000 filtered AND
+        # 0.000 unfiltered, so even the widening retry had nothing to widen to
+        # and the client got the holding line on a question the records answer
+        # outright. The same four words tagged "(passport renewal)" score 0.57.
+        #
+        # The subject was never missing — it just was not in the intent. The
+        # collection in flight IS the subject, and `_service_filter` below
+        # already trusts `service_type` for exactly this reason. Measured
+        # 2026-09-07 against the agency's process table.
+        topic = state.get("service_type") or ""
+        if not topic:
+            return message
+
+    readable_topic = topic.replace("_", " ")
     if not message:
-        return readable_intent
+        return readable_topic
 
     parts = [message]
     if len(message.split()) < _SHORT_QUERY_WORDS:
         previous = last_bot_line(state.get("history_text") or "")
         if previous:
             parts.append(previous)
-    parts.append(f"({readable_intent})")
+    parts.append(f"({readable_topic})")
     return "\n".join(parts)
 
 

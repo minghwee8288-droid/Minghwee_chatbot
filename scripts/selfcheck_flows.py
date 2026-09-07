@@ -24,6 +24,9 @@ from app.graph.prompts.system import RULES
 D = chr(36)
 take = [f.key for f in t.applicable_fields("transfer_employer", {"transfer_direction": "taking on a transfer helper"})]
 rel  = [f.key for f in t.applicable_fields("transfer_employer", {"transfer_direction": "releasing my current helper"})]
+dh_emp  = [f.key for f in t.applicable_fields("direct_hiring", {"employment_status": "currently employed"})]
+dh_free = [f.key for f in t.applicable_fields("direct_hiring", {"employment_status": "between jobs"})]
+hire_src = next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "hire_source")
 rows = [
  ("transfer TAKE-ON asks her name", "helper_name" in take, False),
  ("transfer RELEASE asks her name", "helper_name" in rel, True),
@@ -35,7 +38,7 @@ rows = [
  ("small-ticket services", sorted(S), ["insurance", "passport_renewal", "renewal"]),
  ("blocks the hiring total", q(f"The total first-year cost is S{D}14,000-17,500."), True),
  ("still quotes salary", q(f"Salaries range from {D}600 to {D}800."), False),
- ("new_hiring field count", len(t.SERVICE_FIELDS["new_hiring"]), 24),
+ ("new_hiring field count", len(t.SERVICE_FIELDS["new_hiring"]), 25),
  ("passport_renewal asks case id", any(f.key == "case_id" for f in t.SERVICE_FIELDS["passport_renewal"]), False),
  ("renewal asks case id", any(f.key == "case_id" for f in t.SERVICE_FIELDS["renewal"]), False),
  ("NO flow asks for a case id",
@@ -55,6 +58,24 @@ rows = [
    if "swim" in (f.label + f.question).lower()], []),
  ("first message is told to introduce Claire",
   "introduction is NOT optional" in ico.COLLECTOR_INTRO_NOTE, True),
+ # --- the agency process table, 2026-09-07 ---------------------------
+ # direct_hiring was an empty list, so it raised a ticket that said only
+ # "wants us to process a helper they have already chosen". These six are
+ # the agency's own list; if the flow is ever emptied again this fails.
+ ("direct_hiring collects the agency's six",
+  [k for k in ("helper_name", "helper_contact", "helper_nationality",
+               "helper_location", "employment_status", "helper_availability")
+   if k not in dh_emp], []),
+ ("employed helper -> asked about notice / clearance",
+  "notice_clearance" in dh_emp, True),
+ ("helper between jobs -> NOT asked about notice",
+  "notice_clearance" in dh_free, False),
+ # "First-timer / Ex-Singapore / Ex-abroad / Transfer" - the old two-way
+ # question could not tell a first-timer from someone with two contracts
+ # behind her, which is a different person at a different salary.
+ ("new_hiring offers all four experience types", len(hire_src.options) >= 4, True),
+ ("new_hiring asks bedrooms / bathrooms",
+  any(f.key == "home_size" for f in t.SERVICE_FIELDS["new_hiring"]), True),
 ]
 bad = 0
 for label, got, want in rows:

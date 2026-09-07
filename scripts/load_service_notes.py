@@ -1,6 +1,8 @@
 """Load the agency's transfer + passport-renewal service notes into the KB.
 
-Ming Hwee sent these timings on 2026-09-03. Until they are IN the knowledge
+Ming Hwee sent these timings on 2026-09-03, and the service process +
+timeline table (transfer, passport renewal, new hiring, direct hiring) on
+2026-09-07. Until they are IN the knowledge
 base the bot cannot say them: every figure is checked against the retrieved
 records by guards.ungrounded_figures, so an unretrieved "6 to 8 weeks" is
 binned and the client gets "I'll check with the team" instead — which is
@@ -113,6 +115,152 @@ ROWS: list[dict[str, Any]] = [
             "scheduled, but securing an appointment can take weeks or months depending "
             "on availability. This is an estimate and can vary with document "
             "verification."
+        ),
+    },
+    # --- 2026-09-07: the agency's service process + timeline table ---------
+    #
+    # Additive only. The five rows above are untouched - the script skips on
+    # question + service_type, so re-running it will not rewrite them.
+    #
+    # What this adds is the PROCESS half. Until now the KB held passport
+    # timings with no steps, and nothing at all for new hiring or direct
+    # hiring, so "what is the process?" fell under the soft floor and the
+    # client got the holding line. It has bitten in testing three times.
+    #
+    # Written from the client's side of the desk, not ours. The failure this
+    # avoids is on record: a "what's the process" question once retrieved the
+    # internal pipeline brief and the bot replied "The process involves three
+    # main stages: first, we capture your requirements and match you with
+    # suitable candidates" - our own workflow, described to the person it is
+    # being run on. So these say what HAPPENS and what the client will be asked
+    # to do, never what our internal stages are called.
+    {
+        "service_type": "transfer",
+        "nationality": "all",
+        "section_heading": "Transfer - the steps",
+        "question": "What are the steps to transfer a helper to a new employer?",
+        "answer": (
+            "First the transfer application is submitted to MOM and we wait for their "
+            "approval, which usually takes 1 to 3 working days. MOM sometimes asks for "
+            "extra documents to be uploaded, and that adds to the wait. Once MOM "
+            "approves it the required insurance is purchased, and once the insurance "
+            "is transmitted the helper can start work with her new employer the "
+            "following day."
+        ),
+    },
+    {
+        "service_type": "passport_renewal",
+        "nationality": "all",
+        "section_heading": "Passport renewal - the steps",
+        "question": "What is the process for renewing my helper's passport?",
+        "answer": (
+            "It runs through her own country's embassy in Singapore, so the steps "
+            "depend on her nationality. In every case an appointment at the embassy "
+            "has to be secured first, the helper attends it in person, the passport is "
+            "then processed, and it is made ready for collection in Singapore. What "
+            "differs is how long each part takes and where the passport is actually "
+            "printed. Tell us her nationality and we can be specific."
+        ),
+    },
+    {
+        "service_type": "passport_renewal",
+        "nationality": "PH",
+        "section_heading": "Passport renewal - Filipino helper, the steps",
+        "question": "What is the process for renewing a Filipino helper's passport?",
+        "answer": (
+            "An appointment is made at the Embassy of the Republic of the Philippines "
+            "in Singapore and the helper attends it in person. The passport is then "
+            "processed and printed in the Philippines, shipped back to Singapore, and "
+            "made ready for collection here. From the date of the embassy appointment "
+            "it usually takes about 6 to 8 weeks, though that can vary with "
+            "appointment availability and document verification."
+        ),
+    },
+    {
+        "service_type": "passport_renewal",
+        "nationality": "ID",
+        "section_heading": "Passport renewal - Indonesian helper, the steps",
+        "question": "What is the process for renewing an Indonesian helper's passport?",
+        "answer": (
+            "It is processed through the Indonesian embassy in Singapore. An online "
+            "appointment is booked, the helper attends in person during weekday "
+            "operating hours, and the renewal is processed from there - usually about "
+            "3 working days. That can vary with appointment availability and document "
+            "verification."
+        ),
+    },
+    {
+        "service_type": "passport_renewal",
+        "nationality": "MM",
+        "section_heading": "Passport renewal - Myanmar helper, the steps",
+        "question": "What is the process for renewing a Myanmar helper's passport?",
+        "answer": (
+            "There are three parts: securing an appointment, attending it in person, "
+            "and the renewal being processed. Once the appointment is secured the "
+            "in-person part is generally completed within a day. The waiting time for "
+            "the appointment itself is the long part - it can run to weeks or months "
+            "depending on availability, so it is worth starting early."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - what to expect",
+        "question": "What is the process for hiring a new helper?",
+        "answer": (
+            "We start by going through what you need. That covers who is at home and "
+            "the ages of any children or elderly family members, the type of home and "
+            "how many bedrooms and bathrooms there are, whether you have pets or any "
+            "dietary restrictions, and what her main and secondary duties would be. "
+            "Then we take your preferences - which nationality you would like, and "
+            "whether you are open to a first-timer or would rather someone who has "
+            "worked in Singapore before, worked abroad, or is a transfer helper "
+            "already here. We also ask when you need her to start. With all of that we "
+            "recommend the helpers who genuinely suit your household, rather than "
+            "sending you a stack of profiles to sift through."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "all",
+        "section_heading": "New hiring - start date",
+        "question": "How long does it take to hire a new helper?",
+        "answer": (
+            "There is no single answer, because it turns on your requirements and on "
+            "which helper you choose. What we work to is your own date - so the "
+            "question we ask is when you need her to start, and we plan back from "
+            "that. A consultant will confirm the timeline once your requirements are "
+            "in and we know which helper you are going for."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - what to expect",
+        "question": "What is the process for a direct hire?",
+        "answer": (
+            "A direct hire is one where you have already found the helper yourself and "
+            "want us to process her. We take her full name and contact number, confirm "
+            "where she is at the moment - here in Singapore, back in her home country, "
+            "or working in another country - along with her nationality, whether she "
+            "is currently employed, and when she would be free to start. If she is "
+            "employed overseas we also check whether she has a notice period to serve "
+            "or any clearance to obtain from her current employer before she can "
+            "leave. Once we have that we can set out the procedure, the documents "
+            "required, the likely timeframe and the costs."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "nationality": "all",
+        "section_heading": "Direct hire - timing",
+        "question": "How long does a direct hire take?",
+        "answer": (
+            "There is no fixed timeline for a direct hire. It depends on where the "
+            "helper is, her nationality, whether she is currently employed, when she "
+            "is available, and whether she has a notice period or clearance to "
+            "complete before she can leave her current job. Once we have those details "
+            "we can give you a proper estimate rather than a guess."
         ),
     },
 ]

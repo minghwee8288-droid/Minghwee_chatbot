@@ -362,6 +362,7 @@ _PORTABLE_ACROSS_SERVICES = {
     "care_type",
     "household",
     "home_type",
+    "home_size",
     "languages",
     "budget",
     "referral_source",

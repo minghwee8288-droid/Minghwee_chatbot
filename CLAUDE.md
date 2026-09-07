@@ -192,6 +192,9 @@ because the lead is opened early and the ticket is created much later.
 | A returning client is never asked if they have hired before | `info_collector._known_fields` | Filled from non-archived `placements`. Only a POSITIVE count is evidence — 0 also means "unknown number". |
 | An answer to our own question cannot be dragged onto a parked topic | `intent_classifier` (live-collection rule) | Unless the client names that service or chases its status. |
 | A job-seeker is never met with a holding line | `intent_classifier._JOBSEEKER_PATTERN` | "need a job", "provide work to us", "someone's home … work", "I am a maid" force `candidate_registration`. Skipped for a known employer, so "someone to work at **my** home" stays `new_hiring`. |
+| A generic question mid-collection is searched with the service as its subject | `rag_retriever._search_query` | `intent=other` used to send the message bare. "what is the process" then scored **0.000 filtered and unfiltered**. |
+| A direct hire collects something | `SERVICE_FIELDS["direct_hiring"]` | Was an empty list, so the ticket said only "wants us to process a helper they have already chosen". Ten fields now; asserted. |
+| The notice-period question is only put about a helper who is still employed | `_STILL_EMPLOYED` gate | `excludes` first, so "free to take a new job" and "between jobs" do not match on the word they contain. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -469,6 +472,49 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-07** — **The agency's service process + timeline table, added end to end.**
+  Purely additive: nothing was removed or reworded except where a question could not
+  record the answer the table asks for. (A) **`direct_hiring` was an empty field list.**
+  Not "no questions" — the intent routed to the collector, the collector found nothing to
+  ask, `info_complete` fired on turn one, and the ticket that reached an agent said
+  *"wants us to process a helper they have already chosen"* and nothing else. The agent
+  restarted the conversation every time. It now collects the agency's own six — the
+  helper's full name and number, her nationality, where she is (Singapore / home country /
+  working abroad), her employment status, and when she can start — plus `full_name` and
+  the update channel so the lead is contactable, and `notice_clearance` **gated on
+  `_STILL_EMPLOYED`**: a helper already home has no notice to serve, and asking reads as
+  though we did not listen. Keys are `helper_`-prefixed so none collide with the candidate
+  flow's own `nationality`/`availability`, which mean the opposite person. (B) **`new_hiring`
+  gained `home_size`** — "house type, bedrooms and bathrooms" in the table, and `home_type`
+  only ever captured the first: a 5-bedroom landed house and a 2-bedroom condo are the same
+  `home_type` answer and completely different jobs. Optional, asked once, portable. 24 → 25.
+  (C) **`hire_source` widened from two options to four.** The table asks for the preferred
+  *experience* type — first-timer / ex-Singapore / ex-abroad / transfer — and *"transfer, or
+  a new hire from overseas?"* could not record it, because "new hire from overseas" collapses
+  a helper who has never left home with one who has worked two contracts in Hong Kong.
+  Different people, different salaries. Same key, so nothing downstream moved.
+  (D) **Nine knowledge-base rows** via `scripts/load_service_notes.py` (idempotent on
+  question + service_type; the five 2026-09-03 rows were skipped, not rewritten). The
+  process half was simply absent: passport renewal held timings with no steps, and new
+  hiring and direct hiring held nothing at all, which is the gap that produced a holding
+  line in testing three times. Written from the client's side of the desk — the recorded
+  failure here is a "what's the process" question retrieving the internal pipeline brief
+  and the bot replying *"The process involves three main stages: first, we capture your
+  requirements and match you with suitable candidates"*, our own workflow described to the
+  person it is being run on. (E) **`_search_query` now falls back to `service_type` when
+  the intent is `other`.** This was the real blocker and it is measured: three questions
+  into a passport renewal, *"what is the process"* scored **0.000 filtered AND 0.000
+  unfiltered** — no match at all, so even the widening retry had nothing to widen to. The
+  subject was never missing, it just was not in the intent; `_service_filter` two functions
+  down had trusted `service_type` for this exact reason all along. After: new hiring 0.473,
+  passport renewal (MM) 0.472 returning the Myanmar steps, direct hire 0.661, transfer
+  0.479. `greeting`/`smalltalk` are deliberately **not** included — they are not questions,
+  and biasing them would go looking for an answer nobody asked for; an `other` with no
+  service in flight still searches bare (verified 0.000, holding line). `selfcheck_flows.py`
+  is 23 assertions now. **Still missing from the KB and not fixable in code:** the passport
+  renewal **document list** ("what documents are needed" still scores 0.000) and the
+  **agency fee** for passport renewal and work permit renewal.
 
 - **2026-09-04** — **Two tone fixes, both prompts I had written badly.** (A) **The
   opening no longer promises a consultant.** `COLLECTOR_INTRO_NOTE` made Claire say *"and
