@@ -1038,6 +1038,25 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     ],
     "home_leave": [
         Field("helper_name", "helper's name", "May I know your helper's name?", max_asks=2),
+        # Added 2026-09-08 with the agency's home-leave flow, and it is the
+        # field the whole service turns on. Everything differs by nationality:
+        # a Filipino helper needs her ORIGINAL passport, a ticket itinerary and
+        # six embassy forms signed in wet ink, takes about 4 weeks and costs
+        # $400; an Indonesian helper needs copies and one form we provide,
+        # takes about 2 weeks and costs $250. Without this the ticket does not
+        # say which embassy, the retrieval filter is dropped (see
+        # rag_retriever._nationality) so both routes compete, and the bot can
+        # quote the wrong price against the wrong deadline. The agency's own
+        # step 1 is "confirm nationality and intended travel dates".
+        #
+        # Portable, and the same key passport_renewal uses, so a client who has
+        # already told us in another enquiry is not asked twice.
+        Field(
+            "nationality",
+            "nationality",
+            "Which country is she from?",
+            max_asks=2,
+        ),
         Field(
             "leave_dates",
             "travel dates",

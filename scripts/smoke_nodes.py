@@ -100,6 +100,21 @@ CASES = [
       "collected_info": {"helper_name": "Shushi", "nationality": "Myanmar"},
       "asked_field_counts": {"helper_name": 1, "nationality": 1},
       "history_text": "bot: Which country is her passport from?"}),
+    # Home leave, the two halves of the route branch. A cost question with the
+    # nationality unknown must raise the caveat; once she is Filipino it must
+    # not, because there is then one answer and it is $400.
+    ("info_collector", "home leave, no nationality",
+     {"service_type": "home_leave", "intent": "home_leave",
+      "incoming_text": "how much does home leave cost",
+      "collected_info": {"helper_name": "Liza"},
+      "asked_field_counts": {"helper_name": 1},
+      "history_text": "You: May I know your helper's name?"}),
+    ("info_collector", "home leave, nationality known",
+     {"service_type": "home_leave", "intent": "home_leave",
+      "incoming_text": "how much does home leave cost",
+      "collected_info": {"helper_name": "Liza", "nationality": "Filipino"},
+      "asked_field_counts": {"helper_name": 1, "nationality": 1},
+      "history_text": "You: Which country is she from?"}),
     ("info_collector", "direct hire",
      {"service_type": "direct_hiring", "intent": "direct_hiring",
       "incoming_text": "I already found a helper, can you process her",

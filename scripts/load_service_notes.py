@@ -1149,6 +1149,198 @@ ROWS: list[dict[str, Any]] = [
             "completing and signing. You do not have to source any of these yourself."
         ),
     },
+
+    # --- 2026-09-08: home leave -----------------------------------------------
+    #
+    # The KB held three home-leave rows and none of them was operational: is it
+    # compulsory, who pays for the flights, and one untitled chunk. No document
+    # list, no process, no fee, no lead time - so every practical question about
+    # a home leave got the holding line, exactly as passport renewal did before
+    # 2026-09-07.
+    #
+    # The route is decided by nationality and it changes MORE here than it does
+    # for a passport renewal: the Philippines needs the ORIGINAL passport, a
+    # ticket itinerary and six embassy forms returned with original signatures,
+    # takes about 4 weeks and costs $400; Indonesia needs copies and one form we
+    # provide, takes about 2 weeks and costs $250. Quote the wrong one and the
+    # client has the wrong price, the wrong deadline and the wrong paperwork.
+    # info_collector._ROUTE_BY_NATIONALITY covers the turns where we do not yet
+    # know which of the two applies.
+    #
+    # Kept OUT as internal: "confirm embassy appointment availability with the
+    # runner" instructs our staff. The client-facing fact underneath - that we
+    # check what is available before giving them a date - is in the rows below.
+    #
+    # No Myanmar fee, timeline or document list was given, so none is stated.
+    {
+        "service_type": "home_leave",
+        "nationality": "all",
+        "section_heading": "Home leave - what it involves",
+        "question": "What is home leave and what does Ming Hwee handle?",
+        "answer": (
+            "Home leave is your helper going back to her home country between "
+            "contracts and then returning to work for you. We handle the embassy "
+            "endorsement, the levy waiver for the period she is away, deferring her "
+            "six-monthly medical if one falls due while she is out, and coordinating "
+            "her flights and her return. The embassy endorsement itself is usually "
+            "approved within about 10 working days, but the overall lead time is "
+            "longer and depends on her nationality."
+        ),
+    },
+    {
+        "service_type": "home_leave",
+        "nationality": "all",
+        "section_heading": "Home leave - documents",
+        "question": "What documents are needed for my helper's home leave?",
+        "answer": (
+            "It depends on her nationality. For a Filipino helper we need a copy of "
+            "your NRIC, a copy of her work permit, her ORIGINAL passport and her "
+            "ticket itinerary, plus the embassy set we prepare - the contract, the "
+            "Undertaking Form, Annex A, the Balik-Manggagawa Information Sheet, the "
+            "OFW Information Sheet and the Home Leave OEC form - all returned with "
+            "original signatures. For an Indonesian helper we need a copy of your "
+            "NRIC, a copy of her work permit and a copy of her passport, plus the "
+            "Home Leave form we provide for her to complete and sign. Tell us her "
+            "nationality and we can be exact."
+        ),
+    },
+    {
+        "service_type": "home_leave",
+        "nationality": "PH",
+        "section_heading": "Home leave - Philippines documents",
+        "question": "What documents does a Filipino helper need for home leave?",
+        "answer": (
+            "From you we need a copy of your NRIC, a copy of her work permit, her "
+            "ORIGINAL passport rather than a copy, and her ticket itinerary. We "
+            "prepare the embassy set - the contract, the Undertaking Form, Annex A, "
+            "the Balik-Manggagawa Information Sheet, the OFW Information Sheet and "
+            "the Home Leave OEC form - and each of those has to come back to us with "
+            "an original signature on it, not a scan or a photocopy. Allow about 4 "
+            "weeks, because an embassy appointment is required."
+        ),
+    },
+    {
+        "service_type": "home_leave",
+        "nationality": "ID",
+        "section_heading": "Home leave - Indonesia documents",
+        "question": "What documents does an Indonesian helper need for home leave?",
+        "answer": (
+            "From you we need a copy of your NRIC, a copy of her work permit and a "
+            "copy of her passport - the original is not required. We provide the Home "
+            "Leave form for her to complete and sign, and we deal with the embassy "
+            "ourselves. Allow about 2 weeks."
+        ),
+    },
+    {
+        "service_type": "home_leave",
+        "nationality": "all",
+        "section_heading": "Home leave - process",
+        "question": "What is the process for arranging my helper's home leave?",
+        "answer": (
+            "Six steps. First we take her passport and contract details and confirm "
+            "her nationality and the dates she wants to travel. Second we check what "
+            "embassy appointments are actually available and tell you the lead time - "
+            "about 4 weeks for a Filipino helper, about 2 weeks for an Indonesian "
+            "one. Third we ask you for the documents her embassy needs, which differ "
+            "by nationality. Fourth we prepare the endorsement forms, get the "
+            "signatures required and submit them. Fifth we process the levy waiver "
+            "for the period she is away and defer her six-monthly medical if one "
+            "falls due. Sixth we coordinate her flights and her return, and keep you "
+            "updated from submission through to the day she is back."
+        ),
+    },
+    {
+        "service_type": "home_leave",
+        "nationality": "all",
+        "section_heading": "Home leave - timing",
+        "question": "How long does it take to arrange home leave?",
+        "answer": (
+            "It depends on her nationality. For a Filipino helper allow about 4 "
+            "weeks, because an embassy appointment has to be booked. For an "
+            "Indonesian helper allow about 2 weeks. The endorsement itself is usually "
+            "approved within about 10 working days once it is in. We check what "
+            "appointments are available before giving you a date to work to, so the "
+            "earlier we have the documents the more choice there is."
+        ),
+    },
+    {
+        "service_type": "home_leave",
+        "nationality": "all",
+        "section_heading": "Home leave - cost",
+        "question": "How much does home leave cost?",
+        "answer": (
+            "It is $400 for a Filipino helper and $250 for an Indonesian helper. That "
+            "covers the embassy endorsement and the paperwork we handle for you. "
+            "Flights are separate, and who pays for them follows what your employment "
+            "contract says. If a Filipino helper's application has to be rushed there "
+            "is an additional $40, and the embassy will want proof of the urgency or "
+            "a letter explaining it. If your helper is of another nationality, tell "
+            "us and a consultant will confirm the cost for her embassy."
+        ),
+    },
+    {
+        "service_type": "home_leave",
+        "nationality": "PH",
+        "section_heading": "Home leave - urgent requests",
+        "question": "Can my helper's home leave be arranged urgently?",
+        "answer": (
+            "For a Filipino helper, yes - there is an additional $40 on top of the "
+            "$400 for an urgent request, and the embassy will want proof of the "
+            "urgency or a letter of explanation setting out why it cannot wait, so "
+            "have that ready. Without an urgent request, allow the usual 4 weeks "
+            "because the appointment still has to be booked."
+        ),
+    },
+    {
+        "service_type": "home_leave",
+        "nationality": "all",
+        "section_heading": "Home leave - levy",
+        "question": "Do I still pay the levy while my helper is on home leave?",
+        "answer": (
+            "The levy is waived for the period she is away on home leave. That waiver "
+            "is automatic and we process it as part of the arrangement, so there is "
+            "nothing separate for you to file."
+        ),
+    },
+    {
+        "service_type": "home_leave",
+        "nationality": "all",
+        "section_heading": "Home leave - six-monthly medical",
+        "question": "What happens to the six-monthly medical while my helper is on home leave?",
+        "answer": (
+            "If one falls due while she is away it is deferred, and we arrange that as "
+            "part of the same request rather than leaving you to sort it out. She "
+            "takes it after she is back."
+        ),
+    },
+    {
+        "service_type": "home_leave",
+        "nationality": "all",
+        "section_heading": "Home leave - what the employer does",
+        "question": "What do I need to do as the employer for my helper's home leave?",
+        "answer": (
+            "Tell us her nationality and the dates she wants to travel, then give us "
+            "the documents her embassy needs. A copy of your NRIC and a copy of her "
+            "work permit either way; a Filipino helper also needs her original "
+            "passport and her ticket itinerary, an Indonesian helper needs a copy of "
+            "her passport. After that you sign the forms we prepare and return them "
+            "to us, and for a Filipino helper those need original signatures. We take "
+            "care of the embassy, the levy waiver, the medical deferral and the "
+            "flight coordination."
+        ),
+    },
+    {
+        "service_type": "home_leave",
+        "nationality": "all",
+        "section_heading": "Home leave - flights",
+        "question": "Does Ming Hwee arrange the flights for home leave?",
+        "answer": (
+            "We coordinate the flight booking and her return travel, and we keep you "
+            "updated from the day the application goes in through to the day she is "
+            "back. Who pays for the ticket is a separate matter and follows what your "
+            "employment contract says."
+        ),
+    },
 ]
 
 

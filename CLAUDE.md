@@ -215,6 +215,9 @@ because the lead is opened early and the ticket is created much later.
 | A returning client is welcomed back on every flow | `info_collector.returning_note` | Fired off `first_time_hire`, which only `new_hiring` defines, so transfer/renewal/passport got nothing. Now also fires on the opening turn. |
 | An answer to our own question is never routed away from the collection that asked it | `guards.answering_our_question` + `route_after_rag` | The classifier's stickiness fixes `service_type` but not `intent`, and the money branch reads `intent`. |
 | Every employer flow asks the client's name | `SERVICE_FIELDS[...]["full_name"]` | `transfer_employer` had none, so rule 1c had nothing to use and the lead carried only a phone number. |
+| A home leave never quotes a route we have not established | `info_collector._ROUTE_BY_NATIONALITY` | The nationality changes the documents, the lead time **and** the price (PH original passport + itinerary, 4 weeks, $400; ID copies, 2 weeks, $250). |
+| The home-leave caveat catches money and timing; the passport one deliberately does not | `_HOME_LEAVE_ROUTE_DEPENDENT` vs `_NATIONALITY_DEPENDENT` | A passport renewal is $450 either way, so suppressing that answer would help nobody. |
+| Home leave asks which country she is from | `SERVICE_FIELDS["home_leave"]` | It asked her name and the travel dates only, so there was nothing to route on. The agency's own step 1 is "confirm nationality and intended travel dates". |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -506,6 +509,48 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **Home leave: the per-nationality checklist, the fees, the process,
+  and the question the whole service turns on.** 12 rows, one new field, one guard.
+  (A) **The knowledge base held three home-leave rows and none of them was
+  operational** — is it compulsory, who pays for the flights, and one untitled chunk.
+  No documents, no process, no fee, no lead time, so every practical question about a
+  home leave got the holding line. Retrieval through the real path after loading:
+  **0.502–0.811, all 17 probes above the floor**, with the new rows top for 12 of them
+  and the three controls unmoved (passport process 0.502, new-hiring process 0.473,
+  passport cost 0.551).
+  (B) **`home_leave` did not ask the helper's nationality**, and it is the field
+  everything follows from — more so than on a passport renewal, where the nationality
+  changes only the paperwork. Here it changes the paperwork **and the lead time and the
+  price**: a Filipino helper needs her ORIGINAL passport, a ticket itinerary and six
+  embassy forms returned with original signatures, takes about 4 weeks and costs $400; an
+  Indonesian helper needs copies and one form we provide, takes about 2 weeks and costs
+  $250. Without it the ticket does not say which embassy, and the retrieval filter is
+  dropped when the nationality is unknown, so both routes compete and the top row is
+  whichever phrasing scored best. Quoting Indonesia's $250 and 2 weeks to an employer of
+  a Filipino helper is the wrong budget against the wrong deadline. The agency's own step
+  1 is "confirm nationality and intended travel dates", so this is their question, not an
+  invented one. Portable, and the same key `passport_renewal` uses, so a client who has
+  already told us is not asked twice. 2 fields → 3.
+  (C) **The route caveat generalised from one service to a table.**
+  `_ROUTE_BY_NATIONALITY` maps a service to its own pattern **and its own list of what
+  not to name**, because the two services are route-split on different things.
+  `_HOME_LEAVE_ROUTE_DEPENDENT` carries the timing and the money words that
+  `_NATIONALITY_DEPENDENT` deliberately leaves out — and the passport pattern is
+  **unchanged**, on purpose: a passport renewal is $450 for either nationality, so making
+  it fire on "how much" would suppress an answer it can safely give. Verified by the
+  branch actually taken, not by reading it: the caveat is present for a cost, a timing
+  and a documents question with the nationality unknown, absent once she is Filipino,
+  absent on an ordinary answer, and absent for another service. 10 route-dependent
+  phrasings fire, 9 ordinary answers stay quiet.
+  Kept OUT as internal: *"confirm embassy appointment availability with the runner"* —
+  that instructs our staff. The client-facing fact underneath, that we check what is
+  available before giving them a date, is in the timing row.
+  **No Myanmar fee, timeline or document list was given, so none is stated** — the same
+  rule as the passport fee, and `home_leave` is not in `COST_WITHHELD_SERVICES`, so
+  whatever is here goes out and an invented third would go out too.
+  `home_leave` is 3 fields. `selfcheck_flows.py` is 106 assertions; `smoke_nodes.py` is
+  25 states. **Remaining KB gap: the agency fee for work permit renewal.**
 
 - **2026-09-08** — **A transfer collection drifted into `new_hiring`, and "returning
   client" was offered as an answer to a question our own database answers.** Both from

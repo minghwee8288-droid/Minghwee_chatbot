@@ -404,6 +404,32 @@ rows = [
   "returning client - placed with us before"),
  ("a first-timer still is",
   ico._known_fields({"prior_hires": 0}).get("referral_source"), None),
+ # --- home leave, 2026-09-08 ------------------------------------------
+ # The nationality decides the documents, the lead time AND the price - PH
+ # needs her ORIGINAL passport plus a ticket itinerary, 4 weeks, $400; ID
+ # needs copies, 2 weeks, $250. Quote the wrong route and the client has
+ # budgeted the wrong amount against the wrong deadline. The flow asked
+ # only her name and the travel dates, so there was nothing to route on.
+ ("home leave asks which country she is from",
+  [f.key for f in t.SERVICE_FIELDS["home_leave"]],
+  ["helper_name", "nationality", "leave_dates"]),
+ ("the nationality carries over from another enquiry",
+  "nationality" in ico._PORTABLE_ACROSS_SERVICES, True),
+ ("home leave is route-split by nationality",
+  "home_leave" in ico._ROUTE_BY_NATIONALITY, True),
+ # Unlike passport renewal, the timing and the money are route-split too, so
+ # this pattern has to catch them and the passport one must NOT (a passport
+ # renewal is $450 either way, and suppressing that answer helps nobody).
+ ("a home-leave cost question fires the caveat",
+  bool(ico._HOME_LEAVE_ROUTE_DEPENDENT.search("how much does home leave cost")), True),
+ ("so does a timing question",
+  bool(ico._HOME_LEAVE_ROUTE_DEPENDENT.search("how long does it take")), True),
+ ("an ordinary answer does not",
+  bool(ico._HOME_LEAVE_ROUTE_DEPENDENT.search("she is going in December")), False),
+ ("the passport caveat still ignores cost",
+  bool(ico._NATIONALITY_DEPENDENT.search("how much does it cost")), False),
+ ("no caveat once we know the country",
+  ico._known_nationality({"collected_info": {"nationality": "Filipino"}}), "PH"),
  # A field whose written question spells its options out is asking for all of
  # them; the generic "drop two or three in" rule was overriding that.
  ("enumerated options are named in full",

@@ -224,6 +224,55 @@ _NATIONALITY_DEPENDENT = re.compile(
 )
 
 
+# Home leave runs the same two-route problem one service along, and it bites
+# harder: for a passport renewal the nationality changes the paperwork, but for
+# home leave it changes the paperwork AND the lead time AND the price. The
+# Philippines needs her ORIGINAL passport, a ticket itinerary and six embassy
+# forms returned with original signatures, takes about 4 weeks and costs $400.
+# Indonesia needs copies and one form we provide, takes about 2 weeks and costs
+# $250. Answer the wrong one and the client has budgeted the wrong amount
+# against the wrong deadline and gathered the wrong documents.
+#
+# So this pattern deliberately carries what _NATIONALITY_DEPENDENT leaves out -
+# the timing and the money words. It is a separate regex rather than a widening
+# of that one for exactly the reason recorded there: the passport durations come
+# from rows that are NOT nationality-split, and a cost question on a passport
+# renewal has one answer ($450 either way), so making the passport note fire on
+# "how long" or "how much" would suppress answers it can safely give.
+_HOME_LEAVE_ROUTE_DEPENDENT = re.compile(
+    r"\b(process|procedure|step|steps|document|documents|paperwork|form|forms|"
+    r"requirement|requirements|need(?:ed)?|require[ds]?|submit|sign|embassy|"
+    r"endorsement|itinerary|contract|appointment|"
+    r"how\s+long|how\s+soon|how\s+much|how\s+quickly|how\s+early|"
+    r"when\s+can|when\s+should|when\s+would|when\s+do\s+i|"
+    r"lead\s?time|timeline|time\s?frame|duration|"
+    r"cost|costs|price|prices|fee|fees|charge|charges|"
+    r"how\s+does\s+it\s+work|what\s+happens)\b",
+    re.IGNORECASE,
+)
+
+
+# Which services answer differently depending on the helper's nationality, and
+# what counts as a question whose answer would change. Per-service rather than
+# one shared pattern, because the two services are route-split on different
+# things - see the note above _HOME_LEAVE_ROUTE_DEPENDENT.
+#
+# The second half of each entry is what the model is told NOT to name. That is
+# also per-service: a passport renewal must not name a form belonging to one
+# route, and a home leave must not name a fee or a lead time either.
+_ROUTE_BY_NATIONALITY: dict[str, tuple[re.Pattern[str], str]] = {
+    "passport_renewal": (
+        _NATIONALITY_DEPENDENT,
+        "a nationality, an embassy, or a form that only one route needs",
+    ),
+    "home_leave": (
+        _HOME_LEAVE_ROUTE_DEPENDENT,
+        "a nationality, an embassy, a form, a fee, or a lead time that only "
+        "one route needs",
+    ),
+}
+
+
 # A direct hire runs two routes and the client's question almost never says
 # which. A helper already in Singapore on a valid permit skips the embassy and
 # the flight entirely; one overseas goes through both. Unlike the passport
@@ -1117,18 +1166,19 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # the process". Naming the route we have not established is how an employer
     # ends up preparing the wrong paperwork.
     nationality_note = ""
+    route = _ROUTE_BY_NATIONALITY.get(service_type or "")
     if (
-        service_type == "passport_renewal"
+        route
         and not _known_nationality(state)
-        and _NATIONALITY_DEPENDENT.search(state.get("incoming_text") or "")
+        and route[0].search(state.get("incoming_text") or "")
     ):
         nationality_note = (
             f"{chr(10)}{chr(10)}The records above describe MORE THAN ONE route, "
-            "because the paperwork and the embassy visit differ by the helper's "
+            "because the answer differs by the helper's "
             "nationality — and you have not been told hers yet. Do not pick one. "
-            "Do not name a nationality, an embassy, or a form that only one route "
-            "needs. Give only what is true for all of them, say plainly that the "
-            "exact documents depend on her nationality, and ask which country she "
+            f"Do not name {route[1]}"
+            ". Give only what is true for all of them, say plainly that it "
+            "depends on her nationality, and ask which country she "
             "is from. Once you know it you can be specific."
         )
 
