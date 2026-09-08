@@ -826,6 +826,14 @@ async def _process_locked(
         conversation.get("matched_employer_id")
     )
 
+    # The name on their FILE, which is not the same as the name WhatsApp
+    # reports - see contact.get_record_name. Read per turn for the same reason
+    # as the two above: a name added in the portal this morning must count this
+    # afternoon.
+    record_name = await contact_service.get_record_name(
+        conversation.get("matched_employer_id")
+    )
+
     # Topics a human is already working on this thread — read fresh every
     # turn (never persisted on the checkpoint) so a ticket closing anywhere
     # unblocks its topic on the very next message, with no extra sync step.
@@ -843,6 +851,7 @@ async def _process_locked(
         "matched_case_id": conversation.get("matched_case_id"),
         "prior_hires": prior_hires,
         "placed_helper": placed_helper,
+        "record_name": record_name or "",
         "recent_tickets": recent_tickets,
         # Lead columns do not exist on wp_chat_conversations, so an open lead is
         # read per turn rather than stored on the row.

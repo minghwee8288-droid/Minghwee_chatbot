@@ -410,6 +410,35 @@ rows = [
   "returning client - placed with us before"),
  ("a first-timer still is",
   ico._known_fields({"prior_hires": 0}).get("referral_source"), None),
+ # --- the name is asked, not taken off WhatsApp, 2026-09-08 -----------
+ # Agency, on seeing "Hi Vaidik, I'm Claire ... May I know your helper's
+ # name?" go to a number we had never spoken to: "We are picking the name
+ # from WhatsApp automatically ... this is what we don't want from now on in
+ # passport renewal flow." Ask when our records do not have it; greet when
+ # they do. The push name is a profile label, not the name on a document.
+ ("passport renewal never takes the name off WhatsApp",
+  "passport_renewal" in t.NAME_FROM_RECORD_ONLY, True),
+ ("a new number is asked for it",
+  ico._known_fields({"customer_name": "Vaidik"},
+                    "passport_renewal").get("full_name"), None),
+ ("a client on our file is greeted, not asked",
+  ico._known_fields({"customer_name": "Vaidik", "record_name": "Vaidik Dubey"},
+                    "passport_renewal").get("full_name"), "Vaidik Dubey"),
+ # Scoped deliberately: the opposite behaviour was itself a fix (2026-09-01).
+ ("every other flow still uses the push name",
+  ico._known_fields({"customer_name": "Vaidik"},
+                    "new_hiring").get("full_name"), "Vaidik"),
+ # The briefing leads with the money and the time. Their words: "It is going
+ # straight forward, like 'We handle it for you.' We don't want this thing:
+ # We have to tell the estimated time and the cost. and then We move forward
+ # to the process."
+ ("the briefing leads with the cost and the timing",
+  "WHAT IT COSTS and HOW LONG IT TAKES" in tpl.SERVICE_BRIEFING_NOTE, True),
+ ("and no longer opens by reassuring them",
+  "Do not open with reassurance" in tpl.SERVICE_BRIEFING_NOTE, True),
+ # It claimed the fee was not in the records and produced it a message later.
+ ("it may not claim a figure is missing when it is there",
+  "do NOT claim something is missing" in tpl.SERVICE_BRIEFING_NOTE, True),
  # --- passport renewal explains itself, 2026-09-08 --------------------
  # Agency: "we have to tell them the whole process, the documents required,
  # the cost/fees, and how long it takes ... a new user doesn't know how the

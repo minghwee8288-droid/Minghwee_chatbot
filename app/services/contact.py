@@ -144,6 +144,31 @@ async def find_active_case(employer_id: str) -> str | None:
         return None
 
 
+async def get_record_name(employer_id: str | None) -> str | None:
+    """The employer's name as OUR RECORDS hold it, never as WhatsApp reports it.
+
+    These are two different things and the agency drew the line between them on
+    2026-09-08. `conversation.customer_name` is the WhatsApp push name - set by
+    the client on their own profile, written to the row the first time they
+    message, and never overwritten afterwards because the identity patch only
+    fills it when it is empty. So for a known employer it is still the push
+    name, not the name on their file.
+
+    Used to decide whether to greet them or to ask. A flow in
+    NAME_FROM_RECORD_ONLY greets on this and asks when it is missing; the push
+    name is not evidence either way.
+    """
+    if not employer_id:
+        return None
+    try:
+        employer = await db.select_one("employers", "*", id=employer_id)
+    except Exception:  # noqa: BLE001 - a missing name asks a question, it does not fail
+        logger.warning("Could not read the employer record for a name", exc_info=True)
+        return None
+    name = _name_of(employer) if employer else None
+    return str(name).strip()[:300] or None if name else None
+
+
 async def count_prior_hires(employer_id: str | None) -> int:
     """How many helpers this employer has actually been placed with, by us.
 

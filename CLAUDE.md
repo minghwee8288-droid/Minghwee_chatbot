@@ -233,6 +233,8 @@ because the lead is opened early and the ticket is created much later.
 | The briefing is remembered across turns | `state.briefed_services` (`_merge_unique`) | Deliberately absent from `_TURN_RESET`, like `created_lead_id`. |
 | A briefing never happens on a parked topic, nor over a client's question | `rag_retriever._briefing_turn` | Only the collector briefs; `blocked_topic_responder` never sets `briefed_services`, so without this every later turn would retrieve the briefing set instead of its own answer. |
 | A cross-question may not be answered against the records | prompt `ANSWER_THEN_ASK_INSTRUCTION` | "Can she go to the embassy by herself" was answered "Yes" for an **Indonesian** helper, whom our runner collects from the home. |
+| The WhatsApp push name is not the client's name | `ticket.NAME_FROM_RECORD_ONLY` + `contact.get_record_name` | `passport_renewal` asks unless our own records hold it. `customer_name` is a profile label; `record_name` is the file. |
+| The briefing leads with the cost and the timing | `SERVICE_BRIEFING_NOTE` | "This is straightforward and we'll handle it for you" opens with nothing the client can act on. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -524,6 +526,48 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **The passport-renewal name comes from our records or from the
+  client, never from WhatsApp; and the briefing leads with the money and the time.**
+  Both from the agency's test of the new flow.
+  (A) **"Hi Vaidik, I'm Claire ... May I know your helper's name?"** went to a number we
+  had never spoken to, skipping the employer's own name entirely — because
+  `_with_push_name` filled `full_name` from the WhatsApp profile (2026-09-01, to stop the
+  bot asking for a name it had just used in its greeting). Their rule now: *"ask for the
+  name first if the name is not in the database. If the name is in the database ... greet
+  them before moving forward."* `NAME_FROM_RECORD_ONLY` makes the push name no evidence
+  at all on this flow — it is a label the client set on their own profile, and this flow
+  collects the name that goes on embassy paperwork.
+  (B) **"In the database" needed a source, and `customer_name` is not one.** It is
+  written from the push name when the conversation row is created, and the identity patch
+  only fills it *when empty* — so for a known employer it is still the push name, not the
+  name on their file. New `contact.get_record_name()` reads `employers` directly and the
+  webhook puts it on every turn as `record_name`; `_known_fields` fills `full_name` from
+  it before anything else. Verified live: a new number gets *"Hi, I'm Claire, Ming Hwee's
+  AI assistant. May I know your name?"*, a client on file gets *"Hi Vaidik, ... may I know
+  your helper's name?"*. Every other flow is untouched — the old behaviour was itself a
+  fix, and they asked for this flow.
+  (C) **Suppressing the field was not enough.** `_contact_block` prints
+  `- WhatsApp name: Vaidik` into the system prompt, so the model would have written "Hi
+  Vaidik" and then asked for the name. The prompt state drops `customer_name` on these
+  flows when no record name exists.
+  (D) **The briefing now opens with the fee and the lead time.** Their words: *"It is
+  going straight forward, like 'We handle it for you.' We don't want this thing: We have
+  to tell the estimated time and the cost. and then We move forward to the process."* Both
+  nationalities now open *"The fee is $450, and it usually takes about 3 working days"* /
+  *"about 6 to 8 weeks"*, then the steps, then the invitation to ask.
+  (E) **It also claimed a figure it had was missing.** The live briefing said *"The fee
+  is not stated in our records, so I'll check the exact amount with the team"* — and the
+  client asked in the next message and was told **$450**, which had been in the retrieved
+  set all along. The note now says outright not to claim something is missing without
+  reading for it, and not to soften an exact price into "approximately".
+  (F) **`UnboundLocalError` a second time in two changes**, and caught the same way: the
+  push-name suppression read `system_prompt_state` a hundred lines above where it is
+  built. `smoke_nodes.py` failed seven states. The flag is set early and applied at the
+  build, the same shape as `client_asked`. **Twice in one day is the pattern, not the
+  accident: this file is long enough that any new flag read in more than one place needs
+  `smoke_nodes.py` run before it is believed.**
+  `selfcheck_flows.py` is 169 assertions; `smoke_nodes.py` is 31 states.
 
 - **2026-09-08** — **Passport renewal now explains itself.** Agency: *"firstly ... ask
   for the employer's name by greeting them by name and ... the helper's name ... then the

@@ -1394,6 +1394,23 @@ SERVICE_FIELDS[TRANSFER_EMPLOYER] += [
 ]
 
 
+# Flows where the client's own name is taken from OUR RECORDS or asked for, and
+# never assumed from the WhatsApp profile.
+#
+# Agency, 2026-09-08, on seeing "Hi Vaidik, I'm Claire ... May I know your
+# helper's name?" go out to a number we had never spoken to: "We are picking the
+# name from WhatsApp automatically ... This is what we don't want from now on in
+# passport renewal flow." The push name is whatever the client set on their own
+# profile - it is a reasonable label for a lead and it is not the employer's
+# name on a document, which is what this flow is collecting.
+#
+# The rule they gave: ask when our records do not have it, greet when they do.
+# Scoped rather than global on purpose - the opposite behaviour was itself a
+# fix (2026-09-01, "stop asking for a name it just used in its greeting"), and
+# they asked for this flow.
+NAME_FROM_RECORD_ONLY = frozenset({"passport_renewal"})
+
+
 # A service that explains itself once, mid-collection, as soon as the one field
 # the explanation depends on has been answered. The value is that field's key.
 #

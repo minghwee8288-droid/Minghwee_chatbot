@@ -419,8 +419,18 @@ def _gates_are_exhaustive(
     )
 
 
-def _known_fields(state: ConversationState) -> dict[str, str]:
+def _known_fields(
+    state: ConversationState, service_type: str | None = None
+) -> dict[str, str]:
     known: dict[str, str] = {}
+
+    # The name on their FILE. Filled before the lead and the push name, because
+    # a master record is the strongest thing we have and the one the agency
+    # means by "if the name is in the database". Absent for a number we have
+    # never matched, which is exactly when the flow must ask.
+    record_name = str(state.get("record_name") or "").strip()
+    if record_name:
+        known["full_name"] = record_name[:300]
 
     # Whether they are a returning client is a matter of record, not a question,
     # and as of 2026-09-04 it is NEVER asked either way. The webhook counts this
@@ -474,7 +484,7 @@ def _known_fields(state: ConversationState) -> dict[str, str]:
 
     lead = state.get("matched_lead")
     if not isinstance(lead, dict):
-        return _with_push_name(state, known)
+        return _with_push_name(state, known, service_type)
 
     # leads.full_name is the EMPLOYER's name; leads_candidate.full_name is the
     # helper's. The same column answers helper_name only on a candidate lead —
@@ -498,10 +508,14 @@ def _known_fields(state: ConversationState) -> dict[str, str]:
         if field_key in {"full_name", "helper_name"} and value.lower().startswith("whatsapp lead"):
             continue
         known.setdefault(field_key, value[:300])
-    return _with_push_name(state, known)
+    return _with_push_name(state, known, service_type)
 
 
-def _with_push_name(state: ConversationState, known: dict[str, str]) -> dict[str, str]:
+def _with_push_name(
+    state: ConversationState,
+    known: dict[str, str],
+    service_type: str | None = None,
+) -> dict[str, str]:
     """Fall back to the WhatsApp push name for full_name, when it is one.
 
     Applied last, so a name the client actually gave us on an earlier enquiry
@@ -510,6 +524,12 @@ def _with_push_name(state: ConversationState, known: dict[str, str]) -> dict[str
     holds the phone, and on a replacement or transfer enquiry that is the
     employer, not the helper being asked about.
     """
+    # ...and on some flows it is not a fallback at all. See
+    # ticket.NAME_FROM_RECORD_ONLY: a passport renewal asks for the name unless
+    # our own records hold it, because the push name is a profile label and this
+    # flow is collecting the name that goes on paperwork.
+    if service_type in ticket_service.NAME_FROM_RECORD_ONLY:
+        return known
     push_name = str(state.get("customer_name") or "").strip()
     if not known.get("full_name") and _looks_like_a_person(push_name):
         known["full_name"] = push_name[:300]
@@ -1114,7 +1134,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     allowed_keys = {field.key for field in ticket_service.fields_for(service_type)}
     known = {
         key: value
-        for key, value in _known_fields(state).items()
+        for key, value in _known_fields(state, service_type).items()
         if key in allowed_keys and not str(previous.get(key) or "").strip()
     }
     if known:
@@ -1320,6 +1340,14 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # smoke_nodes.py caught this one the same way.
     client_asked = bool(_ASKS_SOMETHING.search(state.get("incoming_text") or ""))
 
+    # The prompt prints "- WhatsApp name: Vaidik" in its contact block, so
+    # suppressing the field alone would still have produced "Hi Vaidik" and
+    # then asked for the name. On these flows the model is given the name only
+    # when our records hold it.
+    hide_push_name = service_type in ticket_service.NAME_FROM_RECORD_ONLY and not str(
+        state.get("record_name") or ""
+    ).strip()
+
     briefing_note = ""
     # `answer_first` is the collector's own "they asked us something" flag, and
     # it is the same rule the retriever applies one node earlier: a client who
@@ -1428,6 +1456,13 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
 
     label = service_label(service_type)
     system_prompt_state = {**dict(state), "collected_info": collected}
+    if hide_push_name:
+        # Applied where the prompt state is actually BUILT, not a hundred lines
+        # above it - the flag is set earlier and read here for the same reason
+        # client_asked is. Reading a local before it is assigned is the
+        # 2026-09-04 failure, and smoke_nodes.py failed seven states on this
+        # exact mistake before it could ship.
+        system_prompt_state["customer_name"] = ""
 
     # The client asked something while we were collecting. Retrieval now runs
     # before this node on every turn, so the records are in state and the answer

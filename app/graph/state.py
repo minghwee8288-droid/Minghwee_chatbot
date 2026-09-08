@@ -234,6 +234,11 @@ class ConversationState(TypedDict, total=False):
     # actually placed with them. 0 means "we have no record", NOT "first time" —
     # an unknown number is also 0. Only a positive count is evidence.
     prior_hires: int
+
+    # The employer's name as our own records hold it. Distinct from
+    # customer_name, which is the WhatsApp push name - see
+    # contact.get_record_name and ticket.NAME_FROM_RECORD_ONLY.
+    record_name: str
     # The one helper our records place with this employer, when there is exactly
     # one and the row names her: {"helper_name": ..., "nationality": ...}. None
     # whenever there is any doubt. There is NO passport data in the database to

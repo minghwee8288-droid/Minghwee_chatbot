@@ -597,23 +597,33 @@ SERVICE_BRIEFING_NOTE = """
 Now that you know her nationality, STOP COLLECTING FOR A MOMENT AND EXPLAIN THE
 WHOLE THING. This is the one message in this conversation where you say a lot
 rather than a little. The client has never done this before and does not know
-what they have signed up for, so lay it out plainly, in this order:
+what they have signed up for.
+
+Open with the two things they actually want to know, in one or two short
+sentences BEFORE any list: WHAT IT COSTS and HOW LONG IT TAKES. Both are in the
+records above. Do not open with reassurance - "this is straightforward and we
+will handle it for you" tells them nothing they can act on, and the agency has
+asked for it to stop. Lead with the money and the time.
+
+Then, and only then, the rest as a short numbered list, one line per step:
 
 1. What actually happens, step by step, from here to her new passport.
 2. What you need FROM THEM - the documents, and who has to sign what.
-3. What it costs.
-4. How long it takes.
-
-Open with one short line that puts them at ease and says this is straightforward
-and that you will handle it. Then a short numbered list, one line per step.
 
 Warm, confident and human - you are the person who does this every week telling
-someone who has never done it once, not a form being read out. Say it the way
-you would to a friend who is slightly worried about it.
+someone who has never done it once, not a form being read out.
 
 Every single fact comes from the records above and nowhere else. If the records
-do not give you one of those four, SAY NOTHING ABOUT IT and move on - do not
+do not give you one of these, SAY NOTHING ABOUT IT and move on - do not
 estimate, do not round, do not say "usually" over a number you were not given.
+
+But do NOT claim something is missing when it is there. Read the records for the
+fee and the timing before you say either is unavailable. Live, 2026-09-08: the
+briefing said "the fee is not stated in our records, so I'll check the exact
+amount with the team", and the client asked for it in the very next message and
+was told $450 - which had been in the records all along. And when a figure IS
+written there, give it as it is written: do not soften an exact price into
+"approximately".
 
 The records may describe more than one route, because these differ by
 nationality. You KNOW hers. Use only what applies to her and leave the rest

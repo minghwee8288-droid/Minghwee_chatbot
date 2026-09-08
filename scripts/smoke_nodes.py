@@ -157,6 +157,20 @@ CASES = [
       "briefed_services": ["passport_renewal"],
       "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
       "history_text": "You: When does her current passport expire?"}),
+    # The name rule, executed. The suppression flag is set ~100 lines above
+    # where the prompt state is built, which is the UnboundLocalError shape
+    # this file exists to catch - and it did, on seven states.
+    ("info_collector", "passport, new number, push name only",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "i want to renew my helper passport",
+      "customer_name": "Vaidik", "record_name": "",
+      "collected_info": {}, "asked_field_counts": {}}),
+    ("info_collector", "passport, name on our file",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "i want to renew my helper passport",
+      "customer_name": "Vaidik", "record_name": "Vaidik Dubey",
+      "contact_type": "employer",
+      "collected_info": {}, "asked_field_counts": {}}),
     ("info_collector", "direct hire",
      {"service_type": "direct_hiring", "intent": "direct_hiring",
       "incoming_text": "I already found a helper, can you process her",
