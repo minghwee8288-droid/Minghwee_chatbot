@@ -1363,6 +1363,19 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     )
     if briefing_due:
         briefing_note = SERVICE_BRIEFING_NOTE
+        # ...and if we have no price for HER nationality, say so rather than
+        # reaching for the one sitting beside it in the same record.
+        if not ticket_service.fee_is_known_for(
+            service_type, _known_nationality(state)
+        ):
+            briefing_note += (
+                "\n\nWe do NOT have a fee on record for a helper of this "
+                "nationality. The records name a price for other nationalities; "
+                "that price is theirs and not hers. Do not quote it, do not "
+                "adapt it, and do not give a range. Say in one short sentence "
+                "that a consultant will confirm the cost for her embassy, and "
+                "carry on with the timing and the process."
+            )
 
     # The very first thing this client has ever heard from us. Rule 1 and the
     # stage line in build_system_prompt both call for the introduction, but on a
@@ -1499,7 +1512,6 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             + returning_note
             + requirement_note
             + follow_up_notes.get(next_field.key, "")
-            + briefing_note
             + answer_first
         )
         if next_field.optional:
@@ -1520,20 +1532,13 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             # and neither does introducing yourself before asking anything.
             # Four only where all three are genuinely required: the
             # introduction, the answer to what they asked, and our question.
-            # A four-part briefing plus the next question. The list marker
-            # masking in clamp_reply means a numbered step is not counted as a
-            # sentence, so this is roughly "four sections and a question", not
-            # fourteen sentences of prose.
-            max_sentences=14
-            if briefing_due
-            else 4
+            max_sentences=4
             if (first_contact and answer_first)
             else 3
             if (answer_first or first_contact or small_ticket_note or purpose_note
                 or nationality_note or location_note)
             else 2,
             withhold_cost=service_type in COST_WITHHELD_SERVICES,
-            stepped=briefing_due,
         )
         counts[next_field.key] = 1
         logger.info(
@@ -1556,10 +1561,6 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "info_complete": False,
             "reply": reply,
             "needs_handover": bool(state.get("needs_handover")),
-            # Said once. _merge_unique accumulates and _TURN_RESET leaves this
-            # alone, so a briefing given on turn three is still given on turn
-            # nine - repeating it would be worse than never having given it.
-            "briefed_services": [service_type] if briefing_due else [],
         }
 
     # A service that asks nothing at all (direct hiring, a supplier offering a
@@ -1579,7 +1580,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     instruction = instruction_template.format(
         service_label=label,
         enquiry_label="our fees" if service_type == "fee_enquiry" else "helper salary",
-    ) + dropped_note + answer_first
+    ) + dropped_note + briefing_note + answer_first
     reply = await _write(
         state,
         system_prompt_state,
@@ -1591,8 +1592,29 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         # reads: kept "...a live agent will connect with you shortly.", dropped
         # "In the meantime, is there anything else I can help you with?" — and
         # the client was left at a dead end straight after a handover.
-        max_sentences=3,
+        #
+        # ...unless this is the turn that also explains the whole service, which
+        # is a heading, a cost, a timing, a numbered process and then the
+        # handover. The list-marker masking in clamp_reply means a numbered step
+        # is not counted as a sentence.
+        max_sentences=14 if briefing_due else 3,
+        stepped=briefing_due,
     )
+
+    # A briefing that was generated and then discarded by a guard leaves the
+    # bare fallback, and until 2026-09-08 it was still recorded as GIVEN - so it
+    # was never tried again and the client simply never got it. Live: after
+    # "myanmar" the reply was "When does her current passport expire?", which is
+    # that field's hand-written question verbatim, i.e. the fallback. Only mark
+    # it given when the reply that actually goes out is not the fallback.
+    briefing_lost = briefing_due and reply.strip() == fallback.strip()
+    if briefing_lost:
+        logger.error(
+            "Conversation %s: the %s briefing was discarded by a guard and the "
+            "fallback went out instead - it will be tried again next turn",
+            state.get("conversation_id"),
+            service_type,
+        )
     logger.info(
         "Conversation %s finished collection for %s: %s",
         state.get("conversation_id"),
@@ -1608,6 +1630,9 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         "missing_field_keys": [],
         "info_complete": True,
         "reply": reply,
+        # Said once - _merge_unique accumulates and _TURN_RESET leaves this
+        # alone. Never recorded when the briefing did not survive the guards.
+        "briefed_services": [service_type] if (briefing_due and not briefing_lost) else [],
     }
 
 

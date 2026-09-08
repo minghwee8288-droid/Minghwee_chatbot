@@ -1394,6 +1394,38 @@ SERVICE_FIELDS[TRANSFER_EMPLOYER] += [
 ]
 
 
+# The nationalities a service actually has a PRICE for. Where a helper's
+# nationality is not listed, no fee has ever been given to us and none may be
+# quoted for her.
+#
+# Live, 2026-09-08: the closing briefing for a MYANMAR helper opened "The cost
+# is $450". That figure is real and it is in the retrieved records - the row
+# reads "$450 for a Filipino helper and $450 for an Indonesian helper ... if
+# your helper is of another nationality, tell us and a consultant will confirm
+# the cost for her embassy" - so ungrounded_figures passed it happily. Grounded
+# is not the same as true: it is the other two nationalities' price, quoted to
+# a client whose price we do not know.
+#
+# home_leave is here for the same reason: $400 (PH) and $250 (ID) were given,
+# Myanmar was not.
+FEE_BY_NATIONALITY: dict[str, frozenset[str]] = {
+    "passport_renewal": frozenset({"PH", "ID"}),
+    "home_leave": frozenset({"PH", "ID"}),
+}
+
+
+def fee_is_known_for(service_type: str | None, nationality_code: str | None) -> bool:
+    """Whether we hold a price for THIS service and THIS nationality.
+
+    True when the service is not nationality-priced at all, so the ordinary
+    rules apply and nothing extra is said.
+    """
+    known = FEE_BY_NATIONALITY.get(service_type or "")
+    if known is None:
+        return True
+    return bool(nationality_code) and nationality_code in known
+
+
 # Flows where the client's own name is taken from OUR RECORDS or asked for, and
 # never assumed from the WhatsApp profile.
 #

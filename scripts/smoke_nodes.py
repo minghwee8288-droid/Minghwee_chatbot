@@ -171,6 +171,23 @@ CASES = [
       "customer_name": "Vaidik", "record_name": "Vaidik Dubey",
       "contact_type": "employer",
       "collected_info": {}, "asked_field_counts": {}}),
+    # The closing turn: every field answered, so this is the one that explains
+    # the whole service. Myanmar deliberately - we hold no fee for her, and the
+    # briefing must say so rather than borrow the $450 beside it.
+    ("info_collector", "passport, the closing briefing",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "in 2 months",
+      "collected_info": {"full_name": "Vaidik", "helper_name": "Holabhola",
+                         "nationality": "Myanmar", "passport_expiry": "2 months",
+                         "helper_location": "in Singapore",
+                         "permit_expiry": "2 months"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1, "nationality": 1,
+                             "passport_expiry": 1, "helper_location": 1,
+                             "permit_expiry": 1},
+      "briefed_services": [],
+      "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
+      "rag_context": "A consultant will confirm the cost for her embassy.",
+      "history_text": "You: Thanks, and when does her Work Permit expire?"}),
     ("info_collector", "direct hire",
      {"service_type": "direct_hiring", "intent": "direct_hiring",
       "incoming_text": "I already found a helper, can you process her",

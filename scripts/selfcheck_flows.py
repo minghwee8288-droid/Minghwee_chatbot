@@ -410,6 +410,35 @@ rows = [
   "returning client - placed with us before"),
  ("a first-timer still is",
   ico._known_fields({"prior_hires": 0}).get("referral_source"), None),
+ # --- the briefing moved to the END of the collection, 2026-09-08 -----
+ # Agency, after testing: "After all the questions it should reply with that
+ # process message ... the cost should be first, then the estimated time, and
+ # then the process ... add the heading of the message."
+ ("the briefing leads with a heading",
+  "your reply MUST begin with it" in tpl.SERVICE_BRIEFING_NOTE, True),
+ ("then the cost, then the timing, then the process",
+  tpl.SERVICE_BRIEFING_NOTE.index("What it costs")
+  < tpl.SERVICE_BRIEFING_NOTE.index("How long it takes")
+  < tpl.SERVICE_BRIEFING_NOTE.index("The process itself"), True),
+ ("every step gets its own line",
+  "ITS OWN LINE" in tpl.SERVICE_BRIEFING_NOTE, True),
+ # A briefing discarded by a guard used to be recorded as GIVEN, so it was
+ # never retried and the client simply never got it. Live: after "myanmar" the
+ # reply was passport_expiry's hand-written question verbatim - the fallback.
+ ("a discarded briefing is not recorded as given",
+  "briefing_lost" in (Path(__file__).resolve().parents[1]
+                      / "app/graph/nodes/info_collector.py").read_text(
+                          encoding="utf-8"), True),
+ # $450 is the Filipino and Indonesian price. It is in the records, so
+ # ungrounded_figures passes it - and it is not Myanmar's price.
+ ("we hold a passport fee for PH and ID",
+  [n for n in ("PH", "ID") if not t.fee_is_known_for("passport_renewal", n)], []),
+ ("and none for Myanmar, so none may be quoted",
+  t.fee_is_known_for("passport_renewal", "MM"), False),
+ ("home leave is priced the same two ways",
+  t.FEE_BY_NATIONALITY["home_leave"], frozenset({"PH", "ID"})),
+ ("a service with one price for everyone is unaffected",
+  t.fee_is_known_for("renewal", None), True),
  # --- the name is asked, not taken off WhatsApp, 2026-09-08 -----------
  # Agency, on seeing "Hi Vaidik, I'm Claire ... May I know your helper's
  # name?" go to a number we had never spoken to: "We are picking the name
@@ -432,8 +461,8 @@ rows = [
  # straight forward, like 'We handle it for you.' We don't want this thing:
  # We have to tell the estimated time and the cost. and then We move forward
  # to the process."
- ("the briefing leads with the cost and the timing",
-  "WHAT IT COSTS and HOW LONG IT TAKES" in tpl.SERVICE_BRIEFING_NOTE, True),
+ ("the briefing leads with the money and the time",
+  "Lead with the money and the time" in tpl.SERVICE_BRIEFING_NOTE, True),
  ("and no longer opens by reassuring them",
   "Do not open with reassurance" in tpl.SERVICE_BRIEFING_NOTE, True),
  # It claimed the fee was not in the records and produced it a message later.
@@ -475,7 +504,7 @@ rows = [
  ("the briefing turn is given more rows than usual",
   rr.BRIEFING_MATCH_COUNT > 5, True),
  ("the briefing forbids inventing what the records do not give",
-  "SAY NOTHING ABOUT IT" in tpl.SERVICE_BRIEFING_NOTE, True),
+  "say nothing at all about that one" in tpl.SERVICE_BRIEFING_NOTE, True),
  ("and forbids naming another nationality's route",
   "leave the rest" in tpl.SERVICE_BRIEFING_NOTE, True),
  # Cross-questioning after the briefing is the point of it.

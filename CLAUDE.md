@@ -235,6 +235,9 @@ because the lead is opened early and the ticket is created much later.
 | A cross-question may not be answered against the records | prompt `ANSWER_THEN_ASK_INSTRUCTION` | "Can she go to the embassy by herself" was answered "Yes" for an **Indonesian** helper, whom our runner collects from the home. |
 | The WhatsApp push name is not the client's name | `ticket.NAME_FROM_RECORD_ONLY` + `contact.get_record_name` | `passport_renewal` asks unless our own records hold it. `customer_name` is a profile label; `record_name` is the file. |
 | The briefing leads with the cost and the timing | `SERVICE_BRIEFING_NOTE` | "This is straightforward and we'll handle it for you" opens with nothing the client can act on. |
+| The briefing is the CLOSING message, after every question | `info_collector` (completion branch) | Agency, 2026-09-08: "After all the questions it should reply with that process message." Heading, then cost, then timing, then the process, then the handover. |
+| A discarded briefing is never recorded as given | `briefing_lost` | It was marked given even when a guard threw it away, so it was never retried — live, the client got `passport_expiry`'s question verbatim and no briefing, ever. |
+| A price we hold for two nationalities is not the third's price | `ticket.FEE_BY_NATIONALITY` + `fee_is_known_for()` | **$450** was quoted for a **Myanmar** helper. It is in the records (as PH/ID's price), so `ungrounded_figures` passed it. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -526,6 +529,49 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **The passport-renewal briefing moves to the end of the collection,
+  gets a heading, and can no longer be lost or priced from another nationality.**
+  (A) **It never reached the client at all, and the transcript says why.** After the
+  client answered *"myanmar"* the reply was *"When does her current passport expire?"* —
+  which is `passport_expiry`'s hand-written question **word for word**, i.e. the
+  fallback `_write` returns when a guard discards the generated reply. So the briefing
+  WAS written and then thrown away (most likely on formatting: `looks_like_document`
+  still bans bullets and bold even with `allow_steps`). The turn then recorded
+  `briefed_services = ['passport_renewal']` **regardless**, so it was never tried again
+  and the client went from nationality straight to handover having been told nothing.
+  `briefing_lost` compares the outgoing reply against the fallback and only records the
+  briefing as given when it actually survived; a discarded one is logged as an error and
+  retried on the next turn.
+  (B) **It now happens after ALL the questions, not after the nationality.** Agency's
+  instruction on seeing the above: *"After all the questions it should reply with that
+  process message ... so that the user would be able to understand what is happening
+  next."* It is now part of the closing message — everything collected, then the
+  explanation, then the handover line. That also removes the mid-flow interruption
+  entirely.
+  (C) **Heading, then cost, then timing, then process**, their order: *"the cost should
+  be first, then the estimated time, and then the process ... Also, add the heading of
+  the message."* The heading was optional in the first version and appeared in one reply
+  out of three, so it is now required outright; and the steps are explicitly told to take
+  their own lines, because one run-through came back as a single paragraph with
+  *"1. ... 2. ... 3. ..."* inline, which is unreadable on a phone.
+  (D) **$450 was quoted for a MYANMAR helper.** The fee row reads *"$450 for a Filipino
+  helper and $450 for an Indonesian helper ... if your helper is of another nationality,
+  tell us and a consultant will confirm the cost for her embassy"* — so the figure is
+  genuinely in the retrieved records and `ungrounded_figures` passed it happily.
+  **Grounded is not the same as true:** it is the other two nationalities' price, quoted
+  to a client whose price we do not have. `FEE_BY_NATIONALITY` records which
+  nationalities each service actually has a price for (`passport_renewal` and
+  `home_leave`: PH and ID only), and where hers is not among them the briefing is told
+  outright not to quote, adapt or range the one beside it, and to say a consultant will
+  confirm. Verified live: Myanmar now opens *"A consultant will confirm the cost for her
+  embassy"* and gives the timing and the three-form route in full.
+  Verified end to end for all three nationalities: heading present, cost then timing then
+  process, line breaks intact, and no route crossing — Indonesian gets the runner
+  collecting her from home and a passport copy, Filipino gets attending in person with
+  her ORIGINAL passport and the five signed forms, Myanmar gets the Undertaking of
+  Employer Form, Standard Employment Contract and Information Sheet.
+  `selfcheck_flows.py` is 177 assertions; `smoke_nodes.py` is 32 states.
 
 - **2026-09-08** — **The passport-renewal name comes from our records or from the
   client, never from WhatsApp; and the briefing leads with the money and the time.**

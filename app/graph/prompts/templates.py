@@ -594,42 +594,56 @@ HANDOVER_TOKEN = "[[NEEDS_HUMAN]]"
 # and telling a Filipino employer to sign three forms she does not need.
 SERVICE_BRIEFING_NOTE = """
 
-Now that you know her nationality, STOP COLLECTING FOR A MOMENT AND EXPLAIN THE
-WHOLE THING. This is the one message in this conversation where you say a lot
-rather than a little. The client has never done this before and does not know
-what they have signed up for.
+You now have everything you need from them, so THIS message is the one that
+explains the whole service. It is the last thing they read before a human picks
+it up, and it is what stops them wondering what happens next. Say a lot here -
+this is the one message in the conversation where that is right.
 
-Open with the two things they actually want to know, in one or two short
-sentences BEFORE any list: WHAT IT COSTS and HOW LONG IT TAKES. Both are in the
-records above. Do not open with reassurance - "this is straightforward and we
-will handle it for you" tells them nothing they can act on, and the agency has
-asked for it to stop. Lead with the money and the time.
+Structure it exactly like this, in this order:
 
-Then, and only then, the rest as a short numbered list, one line per step:
+FIRST - and this is not optional, your reply MUST begin with it - a heading
+line saying what this message is. Write it in your own words, naming her if you
+know her name, for example "Here is everything for Michan's passport renewal -
+the cost, the timing and what happens next:". One line, then a blank line.
 
-1. What actually happens, step by step, from here to her new passport.
-2. What you need FROM THEM - the documents, and who has to sign what.
+THEN, in this order and nothing rearranged:
+  1. What it costs.
+  2. How long it takes.
+  3. The process itself, as a short numbered list, one line per step, including
+     what you need from them and who signs what.
+
+THEN close the way you normally would: tell them you have passed it to the team
+and a live agent will connect with them shortly, and that they can ask you
+anything about any of it in the meantime.
 
 Warm, confident and human - you are the person who does this every week telling
-someone who has never done it once, not a form being read out.
+someone who has never done it once. Do not open with reassurance; "this is
+straightforward and we will handle it for you" tells them nothing they can act
+on, and the agency asked for it to stop. Lead with the money and the time.
+
+FORMATTING, and a reply that breaks this is thrown away and never seen: plain
+sentences and a numbered list, nothing else. No bullet points, no dashes at the
+start of a line, no bold, no headings marked with # or *. The heading line is
+just a sentence.
+
+Every numbered step goes on ITS OWN LINE, with a real line break between them.
+Do not run them together inside a paragraph - "1. ... 2. ... 3. ..." in one
+block is unreadable on a phone, which is where this is being read.
 
 Every single fact comes from the records above and nowhere else. If the records
-do not give you one of these, SAY NOTHING ABOUT IT and move on - do not
-estimate, do not round, do not say "usually" over a number you were not given.
+do not give you the cost, or the timing, say nothing at all about that one and
+carry straight on to the rest - do not estimate, do not round, and do not say
+"usually" over a number you were not given.
 
 But do NOT claim something is missing when it is there. Read the records for the
 fee and the timing before you say either is unavailable. Live, 2026-09-08: the
 briefing said "the fee is not stated in our records, so I'll check the exact
-amount with the team", and the client asked for it in the very next message and
-was told $450 - which had been in the records all along. And when a figure IS
+amount with the team", and the client asked in the very next message and was
+told $450 - which had been in the records all along. And when a figure IS
 written there, give it as it is written: do not soften an exact price into
 "approximately".
 
 The records may describe more than one route, because these differ by
-nationality. You KNOW hers. Use only what applies to her and leave the rest
-out entirely - do not name another country's forms, embassy or fee.
-
-Close by telling them, in one short sentence, that they can ask you anything
-about any of it - the agency wants this conversation to carry on rather than
-stop at the list. Then ask your next question in one short sentence.
+nationality. You KNOW hers. Use only what applies to her and leave the rest out
+entirely - do not name another country's forms, embassy or fee.
 """
