@@ -89,6 +89,10 @@ app/
   db/supabase.py     service-role client (bypasses RLS), read retries, insert_numbered
 scripts/             preflight, retrieval check, reset, simulate, SQL migrations
 portal-ui/           React + Vite ticket dashboard (separate deliverable)
+reset-ui/            Next.js "clear a conversation" page (separate deliverable, own
+                     Vercel project). Standalone: imports nothing from app/, calls no
+                     chatbot endpoint, talks to Supabase directly with the service-role
+                     key from its own serverless functions. See reset-ui/README.md.
 ```
 
 ---
@@ -489,6 +493,7 @@ docker compose logs chatbot | grep "Safety gate"
 
 # diagnostics (all read-only)
 python scripts/smoke_nodes.py          # RUNS each node with the LLM and DB stubbed. Run this FIRST.
+python scripts/selfcheck_reset_ui.py   # reset-ui/ still clears what reset_conversation.py clears
 python scripts/selfcheck_flows.py      # behavioural assertions; also runs IN the container:
                                        #   docker compose exec chatbot python /app/scripts/selfcheck_flows.py
                                        # Verifies BEHAVIOUR, not grep counts — see the note below.
@@ -535,6 +540,64 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **`reset-ui/`: clearing a conversation from a web page instead of a
+  terminal, and the foreign keys that made "also delete the lead" a real question.**
+  A separate Next.js app in its own folder, deployed to its own Vercel project. It
+  imports nothing from `app/`, calls no chatbot endpoint, and changes nothing in `app/`
+  or `portal-ui/` — deleting the whole folder cannot affect the running bot. The delete
+  path mirrors `scripts/reset_conversation.py` step for step and in the same child-first
+  order, including the LangGraph checkpoint, which it reaches over a direct Postgres
+  connection for the reason the script gives: those three tables are created outside
+  PostgREST's schema cache and the REST client is not a reliable way to reach them.
+  (A) **It can delete an employer lead, which the script refuses to do.** That refusal is
+  deliberate and documented — `leads` holds real sales pipeline — so the client's
+  instruction was honoured with conditions rather than by removing the protection: only a
+  lead **explicitly ticked by id**, never a phone sweep; only after the lead's number,
+  name, status and age have been shown; and only when nothing else references it.
+  Deleting the lead **and** the checkpoint together is also the procedure §10 already
+  prescribes, since deleting the lead alone is what broke conversation 36.
+  (B) **`leads` has THREE inbound foreign keys and every one is `ON DELETE NO ACTION`** —
+  `cb_tickets.created_lead_id` (§9.5), `lead_activities.lead_id` and
+  `employer_service_requests.converted_lead_id`, confirmed against the live database
+  rather than assumed. So a lead delete fails outright on any of them. All three are
+  checked **before** the lead is offered as deletable and **again** at the moment of
+  deletion, because the page may have been open a while. Not theoretical: of the four
+  employer leads in the database, **two were blocked by `lead_activities`**, and without
+  the check the client would have been shown a raw Postgres foreign-key error. Tickets on
+  the conversation being cleared are deliberately NOT blockers — they are deleted first,
+  in the same operation, which is the whole reason the two happen together.
+  `leads_candidate` has no inbound foreign keys and is never blocked.
+  (C) **A lead can be cleared with no conversation.** Found while testing: a number with a
+  lead but no thread showed the lead and offered no way to remove it.
+  (D) **`lib/phone.ts` is a line-for-line port of `app/utils.py`** and each function names
+  its Python original. The two must stay in step — a mismatch means the tool reports "no
+  conversation" for a client who has one, or offers up somebody else's row. This is the
+  §9.8 duplication risk accepted knowingly, because the alternative was making the
+  chatbot service a dependency of the page. For the same reason the lead-blocker rule is
+  **one module with two callers**, not two copies.
+  (E) **Safety.** The service-role key never reaches the browser (no `NEXT_PUBLIC_`
+  variable exists); one shared password, compared timing-safely; the API accepts only a
+  phone number, one conversation id and lead ids, and table names are never taken from
+  the request; the reset re-resolves the conversation from the phone and refuses if it no
+  longer matches what the page was showing; and an optional `RESET_ALLOWED_NUMBERS` gate
+  fails closed exactly as `BOT_ALLOWED_NUMBERS` does. There is no unscoped delete in the
+  codebase. `wp_chat_summaries` is left alone — nothing in `app/` reads it and the script
+  does not touch it.
+  (F) **The drift is caught mechanically, not by intention.**
+  `scripts/selfcheck_reset_ui.py` parses both implementations and asserts they clear the
+  same tables and blank the same 13 columns, and **compiles `lib/phone.ts` and runs it**
+  against `app/utils.py` on 12 inputs rather than reading it. Add a table to the Python's
+  `WIPE_TABLES` and forget the TypeScript and it fails, naming the table — verified by
+  injecting exactly that fault plus a dropped `contact_type`, and confirming both were
+  caught. `scripts/seed_reset_ui_testdata.py` creates and removes a disposable
+  conversation on a reserved number for testing the UI by hand.
+  Verified against the live database with a seeded conversation (4 messages, 1 ticket,
+  1 handover, 2 checkpoint rows, 1 lead), deleted afterwards: every row confirmed gone by
+  direct SQL, the conversation back at `bot_active` with a fresh thread and identity
+  cleared, and the other 55,802 messages untouched. Also verified: the lead-only path, a
+  blocked employer lead refused with its reason, a stale conversation id refused with
+  nothing deleted, and both wrong and missing passwords rejected.
 
 - **2026-09-08** — **A broadcast silenced the bot on a live conversation, and the
   client's next message got nothing back.** Not a flow bug — the agent detector.

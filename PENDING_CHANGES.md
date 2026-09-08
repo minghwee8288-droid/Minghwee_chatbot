@@ -37,7 +37,10 @@ this file describes what we still intend to change.
       but the deterministic harm-keyword override is English-only — including
       `emergency_override` in `webhook.py`, the out-of-hours path.
 - [ ] **Apply `scripts/ticket_lead_fk_set_null.sql`** so deleting a lead cannot fail with
-      an FK error once tickets start referencing leads.
+      an FK error once tickets start referencing leads. Now visible to the client, not
+      just to a script: `reset-ui/` greys out a lead it cannot delete and names the
+      rows in the way. Applying this removes the `cb_tickets` blocker; the
+      `lead_activities` and `employer_service_requests` ones remain, and should.
 - [ ] **Rotate the webhook secret.** It is committed in plaintext in
       `.claude/settings.json` and needs scrubbing from git history.
 - [ ] **Rewrite `scripts/TEST_SCRIPT.md` §E.** It still treats "admits it is a bot" as a
