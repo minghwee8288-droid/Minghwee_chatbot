@@ -238,6 +238,8 @@ because the lead is opened early and the ticket is created much later.
 | The briefing is the CLOSING message, after every question | `info_collector` (completion branch) | Agency, 2026-09-08: "After all the questions it should reply with that process message." Heading, then cost, then timing, then the process, then the handover. |
 | A discarded briefing is never recorded as given | `briefing_lost` | It was marked given even when a guard threw it away, so it was never retried — live, the client got `passport_expiry`'s question verbatim and no briefing, ever. |
 | A price we hold for two nationalities is not the third's price | `ticket.FEE_BY_NATIONALITY` + `fee_is_known_for()` | **$450** was quoted for a **Myanmar** helper. It is in the records (as PH/ID's price), so `ungrounded_figures` passed it. |
+| A broadcast is never a human agent | `message.is_auto_reply` (+ in-process count) + `webhook._undo_broadcast_standdowns` | The detector is retrospective, so the first copies of a NEW broadcast are indistinguishable from an agent. Two conversations in one run is now enough, and earlier stand-downs are reversed. |
+| A negative auto-reply verdict is never cached | `_AUTO_REPLY_VERDICTS` | Caching the first "no" on a fresh broadcast pinned it, so every later copy short-circuited to "no" and silenced the bot estate-wide. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -493,6 +495,9 @@ python scripts/preflight.py            # go-live gate: KB, agents, branch, porta
 python scripts/check_retrieval.py      # retrieval calibration; tunes RAG_SOFT_FLOOR
 python scripts/watch_conversation.py --follow
 
+python scripts/unsilence_conversation.py --list       # stood-down threads the bot should own
+python scripts/unsilence_conversation.py +6591234567  # put the bot back, thread KEPT
+
 # DESTRUCTIVE — test numbers only
 python scripts/reset_conversation.py +6591234567
 ```
@@ -529,6 +534,44 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **A broadcast silenced the bot on a live conversation, and the
+  client's next message got nothing back.** Not a flow bug — the agent detector.
+  (A) **What happened.** The agency broadcast a number-migration notice to about fifty
+  clients. `handle_outbound` treats any outbound message we did not send as a human agent
+  taking over, and stands the bot down. `is_auto_reply()` exists to stop exactly that, and
+  it worked for most of the estate — the log is full of *"Ignoring WhatsApp Business
+  auto-reply on conversation N"* — but conversation 3766 was read as an agent, went to
+  `bot_status=human_active`, and the client's *"hi i want to renew my helper passport"*
+  was answered with silence. Confirmed by reading the row, not inferred.
+  (B) **Why the detector cannot catch the start of a broadcast.** It is retrospective: it
+  counts how many conversations ALREADY hold this exact body, and needs three. So the
+  first copies of a brand-new broadcast are, by construction, indistinguishable from an
+  agent typing — every broadcast the agency ever sends takes the bot down on the first
+  conversations it reaches.
+  (C) **And a negative verdict was cached forever.** `_AUTO_REPLY_VERDICTS[normalised] =
+  verdict` stored the "no" as well as the "yes". If the very first copy of a broadcast is
+  evaluated before three rows exist — which is the normal case — that "no" is pinned, and
+  every one of the remaining forty-nine copies short-circuits to it. That is the whole
+  estate silenced by one broadcast, and it is luck rather than design that it did not
+  happen this time. Only positive verdicts are remembered now.
+  (D) **Two fixes, because one is not enough.** The same body seen on **two** different
+  conversations within one process run is a broadcast — a human does not send sixty
+  identical characters to two clients in the same breath — so recognition no longer waits
+  on database writes. And `_undo_broadcast_standdowns` reverses the stand-downs the
+  earlier copies already caused, via a new `handover.undo_agent_takeover` that restores
+  `bot_active` **without** minting a fresh thread: `back_to_bot` does mint one, which
+  would throw away a collection the client is four questions into. Verified: copy 1 is
+  still missed (nothing exists to distinguish it), copy 2 onward is caught, copy 1 is then
+  un-silenced, and a genuine agent reply still stands the bot down.
+  (E) **`scripts/unsilence_conversation.py`.** `--list` shows stood-down conversations on
+  numbers the bot actually serves — 208 threads sit in `human_active` and almost all of
+  them are the portal doing its job, so the allowlist is the only filter that means
+  anything. Naming a number puts the bot back on it, thread and checkpoint kept.
+  Deliberately not `reset_conversation.py`, which deletes.
+  **Checked after the fix: zero allowlisted conversations are stood down** — but that was
+  run against a local `.env` with 11 numbers while the server's gate has 17, so run
+  `--list` in the container to confirm the other six.
 
 - **2026-09-08** — **The passport-renewal briefing moves to the end of the collection,
   gets a heading, and can no longer be lost or priced from another nationality.**

@@ -239,6 +239,27 @@ async def agent_took_over(conversation: dict[str, Any], reason: str = REASON_AGE
     logger.info("Agent detected on conversation %s — bot silenced", conversation_id)
 
 
+async def undo_agent_takeover(conversation_id: Any, reason: str) -> None:
+    """Reverse a stand-down that turned out not to be an agent at all.
+
+    Deliberately NOT back_to_bot(): that mints a fresh langgraph_thread_id
+    because it is used where we have no reliable sense of what is in progress.
+    Here we know exactly what happened - a broadcast landed on the thread and
+    was mistaken for a human - and the client may be four questions into a
+    collection. Throwing that away would turn one silent turn into a
+    conversation that starts over.
+    """
+    await conversation_service.set_bot_status(
+        conversation_id, conversation_service.BOT_ACTIVE
+    )
+    await _log(conversation_id, HUMAN_TO_BOT, reason)
+    logger.info(
+        "Conversation %s was stood down by a message we now know was a broadcast - "
+        "bot re-enabled, thread kept",
+        conversation_id,
+    )
+
+
 async def back_to_bot(conversation: dict[str, Any], reason: str = REASON_AGENT_RESOLVED) -> None:
     """Return a conversation to the bot (used when an agent closes the thread,
     or when a standdown with no real agent message behind it — a bot failure —

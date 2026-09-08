@@ -188,14 +188,31 @@ async def store_auto_reply(conversation_id: int, message: IncomingMessage) -> di
 
 
 # Verdicts for bodies already checked against the database.
+# Only POSITIVE verdicts are remembered. A negative one is provisional and
+# caching it is a live landmine: is_auto_reply counts how many conversations
+# ALREADY hold this body, so the first copy of a brand-new broadcast sees zero
+# and is a "no" - and pinning that means every one of the other forty-nine
+# copies short-circuits to "no" as well, silencing the bot on every client the
+# broadcast reaches until the 72-hour safety net. The cost of not caching a
+# negative is one extra indexed lookup on a message that is usually a genuine
+# agent reply, which happens once per conversation, not once per turn.
 _AUTO_REPLY_VERDICTS: dict[str, bool] = {}
+
+# Conversations this PROCESS has seen a given outbound body on. The database
+# check is retrospective - it only counts what has already been stored - so on
+# a fresh broadcast it lags by however many copies are in flight. Counting them
+# here as they arrive closes that gap without waiting for the writes.
+_OUTBOUND_BODY_SEEN: dict[str, set[Any]] = {}
 # Templates are long; a genuine agent's "ok" or "noted" is not.
 _AUTO_REPLY_MIN_CHARS = 60
 # How many different clients must have received the identical text.
 _AUTO_REPLY_MIN_CONVERSATIONS = 3
 
+# ...and two is enough when we watched both arrive ourselves.
+_AUTO_REPLY_MIN_IN_PROCESS = 2
 
-async def is_auto_reply(body: str | None) -> bool:
+
+async def is_auto_reply(body: str | None, conversation_id: Any = None) -> bool:
     """Whether an outbound message came from WhatsApp Business, not a person.
 
     The configured list catches known templates. Beyond that the test is
@@ -216,9 +233,24 @@ async def is_auto_reply(body: str | None) -> bool:
     if len(normalised) < _AUTO_REPLY_MIN_CHARS:
         return False
 
-    cached = _AUTO_REPLY_VERDICTS.get(normalised)
-    if cached is not None:
-        return cached
+    if _AUTO_REPLY_VERDICTS.get(normalised):
+        return True
+
+    # Same body, different conversations, seen by this process. Two is already
+    # a broadcast: a human agent writing 60+ identical characters to two
+    # different clients within one run does not happen.
+    if conversation_id is not None:
+        seen = _OUTBOUND_BODY_SEEN.setdefault(normalised, set())
+        seen.add(conversation_id)
+        if len(seen) >= _AUTO_REPLY_MIN_IN_PROCESS:
+            _AUTO_REPLY_VERDICTS[normalised] = True
+            logger.info(
+                "Same message seen on %d conversations in this run - treating it as "
+                "a broadcast, not an agent: %r",
+                len(seen),
+                (body or "")[:80],
+            )
+            return True
 
     try:
         result = await db.execute(
@@ -234,7 +266,8 @@ async def is_auto_reply(body: str | None) -> bool:
         logger.exception("Auto-reply lookup failed")
         return False
 
-    _AUTO_REPLY_VERDICTS[normalised] = verdict
+    if verdict:
+        _AUTO_REPLY_VERDICTS[normalised] = verdict
     if verdict:
         logger.info(
             "Treating a message sent to %d clients verbatim as a WhatsApp auto-reply: %r",

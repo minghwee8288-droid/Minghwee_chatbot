@@ -551,6 +551,48 @@ async def handle_inbound(message: IncomingMessage) -> None:
     await debouncer.add(message)
 
 
+# Conversations stood down by a given outbound body, so a stand-down can be
+# reversed if that body turns out to be a broadcast.
+#
+# is_auto_reply is retrospective - it counts the conversations that ALREADY
+# hold this message - so the first copies of a brand-new broadcast are, by
+# construction, indistinguishable from an agent typing. Live, 2026-09-08: the
+# agency sent a number-migration notice to about fifty clients, and the bot
+# went silent on a conversation it reached early; the client's next message
+# ("hi i want to renew my helper passport") got nothing back, and without this
+# it would have stayed that way until the 72-hour safety net.
+#
+# Keyed on the raw body and bounded: only the last few distinct bodies are
+# kept, which is all a broadcast needs.
+_SILENCED_BY_BODY: "OrderedDict[str, set[Any]]" = OrderedDict()
+_SILENCED_BODIES_KEPT = 8
+
+
+def _remember_standdown(body: str | None, conversation_id: Any) -> None:
+    key = (body or "").strip()
+    if not key:
+        return
+    _SILENCED_BY_BODY.setdefault(key, set()).add(conversation_id)
+    _SILENCED_BY_BODY.move_to_end(key)
+    while len(_SILENCED_BY_BODY) > _SILENCED_BODIES_KEPT:
+        _SILENCED_BY_BODY.popitem(last=False)
+
+
+async def _undo_broadcast_standdowns(body: str | None) -> None:
+    """Re-enable the bot on conversations this same broadcast already silenced."""
+    stranded = _SILENCED_BY_BODY.pop((body or "").strip(), set())
+    for conversation_id in stranded:
+        try:
+            await handover_service.undo_agent_takeover(
+                conversation_id, "broadcast mistaken for an agent"
+            )
+        except Exception:  # noqa: BLE001 - one failure must not strand the rest
+            logger.exception(
+                "Could not re-enable the bot on conversation %s after a broadcast",
+                conversation_id,
+            )
+
+
 async def handle_outbound(message: IncomingMessage) -> None:
     """An outbound message appeared on the number — ours, or a human agent's."""
     if _already_processed(message.whapi_message_id):
@@ -571,11 +613,15 @@ async def handle_outbound(message: IncomingMessage) -> None:
 
     # The WhatsApp Business app's own greeting/away messages are not an agent.
     # Treating them as one would silence the bot on every new conversation.
-    if await message_service.is_auto_reply(message.body):
+    if await message_service.is_auto_reply(message.body, conversation["id"]):
         await message_service.store_auto_reply(conversation["id"], message)
         logger.info(
             "Ignoring WhatsApp Business auto-reply on conversation %s", conversation["id"]
         )
+        # Earlier copies of this same broadcast arrived BEFORE we had enough
+        # evidence to recognise it, and each of those stood the bot down on a
+        # real client. Now that we know what it is, put them back.
+        await _undo_broadcast_standdowns(message.body)
         return
 
     # A reaction, a delete notice or some other protocol event is not a human
@@ -608,6 +654,7 @@ async def handle_outbound(message: IncomingMessage) -> None:
     # half-buffered client messages are dropped.
     await debouncer.flush_now(message.customer_number)
     await handover_service.agent_took_over(conversation)
+    _remember_standdown(message.body, conversation["id"])
 
 
 # Unknown contacts are looked up again periodically rather than once, so a
