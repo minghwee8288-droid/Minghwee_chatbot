@@ -49,7 +49,11 @@ logger = logging.getLogger("unsilence")
 
 async def list_stranded() -> None:
     """Stood-down conversations the bot would otherwise be answering."""
-    allowed = {normalize_phone(n) for n in settings.bot_allowed_numbers}
+    # settings.bot_allowed_numbers is the RAW comma-separated STRING; iterating
+    # it walks characters, which silently compared phone numbers against "+9"
+    # and reported nothing affected no matter what was stranded.
+    # settings.allowed_numbers is the parsed, normalised set.
+    allowed = set(settings.allowed_numbers)
     logger.info("%d number(s) on the safety gate", len(allowed))
     rows = await db.select_many(
         "wp_chat_conversations", "id,customer_number,bot_status,updated_at",
