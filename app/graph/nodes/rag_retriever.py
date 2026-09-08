@@ -94,6 +94,18 @@ def _search_query(state: ConversationState) -> str:
             return message
 
     readable_topic = topic.replace("_", " ")
+    # A price question is tagged with the PRICE of the service, not just the
+    # service. The knowledge base phrases these rows "How much does it cost
+    # to renew my helper's passport?", and a terse "what is cost" tagged only
+    # "(passport renewal)" landed at 0.367 - under the floor, so _answerable()
+    # read False and the client got a holding line for a figure we hold.
+    # Measured 2026-09-08 across six phrasings and every service: "(cost of
+    # passport renewal)" scores 0.503-0.566 against 0.362-0.465, and the right
+    # row is top every time. Renewal, transfer, replacement and direct hire all
+    # improve too; home leave and replacement move by less than 0.02 and keep
+    # the same top row.
+    if intent == "fee_enquiry" and topic:
+        readable_topic = f"cost of {readable_topic}"
     if not message:
         return readable_topic
 
@@ -170,6 +182,17 @@ def _service_filter(state: ConversationState) -> str | None:
     return state.get("service_type")
 
 
+# A question about what WE charge, as opposed to money in general. Timing
+# words are deliberately absent: "how much time does it take" is not a price
+# question and must keep the widening retry it has had since 2026-09-03.
+_PRICE_QUESTION = re.compile(
+    r"\bcosts?\b|\bprices?\b|\bfees?\b|\bcharges?\b"
+    r"|\bhow\s+much\s+(?:is|are|does|do|would|will|for|to)\b"
+    r"|\bhow\s+much\s*[?.!]*\s*$",
+    re.IGNORECASE,
+)
+
+
 def _nationality(state: ConversationState) -> str | None:
     """The PH/ID/MM code this conversation is about, if we know it.
 
@@ -222,7 +245,31 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
     # deliberately NOT dropped — the KB holds per-nationality passport timings,
     # and a confident answer about the wrong country is worse than a holding
     # line.
-    if service and best < settings.rag_soft_floor:
+    # ...but NOT when this service states its own price and the client is
+    # asking for it. _service_filter keeps the filter for those three exactly
+    # so another service's fee cannot be quoted; widening below the floor would
+    # hand it straight back. Measured: a terse "what is cost" inside a PASSPORT
+    # renewal scores 0.361 filtered, so it widens - and unfiltered the top row
+    # is the WORK PERMIT renewal at $695, where the answer is $450. A wrong
+    # price is worse than a vague one, so this turn keeps the narrow result and
+    # falls to the holding line if it is genuinely too weak.
+    #
+    # Scoped to a PRICE question, not to money generally: the case this retry
+    # was written for on 2026-09-03 was "How much time it takes in renewal" - a
+    # TIMING question inside passport_renewal that needed the `renewal` rows,
+    # and it still widens exactly as it did.
+    fee_question = state.get("intent") == "fee_enquiry" or _PRICE_QUESTION.search(
+        state.get("incoming_text") or ""
+    )
+    if service in FEE_STATED_SERVICES and fee_question:
+        logger.info(
+            "Retrieval under service=%s scored %.3f but it is a price question on a "
+            "service that states its own fee - not widening, so another service's "
+            "figure cannot be quoted",
+            service,
+            best,
+        )
+    elif service and best < settings.rag_soft_floor:
         wider = await rag.search(
             query,
             service_type=None,

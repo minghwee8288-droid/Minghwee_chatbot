@@ -33,6 +33,8 @@ from app.graph.prompts.style import STYLE_BLOCK
 import app.graph.guards as gd
 import app.graph.prompts.templates as tpl
 from app.graph.nodes.intent_classifier import _named_service as _named_svc
+import app.graph.closure as cl
+btr = importlib.import_module("app.graph.nodes.blocked_topic_responder")
 import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location("lsn", str(Path(__file__).resolve().parent / "load_service_notes.py"))
 lsn = _ilu.module_from_spec(_spec); _spec.loader.exec_module(lsn)
@@ -408,6 +410,74 @@ rows = [
   "returning client - placed with us before"),
  ("a first-timer still is",
   ico._known_fields({"prior_hires": 0}).get("referral_source"), None),
+ # --- the 2026-09-08 live round: new hiring + passport renewal --------
+ # REGRESSION, same day. _undecidable_gate_keys assumed a field's gates cover
+ # its whole answer space. True for transfer_direction, false for requirement,
+ # whose gates are childcare -> children_detail and eldercare -> elderly_detail
+ # while "general housework and cooking" is a first-class option opening
+ # neither. Live: "General house work" was blanked and re-asked, "Only general
+ # housework" was blanked and re-asked, and the third message was "I have tell
+ # several time I need general housework".
+ ("general housework answers the requirement question",
+  ico._undecidable_gate_keys("new_hiring", {"requirement": "general housework"}), []),
+ ("every declared option answers it",
+  [o for o in next(f for f in t.SERVICE_FIELDS["new_hiring"]
+                   if f.key == "requirement").options
+   if ico._undecidable_gate_keys("new_hiring", {"requirement": o})], []),
+ ("a transfer direction that opens no branch is still caught",
+  ico._undecidable_gate_keys("transfer_employer",
+                             {"transfer_direction": "transfer"}),
+  ["transfer_direction"]),
+ ("the rule is off for a field with no options to check against",
+  ico._gates_are_exhaustive("new_hiring", "requirement",
+                            [f.gate for f in t.SERVICE_FIELDS["new_hiring"]
+                             if f.gate and f.gate.field == "requirement"]), False),
+ # "6 bedroom and 6 bathrooms are there" matched `are there`, so the collector
+ # believed a question had been asked and promised to "confirm your question
+ # with the team and come back to you" - a promise to answer nothing.
+ ("a trailing 'are there' is a statement, not a question",
+  bool(ico._ASKS_SOMETHING.search("6 bedroom and 6 bathrooms are there")), False),
+ ("an opening 'is there' still is",
+  bool(ico._ASKS_SOMETHING.search("Is there a fee for this?")), True),
+ ("and the 2026-09-02 case still fires",
+  bool(ico._ASKS_SOMETHING.search("In 2 weeks can you provide")), True),
+ # A bare "Yes" closed "Any preference on her age or how much experience she
+ # should have?" and the agent got a preference with no content.
+ ("a bare yes does not answer an open question",
+  [f.key for f in ico._unfinished("new_hiring", {"helper_profile": "Yes"},
+                                  {"helper_profile": 1})[0]], ["helper_profile"]),
+ ("a bare yes DOES answer a yes-or-no question",
+  [f.key for f in ico._unfinished("new_hiring", {"pets": "Yes"},
+                                  {"pets": 1})[0]], []),
+ ("'Yes all' answers the extra-duties question",
+  [f.key for f in ico._unfinished("new_hiring", {"special_duties": "Yes all"},
+                                  {"special_duties": 1})[0]], []),
+ # "Ok what is cost" and "what is cost" got the holding line on a parked
+ # passport renewal, for a figure the KB holds ($450).
+ ("a bare price question reads as a general question",
+  [m for m in ("Ok what is cost", "what is cost", "what's the cost",
+               "what is the fee")
+   if not btr.asks_general_info(m)], []),
+ ("chasing the case still is not one",
+  btr.asks_general_info("any update on my passport renewal?"), False),
+ # The widening retry dropped the filter below the floor, which handed back
+ # the WORK PERMIT fee ($695) inside a PASSPORT renewal ($450).
+ ("a price question is recognised",
+  bool(rr._PRICE_QUESTION.search("what is cost")), True),
+ ("a timing question is not, so it keeps its widening retry",
+  bool(rr._PRICE_QUESTION.search("how much time it takes")), False),
+ # "okayyyyyyyyyyyyyyyyyyyyyyyyyyy" was answered with the handover line the
+ # client had already been given twice.
+ ("an elongated acknowledgement is an acknowledgement",
+  [m for m in ("okayyyyyyyyyyyy", "Okayyy", "thankssss", "sureee")
+   if not cl.is_pure_acknowledgement(m)], []),
+ ("an elongated 'goooood' survives the other collapsing",
+  cl.is_pure_acknowledgement("goooood"), True),
+ ("a question is still not an acknowledgement",
+  cl.is_pure_acknowledgement("ok what is cost"), False),
+ ("'??' is still answered",
+  cl.needs_no_reply("??", history_text="You: shortly."), False),
+ # --- a price question names the shape, not the subject ---------------
  # A price question names the shape of the question, not its subject - the
  # same defect fixed for process_question/document_question on 2026-09-07,
  # with the money intents deliberately left out then. Measured: a bare "how
@@ -423,10 +493,14 @@ rows = [
   rr._search_query({"incoming_text": "how much does it cost",
                     "intent": "fee_enquiry", "service_type": "fee_enquiry"}),
   "how much does it cost"),
- ("and inside a service it is tagged with that service",
+ # Tagged with the COST of the service, not just the service. The KB phrases
+ # these rows "How much does it cost to renew my helper's passport?", and a
+ # terse "what is cost" tagged only "(passport renewal)" landed at 0.367 -
+ # under the floor, so the client got a holding line for a figure we hold.
+ ("and inside a service it is tagged with that service's cost",
   rr._search_query({"incoming_text": "how much does it cost",
                     "intent": "fee_enquiry", "service_type": "home_leave"}),
-  "how much does it cost\n(home leave)"),
+  "how much does it cost\n(cost of home leave)"),
  # Widening a money question is right when the figures live elsewhere and
  # WRONG when this service states its own price - the widened search then
  # returns another service's fee, which is false rather than merely vague.

@@ -374,9 +374,48 @@ def _undecidable_gate_keys(service_type: str, collected: dict[str, Any]) -> list
         value = str((collected or {}).get(key) or "").strip()
         if not value or value.lower() == ticket_service.UNANSWERED:
             continue  # genuinely unanswered - the gates are undecided, which is right
+        if not _gates_are_exhaustive(service_type, key, gates):
+            continue
         if not any(gate.state(collected) == "open" for gate in gates):
             stuck.append(key)
     return stuck
+
+
+def _gates_are_exhaustive(
+    service_type: str, key: str, gates: list[Any]
+) -> bool:
+    """Whether opening NO gate really means the question was not answered.
+
+    It only means that where the gates cover the whole answer space. On
+    `transfer_direction` they do: two opposing gates, two options, every valid
+    answer opens one of them, so a value opening neither is a value we did not
+    understand.
+
+    On `requirement` they emphatically do not, and shipping the rule without
+    this test broke a live conversation on 2026-09-08. Its gates are
+    `children_detail` (childcare) and `elderly_detail` (eldercare) - partial
+    branches off a field whose own options include "general housework and
+    cooking", which is a complete, correct answer that opens neither. So the
+    client said "General house work", the value was blanked as undecidable and
+    the question re-asked; they answered "Only general housework" and it was
+    blanked again; the third time they wrote "I have tell several time I need
+    general housework" and the flow only moved on because max_asks ran out.
+    Their words, on the second re-ask, are the whole bug report.
+
+    Derived from the field's own declared options rather than a list of
+    exempt keys, so a new gate or a reworded option cannot leave this stale.
+    A field with no options cannot be checked and is left alone - the rule is
+    off unless it can be shown to be safe.
+    """
+    field = next(
+        (f for f in ticket_service.fields_for(service_type) if f.key == key), None
+    )
+    if not field or not field.options:
+        return False
+    return all(
+        any(gate.state({key: option}) == "open" for gate in gates)
+        for option in field.options
+    )
 
 
 def _known_fields(state: ConversationState) -> dict[str, str]:
@@ -588,8 +627,19 @@ _ASKS_SOMETHING = re.compile(
     r"which\s+documents?|when\s+(can|will|do)|cost|price|fee|fees|charge|"
     r"salary|levy|deposit|require[ds]?|needed|"
     r"can\s+(you|we|i)|could\s+you|do\s+you\s+(have|provide|offer|know)|"
-    r"are\s+you\s+able|will\s+you|is\s+it\s+possible|is\s+there|are\s+there|"
-    r"any\s+(idea|chance)|possible\s+to)\b",
+    r"are\s+you\s+able|will\s+you|is\s+it\s+possible|"
+    r"any\s+(idea|chance)|possible\s+to)\b"
+    # "is there" / "are there" only count when they OPEN the message. As an
+    # interrogative they always do ("is there a fee?"); trailing, they are the
+    # ordinary Singaporean and Indian English way of stating that something
+    # exists. Live, 2026-09-08: "6 bedroom and 6 bathrooms are there" matched
+    # here, so the collector believed a question had been asked and closed on
+    # "Will she have her own room...? I'll confirm your question with the team
+    # and come back to you." - a promise to answer a question the client had
+    # never asked, which leaves them waiting for a reply that cannot come.
+    # _VALUE_IS_QUESTION anchors all of its own word alternatives at ^ for
+    # exactly this reason; these two were the pair that got left unanchored.
+    r"|^\s*(?:is|are)\s+there\b",
     re.IGNORECASE,
 )
 
@@ -617,6 +667,31 @@ _ASSERTS_WITHOUT_DETAIL = re.compile(
     r"\s*[.!,]*\s*$",
     re.IGNORECASE,
 )
+
+# A question that a bare yes or no cannot answer: one that does not open with
+# an auxiliary verb. "Will she have her own room?" and "Do you have any pets?"
+# are settled by "yes"; "Any preference on her age or how much experience she
+# should have?" is not - it is grammatically a yes/no question and carries no
+# information at all when answered that way.
+#
+# Live, 2026-09-08: that exact question was answered "Yes", the field closed on
+# it, and the ticket reached the agent saying the client had a preference about
+# age and experience without saying what it was. `additional_notes` survived the
+# same shape only because the model happened to ask again unprompted.
+_YES_NO_QUESTION = re.compile(
+    r"^\s*(?:do|does|did|is|are|was|were|will|would|can|could|shall|should|"
+    r"have|has|had|may|might)\b",
+    re.IGNORECASE,
+)
+
+# Deliberately a BARE yes or no and nothing else. "Yes all" answers the
+# extra-duties question completely and must not be re-asked; "Yes" alone
+# answers nothing.
+_BARE_YES_NO = re.compile(
+    r"^\W*(?:yes|yeah|yep|yup|ya|sure|ok|okay|no|nope|nah)\W*$",
+    re.IGNORECASE,
+)
+
 
 # An address that parses but is almost certainly mistyped. Live, same round:
 # "Vd@gmail.con" went onto the lead exactly as written. Email is the only
@@ -664,6 +739,21 @@ def _unfinished(
                     "and ask if that is right. Do NOT correct it yourself and do NOT "
                     "say what you think it should be — just check."
                 )
+        # `<=`, not `<`, and for the same reason the email branch uses it:
+        # helper_profile and additional_notes are both max_asks=1, so the
+        # ordinary limit would rule out ever querying a bare "Yes" on exactly
+        # the two fields this was written for. One extra ask, never more.
+        elif (
+            asked.get(field.key, 0) <= min(field.max_asks, MAX_ASKS_PER_FIELD)
+            and _BARE_YES_NO.match(value)
+            and not _YES_NO_QUESTION.match(field.question)
+        ):
+            note = (
+                f'\n\nThey answered "{value}", which does not tell you anything '
+                "about it. Your question was not a yes-or-no one. Acknowledge "
+                "them and ask warmly for the actual detail, in your own words - "
+                "do not repeat the question back word for word."
+            )
         elif asked.get(field.key, 0) < min(
             field.max_asks, MAX_ASKS_PER_FIELD
         ) and _ASSERTS_WITHOUT_DETAIL.search(value):

@@ -281,7 +281,14 @@ _GENERAL_INFO = re.compile(
     r"|\bhow\s+much\b"
     r"|\bhow\s+many\b"
     r"|\bwhat\s+(?:documents?|papers?|forms?)\b"
-    r"|\bwhat\s+(?:is|are)\s+the\s+(?:process|procedure|steps?|requirements?|timeline|cost)\b"
+    # "the" is optional and the money words are spelled out. Live, 2026-09-08:
+    # a client with a passport renewal parked asked "Ok what is cost" and then
+    # "I'll ask you the feesa", and got the holding line twice - the pattern
+    # required "what is THE cost" and knew nothing of fee/price/charge here, so
+    # a question we answer for $450 was passed to a human.
+    r"|\bwhat(?:'?s|\s+is|\s+are)\s+(?:the\s+)?"
+    r"(?:process|procedure|steps?|requirements?|timeline|cost|costs|price|"
+    r"prices|fee|fees|charge|charges)\b"
     r"|\bwhat\s+do\s+i\s+need\b"
     r"|\bis\s+there\s+(?:a|any)\s+(?:fee|cost|charge)\b",
     re.IGNORECASE,

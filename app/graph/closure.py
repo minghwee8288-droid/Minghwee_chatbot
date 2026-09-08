@@ -67,7 +67,43 @@ def _words(text: str) -> list[str]:
     return [w for w in re.split(r"\s+", (text or "").strip()) if w]
 
 
+# WhatsApp spells enthusiasm by holding a letter down. Live, 2026-09-08:
+# "okayyyyyyyyyyyyyyyyyyyyyyyyyyy" was answered "A live agent is handling this
+# and will connect with you shortly. In the meantime, is there anything else I
+# can help you with?" - the same line the client had already been given twice,
+# in reply to a message that said only "fine". _ACK ends its alternatives on
+# \b, and "okay" inside "okayyyy" has no word boundary after it, so none of
+# them matched and a plain acknowledgement was treated as a new message.
+#
+# Only a letter repeated THREE or more times is collapsed, and only down to two
+# - so "ok" and "sure" are untouched, real doubles like "hmm" survive, and no
+# ordinary English word is altered.
+# Both collapsed forms are tried, because neither alone is right: "okayyyy"
+# needs the run reduced to ONE letter to read as "okay", while "goooood" needs
+# it reduced to TWO to stay "good". Testing both costs nothing and no English
+# word carries three identical letters in a row, so neither form can turn a
+# real word into an acknowledgement that was not one.
+_ELONGATED = re.compile(r"(.)\1{2,}", re.IGNORECASE)
+
+
+def _unstretched(text: str) -> list[str]:
+    """The message as written, plus its de-elongated readings."""
+    body = text or ""
+    forms = [body, _ELONGATED.sub(r"\1\1", body), _ELONGATED.sub(r"\1", body)]
+    seen: list[str] = []
+    for form in forms:
+        if form not in seen:
+            seen.append(form)
+    return seen
+
+
 def is_pure_acknowledgement(text: str) -> bool:
+    """True if the message, in any of its de-elongated readings, says only
+    'received'. See _unstretched."""
+    return any(_is_pure_acknowledgement(form) for form in _unstretched(text))
+
+
+def _is_pure_acknowledgement(text: str) -> bool:
     """Whether a message says nothing beyond 'received'.
 
     Subtractive rather than a whitelist of exact strings: the acknowledgement is

@@ -223,6 +223,12 @@ because the lead is opened early and the ticket is created much later.
 | A fee is quoted only where the agency gave us one | `guards.FEE_STATED_SERVICES` vs `COST_WITHHELD_SERVICES` | Exact opposites, asserted disjoint. Renewal/passport/home leave state it; hiring, direct hire, replacement and both transfers defer to a consultant. |
 | A price question is a question about the SERVICE | `rag_retriever._SUBJECTLESS_INTENTS` (+`fee_enquiry`) | "How much does it cost" inside a renewal returned Form A's **hiring** schedule. `salary_enquiry` stays out — what a helper earns is about the helper. |
 | A service that states its own fee is not widened | `_service_filter` (`FEE_STATED_SERVICES` first) | Widening returned the **work permit** fee ($695) inside a **passport** renewal ($450). A wrong price is worse than a vague one. |
+| An undecidable gate only re-asks where the gates cover the whole answer | `info_collector._gates_are_exhaustive` | `requirement`'s gates are childcare/eldercare; "general housework" is a real option opening neither, and was blanked and re-asked three times. |
+| A trailing "are there" is a statement | `info_collector._ASKS_SOMETHING` (anchored) | "6 bedroom and 6 bathrooms are there" read as a question and drew a promise to come back with an answer. |
+| A bare yes/no does not close a question that is not yes/no | `_BARE_YES_NO` + `_YES_NO_QUESTION` | "Yes" closed "Any preference on her age or experience?". `<=` on the ask count, since both affected fields are `max_asks=1`. |
+| A parked topic still answers a bare price question | `blocked_topic_responder._GENERAL_INFO` | "Ok what is cost" needed "what is **the** cost" to match, so a $450 answer was handed to a human. |
+| The widening retry cannot undo the fee filter | `rag_retriever._PRICE_QUESTION` + `FEE_STATED_SERVICES` | Below the floor it dropped the filter and reached $695 inside a $450 service. Timing questions still widen. |
+| An elongated acknowledgement is an acknowledgement | `closure._unstretched` | "okayyyyyy" drew the handover line a third time. Both collapsed readings are tried — one for "okayyyy", two for "goooood". |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -514,6 +520,69 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **Six defects from the agency's live round on new hiring and
+  passport renewal. One is a regression shipped the same morning.**
+  (A) **`requirement` was asked three times and the client had to say so.**
+  *"General house work"* → re-asked → *"Only general housework"* → re-asked → *"I have
+  tell several time I need general housework"*, and the flow only moved on because
+  `max_asks` ran out. Cause: `_undecidable_gate_keys`, added that morning for the
+  transfer gate deadlock, assumes a field's gates cover its whole answer space. They do
+  on `transfer_direction` — two opposing gates, two options, every valid answer opens
+  one. They do **not** on `requirement`, whose gates are `children_detail` (childcare)
+  and `elderly_detail` (eldercare) while its own declared options include *"general
+  housework and cooking"* — a complete, correct answer that opens neither. So a good
+  answer was read as "the gate did not understand this", blanked, and asked again.
+  `_gates_are_exhaustive` now derives the test from the field's **own options** — the
+  rule fires only where every declared option opens some gate — so a new gate or a
+  reworded option cannot leave it stale, and a field with no options is left alone. The
+  transfer deadlock the rule exists for still fires.
+  (B) **A promise to answer a question nobody asked.** *"6 bedroom and 6 bathrooms are
+  there"* matched `_ASKS_SOMETHING`'s `are there`, so the collector believed a question
+  was outstanding and closed with *"I'll confirm your question with the team and come
+  back to you"* — leaving the client waiting for a reply that could never come. `is
+  there`/`are there` now only count when they **open** the message, which is what they
+  do as interrogatives; trailing, they are ordinary Singaporean and Indian English for
+  "there are". `_VALUE_IS_QUESTION` anchors all of its own alternatives at `^` for
+  exactly this reason — these two were the pair left unanchored.
+  (C) **A bare "Yes" closed an open question.** *"Any preference on her age or how much
+  experience she should have?"* → *"Yes"*, field closed, and the agent was handed a
+  preference with no content. `_BARE_YES_NO` (a bare yes/no and **nothing else**, so
+  *"Yes all"* still answers the extra-duties question) plus `_YES_NO_QUESTION` (does the
+  question open with an auxiliary verb) re-ask once. `<=` on the ask count, not `<`: both
+  fields this was written for, `helper_profile` and `additional_notes`, are `max_asks=1`,
+  so the ordinary limit would have ruled out the re-ask on precisely the two cases.
+  (D) **A parked passport renewal refused a price question we can answer.** *"Ok what is
+  cost"* and *"I'll ask you the feesa"* both got the holding line. `_GENERAL_INFO`
+  required *"what is **the** cost"* and listed no fee/price/charge in that branch, so a
+  $450 answer was passed to a human. Both fixed.
+  (E) **The widening retry reopened the wrong-price hole closed hours earlier.**
+  `_service_filter` keeps the filter for `FEE_STATED_SERVICES` so another service's fee
+  cannot be quoted — but the retry below it drops the filter whenever the filtered score
+  is under the floor, and a terse *"what is cost"* inside a **passport** renewal scores
+  0.361, so it widened and the top row was the **work permit** renewal at **$695** where
+  the answer is **$450**. Scoped to a PRICE question via `_PRICE_QUESTION`, deliberately
+  excluding timing words: the 2026-09-03 case this retry was written for is *"How much
+  time it takes in renewal"*, and it still widens exactly as before.
+  (F) **A fee question is tagged with the service's COST, not the service.** The KB
+  phrases these rows *"How much does it cost to renew my helper's passport?"*, and
+  `"(passport renewal)"` alone put *"what is cost"* at **0.367** — under the floor, so
+  `_answerable()` read False and the client got a holding line for a figure we hold.
+  Measured across six phrasings and every service: `"(cost of passport renewal)"` scores
+  **0.503–0.566** against 0.362–0.465 and returns the right row every time. Renewal,
+  transfer, replacement and direct hire all improve; home leave and replacement move by
+  under 0.02 and keep the same top row.
+  (G) **"okayyyyyyyyyyyyyyyyyyyyyyyyyyy" was answered** with the handover line the client
+  had already been given twice. `_ACK` ends its alternatives on `\b`, and "okay" inside
+  "okayyyy" has no word boundary after it. `_unstretched` tries the message as written
+  and both de-elongated readings — collapsing a run to **one** letter recovers "okayyyy"
+  → "okay", collapsing it to **two** recovers "goooood" → "good", and no English word
+  carries three identical letters in a row, so neither reading can invent an
+  acknowledgement.
+  **What worked, verified in the same transcripts:** the stepped six-step process answer
+  went out correctly on a parked topic, the per-nationality documents answer was right
+  for an Indonesian helper, and the timing answer (3 working days) was grounded.
+  `selfcheck_flows.py` is 148 assertions; `smoke_nodes.py` is 27 states.
 
 - **2026-09-08** — **The consolidated cost + timeline table: the last content gap
   closed, three stale rows corrected, and the money-question defect that would have

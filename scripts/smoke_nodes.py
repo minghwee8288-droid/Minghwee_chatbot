@@ -115,6 +115,24 @@ CASES = [
       "collected_info": {"helper_name": "Liza", "nationality": "Filipino"},
       "asked_field_counts": {"helper_name": 1, "nationality": 1},
       "history_text": "You: Which country is she from?"}),
+    # The 2026-09-08 regression, executed rather than inspected: a requirement
+    # of "general housework" opens neither of requirement's two gates, and the
+    # undecidable-gate rule blanked it and re-asked three times.
+    ("info_collector", "hiring, general housework",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "Only general housework",
+      "collected_info": {"requirement": "general housework"},
+      "asked_field_counts": {"requirement": 2},
+      "history_text": "You: What would you mainly need help with?"}),
+    # A bare "Yes" to an open question, which must be asked once more.
+    ("info_collector", "hiring, bare yes on age/experience",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "Yes",
+      "collected_info": {"requirement": "general housework",
+                         "helper_profile": "Yes"},
+      "asked_field_counts": {"requirement": 1, "helper_profile": 1},
+      "history_text": "You: Any preference on her age or how much experience "
+                      "she should have?"}),
     ("info_collector", "direct hire",
      {"service_type": "direct_hiring", "intent": "direct_hiring",
       "incoming_text": "I already found a helper, can you process her",
