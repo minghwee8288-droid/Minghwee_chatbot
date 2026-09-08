@@ -240,6 +240,7 @@ because the lead is opened early and the ticket is created much later.
 | A price we hold for two nationalities is not the third's price | `ticket.FEE_BY_NATIONALITY` + `fee_is_known_for()` | **$450** was quoted for a **Myanmar** helper. It is in the records (as PH/ID's price), so `ungrounded_figures` passed it. |
 | A broadcast is never a human agent | `message.is_auto_reply` (+ in-process count) + `webhook._undo_broadcast_standdowns` | The detector is retrospective, so the first copies of a NEW broadcast are indistinguishable from an agent. Two conversations in one run is now enough, and earlier stand-downs are reversed. |
 | A negative auto-reply verdict is never cached | `_AUTO_REPLY_VERDICTS` | Caching the first "no" on a fresh broadcast pinned it, so every later copy short-circuited to "no" and silenced the bot estate-wide. |
+| A mass announcement is caught on its FIRST copy | `message._BROADCAST_MARKERS` | "Dear Valued Customer" and its kin. `operating hours` is deliberately absent — an agent answering "what time do you open" says it. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -572,6 +573,17 @@ Append here, newest first. One entry per behavioural change.
   **Checked after the fix: zero allowlisted conversations are stood down** — but that was
   run against a local `.env` with 11 numbers while the server's gate has 17, so run
   `--list` in the container to confirm the other six.
+  (F) **And the first copy, once the agency showed us the text.** The counting rules
+  above catch a broadcast from its second conversation; the first has nothing to compare
+  against. `_BROADCAST_MARKERS` closes that with the one thing a mass announcement cannot
+  hide — who it is addressed to. Nobody writes *"Dear Valued Customer"* to a client they
+  are already talking to about their helper's passport. Kept strictly to that test:
+  **"operating hours" is deliberately NOT a marker**, because an agent answering *"what
+  time do you open"* would say it, and a rule that swallows a real agent is worse than the
+  bug it fixes — verified against four genuine one-to-one agent replies, one of which
+  quotes the opening hours in full. A one-off announcement carrying none of these phrases
+  can still be matched outright by putting its exact text in `WHATSAPP_AUTO_REPLY_TEXTS`
+  in `.env` (`||` separated).
 
 - **2026-09-08** — **The passport-renewal briefing moves to the end of the collection,
   gets a heading, and can no longer be lost or priced from another nationality.**

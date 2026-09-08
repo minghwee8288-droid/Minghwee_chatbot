@@ -34,6 +34,8 @@ import app.graph.guards as gd
 import app.graph.prompts.templates as tpl
 from app.graph.nodes.intent_classifier import _named_service as _named_svc
 import app.graph.closure as cl
+import app.services.message as ms
+import app.services.handover as hs
 btr = importlib.import_module("app.graph.nodes.blocked_topic_responder")
 import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location("lsn", str(Path(__file__).resolve().parent / "load_service_notes.py"))
@@ -410,6 +412,20 @@ rows = [
   "returning client - placed with us before"),
  ("a first-timer still is",
   ico._known_fields({"prior_hires": 0}).get("referral_source"), None),
+ # --- a broadcast is not an agent, 2026-09-08 -------------------------
+ # The agency's number-migration notice went to ~50 clients, landed in the
+ # bot's own threads, and the agent detector read it as a human taking over.
+ # A client's "hi i want to renew my helper passport" got silence.
+ ("a mass announcement is recognised by how it addresses people",
+  "dear valued customer" in ms._BROADCAST_MARKERS, True),
+ # An agent answering "what time do you open" says this. A marker that fires
+ # on a real agent is far worse than the bug it fixes.
+ ("...and 'operating hours' is deliberately not one of them",
+  any("operating hours" in m for m in ms._BROADCAST_MARKERS), False),
+ ("two conversations in one run is already a broadcast",
+  ms._AUTO_REPLY_MIN_IN_PROCESS, 2),
+ ("a stand-down can be undone without minting a new thread",
+  hasattr(hs, "undo_agent_takeover"), True),
  # --- the briefing moved to the END of the collection, 2026-09-08 -----
  # Agency, after testing: "After all the questions it should reply with that
  # process message ... the cost should be first, then the estimated time, and

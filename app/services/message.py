@@ -208,6 +208,30 @@ _AUTO_REPLY_MIN_CHARS = 60
 # How many different clients must have received the identical text.
 _AUTO_REPLY_MIN_CONVERSATIONS = 3
 
+# Phrasing that only ever appears in a message written for everybody. The
+# agency's number-migration notice on 2026-09-08 - "Dear Valued Customer ...
+# Please save our new number ... Thank you for your continued trust and
+# support" - went to about fifty clients and silenced the bot on the first
+# conversation it reached, because the counting rules below need a second copy
+# before they can tell a broadcast from an agent.
+#
+# These need no second copy. Every one is a register a person does not use when
+# replying to one client they are already talking to: nobody writes "Dear
+# Valued Customer" to Vaidik about his helper's passport. Kept to that test -
+# "operating hours" is deliberately NOT here, because an agent answering "what
+# time do you open" would say it.
+#
+# For a one-off announcement with none of these, put its exact text in
+# WHATSAPP_AUTO_REPLY_TEXTS in .env ('||' separated) and it is matched outright.
+_BROADCAST_MARKERS = (
+    "dear valued customer",
+    "dear valued clients",
+    "dear customers",
+    "please save our new number",
+    "thank you for your continued trust",
+    "we look forward to serving you through",
+)
+
 # ...and two is enough when we watched both arrive ourselves.
 _AUTO_REPLY_MIN_IN_PROCESS = 2
 
@@ -232,6 +256,16 @@ async def is_auto_reply(body: str | None, conversation_id: Any = None) -> bool:
         return True
     if len(normalised) < _AUTO_REPLY_MIN_CHARS:
         return False
+
+    # An announcement says who it is for, and it is not one person.
+    if any(marker in normalised for marker in _BROADCAST_MARKERS):
+        _AUTO_REPLY_VERDICTS[normalised] = True
+        logger.info(
+            "Outbound message is addressed to everybody, not to this client - "
+            "treating it as a broadcast, not an agent: %r",
+            (body or "")[:80],
+        )
+        return True
 
     if _AUTO_REPLY_VERDICTS.get(normalised):
         return True
