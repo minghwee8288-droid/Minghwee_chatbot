@@ -133,6 +133,30 @@ CASES = [
       "asked_field_counts": {"requirement": 1, "helper_profile": 1},
       "history_text": "You: Any preference on her age or how much experience "
                       "she should have?"}),
+    # The 2026-09-08 passport-renewal redesign: the turn after the nationality
+    # lands must EXECUTE the briefing branch, not just satisfy a data check.
+    # This is the shape of the 2026-09-04 UnboundLocalError - a new flag read
+    # in three places - and only running the node catches it.
+    ("info_collector", "passport, the briefing turn",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "Indonesian",
+      "collected_info": {"full_name": "Kapil", "helper_name": "Michan",
+                         "nationality": "Indonesian"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1, "nationality": 1},
+      "briefed_services": [],
+      "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
+      "rag_context": "Indonesian passport renewal costs $450 and takes about 3 working days.",
+      "history_text": "You: Which country is her passport from?"}),
+    ("info_collector", "passport, already briefed",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "In 2 weeks",
+      "collected_info": {"full_name": "Kapil", "helper_name": "Michan",
+                         "nationality": "Indonesian", "passport_expiry": "2 weeks"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1, "nationality": 1,
+                             "passport_expiry": 1},
+      "briefed_services": ["passport_renewal"],
+      "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
+      "history_text": "You: When does her current passport expire?"}),
     ("info_collector", "direct hire",
      {"service_type": "direct_hiring", "intent": "direct_hiring",
       "incoming_text": "I already found a helper, can you process her",

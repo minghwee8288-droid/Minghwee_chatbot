@@ -120,6 +120,21 @@ def _merge_counts(current: dict | None, new: dict | None) -> dict:
     return merged
 
 
+def _merge_unique(current: list | None, new: list | None) -> list:
+    """A set that keeps its order, accumulated across turns.
+
+    Used for the services we have already explained end to end. It must survive
+    the per-turn reset in graph._TURN_RESET the same way created_lead_id does:
+    a briefing given on turn three is still given on turn nine, and repeating it
+    would be worse than never having given it.
+    """
+    merged = list(current or [])
+    for item in new or []:
+        if item and item not in merged:
+            merged.append(item)
+    return merged
+
+
 def _merge_dict(current: dict | None, new: dict | None) -> dict:
     """Collected info accumulates across turns instead of being replaced.
 
@@ -288,6 +303,10 @@ class ConversationState(TypedDict, total=False):
     # How many times each field has actually been asked, cleared on a service
     # switch alongside collected_info.
     asked_field_counts: Annotated[dict[str, int], _merge_counts]
+
+    # Services whose process, documents, cost and timing we have already laid
+    # out in full. Accumulates, and is deliberately absent from _TURN_RESET.
+    briefed_services: Annotated[list[str], _merge_unique]
     info_complete: bool
 
     # --- Output ---

@@ -31,6 +31,7 @@ from app.graph.guards import (
 from app.graph.llm import complete, complete_json
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
+    SERVICE_BRIEFING_NOTE,
     ACKNOWLEDGE_ONLY_INSTRUCTION,
     ANSWER_THEN_ASK_INSTRUCTION,
     COLLECTOR_INSTRUCTION,
@@ -623,7 +624,15 @@ _CARE_TYPE_FILLER = re.compile(
 # ignored in the same turn. The two patterns have to agree about what reads as
 # a question, so the openers below now mirror that one.
 _ASKS_SOMETHING = re.compile(
-    r"\?|\b(how\s+(much|long|many|do|does)|what\s+(documents?|do\s+i|is|are)|"
+    # "what if" / "what about" / "what happens" carry no question mark and none
+    # of the other openers, so live on 2026-09-08 "what if her work permit
+    # expires at the same time" got only the next question back - the client's
+    # question was never acknowledged, let alone answered. _VALUE_IS_QUESTION
+    # already reads all three as questions (its `what` suffix is optional), so
+    # until now the two patterns disagreed about the same words, which is the
+    # exact mismatch the note below this one was written about.
+    r"\?|\bwhat\s+(?:if|about|happens)\b|"
+    r"\b(how\s+(much|long|many|do|does)|what\s+(documents?|do\s+i|is|are)|"
     r"which\s+documents?|when\s+(can|will|do)|cost|price|fee|fees|charge|"
     r"salary|levy|deposit|require[ds]?|needed|"
     r"can\s+(you|we|i)|could\s+you|do\s+you\s+(have|provide|offer|know)|"
@@ -1295,6 +1304,38 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "Once you know, you can be specific."
         )
 
+    # The turn that stops and explains the whole service. Fires once, on the
+    # turn AFTER the field the explanation depends on has been answered - for a
+    # passport renewal, her nationality, because every practical answer differs
+    # by it and there is nothing honest to say before we know it.
+    #
+    # Gated on rag_matches, and that is the important half: without records this
+    # would be an instruction to improvise a process, a document list and a
+    # price, which is the single worst thing this bot can do. With nothing
+    # retrieved the turn silently stays an ordinary question.
+    # Did the client put a question to us this turn? Read in two places about a
+    # hundred lines apart, so it is computed once here rather than derived from
+    # `answer_first` below - reading a local before it is assigned is exactly
+    # the 2026-09-04 failure that silenced the bot on every single turn, and
+    # smoke_nodes.py caught this one the same way.
+    client_asked = bool(_ASKS_SOMETHING.search(state.get("incoming_text") or ""))
+
+    briefing_note = ""
+    # `answer_first` is the collector's own "they asked us something" flag, and
+    # it is the same rule the retriever applies one node earlier: a client who
+    # asked a question gets it answered, and the briefing waits a turn. Without
+    # this the two instructions would both be in the prompt, pulling opposite
+    # ways on the same reply.
+    briefing_due = (
+        ticket_service.briefing_due(
+            service_type, collected, state.get("briefed_services")
+        )
+        and bool(state.get("rag_matches"))
+        and not client_asked
+    )
+    if briefing_due:
+        briefing_note = SERVICE_BRIEFING_NOTE
+
     # The very first thing this client has ever heard from us. Rule 1 and the
     # stage line in build_system_prompt both call for the introduction, but on a
     # collector turn they compete with COLLECTOR_INSTRUCTION's "ask for that one
@@ -1391,11 +1432,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # The client asked something while we were collecting. Retrieval now runs
     # before this node on every turn, so the records are in state and the answer
     # can go out with the next question rather than being ignored.
-    answer_first = (
-        ANSWER_THEN_ASK_INSTRUCTION
-        if _ASKS_SOMETHING.search(state.get("incoming_text") or "")
-        else ""
-    )
+    answer_first = ANSWER_THEN_ASK_INSTRUCTION if client_asked else ""
 
     # The greeting and the AI disclosure are two sentences before a single
     # question has been asked, so a two-sentence budget deletes the question
@@ -1427,6 +1464,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             + returning_note
             + requirement_note
             + follow_up_notes.get(next_field.key, "")
+            + briefing_note
             + answer_first
         )
         if next_field.optional:
@@ -1447,13 +1485,20 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             # and neither does introducing yourself before asking anything.
             # Four only where all three are genuinely required: the
             # introduction, the answer to what they asked, and our question.
-            max_sentences=4
+            # A four-part briefing plus the next question. The list marker
+            # masking in clamp_reply means a numbered step is not counted as a
+            # sentence, so this is roughly "four sections and a question", not
+            # fourteen sentences of prose.
+            max_sentences=14
+            if briefing_due
+            else 4
             if (first_contact and answer_first)
             else 3
             if (answer_first or first_contact or small_ticket_note or purpose_note
                 or nationality_note or location_note)
             else 2,
             withhold_cost=service_type in COST_WITHHELD_SERVICES,
+            stepped=briefing_due,
         )
         counts[next_field.key] = 1
         logger.info(
@@ -1476,6 +1521,10 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "info_complete": False,
             "reply": reply,
             "needs_handover": bool(state.get("needs_handover")),
+            # Said once. _merge_unique accumulates and _TURN_RESET leaves this
+            # alone, so a briefing given on turn three is still given on turn
+            # nine - repeating it would be worse than never having given it.
+            "briefed_services": [service_type] if briefing_due else [],
         }
 
     # A service that asks nothing at all (direct hiring, a supplier offering a
@@ -1534,6 +1583,7 @@ async def _write(
     fallback: str = "",
     max_sentences: int = 2,
     withhold_cost: bool = False,
+    stepped: bool = False,
 ) -> str:
     system_prompt = build_system_prompt(
         prompt_state,
@@ -1548,13 +1598,23 @@ async def _write(
         "Your reply:"
     )
     try:
-        reply = await complete(system_prompt, user_prompt, temperature=0.45, max_tokens=140)
+        reply = await complete(
+            system_prompt,
+            user_prompt,
+            temperature=0.45,
+            # A four-part briefing does not fit in 140. Same budget the stepped
+            # path in response_generator uses; every other turn is unchanged.
+            max_tokens=460 if stepped else 140,
+        )
     except Exception:  # noqa: BLE001
         logger.exception("Collector reply generation failed")
         return FALLBACK_QUESTION
 
     reply = strip_meta_commentary(reply.strip().strip('"'))
-    if is_degenerate(reply) or looks_like_document(reply):
+    # A numbered list IS the requested format on a briefing turn. Headings,
+    # bold and bullets stay banned there as everywhere else - see
+    # looks_like_document(allow_steps=).
+    if is_degenerate(reply) or looks_like_document(reply, allow_steps=stepped):
         logger.error("Discarded malformed collector reply: %r", reply[:200])
         return fallback or FALLBACK_QUESTION
 

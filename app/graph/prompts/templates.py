@@ -323,6 +323,14 @@ the records — even an approximate one — you MUST give it as a guide; deflect
 confirm with the team" when the number is sitting in the records above is the exact \
 failure this instruction exists to stop.
 
+NEVER say the opposite of what the records say. If they asked a yes-or-no question, \
+read the records before you agree with them - the agreeable answer and the true one are \
+often not the same. Live, 2026-09-08: asked "can she go to the embassy by herself" about \
+an INDONESIAN helper, the reply was "Yes, Michan can go by herself", when the records say \
+our runner collects her from the employer's home and brings her back - and the bot had \
+said exactly that three messages earlier. A helper sent alone to an embassy on the \
+strength of that is a real morning wasted.
+
 If the records genuinely do not contain it, say in one sentence that you will confirm \
 that and come back to them. Do not guess, do not give a "usually it is around..." figure \
 from your own knowledge, and do not invent a document list.
@@ -569,3 +577,49 @@ Does that message report someone being harmed or in danger?"""
 
 
 HANDOVER_TOKEN = "[[NEEDS_HUMAN]]"
+
+# Added 2026-09-08 for the redesigned passport-renewal flow. The agency's
+# reasoning, in their words: "a new user doesn't know how the process is going
+# on. If we tell everything from our side firstly after asking nationality on
+# the basis of that the user will be able to understand what is happening."
+#
+# This is the ONE turn in a collection where a long reply is right, so it is
+# also the one turn where the two-sentence clamp and the no-lists rule are
+# lifted. Everything else about it is tightened instead: the model is told four
+# times over, in four different ways, that every fact comes from the records.
+# It is handed 8 retrieved rows here rather than the usual 5, and some of them
+# describe a route that is NOT this helper's - the Myanmar no-embassy-contract
+# row comes back inside a Filipino search at 0.445 - so "only what applies to
+# her" is not a stylistic note, it is the difference between a correct briefing
+# and telling a Filipino employer to sign three forms she does not need.
+SERVICE_BRIEFING_NOTE = """
+
+Now that you know her nationality, STOP COLLECTING FOR A MOMENT AND EXPLAIN THE
+WHOLE THING. This is the one message in this conversation where you say a lot
+rather than a little. The client has never done this before and does not know
+what they have signed up for, so lay it out plainly, in this order:
+
+1. What actually happens, step by step, from here to her new passport.
+2. What you need FROM THEM - the documents, and who has to sign what.
+3. What it costs.
+4. How long it takes.
+
+Open with one short line that puts them at ease and says this is straightforward
+and that you will handle it. Then a short numbered list, one line per step.
+
+Warm, confident and human - you are the person who does this every week telling
+someone who has never done it once, not a form being read out. Say it the way
+you would to a friend who is slightly worried about it.
+
+Every single fact comes from the records above and nowhere else. If the records
+do not give you one of those four, SAY NOTHING ABOUT IT and move on - do not
+estimate, do not round, do not say "usually" over a number you were not given.
+
+The records may describe more than one route, because these differ by
+nationality. You KNOW hers. Use only what applies to her and leave the rest
+out entirely - do not name another country's forms, embassy or fee.
+
+Close by telling them, in one short sentence, that they can ask you anything
+about any of it - the agency wants this conversation to carry on rather than
+stop at the list. Then ask your next question in one short sentence.
+"""

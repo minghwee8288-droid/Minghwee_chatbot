@@ -11,6 +11,7 @@ from app.graph.guards import FEE_STATED_SERVICES, last_bot_line
 from app.graph.state import ConversationState, effective_contact_type
 from app.services import contact as contact_service
 from app.services import rag
+from app.services import ticket as ticket_service
 from app.services.lead import nationality_code
 
 logger = logging.getLogger(__name__)
@@ -46,10 +47,71 @@ _SUBJECTLESS_INTENTS = {
 _MONEY_SERVICES = {"fee_enquiry", "salary_enquiry"}
 
 
+# The turn that explains a whole service is not searching for what the client
+# just said - they said "Indonesian" - it is searching for everything they are
+# about to be told. Measured 2026-09-08 against both nationalities: this exact
+# phrasing is the one that brings back all four kinds of row (process,
+# documents, cost AND timing); the shorter "the full process, the documents,
+# the cost and how long it takes" returned no timing row for either.
+BRIEFING_QUERY = (
+    "what is the process, what documents are needed, how much does it cost "
+    "and how long does it take"
+)
+
+# Four kinds of answer have to arrive together, and the nationality-specific
+# document row has to survive alongside them. At the ordinary 5 the timing row
+# was the one that fell off the end.
+BRIEFING_MATCH_COUNT = 8
+
+
+def _briefing_turn(state: ConversationState) -> bool:
+    """Whether THIS turn is the one that lays the whole service out.
+
+    ticket_service.briefing_due() answers "has the service reached the point
+    where it can explain itself". Two more things have to be true before we
+    replace the client's own words with a briefing query:
+
+    1. The topic is not PARKED. Only the collector gives a briefing, and a
+       parked topic goes to blocked_topic_responder instead - which never sets
+       briefed_services, so without this test the briefing query would be used
+       for every remaining turn of the conversation and every specific question
+       ("what is the cost", "do you need the original passport") would be
+       answered out of a general briefing set rather than its own rows.
+    2. The client did not just ask us something. Their question gets the
+       retrieval, and the briefing waits one turn - answering what somebody
+       asked comes before telling them what we planned to tell them.
+    """
+    if not ticket_service.briefing_due(
+        state.get("service_type"),
+        state.get("collected_info"),
+        state.get("briefed_services"),
+    ):
+        return False
+    topic_key = ticket_service.topic_key_for(
+        state.get("service_type"),
+        effective_contact_type(state),
+        state.get("intent"),
+    )
+    if topic_key and topic_key in (state.get("blocked_topics") or {}):
+        return False
+    return not _ASKS_US_SOMETHING.search(state.get("incoming_text") or "")
+
+
+# Narrow on purpose: this only decides whether the briefing waits a turn.
+_ASKS_US_SOMETHING = re.compile(
+    r"\?|^\s*(?:what|when|where|which|who|why|how|can|could|do|does|is|are)\b",
+    re.IGNORECASE,
+)
+
+
 def _search_query(state: ConversationState) -> str:
     """Bias the query with the last thing the client said plus the topic."""
     message = (state.get("incoming_text") or "").strip()
     intent = state.get("intent") or ""
+
+    if _briefing_turn(state):
+        service = (state.get("service_type") or "").replace("_", " ")
+        return f"{BRIEFING_QUERY}\n({service})"
 
     # A greeting or a piece of small talk is searched as it stands: it is not a
     # question, and biasing it towards whatever is in flight would go looking
@@ -219,11 +281,13 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
     contact = effective_contact_type(state)
     nationality = _nationality(state)
     service = _service_filter(state)
+    briefing = _briefing_turn(state)
     matches = await rag.search(
         query,
         service_type=service,
         contact_type=contact,
         nationality=nationality,
+        match_count=BRIEFING_MATCH_COUNT if briefing else None,
     )
     best = rag.best_similarity(matches)
 

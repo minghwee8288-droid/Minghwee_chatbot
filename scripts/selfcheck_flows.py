@@ -410,6 +410,52 @@ rows = [
   "returning client - placed with us before"),
  ("a first-timer still is",
   ico._known_fields({"prior_hires": 0}).get("referral_source"), None),
+ # --- passport renewal explains itself, 2026-09-08 --------------------
+ # Agency: "we have to tell them the whole process, the documents required,
+ # the cost/fees, and how long it takes ... a new user doesn't know how the
+ # process is going on." Greet by name, learn the nationality, then explain.
+ ("passport renewal asks the client's name first",
+  [f.key for f in t.SERVICE_FIELDS["passport_renewal"]][:3],
+  ["full_name", "helper_name", "nationality"]),
+ ("the briefing hangs off the nationality",
+  t.BRIEFING_AFTER.get("passport_renewal"), "nationality"),
+ ("nothing to brief before we know it",
+  t.briefing_due("passport_renewal", {"helper_name": "Michan"}, []), False),
+ ("due the moment we do",
+  t.briefing_due("passport_renewal", {"nationality": "Indonesian"}, []), True),
+ ("and never twice",
+  t.briefing_due("passport_renewal", {"nationality": "Indonesian"},
+                 ["passport_renewal"]), False),
+ # It must survive the per-turn reset, or it is given again every turn.
+ ("the briefing is remembered across turns",
+  "briefed_services" in g._TURN_RESET, False),
+ ("the briefing turn searches for the whole picture, not the last answer",
+  rr._search_query({"incoming_text": "Indonesian", "intent": "passport_renewal",
+                    "service_type": "passport_renewal",
+                    "collected_info": {"nationality": "Indonesian"},
+                    "briefed_services": []}),
+  rr.BRIEFING_QUERY + "\n(passport renewal)"),
+ ("...and goes back to normal once it has been given",
+  rr._search_query({"incoming_text": "Indonesian", "intent": "passport_renewal",
+                    "service_type": "passport_renewal",
+                    "collected_info": {"nationality": "Indonesian"},
+                    "briefed_services": ["passport_renewal"]}),
+  "Indonesian\n(passport renewal)"),
+ # Eight rows, not five: at five the TIMING row fell off the end and the
+ # briefing could not say how long it takes.
+ ("the briefing turn is given more rows than usual",
+  rr.BRIEFING_MATCH_COUNT > 5, True),
+ ("the briefing forbids inventing what the records do not give",
+  "SAY NOTHING ABOUT IT" in tpl.SERVICE_BRIEFING_NOTE, True),
+ ("and forbids naming another nationality's route",
+  "leave the rest" in tpl.SERVICE_BRIEFING_NOTE, True),
+ # Cross-questioning after the briefing is the point of it.
+ ("'what if' is heard as a question",
+  bool(ico._ASKS_SOMETHING.search("what if her work permit expires too")), True),
+ ("'what about' too",
+  bool(ico._ASKS_SOMETHING.search("what about the fee")), True),
+ ("a yes/no answer may not reverse the records",
+  "opposite of what the records say" in tpl.ANSWER_THEN_ASK_INSTRUCTION, True),
  # --- the 2026-09-08 live round: new hiring + passport renewal --------
  # REGRESSION, same day. _undecidable_gate_keys assumed a field's gates cover
  # its whole answer space. True for transfer_direction, false for requirement,

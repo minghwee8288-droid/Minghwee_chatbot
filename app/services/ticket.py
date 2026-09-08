@@ -1071,7 +1071,21 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     # the honest answer was "I don't have any case ID". We identify them from
     # the phone number instead — see contact.identify().
     "passport_renewal": [
+        # The employer's own name comes first, 2026-09-08. Rule 1c has told
+        # Claire to use the client's name since 2026-09-04 and this flow never
+        # asked for it, so on a number we do not already know she had nothing to
+        # use and opened cold. Portable and filled from the WhatsApp push name,
+        # so a client we know is greeted, not interrogated.
+        Field(
+            "full_name",
+            "name",
+            "May I know your name?",
+            max_asks=2,
+            group="who they are",
+        ),
         Field("helper_name", "helper's name", "May I know your helper's name?", max_asks=2),
+        # Third, and the flow stops to explain itself the moment it is answered
+        # - see BRIEFING_AFTER below.
         Field(
             "nationality",
             "nationality",
@@ -1378,6 +1392,45 @@ SERVICE_FIELDS[TRANSFER_EMPLOYER] += [
     _hiring_field("update_channel", gate=_TAKING_ON_TRANSFER),
     _hiring_field("email"),
 ]
+
+
+# A service that explains itself once, mid-collection, as soon as the one field
+# the explanation depends on has been answered. The value is that field's key.
+#
+# Agency instruction, 2026-09-08: "we have to tell them the whole process, the
+# documents required, the cost/fees, and how long it takes ... we are updating
+# this process because a new user doesn't know how the process is going on."
+# Their reasoning is the design: a passport renewal answers differently for
+# every nationality - different documents, a different embassy visit, and for
+# home leave a different price and lead time - so there is nothing honest to
+# say before we know it, and once we do there is no reason to make the client
+# drag it out of us a question at a time.
+#
+# It is deliberately NOT the opening turn. Briefing before the nationality is
+# known produces "it depends on her nationality", which is the exact defect
+# fixed on 2026-09-04: a sentence that tells the client nothing and is then
+# followed by the question it depends on.
+BRIEFING_AFTER: dict[str, str] = {
+    "passport_renewal": "nationality",
+}
+
+
+def briefing_due(
+    service_type: str | None,
+    collected: dict[str, Any] | None,
+    briefed: list[str] | None,
+) -> bool:
+    """Whether this turn is the one that lays the whole service out.
+
+    Takes plain values rather than the graph state so both the retriever and
+    the collector can ask the same question without importing each other, and
+    so the two can never drift apart on what "due" means (§9.8).
+    """
+    key = BRIEFING_AFTER.get(service_type or "")
+    if not key or service_type in (briefed or []):
+        return False
+    value = str((collected or {}).get(key) or "").strip()
+    return bool(value) and value.lower() != UNANSWERED
 
 
 def missing_fields(service_type: str | None, collected: dict[str, Any]) -> list[Field]:

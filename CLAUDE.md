@@ -229,6 +229,10 @@ because the lead is opened early and the ticket is created much later.
 | A parked topic still answers a bare price question | `blocked_topic_responder._GENERAL_INFO` | "Ok what is cost" needed "what is **the** cost" to match, so a $450 answer was handed to a human. |
 | The widening retry cannot undo the fee filter | `rag_retriever._PRICE_QUESTION` + `FEE_STATED_SERVICES` | Below the floor it dropped the filter and reached $695 inside a $450 service. Timing questions still widen. |
 | An elongated acknowledgement is an acknowledgement | `closure._unstretched` | "okayyyyyy" drew the handover line a third time. Both collapsed readings are tried — one for "okayyyy", two for "goooood". |
+| A service explains itself once, after the field it depends on | `ticket.BRIEFING_AFTER` + `briefing_due()` | `passport_renewal` → `nationality`. Never on the opening turn: before the nationality the only honest answer is "it depends", which is the 2026-09-04 defect. |
+| The briefing is remembered across turns | `state.briefed_services` (`_merge_unique`) | Deliberately absent from `_TURN_RESET`, like `created_lead_id`. |
+| A briefing never happens on a parked topic, nor over a client's question | `rag_retriever._briefing_turn` | Only the collector briefs; `blocked_topic_responder` never sets `briefed_services`, so without this every later turn would retrieve the briefing set instead of its own answer. |
+| A cross-question may not be answered against the records | prompt `ANSWER_THEN_ASK_INSTRUCTION` | "Can she go to the embassy by herself" was answered "Yes" for an **Indonesian** helper, whom our runner collects from the home. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -520,6 +524,61 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-08** — **Passport renewal now explains itself.** Agency: *"firstly ... ask
+  for the employer's name by greeting them by name and ... the helper's name ... then the
+  nationality ... then we have to tell them the whole process, the documents required, the
+  cost/fees, and how long it takes ... a new user doesn't know how the process is going
+  on."*
+  (A) **The flow asks the client's own name, first.** It was the only thing rule 1c
+  needed and the one field this flow never had, so on a number we do not already know
+  Claire opened cold. Portable and filled from the WhatsApp push name. 5 fields → 6:
+  name, helper's name, nationality, then the rest.
+  (B) **`BRIEFING_AFTER` — a service that stops and explains itself, once, on the turn
+  the field it depends on is answered.** For a passport renewal that is the nationality,
+  and the agency's reasoning is the design: the documents, the embassy visit and the lead
+  time all differ by it, so there is nothing honest to say before we know it and no
+  reason to make the client drag it out a question at a time afterwards. Deliberately NOT
+  the opening turn — briefing before the nationality produces *"it depends on her
+  nationality"*, the exact defect fixed on 2026-09-04.
+  (C) **The briefing turn retrieves what the client is about to be told, not what they
+  just said** — they said "Indonesian". `BRIEFING_QUERY` asks for the process, the
+  documents, the cost and the timing together, at **8 rows rather than 5**: measured, at
+  5 the TIMING row was the one that fell off the end, so the briefing could not say how
+  long it takes. Verified end to end against the live model for both nationalities, and
+  every claim in both replies was checked back to the row it came from — the Filipino
+  reply's *"processed and printed in the Philippines, shipped back"* is verbatim from the
+  KB, not invented.
+  (D) **It is route-correct, which is the whole point.** An Indonesian client is told the
+  runner collects her from the home, a copy of the passport is enough, $450, about 3
+  working days. A Filipino client is told she attends in person, her **original** passport
+  is required, the five embassy forms need original signatures, $450, 6 to 8 weeks.
+  Neither reply named the other's route, even though the retrieved set contains rows for
+  both (the Myanmar no-embassy-contract row comes back inside a Filipino search at 0.445).
+  (E) **Two things had to be gated, and the second was a real design flaw.** The briefing
+  waits a turn if the client asked us something — answering them comes first. And it never
+  fires on a **parked** topic: only the collector briefs, `blocked_topic_responder` never
+  sets `briefed_services`, so without that test every remaining turn of a ticketed
+  conversation would have retrieved the briefing set instead of its own answer — which is
+  precisely the transcript the agency sent. Found by a self-check going red, not by review.
+  (F) **Cross-questioning after the briefing, which is what they asked for.** Five
+  follow-ups run live: *why do you need my NRIC*, *original or copy*, *is $450 final*,
+  *what if her work permit expires too*, *can she go by herself*. Two failed and are
+  fixed. *"what if"* carried no question mark and none of `_ASKS_SOMETHING`'s openers, so
+  the client's question was simply ignored — and `_VALUE_IS_QUESTION` already read it as a
+  question, so the two patterns disagreed about the same words, the exact mismatch the note
+  between them warns about. And *"can she go to the embassy by herself"* was answered
+  **"Yes"** for an Indonesian helper, reversing a fact the bot had stated three messages
+  earlier; `ANSWER_THEN_ASK_INSTRUCTION` said how to answer but never said not to
+  contradict the records, and a yes/no question is the shape most likely to be flipped by
+  an agreeable model. It now leads with the runner accompanying her. **Not claimed as
+  fully solved:** the reply still opens *"Yes, she can go by herself, but..."* — the
+  operative fact is now there, the hedge is model style.
+  (G) **`UnboundLocalError` again, caught again.** The briefing block reads whether the
+  client asked a question ~100 lines above where `answer_first` was assigned — the same
+  shape as 2026-09-04. `smoke_nodes.py` failed three states on it. Fixed the same way that
+  one was: one value, `client_asked`, computed once and read by both.
+  `selfcheck_flows.py` is 162 assertions; `smoke_nodes.py` is 29 states.
 
 - **2026-09-08** — **Six defects from the agency's live round on new hiring and
   passport renewal. One is a regression shipped the same morning.**
