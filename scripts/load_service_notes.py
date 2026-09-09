@@ -1522,7 +1522,7 @@ ROWS: list[dict[str, Any]] = [
     # knowledge base matched it, because the only row that answers it is
     # phrased "for a direct hire" and the filter excluded it.
     #
-    # No insurance MINIMUM is stated - see CLAUDE.md §9.12, the KB disagrees
+    # No insurance MINIMUM is stated - see CLAUDE.md §9.13, the KB disagrees
     # with itself three ways and it is Ming Hwee's call, not this script's. The
     # $5,000 bond is documented as quotable and is phrased the way the existing
     # direct-hire row phrases it, deliberately clear of the words

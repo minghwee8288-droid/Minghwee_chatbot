@@ -38,6 +38,43 @@ import app.graph.closure as cl
 import app.services.message as ms
 import app.services.handover as hs
 btr = importlib.import_module("app.graph.nodes.blocked_topic_responder")
+import re as _re
+import pathlib as _pathlib
+import app.services.contact as _contact
+from app.graph.prompts.system import _known_cases_block as _cases_block
+
+_APP_DIR = _pathlib.Path(__file__).resolve().parents[1] / "app"
+_APP_SRC = {f: f.read_text(encoding="utf-8") for f in _APP_DIR.rglob("*.py")}
+_CONTACT_SRC = (_APP_DIR / "services" / "contact.py").read_text(encoding="utf-8")
+
+# The eleven case tables, named rather than pattern-matched: a `case_[a-z_]+`
+# pattern also catches "case_enquiry", "case_id" and "case_summary", which are
+# an intent, a field key and a state key, and none of them is a table.
+_CASE_TABLES = (
+    "cases", "case_stages", "case_tasks", "case_task_details",
+    "case_task_comments", "case_task_documents", "case_requirements",
+    "case_requirement_links", "case_candidate_suggestions",
+    "case_salary_schedules", "case_salary_schedule_signing_links",
+)
+_TABLE_RE = "|".join(_CASE_TABLES)
+
+# Any write against one of them, in either call style the db helper supports.
+# The portal owns these rows; the bot reads them and must never touch them -
+# see the read-only note above contact.get_cases.
+_CASE_WRITE = _re.compile(
+    rf'db\.table\(\s*"(?:{_TABLE_RE})"\s*\)\s*\.\s*(?:insert|update|delete|upsert)'
+    rf'|db\.(?:insert|update|delete|upsert)\(\s*"(?:{_TABLE_RE})"'
+)
+_case_writes = sorted(
+    {m.group(0) for src in _APP_SRC.values() for m in _CASE_WRITE.finditer(src)}
+)
+
+_CASE_A = {"case_id": "1", "case_number": "CS-2026-0007", "case_type": "First-time hire",
+           "status": "active", "stage": "documents", "country": "PH",
+           "opened_at": "2026-09-01", "helper_name": "Liza Fernandez"}
+_CASE_B = {"case_id": "2", "case_number": "CS-2026-0002", "case_type": "Home leave",
+           "status": "completed", "stage": "closing", "country": "ID",
+           "opened_at": "2026-06-14", "helper_name": ""}
 import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location("lsn", str(Path(__file__).resolve().parent / "load_service_notes.py"))
 lsn = _ilu.module_from_spec(_spec); _spec.loader.exec_module(lsn)
@@ -892,6 +929,55 @@ rows = [
  # them; the generic "drop two or three in" rule was overriding that.
  ("enumerated options are named in full",
   "name them" in ico._field_guidance("new_hiring", {}, lang_f), True),
+
+ # --- Case ID resolution, 2026-09-09 ----------------------------------
+ # The agency's hard constraint was that this layer is purely additive and
+ # read-only. Both halves are asserted rather than intended.
+ ("case tables are never written by the bot", _case_writes, []),
+ ("nor is one so much as named outside contact.py",
+  sorted(f.name for f, src in _APP_SRC.items()
+         if _re.search(rf'"(?:{_TABLE_RE})"', src)), ["contact.py"]),
+ # Three columns point at a case and which one is set depends on how the
+ # office actioned the enquiry. Reading only the structural one means a case
+ # created by either conversion path is invisible until a placement exists.
+ ("a case is resolved down all three paths",
+  [k for k in ("converted_employer_id", "employer_service_requests",
+               'in_("placement_id"') if k not in _CONTACT_SRC], []),
+ # The old filter was `status = 'active'`. Probed against the live CHECK on
+ # 2026-09-09 the column takes active|completed|cancelled|on_hold, so that
+ # filter hid three quarters of the vocabulary - including on_hold, whose
+ # client is the likeliest of all of them to be chasing us.
+ ("a case is no longer excluded by its status",
+  'eq("status", "active")' in _CONTACT_SRC, False),
+ ("and a case on hold is not treated as finished",
+  "on_hold" in _contact._CLOSED_LOOKING, False),
+ ("but a completed one sorts below a live one",
+  _contact._case_sort_key({"status": "completed"})[0]
+  > _contact._case_sort_key({"status": "active"})[0], True),
+ ("the number of cases put in front of the model is bounded",
+  _contact.MAX_CASES <= 5, True),
+ # No user-facing change: the case is context the model may USE, never a
+ # line it reads out. Same rule as RETURNING_NOTE - referring to what we
+ # last spoke about is warmth, reciting their file is not.
+ ("a case number is never recited unprompted",
+  "Do NOT read a" in _cases_block({"matched_cases": [_CASE_A]}), True),
+ ("the case detail does reach the prompt",
+  "CS-2026-0007" in _cases_block({"matched_cases": [_CASE_A]}), True),
+ ("and it names the helper the case is about",
+  "Liza Fernandez" in _cases_block({"matched_cases": [_CASE_A, _CASE_B]}), True),
+ # Nothing that used to be in the prompt may go missing: an id that resolved
+ # against a row we could not read still means there IS a case.
+ ("an unreadable case falls back to the line that was there before",
+  _cases_block({"matched_case_id": "abc", "matched_cases": []}),
+  "- They have an active case with us."),
+ ("and a client with no case adds nothing at all",
+  _cases_block({}), ""),
+ # The ban is on ASKING a client for a case reference, not on putting the one
+ # we already hold in front of the agent who picks the ticket up.
+ ("the ticket carries the case, and no flow asks for it",
+  ("case_number" in t._DETAIL_LABELS,
+   [s for s, fl in t.SERVICE_FIELDS.items() if any(f.key == "case_id" for f in fl)]),
+  (True, [])),
 ]
 bad = 0
 for label, got, want in rows:

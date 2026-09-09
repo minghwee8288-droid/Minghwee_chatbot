@@ -244,6 +244,58 @@ def _previous_enquiries(tickets: list[dict[str, Any]] | None) -> str:
     return "\n".join(lines)
 
 
+def _known_cases_block(state: dict[str, Any]) -> str:
+    """The cases the office holds for this client — context, not a script.
+
+    Distinct from _case_block below, which answers a `case_enquiry` turn from
+    the full case row. This one rides on every turn, for every service, so the
+    bot knows what is already under way without anybody having to ask.
+
+    Deliberately worded to be used and not recited. The agency's standing rule
+    on a returning client (2026-09-09, RETURNING_NOTE) is that referring to
+    what we last spoke about is warmth and reading their file back at them is
+    not — and a case number is the most file-like thing we hold. So the model
+    gets the detail and is told plainly what it is for.
+
+    Falls back to the old single line whenever an id resolved but the row did
+    not, so nothing that used to be in this prompt can go missing.
+    """
+    cases = [c for c in (state.get("matched_cases") or []) if c]
+    if not cases:
+        if state.get("matched_case_id"):
+            return "- They have an active case with us."
+        return ""
+
+    lines = ["- Cases the office holds for this client, most recent first:"]
+    for case in cases:
+        head = f"Case {case['case_number']}" if case.get("case_number") else "A case"
+        detail = ", ".join(
+            part for part in (case.get("case_type"), case.get("country")) if part
+        )
+        if detail:
+            head += f" ({detail})"
+        if case.get("helper_name"):
+            head += f" for helper {case['helper_name']}"
+        trailing = ", ".join(
+            f"{label}: {value}"
+            for label, value in (
+                ("stage", case.get("stage")),
+                ("status", case.get("status")),
+            )
+            if value
+        )
+        lines.append(f"  - {head}" + (f" — {trailing}" if trailing else ""))
+    lines.append(
+        "  Use this to know what is already under way for them: do not ask "
+        "about a helper or a service the office is plainly already handling, "
+        "and if they ask you about their case, answer from this. Do NOT read a "
+        "case number, a stage name or a status out to them unprompted — those "
+        "are our internal records, and reciting them is the reading-out-their-"
+        "file this bot does not do."
+    )
+    return "\n".join(lines)
+
+
 def _contact_block(state: dict[str, Any]) -> str:
     contact_type = state.get("contact_type") or "unknown"
     name = state.get("customer_name") or ""
@@ -255,8 +307,9 @@ def _contact_block(state: dict[str, Any]) -> str:
             "- This is an existing employer in our system. Treat them as a returning "
             "client, not a new enquiry."
         )
-        if state.get("matched_case_id"):
-            lines.append("- They have an active case with us.")
+        known_cases = _known_cases_block(state)
+        if known_cases:
+            lines.append(known_cases)
         previous = _previous_enquiries(state.get("recent_tickets"))
         if previous:
             lines.append(previous)

@@ -1800,6 +1800,10 @@ _CONTACT_NOUNS = {
 # get their own heading here and everything else falls back to the field label.
 _DETAIL_LABELS = {
     "case_id": "Case ID",
+    # Resolved from the portal, never asked for — see contact.get_cases. The
+    # ban is on ASKING a client for a case reference, not on putting the one we
+    # already hold in front of the agent who picks the ticket up.
+    "case_number": "Case",
     "full_name": "Name",
     "helper_name": "Helper",
     "email": "Email",
@@ -2296,6 +2300,13 @@ async def create(
     # substituted) stored value, so a topic the portal's schema does not know
     # can still be blocked and resolved correctly.
     info.setdefault("topic_key", service_type)
+    # The case this enquiry belongs to, when the portal holds one. cb_tickets
+    # has no case_id column (checked against the live schema, 2026-09-09), so
+    # the reference goes in captured_info, which is jsonb and needs no
+    # migration. Additive: a conversation with no case is exactly as it was.
+    _case = next(iter(conversation.get("matched_cases") or []), None)
+    if _case and _case.get("case_number"):
+        info.setdefault("case_number", _case["case_number"])
     if true_service:
         # First key, so it heads the agent's view of the ticket.
         info = {"enquiry_type": true_service, **info}

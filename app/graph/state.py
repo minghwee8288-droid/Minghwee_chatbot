@@ -213,6 +213,7 @@ def conversation_ref(state: "ConversationState") -> dict[str, Any]:
         "matched_candidate_id": state.get("matched_candidate_id"),
         "matched_supplier_id": state.get("matched_supplier_id"),
         "matched_case_id": state.get("matched_case_id"),
+        "matched_cases": state.get("matched_cases"),
     }
 
 
@@ -229,6 +230,11 @@ class ConversationState(TypedDict, total=False):
     matched_candidate_id: str | None
     matched_supplier_id: str | None
     matched_case_id: str | None
+    # Every case the portal holds for this contact, live ones first, read fresh
+    # each turn like prior_hires and placed_helper. Additive context only - no
+    # node branches on it and no flow changes shape because it is non-empty.
+    # See contact.get_cases for the three columns a case is resolved through.
+    matched_cases: list[dict[str, Any]] | None
     salesperson_profile_id: str | None
     # Non-archived `placements` rows for this employer: how many helpers we have
     # actually placed with them. 0 means "we have no record", NOT "first time" —

@@ -881,6 +881,18 @@ async def _process_locked(
         conversation.get("matched_employer_id")
     )
 
+    # The cases the portal holds for this contact. Read per turn for the same
+    # reason as the three above: a case opened in the portal this morning must
+    # count this afternoon, and a case is created on the office side days after
+    # the conversation that produced the lead. READ ONLY - see
+    # contact.get_cases, which never writes to any case_* table.
+    #
+    # The phone is passed as well as the employer id because a lead converted
+    # before the employers row carried a matchable number still names its case.
+    matched_cases = await contact_service.get_cases(
+        conversation.get("matched_employer_id"), phone
+    )
+
     # Topics a human is already working on this thread — read fresh every
     # turn (never persisted on the checkpoint) so a ticket closing anywhere
     # unblocks its topic on the very next message, with no extra sync step.
@@ -896,6 +908,9 @@ async def _process_locked(
         "matched_candidate_id": conversation.get("matched_candidate_id"),
         "matched_supplier_id": conversation.get("matched_supplier_id"),
         "matched_case_id": conversation.get("matched_case_id"),
+        # Every case, not just the one id on the row: an employer accumulates
+        # one per engagement over time, and the row holds a single column.
+        "matched_cases": matched_cases,
         "prior_hires": prior_hires,
         "placed_helper": placed_helper,
         "record_name": record_name or "",

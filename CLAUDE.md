@@ -253,6 +253,10 @@ because the lead is opened early and the ticket is created much later.
 | A numbered list is never handed over without a sentence saying what it is | `SERVICE_BRIEFING_NOTE` | "The cost is approximately $450." straight into "1. Copy of your NRIC" — the agency asked how the client is meant to know that is the document list. |
 | The briefing ends with the client's own steps, not ours | `SERVICE_BRIEFING_NOTE` (`THE STEPS ARE THEIRS`) + the `what happens next` KB row | Confirm, pay, send documents, sign forms, hear back. The embassy/runner rows stay out of it — that is the same processing the 2026-09-09 meeting excluded. |
 | The briefing has ONE ending | `SERVICE_BRIEFING_NOTE` (`CLOSE IT ONCE`) | It asked "Would you like to go ahead?" **and** said it had already passed everything on. The ticket is raised on that same turn, so the question is the half that goes. |
+| The bot reads a case and never writes one | `contact.get_cases` + `selfcheck_flows.py` | All eleven `case_*` tables. Asserted mechanically: no insert/update/delete anywhere in `app/`, and no case table so much as NAMED outside `contact.py`. |
+| A case is reachable three ways, not one | `contact.get_cases` | `leads.converted_case_id`, `employer_service_requests.converted_case_id`, then `cases.placement_id`. `cases` has no `employer_id` column at all, and `placement_id` is NOT NULL. |
+| A case is never excluded by its status | `contact.get_cases` | The old `status = 'active'` filter hid `completed`, `cancelled` and `on_hold` — and the client whose case is on hold is the likeliest of all of them to be chasing us. Statuses only ORDER the list now. |
+| A case number is context, never a line to read out | `system._known_cases_block` | The same rule as `RETURNING_NOTE`: referring to what is under way is warmth, reading their file back at them is not. |
 | A broadcast is never a human agent | `message.is_auto_reply` (+ in-process count) + `webhook._undo_broadcast_standdowns` | The detector is retrospective, so the first copies of a NEW broadcast are indistinguishable from an agent. Two conversations in one run is now enough, and earlier stand-downs are reversed. |
 | A negative auto-reply verdict is never cached | `_AUTO_REPLY_VERDICTS` | Caching the first "no" on a fresh broadcast pinned it, so every later copy short-circuited to "no" and silenced the bot estate-wide. |
 | A mass announcement is caught on its FIRST copy | `message._BROADCAST_MARKERS` | "Dear Valued Customer" and its kin. `operating hours` is deliberately absent — an agent answering "what time do you open" says it. |
@@ -319,6 +323,26 @@ things every helper is profiled on — `share_room`, `no_offday`, `window_clean`
 `off_days_per_month`, `asking_salary_cents` and `candidate_type`. **When asked what the
 employer flow should collect, this is the form to read** — it is what the office actually
 filters on.
+
+**`cases` is the portal's, and every one of its interesting columns is
+CHECK-constrained.** Derived by attempting inserts against the live constraints on
+2026-09-09 (`scripts/seed_case_testdata.py` re-derives them on demand, so this can be
+checked rather than trusted):
+
+```
+cases_status_check      active | completed | cancelled | on_hold
+                        rejects open, closed, in_progress, new, pending, draft
+cases_country_check     PH | ID | MM          rejects "Philippines", "SG", "PHL"
+cases_case_type_check   First-time hire | Home leave | Transfer | Renewal |
+                        Direct hire | NULL    (see section 9 — two services missing)
+current_stage_key       free text, no constraint
+```
+
+`cases.placement_id` is **NOT NULL**, so every case hangs off a `placements` row and
+there is no direct employer link — which is why `get_cases` reads the two
+`converted_case_id` columns as well. The table was **empty on every check made against
+it**; the whole layer is written for data that has not arrived yet, which is why the
+seeder exists.
 
 **The bot never closes a ticket.** No code path writes `cb_tickets.status` after insert.
 The portal owns resolution.
@@ -472,9 +496,19 @@ Ordered by what will hurt first.
     does not fire (we did not land on a parked topic). Not fixed deliberately: forcing
     `service_type` to the parked service for one turn would overwrite the in-flight
     `service_type` on the checkpoint and strand the live collection.
-11. **Unbounded in-memory caches** with no TTL: `_LOCKS` (webhook),
+11. **The platform has no case type for a passport renewal or a replacement.**
+    `cases_case_type_check` accepts `First-time hire`, `Home leave`, `Transfer`,
+    `Renewal`, `Direct hire` and NULL — measured against the live constraint,
+    2026-09-09. Passport renewal is the service the agency has been testing all
+    week and the one with the most flow work in it; replacement collects eight
+    fields. Neither can be opened as a typed case on the portal, so the bot can
+    read a case for five of the seven services and never for those two. Not
+    fixable here: the constraint is the portal's, and widening it is their call.
+    `process_templates` says the same thing from the other side — 5 rows, only
+    two case types (First-time hire for PH/ID/MM, Home leave for PH).
+12. **Unbounded in-memory caches** with no TTL: `_LOCKS` (webhook),
     `_AUTO_REPLY_VERDICTS` (message), `_MISSING_COLUMNS` (contact), `_vocabularies` (rag).
-12. **The KB states three different medical-insurance minimums, and the note that
+13. **The KB states three different medical-insurance minimums, and the note that
     used to sit here was wrong.** Two rows say medical insurance must cover at least
     **S$60,000/yr** (one of them sourced from Ming Hwee's own Client Service Agreement)
     and one says **S$15,000/yr**; the direct-hire flow the agency sent on 2026-09-08 also
@@ -551,6 +585,70 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-09** — **Case IDs: the bot now knows which cases a client has, resolved
+  silently and read-only.** The agency's brief: resolve the case in the backend rather
+  than asking for it, hold it for the conversation, make it available across all seven
+  services, and change nothing that currently works.
+  (A) **Only ONE of the eleven `case_*` tables was ever used, and only barely.** An audit
+  of the screenshot they sent found `cases` referenced twice — both SELECTs in
+  `contact.py` — and the other ten (`case_stages`, `case_tasks`, `case_requirements`,
+  `case_candidate_suggestions`, the four task tables, the two salary-schedule tables) not
+  referenced anywhere at all. What the resolved id produced was **one line** in the
+  prompt: *"They have an active case with us."* No number, no stage, no helper. The
+  plumbing was half-built rather than missing.
+  (B) **`cases` has no `employer_id` column**, and `placement_id` is NOT NULL — so the
+  only structural route is `employers → placements → cases`, which is what
+  `find_active_case` walked. But the agency's own lifecycle is *lead → employer → case*,
+  and that route does not mention a placement. **`leads.converted_case_id` exists** (with
+  `converted_employer_id` and `converted_at`), and it is exactly their lifecycle; so does
+  `employer_service_requests.converted_case_id`, whose own column comment describes the
+  returning-employer path — "actioned by creating a CASE directly, rather than first
+  spinning it into a lead". The bot already creates and owns the `leads` row. `get_cases`
+  reads all three and dedupes, so a case created by either conversion is visible without
+  waiting for a placement row to appear.
+  (C) **The `status = 'active'` filter was a guess that had never run.** `cases` has been
+  empty on every check, so it had never once been evaluated against a real row. Probed
+  against the live CHECK constraint, the column takes **active | completed | cancelled |
+  on_hold** and rejects open, closed, in_progress, new, pending and draft — so 'active'
+  was real, but filtering on it hid three quarters of the vocabulary, including the
+  `on_hold` client who is the likeliest of the four to be chasing us. Status now only
+  ORDERS the list. `cases.country` turned out to be **PH | ID | MM** and rejected
+  "Philippines" outright, which is how the first seeding run failed.
+  (D) **Read-only is enforced, not intended.** `selfcheck_flows.py` asserts there is no
+  insert, update, delete or upsert against any of the eleven tables anywhere in `app/`,
+  and that none of them is so much as **named** outside `contact.py`. The first version of
+  that assertion failed for the right reason — a `case_[a-z_]+` pattern also matches
+  `case_enquiry`, `case_id` and `case_summary`, which are an intent, a field key and a
+  state key — so the check names the eleven tables explicitly.
+  (E) **No user-facing change, which is the constraint that shaped the prompt block.**
+  The case detail rides on every turn, for every service, via `_contact_block`, and is
+  worded to be USED and not recited: know what is already under way, do not ask about a
+  service the office is plainly handling, answer if they ask — and never read a case
+  number, stage or status out unprompted. That is `RETURNING_NOTE`'s rule applied to the
+  most file-like thing we hold. Verified live: the case context is in the system prompt
+  and neither an ordinary answer nor an intake turn leaked a number, a stage or a status.
+  The old single line is still emitted when an id resolved but the row did not, so nothing
+  that used to be in the prompt can go missing.
+  (F) **The ticket carries the case number.** `cb_tickets` has no `case_id` column, so it
+  goes in `captured_info` (jsonb, no migration) with a `_DETAIL_LABELS` entry, and the
+  agent picking the ticket up sees the reference the client will quote at them. The ban
+  has always been on ASKING a client for a case ID — `_case_id()` is still uncalled by
+  every flow, still asserted — not on using the one we already hold.
+  (G) **Deliberately NOT done: the case does not fill any field.** A case names its
+  placement, so it could fill the helper's name and skip a question — but that changes the
+  shape of a conversation, which the brief ruled out. `get_placed_helper` stays the only
+  thing that fills a helper from records.
+  (H) **`scripts/seed_case_testdata.py`** creates a throwaway employer with three cases,
+  one reachable down each path, runs the real lookup, and deletes everything. The two
+  conversion-path cases are given placements belonging to a **decoy** employer, so the
+  structural path cannot reach them — which is what proves the two `converted_case_id`
+  columns are doing the work rather than coincidence. Run twice, both runs identical and
+  the database back to `cases`=0 with every other count unchanged.
+  **Found and NOT fixable here (section 9.11): there is no case type for a passport
+  renewal or a replacement.** Two of the seven services cannot be opened as a typed case
+  at all. That is the portal's constraint to widen.
+  `selfcheck_flows.py` is 227 assertions; `smoke_nodes.py` is 32 states.
 
 - **2026-09-09** — **`reset-ui/` cut down to one button, and two claims in the
   2026-09-08 entry below are now WRONG — read this instead.** The client used the page,
@@ -1136,7 +1234,7 @@ Append here, newest first. One entry per behavioural change.
   0.486, home leave 0.588, replacement 0.603, transfer 0.595, transfer_employer 0.626,
   direct hire 0.668 — **16 probes, none below the floor**, and the salary probes unmoved.
   `selfcheck_flows.py` is 130 assertions. **No content gap remains.** Still open and
-  needing Ming Hwee, not code: the medical insurance minimum (§9.12), the Settling-In
+  needing Ming Hwee, not code: the medical insurance minimum (§9.13), the Settling-In
   Programme window, the Myanmar passport route, and who receives leads (§9.1).
 
 - **2026-09-08** — **Replacement: the document checklist and the nine steps, and the
@@ -1172,7 +1270,7 @@ Append here, newest first. One entry per behavioural change.
   three ways (§9.8). It is now top for that question under `direct_hiring`, `new_hiring`
   **and** `replacement`, with the direct-hire-specific row still second at 0.512, so
   nothing was displaced out of the set the model receives. **No insurance minimum is
-  stated** (§9.12); the $5,000 bond is phrased the way the existing direct-hire row
+  stated** (§9.13); the $5,000 bond is phrased the way the existing direct-hire row
   phrases it, deliberately clear of the words `quotes_hiring_package_cost` fires on.
   (D) **That exposed a hole in the vetting.** A `general` row is retrieved from inside a
   `new_hiring` or `direct_hiring` conversation, where the cost guard runs on the reply —
@@ -1510,7 +1608,7 @@ Append here, newest first. One entry per behavioural change.
   Verified by capturing the instruction actually built: present for a timing and a
   process question with the location unknown, absent once it is known, absent on an
   ordinary answer, and absent for another service.
-  (D) **No insurance minimum was written into any row, deliberately** — see §9.12. The
+  (D) **No insurance minimum was written into any row, deliberately** — see §9.13. The
   source states medical insurance at $15,000/yr, which is the pre-October-2023 figure,
   while Ming Hwee's own Service Agreement says $60,000. Picking a side in a legal
   minimum is not this repo's call, so the rows say "MOM's minimum coverage" and defer
