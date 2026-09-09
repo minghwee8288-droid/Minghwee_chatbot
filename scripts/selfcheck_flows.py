@@ -930,6 +930,26 @@ rows = [
  ("enumerated options are named in full",
   "name them" in ico._field_guidance("new_hiring", {}, lang_f), True),
 
+ # --- a name we already hold is USED, 2026-09-09 ----------------------
+ # Live, conversation 3766: an employer whose name is on file was opened
+ # with "Hi, I'm Claire ... May I know your helper's name?" - no name at
+ # all. The skip was correct (the agency's own rule is ask when it is not
+ # in the database, greet when it is); the greeting half never happened,
+ # and from the client's side those two are the same bot.
+ ("a name on file fills the field, so it is never asked for",
+  ico._known_fields({"record_name": "tunaktun"},
+                    "passport_renewal").get("full_name"), "tunaktun"),
+ ("a number with nothing on file still gets the question",
+  "full_name" in ico._known_fields({"record_name": ""}, "passport_renewal"), False),
+ ("and the WhatsApp push name is not evidence on these flows",
+  sorted(t.NAME_FROM_RECORD_ONLY), ["home_leave", "passport_renewal", "renewal"]),
+ ("a name we hold is greeted with, not just filed",
+  "Greet them by it" in ico.RECORD_NAME_NOTE, True),
+ ("and it is still never re-asked",
+  "never be asked for a name we are holding" in ico.RECORD_NAME_NOTE, True),
+ ("nor tidied up on the client's behalf",
+  "do not correct its spelling" in ico.RECORD_NAME_NOTE, True),
+
  # --- Case ID resolution, 2026-09-09 ----------------------------------
  # The agency's hard constraint was that this layer is purely additive and
  # read-only. Both halves are asserted rather than intended.

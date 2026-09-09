@@ -257,6 +257,7 @@ because the lead is opened early and the ticket is created much later.
 | A case is reachable three ways, not one | `contact.get_cases` | `leads.converted_case_id`, `employer_service_requests.converted_case_id`, then `cases.placement_id`. `cases` has no `employer_id` column at all, and `placement_id` is NOT NULL. |
 | A case is never excluded by its status | `contact.get_cases` | The old `status = 'active'` filter hid `completed`, `cancelled` and `on_hold` — and the client whose case is on hold is the likeliest of all of them to be chasing us. Statuses only ORDER the list now. |
 | A case number is context, never a line to read out | `system._known_cases_block` | The same rule as `RETURNING_NOTE`: referring to what is under way is warmth, reading their file back at them is not. |
+| A name we already hold is USED, not just filed | `info_collector.RECORD_NAME_NOTE` | Skipping the question is right; skipping the greeting too makes it look like the name was never handled. Fires only when `returning_note` and `recognised_note` do not — one opener, never two. |
 | A broadcast is never a human agent | `message.is_auto_reply` (+ in-process count) + `webhook._undo_broadcast_standdowns` | The detector is retrospective, so the first copies of a NEW broadcast are indistinguishable from an agent. Two conversations in one run is now enough, and earlier stand-downs are reversed. |
 | A negative auto-reply verdict is never cached | `_AUTO_REPLY_VERDICTS` | Caching the first "no" on a fresh broadcast pinned it, so every later copy short-circuited to "no" and silenced the bot estate-wide. |
 | A mass announcement is caught on its FIRST copy | `message._BROADCAST_MARKERS` | "Dear Valued Customer" and its kin. `operating hours` is deliberately absent — an agent answering "what time do you open" says it. |
@@ -585,6 +586,41 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-09** — **"it still didn't ask name" — it knew the name and would not say
+  it.** The agency tested a passport renewal and got *"Hi, I'm Claire, Ming Hwee's AI
+  assistant. May I know your helper's name?"* — straight past them to the helper, exactly
+  as on 2026-09-08, and reported in the same words.
+  (A) **Nothing was broken about the skip.** Read from the live row rather than assumed:
+  conversation 3766, number 917970027379, matched to employer **"tunaktun"** —
+  `get_record_name` returns that, `_known_fields` fills `full_name` from it, and the
+  question is correctly not asked. That IS the rule the agency gave on 2026-09-08: *"ask
+  for the name first if the name is not in the database. If the name is in the database,
+  greet them before moving forward."* The first half worked and the second half never
+  happened.
+  (B) **Why the greeting needed its own note.** `full_name` reaches the prompt inside
+  *"Already confirmed by the client (do not ask again)"* — an instruction NOT to ask.
+  Nothing there says to USE it, and prompt rule 1c loses to `COLLECTOR_INSTRUCTION`'s
+  "ask for that one detail and nothing else" — the same mechanism that was dropping the
+  AI introduction on 2026-09-04, fixed the same way: in the instruction that actually
+  wins on a collector turn.
+  (C) **The two existing notes could not cover it.** `recognised_note` requires a
+  `placed_helper` and `returning_note` requires a positive `prior_hires`. This client is
+  an employer on file with **no placement**, so both were silent — and that is the
+  commonest shape there is, because the portal creates an `employers` row the moment a
+  lead is converted, long before anyone is placed. `RECORD_NAME_NOTE` is gated behind
+  both, so there is one opener and never two.
+  Verified live across all six shapes: a new number still gets *"May I know your name?"*
+  on both renewals; a name on file is greeted (*"Hi tunaktun, I'm Claire…"*,
+  *"Hi Ratna Choukade…"*, *"Hi Manish M…"*); a returning client still gets the single
+  *"Hi Ratna, welcome back"*; and the WhatsApp push name leaked into none of them.
+  **Also found while reading the row, and NOT a bot bug:** `reset_conversation.py` had
+  been run and the lead deleted, yet the number was still recognised — because the
+  **portal** had converted that lead at 12:16 and created an `employers` row *and* a
+  synthetic `profiles` row (`employer+…@no-email.local`). Neither is chatbot data and
+  neither reset touches them, by design. A reset therefore does NOT make a converted
+  number look new again; the master records have to go too, and that is a portal-side
+  decision, not one this repo should take on its own.
 
 - **2026-09-09** — **Case IDs: the bot now knows which cases a client has, resolved
   silently and read-only.** The agency's brief: resolve the case in the backend rather

@@ -874,6 +874,19 @@ _WHY_WE_ASK: dict[str, str] = {
 # it did before.
 
 
+# What a client whose name is already on their file is greeted with, once, at
+# the top of a collection. A module constant rather than an inline string so
+# selfcheck_flows.py can assert it greets AND forbids re-asking. See the note
+# at the call site for the live conversation that produced it.
+RECORD_NAME_NOTE = (
+    "\n\nWe already hold their name on their file with us: {name}. Greet them "
+    "by it, once, at the start of this message, and then ask your question - "
+    "they are not a stranger, and they must never be asked for a name we are "
+    "holding. Use it exactly as written here: do not correct its spelling, "
+    "expand it, shorten it or guess a fuller version."
+)
+
+
 # What a returning client is told, once, at the top of a collection. A module
 # constant rather than an inline string so selfcheck_flows.py can assert its
 # two halves: that it DOES refer to the last enquiry, and that it does not
@@ -1348,6 +1361,43 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         # than a plain welcome.
         returning_note = RETURNING_NOTE
 
+    # Their name is on their file, and nothing above is going to use it.
+    #
+    # Live, conversation 3766 (2026-09-09): a number matching employer
+    # "tunaktun" opened with "Hi, I'm Claire, Ming Hwee's AI assistant. May I
+    # know your helper's name?" — no name, straight past the client to the
+    # helper. The agency reported it in the same words as the 2026-09-08
+    # defect: "it still didn't ask name".
+    #
+    # It had NOT skipped the question by mistake. `full_name` was correctly
+    # pre-filled from employers.display_name, which is the rule the agency
+    # themselves gave us on 2026-09-08: "ask for the name first if the name is
+    # not in the database. If the name is in the database, greet them before
+    # moving forward." The skip was right; the greeting half simply never
+    # happened, and from the client's side "never asked my name" and "knows my
+    # name and won't say it" are the same bot.
+    #
+    # Why it needs a note at all: `full_name` reaches the prompt inside
+    # "Already confirmed by the client (do not ask again)", which is an
+    # instruction NOT to ask. Nothing there says to USE it, and prompt rule 1c
+    # (use the client's name when you know it) loses to COLLECTOR_INSTRUCTION's
+    # "ask for that one detail and nothing else" — exactly how the introduction
+    # was being dropped on 2026-09-04, and fixed the same way, in the
+    # instruction that actually wins on a collector turn.
+    #
+    # The two notes above already open the message when they fire — one
+    # welcomes them back by name, the other opens on the helper we can see — so
+    # this is gated behind both. One opener, never two.
+    record_name_note = ""
+    if (
+        str(state.get("record_name") or "").strip()
+        and known.get("full_name")
+        and not recognised_note
+        and not returning_note
+        and not any(asked.values())
+    ):
+        record_name_note = RECORD_NAME_NOTE.format(name=known["full_name"])
+
     # A small-ticket service, on its opening turn: say what the job involves
     # before asking about it. Gated on nothing having been asked yet, so it
     # happens once and does not turn every turn into a briefing.
@@ -1621,6 +1671,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             + location_note
             + purpose_note
             + returning_note
+            + record_name_note
             + requirement_note
             + follow_up_notes.get(next_field.key, "")
             + answer_first
@@ -1647,7 +1698,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             if (first_contact and answer_first)
             else 3
             if (answer_first or first_contact or small_ticket_note or purpose_note
-                or nationality_note or location_note)
+                or nationality_note or location_note or record_name_note)
             else 2,
             withhold_cost=service_type in COST_WITHHELD_SERVICES,
             grounded_options=next_field.options or (),
