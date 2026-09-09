@@ -219,6 +219,8 @@ because the lead is opened early and the ticket is created much later.
 | A returning client is welcomed back on every flow | `info_collector.returning_note` | Fired off `first_time_hire`, which only `new_hiring` defines, so transfer/renewal/passport got nothing. Now also fires on the opening turn. |
 | An answer to our own question is never routed away from the collection that asked it | `guards.answering_our_question` + `route_after_rag` | The classifier's stickiness fixes `service_type` but not `intent`, and the money branch reads `intent`. |
 | Every employer flow asks the client's name | `SERVICE_FIELDS[...]["full_name"]` | `transfer_employer` had none, so rule 1c had nothing to use and the lead carried only a phone number. |
+| ...and that is now checked as a SET, not one flow at a time | `selfcheck_flows.py` | The row above was written for `transfer_employer` in 2026-09-08 and was simply false everywhere else: renewal, home leave, replacement and insurance never asked at all. Money enquiries are excluded — they are a question, not an intake. |
+| A renewal, a home leave and a passport renewal ask the name rather than read it off WhatsApp | `ticket.NAME_FROM_RECORD_ONLY` | Adding the field alone changes nothing: `_with_push_name` fills it from the profile and the question is skipped before it is asked. |
 | A home leave never quotes a route we have not established | `info_collector._ROUTE_BY_NATIONALITY` | The nationality changes the documents, the lead time **and** the price (PH original passport + itinerary, 4 weeks, $400; ID copies, 2 weeks, $250). |
 | The home-leave caveat catches money and timing; the passport one deliberately does not | `_HOME_LEAVE_ROUTE_DEPENDENT` vs `_NATIONALITY_DEPENDENT` | A passport renewal is $450 either way, so suppressing that answer would help nobody. |
 | Home leave asks which country she is from | `SERVICE_FIELDS["home_leave"]` | It asked her name and the travel dates only, so there was nothing to route on. The agency's own step 1 is "confirm nationality and intended travel dates". |
@@ -549,6 +551,40 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-09** — **"Why did you remove that?" — it was never there.** The agency tested
+  a **work permit renewal** and got *"May I know your helper's name?"* as the opening
+  question: *"the chatbot is asking directly name of helper, not saying that before, may I
+  know your name."* Nothing had been removed. `renewal` was two fields, `helper_name` and
+  `permit_expiry`, and had never held the client's own name. Only `passport_renewal` asks
+  it, because that was added on 2026-09-08 when they raised it against that one flow.
+  (A) **The invariant in §5 was false in four places.** *"Every employer flow asks the
+  client's name"* has been in this file since 2026-09-08 and was written about
+  `transfer_employer` alone — nothing checked the others. `renewal`, `home_leave`,
+  `replacement` and `insurance` all opened without it, so rule 1c had nothing to greet
+  anyone with and each lead reached sales carrying a phone number and a **helper's** name.
+  It is now asserted over `lead.EMPLOYER_LEAD_SERVICES` as a set, so a new flow cannot be
+  added without one.
+  (B) **Adding the field alone would have changed nothing, and that is the whole trap.**
+  `_with_push_name` fills `full_name` from the WhatsApp profile whenever it looks like a
+  person's name, so the question is skipped before it is ever asked — which is exactly the
+  defect the agency reported against passport renewal on 2026-09-08, reported the same way
+  both times. `renewal` and `home_leave` join `NAME_FROM_RECORD_ONLY`: asked when our
+  records do not hold it, greeted when they do. Both put the client's name on official
+  paperwork, which is the same reason passport renewal is in there.
+  (C) **`replacement` and `insurance` got the field but NOT that rule.** They were the same
+  gap and are fixed with it — but nobody has objected to the push name on those two, and
+  filling it from the profile is itself the 2026-09-01 fix. There the question is only a
+  fallback for when there is no usable push name, so the lead always carries a name.
+  (D) **`fee_enquiry` and `salary_enquiry` are deliberately left alone**, and the assertion
+  excludes them by name. They are a money QUESTION, not an intake — two fields, and
+  `route_after_rag` only lets them collect when nothing else is in hand. Asking a name
+  there turns a price question into a form, which is the 2026-09-07 defect that produced
+  *"But I come here for passport renewal not for care"*.
+  Verified live: a new number gets *"I'm Claire, Ming Hwee's AI assistant. May I know your
+  name?"*, a client on file gets *"Hi Vaidik, welcome back — may I know your helper's
+  name?"*, and home leave behaves the same. `renewal` is 3 fields, `home_leave` 4,
+  `insurance` 4, `replacement` 8.
 
 - **2026-09-09** — **The first briefing to reach a real client, and three things wrong
   with it.** The agency's own reading of the transcript, in their words.

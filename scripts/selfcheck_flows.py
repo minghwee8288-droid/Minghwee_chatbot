@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import importlib
 import app.services.ticket as t
+import app.services.lead as _lead
 from app.graph.guards import quotes_hiring_package_cost as q
 ic = importlib.import_module("app.graph.nodes.intent_classifier")
 ico = importlib.import_module("app.graph.nodes.info_collector")
@@ -584,6 +585,48 @@ rows = [
  ("every other flow still uses the push name",
   ico._known_fields({"customer_name": "Vaidik"},
                     "new_hiring").get("full_name"), "Vaidik"),
+ # --- the same, for the other two flows that never asked, 2026-09-09 ---
+ # Agency, testing a work permit renewal: "the chatbot is asking directly
+ # name of helper, not saying that before, may I know your name". It was not
+ # removed - `renewal` never had the field, and neither did `home_leave`,
+ # which makes CLAUDE.md's "every employer flow asks the client's name"
+ # false in two places.
+ ("the name is asked before the helper's on every renewal",
+  [t.SERVICE_FIELDS[s][0].key for s in
+   ("renewal", "passport_renewal", "home_leave")],
+  ["full_name", "full_name", "full_name"]),
+ ("a work permit renewal is three questions now",
+  [f.key for f in t.SERVICE_FIELDS["renewal"]],
+  ["full_name", "helper_name", "permit_expiry"]),
+ # ...and adding the field alone would have changed NOTHING: _with_push_name
+ # fills full_name from the WhatsApp profile, so the question is skipped
+ # before it is ever asked. That is the exact 2026-09-08 defect on passport
+ # renewal, reported the same way both times.
+ ("neither takes the name off WhatsApp either",
+  [s for s in ("renewal", "home_leave") if s in t.NAME_FROM_RECORD_ONLY],
+  ["renewal", "home_leave"]),
+ ("so a new number is asked on a work permit renewal",
+  ico._known_fields({"customer_name": "Vaidik"}, "renewal").get("full_name"),
+  None),
+ ("and a client on our file is greeted on a home leave",
+  ico._known_fields({"customer_name": "Vaidik", "record_name": "Vaidik Dubey"},
+                    "home_leave").get("full_name"), "Vaidik Dubey"),
+ # Every employer flow, checked as a set rather than one at a time, so a new
+ # one cannot be added without the field. lead.py's copy deliberately, not
+ # ticket_creator.py's - the two disagree and the ticket_creator copy is dead
+ # (CLAUDE.md 9.8).
+ #
+ # fee_enquiry and salary_enquiry are excluded on purpose. They are a money
+ # QUESTION, not an intake - two fields, and route_after_rag only lets them
+ # collect at all when nothing else is in hand. Asking a name there turns a
+ # price question into a form, which is the 2026-09-07 defect the agency hit
+ # ("But I come here for passport renewal not for care").
+ ("no employer intake flow opens without asking who we are talking to",
+  [s for s in sorted(_lead.EMPLOYER_LEAD_SERVICES)
+   if s not in {"fee_enquiry", "salary_enquiry"}
+   and t.fields_for(s)
+   and not any(f.key == "full_name" for f in t.fields_for(s))],
+  []),
  # The briefing leads with the money and the time. Their words: "It is going
  # straight forward, like 'We handle it for you.' We don't want this thing:
  # We have to tell the estimated time and the cost. and then We move forward
@@ -827,7 +870,7 @@ rows = [
  # only her name and the travel dates, so there was nothing to route on.
  ("home leave asks which country she is from",
   [f.key for f in t.SERVICE_FIELDS["home_leave"]],
-  ["helper_name", "nationality", "leave_dates"]),
+  ["full_name", "helper_name", "nationality", "leave_dates"]),
  ("the nationality carries over from another enquiry",
   "nationality" in ico._PORTABLE_ACROSS_SERVICES, True),
  ("home leave is route-split by nationality",

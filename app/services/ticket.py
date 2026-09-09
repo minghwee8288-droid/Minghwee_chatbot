@@ -863,6 +863,20 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     # decides who in the office picks the case up. Added at the client's request,
     # 2026-09-03.
     "replacement": [
+        # Added 2026-09-09 alongside `renewal`, from the same complaint. Not
+        # asked here either, so rule 1c had nothing to greet them with and the
+        # lead carried a phone number and a helper's name. Left OUT of
+        # NAME_FROM_RECORD_ONLY deliberately: nobody has objected to the push
+        # name on these two, and filling it from the profile is itself the
+        # 2026-09-01 fix - this only gives the flow a question to fall back on
+        # when there is no usable push name, so the lead carries a name.
+        Field(
+            "full_name",
+            "name",
+            "May I know your name?",
+            max_asks=2,
+            group="who they are",
+        ),
         Field("helper_name", "helper's name", "May I know your current helper's name?", max_asks=2),
         Field(
             "helper_tenure",
@@ -995,6 +1009,20 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     # required and what a policy costs, so the job here is to establish which of
     # the two situations they are in and get it to the desk — not to qualify.
     INSURANCE: [
+        # Added 2026-09-09 alongside `renewal`, from the same complaint. Not
+        # asked here either, so rule 1c had nothing to greet them with and the
+        # lead carried a phone number and a helper's name. Left OUT of
+        # NAME_FROM_RECORD_ONLY deliberately: nobody has objected to the push
+        # name on these two, and filling it from the profile is itself the
+        # 2026-09-01 fix - this only gives the flow a question to fall back on
+        # when there is no usable push name, so the lead carries a name.
+        Field(
+            "full_name",
+            "name",
+            "May I know your name?",
+            max_asks=2,
+            group="who they are",
+        ),
         Field(
             "insurance_need",
             "what they need",
@@ -1028,6 +1056,20 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     # service, and their standing rule is that a reference number is never asked
     # for when the phone number already identifies the client. 2026-09-04.
     "renewal": [
+        # The employer's own name comes first, 2026-09-09: the agency tested a
+        # work permit renewal and asked "the chatbot is asking directly name of
+        # helper, not saying before, may I know your name". It never had this
+        # field - the flow opened straight on the helper - so rule 1c had
+        # nothing to greet them with and the lead carried a phone number and a
+        # helper's name. Same shape and same reasoning as passport_renewal on
+        # 2026-09-08.
+        Field(
+            "full_name",
+            "name",
+            "May I know your name?",
+            max_asks=2,
+            group="who they are",
+        ),
         Field("helper_name", "helper's name", "May I know your helper's name?", max_asks=2),
         Field(
             "permit_expiry",
@@ -1037,6 +1079,19 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         ),
     ],
     "home_leave": [
+        # The employer's own name, first. Not asked for on 2026-09-09 when the
+        # agency raised it against `renewal`, but the identical gap: this
+        # flow also opened straight on the helper, and the name on a home
+        # leave goes onto embassy paperwork exactly as it does on a passport
+        # renewal. CLAUDE.md's own invariant - every employer flow asks the
+        # client's name - was false here.
+        Field(
+            "full_name",
+            "name",
+            "May I know your name?",
+            max_asks=2,
+            group="who they are",
+        ),
         Field("helper_name", "helper's name", "May I know your helper's name?", max_asks=2),
         # Added 2026-09-08 with the agency's home-leave flow, and it is the
         # field the whole service turns on. Everything differs by nationality:
@@ -1436,7 +1491,7 @@ def fee_is_known_for(service_type: str | None, nationality_code: str | None) -> 
 # Scoped rather than global on purpose - the opposite behaviour was itself a
 # fix (2026-09-01, "stop asking for a name it just used in its greeting"), and
 # they asked for this flow.
-NAME_FROM_RECORD_ONLY = frozenset({"passport_renewal"})
+NAME_FROM_RECORD_ONLY = frozenset({"passport_renewal", "renewal", "home_leave"})
 
 
 # A service that explains itself once, mid-collection, as soon as the one field
