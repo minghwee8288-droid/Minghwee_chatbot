@@ -552,6 +552,53 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-09-09** — **`reset-ui/` cut down to one button, and two claims in the
+  2026-09-08 entry below are now WRONG — read this instead.** The client used the page,
+  then asked for most of it removed: *"we don't want the check this right person part and
+  3 lead to clear part, we just want clear chat button and don't want tick check for lead
+  clearance — we directly clear the lead from particular number"*, and then *"make that
+  button clear chat, by clicking that button chat and lead should be cleared, nothing to
+  lookup, directly clear"*.
+  (A) **Leads are no longer ticked. Every lead on the number goes automatically.** This
+  supersedes (A) of the entry below, which described the protection as "only a lead
+  explicitly ticked by id, only after its number, name, status and age have been shown".
+  The client declined that after using it. What remains is the protection that is not a
+  matter of taste: a lead something else references is **refused with its reason and left
+  in place** while the conversation still clears (the three `ON DELETE NO ACTION` foreign
+  keys are unchanged and still checked twice), and every lead `DELETE` is keyed on **one
+  resolved lead id, never on the phone** — which is what stops the loose last-four-digits
+  `ilike` fallback in `find_by_phone` sweeping up a stranger's lead off the same four
+  digits. `selfcheck_reset_ui.py` asserts that keying mechanically.
+  (B) **The API now accepts a phone number and nothing else**, which supersedes (E)
+  below. The conversation and every lead are resolved server-side, so no request can name
+  a row belonging to somebody else — strictly narrower than the old shape, which took a
+  conversation id and a list of lead ids from the browser. The stale-tab guard went with
+  it and is no longer needed: there is no id from the page to disagree with.
+  (C) **Pressing Clear chat on an already-cleared number says so**, rather than walking
+  the client through a confirmation reading "0 messages, 0 tickets" and then reporting
+  success — which reads as though the first clear had not worked. The conversation row
+  **survives** a reset (it is updated, not deleted), so a second press finds a real
+  conversation with nothing in it; that is the case this distinguishes, and it is
+  deliberately worded differently from "Nothing found", which is a number with no
+  conversation at all.
+  (D) **The per-step result list is gone** — a clean run reports one line. A step that
+  did NOT complete is still named, because "Cleared" printed over a lead the database
+  refused would simply be untrue, and two of the four real employer leads are in exactly
+  that state.
+  (E) **The confirmation dialog was kept, against the direction of every other change
+  here.** Every delete is irreversible, there is no dry run, and the only thing
+  identifying the target is a phone number typed by hand — so the dialog naming the
+  contact is what catches a mistyped digit. The lookup still runs; it is invisible, and
+  its only job is to fill that dialog in.
+  (F) **The password is now built into `lib/env.ts`** (`DEFAULT_PASSWORD`) at the client's
+  request, so the page works with no configuration. **The repository is public**, so that
+  value is readable on GitHub: `RESET_UI_PASSWORD` in the Vercel project overrides it and
+  should be set before this is pointed at live client numbers. Deployed as its own Vercel
+  project with **Root Directory `reset-ui`** — the repo root is a Python service and
+  building it there fails.
+  Verified against the live database on seeded contacts covering all three shapes: a
+  candidate lead, a deletable employer lead, and one blocked by a `lead_activities` row.
+
 - **2026-09-09** — **"Why did you remove that?" — it was never there.** The agency tested
   a **work permit renewal** and got *"May I know your helper's name?"* as the opening
   question: *"the chatbot is asking directly name of helper, not saying that before, may I

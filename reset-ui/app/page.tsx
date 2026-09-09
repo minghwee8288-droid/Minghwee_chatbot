@@ -22,7 +22,7 @@
 
 import { useCallback, useState } from 'react';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { Banner, Card, Spinner, TextInput } from '@/components/ui';
+import { Banner, Card, PasswordInput, Spinner, TextInput } from '@/components/ui';
 import { prettyPhone } from '@/lib/phone';
 import type { LookupResult, ResetResult } from '@/lib/types';
 
@@ -163,9 +163,8 @@ export default function Page() {
         <Card>
           <form onSubmit={handleClear} className="space-y-6">
             {!unlocked ? (
-              <TextInput
+              <PasswordInput
                 label="Password"
-                type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="Shared password"

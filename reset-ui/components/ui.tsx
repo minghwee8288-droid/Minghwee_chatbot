@@ -2,7 +2,7 @@
 
 /** Small shared pieces, kept out of page.tsx so the flow there stays readable. */
 
-import type { ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 
 export function Card({
   children,
@@ -96,6 +96,12 @@ export function Spinner({ label }: { label: string }) {
   );
 }
 
+/** Shared by both inputs, so the password field cannot drift from the other. */
+const FIELD_CLASS =
+  'w-full rounded-xl border border-slate-300 bg-white px-4 py-3.5 text-base outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20';
+
+const LABEL_CLASS = 'text-xs font-bold uppercase tracking-widest text-slate-500';
+
 /** A labelled text input, sized for a page that is mostly this one field. */
 export function TextInput({
   label,
@@ -107,13 +113,88 @@ export function TextInput({
 } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="block">
-      <span className="text-xs font-bold uppercase tracking-widest text-slate-500">{label}</span>
-      <input
-        {...props}
-        className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3.5 text-base outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
-      />
+      <span className={LABEL_CLASS}>{label}</span>
+      <input {...props} className={`mt-2 ${FIELD_CLASS}`} />
       {hint ? <span className="mt-2 block text-sm text-slate-500">{hint}</span> : null}
     </label>
+  );
+}
+
+function EyeIcon({ off }: { off: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-5 w-5"
+      aria-hidden
+    >
+      {off ? (
+        <>
+          <path d="M10.6 6.2A10 10 0 0 1 12 6c6.5 0 10 6 10 6a17.8 17.8 0 0 1-3.1 3.8" />
+          <path d="M6.7 6.7A17.8 17.8 0 0 0 2 12s3.5 6 10 6a9.9 9.9 0 0 0 4.2-.9" />
+          <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+          <path d="m3 3 18 18" />
+        </>
+      ) : (
+        <>
+          <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+          <circle cx="12" cy="12" r="3" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+/**
+ * A password field with a show/hide toggle.
+ *
+ * The button is NOT inside the <label> — a label forwards clicks to its
+ * control, so a button nested in one fights the thing it sits on. The label is
+ * bound by `htmlFor` instead, which is also what a screen reader expects.
+ */
+export function PasswordInput({
+  label,
+  hint,
+  ...props
+}: {
+  label: string;
+  hint?: string;
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'>) {
+  const [visible, setVisible] = useState(false);
+  const id = useId();
+
+  return (
+    <div>
+      <label htmlFor={id} className={LABEL_CLASS}>
+        {label}
+      </label>
+      <div className="relative mt-2">
+        <input
+          {...props}
+          id={id}
+          type={visible ? 'text' : 'password'}
+          // Room for the button, so a long password does not run under it.
+          className={`${FIELD_CLASS} pr-12`}
+        />
+        <button
+          type="button"
+          onClick={() => setVisible((shown) => !shown)}
+          // Not a submit button: inside a form, the default type would clear
+          // the field by submitting it.
+          aria-label={visible ? 'Hide password' : 'Show password'}
+          aria-pressed={visible}
+          title={visible ? 'Hide password' : 'Show password'}
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
+        >
+          <EyeIcon off={visible} />
+        </button>
+      </div>
+      {hint ? <span className="mt-2 block text-sm text-slate-500">{hint}</span> : null}
+    </div>
   );
 }
 
