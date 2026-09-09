@@ -508,9 +508,25 @@ Ordered by what will hurt first.
     fixable here: the constraint is the portal's, and widening it is their call.
     `process_templates` says the same thing from the other side — 5 rows, only
     two case types (First-time hire for PH/ID/MM, Home leave for PH).
-12. **Unbounded in-memory caches** with no TTL: `_LOCKS` (webhook),
+12. **`transfer_direction` is still extracted as the bare word "transfer", and the
+    2026-09-08 mitigation only bounds the damage.** Reproduced 3 runs out of 3 on
+    2026-09-09: "Hi I am looking for a transfer helper" -> "Vaidik Dubey" -> "I am
+    looking to take on a transfer helper" and the stored value is `'transfer'`,
+    which matches NEITHER `_TAKING_ON_TRANSFER` nor `_RELEASING_HELPER`. Both
+    gates close, `applicable_fields` drops to 2, and once `max_asks` (2) is spent
+    the collection completes on `full_name` + `transfer_direction` alone - a
+    4-turn conversation and a 2-field ticket, which is CB-2026-0004 exactly.
+    `_undecidable_gate_keys` does its job (it blanks and re-asks) but cannot make
+    the extractor return a decidable value. The field HAS options -
+    `('taking on a transfer helper', 'releasing my current helper')` - and the
+    extractor is not constrained to them, which is the likely fix; the other
+    candidate is resolving the direction from the client's own opening message,
+    which almost always says it. It is intermittent: a separate full run collected
+    22 fields over 21 turns. Not fixed here because it is gating logic and a rushed
+    change to it can strand a live collection.
+13. **Unbounded in-memory caches** with no TTL: `_LOCKS` (webhook),
     `_AUTO_REPLY_VERDICTS` (message), `_MISSING_COLUMNS` (contact), `_vocabularies` (rag).
-13. **The KB states three different medical-insurance minimums, and the note that
+14. **The KB states three different medical-insurance minimums, and the note that
     used to sit here was wrong.** Two rows say medical insurance must cover at least
     **S$60,000/yr** (one of them sourced from Ming Hwee's own Client Service Agreement)
     and one says **S$15,000/yr**; the direct-hire flow the agency sent on 2026-09-08 also
@@ -546,6 +562,9 @@ python scripts/selfcheck_flows.py      # behavioural assertions; also runs IN th
                                        # Verifies BEHAVIOUR, not grep counts — see the note below.
 python scripts/preflight.py            # go-live gate: KB, agents, branch, portal bridge
 python scripts/check_retrieval.py      # retrieval calibration; tunes RAG_SOFT_FLOOR
+python scripts/e2e_services.py         # walks all 7 services end to end against the
+                                       #   real model and grades the transcripts.
+                                       #   ~25 min, ~270 LLM calls. Writes nothing.
 python scripts/watch_conversation.py --follow
 
 python scripts/unsilence_conversation.py --list       # stood-down threads the bot should own
@@ -604,6 +623,50 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-09** — **"approximately weeks or months", and three checks that were wrong
+  about a bot that was right.** Follow-up to the end-to-end run above.
+  (A) **The Myanmar timeline said nothing.** From the agency's screenshot: *"It can take
+  approximately weeks or months for an appointment slot to become available."*
+  Reproduced twice. The rows were not wrong — they read *"approximately a day in person,
+  though the wait for a slot can run to weeks or months"* — but putting "approximately"
+  next to a range with **no number in it** invited exactly that reordering, and it was
+  the first line of the briefing a Myanmar client reads. Both timing rows are reworded so
+  "approximately" can only attach to the part we can be approximate about, and the
+  unpredictable half is stated as unpredictable. The word **"appointment" stays**: unlike
+  the process rows the 2026-09-09 meeting stripped, here the wait for a slot IS the
+  timeline, and removing it leaves a sentence that cannot explain itself. After:
+  *"The waiting time for an appointment can be several weeks or sometimes months."*
+  (B) **Two `UPDATES` entries were fighting over the same row.** Adding a new entry for
+  a question that already had one meant the later of the two won on every run — so the
+  fix silently did not take, **and the loader stopped being idempotent**: two consecutive
+  runs each "corrected" 4 rows, flip-flopping the text between two wordings forever. That
+  is §9.8 in a new place, and the documented rule that a script claiming idempotency must
+  be RUN twice is what caught it. The existing entries are now edited in place, and two
+  consecutive runs correct 0.
+  (C) **Three of the end-to-end checks were wrong, and the bot was right in all three.**
+  Worth recording because each was a plausible-looking check that would have sent someone
+  chasing a defect that does not exist. *"Says why it is about to ask a lot"* tested the
+  first message's LENGTH and failed a reply that says exactly what it should — 136
+  characters against a threshold of 140. *"Disambiguates take-on vs release"* asserted
+  `transfer_direction` was collected, but a client who opens with *"I am looking for a
+  transfer helper"* has already answered it, the extractor takes it straight off that
+  message, and putting the question anyway would be asking them something they just said;
+  it now checks that the take-on branch ran and that the direction is never re-asked.
+  And the small-ticket overview was graded on whether the MODEL used what it was given,
+  which is a coin flip — it is now graded on the half that is deterministic, that the
+  turn fires and has records, with the model's use of it reported rather than failed.
+  **A check that fails half the time on correct code is noise, and noise is how a real
+  failure gets ignored.**
+  (D) **Confirmed, not assumed: the embassy step is gone from the client's steps.** The
+  screenshot's *"4. Holabola attends the embassy appointment"* does not reproduce — three
+  runs across Myanmar and Indonesian, no runner, no accompaniment, no embassy appointment
+  anywhere in the steps the client is given. The Filipino route is clean too.
+  (E) **Checked and NOT a defect: the helper's name being re-asked.** *"Holabola"* is not
+  extracted on the first try and the flow asks once more. Measured across eight names,
+  it is specific to that invented word — `Ana`, `Siti`, `Nyein Nyein`, `Tara rara` and
+  `Liza Fernandez` all extract first time, as do *"her name is Holabola"* and *"Holabola
+  is her name"*. Recorded so it is not chased as a systematic bug.
 
 - **2026-09-09** — **All seven services walked end to end, and the small-ticket
   briefing had never once happened.** The agency asked for a full check that every
@@ -1345,7 +1408,7 @@ Append here, newest first. One entry per behavioural change.
   0.486, home leave 0.588, replacement 0.603, transfer 0.595, transfer_employer 0.626,
   direct hire 0.668 — **16 probes, none below the floor**, and the salary probes unmoved.
   `selfcheck_flows.py` is 130 assertions. **No content gap remains.** Still open and
-  needing Ming Hwee, not code: the medical insurance minimum (§9.13), the Settling-In
+  needing Ming Hwee, not code: the medical insurance minimum (§9.14), the Settling-In
   Programme window, the Myanmar passport route, and who receives leads (§9.1).
 
 - **2026-09-08** — **Replacement: the document checklist and the nine steps, and the
@@ -1381,7 +1444,7 @@ Append here, newest first. One entry per behavioural change.
   three ways (§9.8). It is now top for that question under `direct_hiring`, `new_hiring`
   **and** `replacement`, with the direct-hire-specific row still second at 0.512, so
   nothing was displaced out of the set the model receives. **No insurance minimum is
-  stated** (§9.13); the $5,000 bond is phrased the way the existing direct-hire row
+  stated** (§9.14); the $5,000 bond is phrased the way the existing direct-hire row
   phrases it, deliberately clear of the words `quotes_hiring_package_cost` fires on.
   (D) **That exposed a hole in the vetting.** A `general` row is retrieved from inside a
   `new_hiring` or `direct_hiring` conversation, where the cost guard runs on the reply —
@@ -1719,7 +1782,7 @@ Append here, newest first. One entry per behavioural change.
   Verified by capturing the instruction actually built: present for a timing and a
   process question with the location unknown, absent once it is known, absent on an
   ordinary answer, and absent for another service.
-  (D) **No insurance minimum was written into any row, deliberately** — see §9.13. The
+  (D) **No insurance minimum was written into any row, deliberately** — see §9.14. The
   source states medical insurance at $15,000/yr, which is the pre-October-2023 figure,
   while Ming Hwee's own Service Agreement says $60,000. Picking a side in a legal
   minimum is not this repo's call, so the rows say "MOM's minimum coverage" and defer

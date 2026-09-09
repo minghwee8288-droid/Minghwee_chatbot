@@ -2029,13 +2029,25 @@ UPDATES += [
     {
         "where": {"question": "How long does a passport renewal take for a helper?",
                   "service_type": "passport_renewal"},
-        "reason": "2026-09-09 meeting: 'approximately' not 'roughly', and no embassy mechanics",
+        # Reworded again 2026-09-09, same day: "approximately a day in person,
+        # though the wait for a slot can run to weeks or months" was reordered
+        # by the model into "It can take approximately weeks or months for an
+        # appointment slot to become available" — live, in the agency's own
+        # screenshot, and reproduced twice afterwards. "Approximately weeks"
+        # says nothing, and it was the first line of the briefing.
+        #
+        # "Approximately" is now bound only to the part we can be approximate
+        # about. The unpredictable half is stated as unpredictable, which is
+        # both honest and a sentence the model can reuse whole.
+        "reason": "2026-09-09 meeting: 'approximately' not 'roughly', no embassy "
+                  "mechanics; and 'approximately weeks or months' reached a client",
         "set": {"answer": (
             "It depends on her nationality. For a Filipino helper it is "
             "approximately 6 to 8 weeks. For an Indonesian helper it is "
-            "approximately 3 working days. For a Myanmar helper it is "
-            "approximately a day in person, though the wait for a slot can run "
-            "to weeks or months. These are estimates and can vary."
+            "approximately 3 working days. For a Myanmar helper the in-person "
+            "part is generally completed within a day, but the wait for an "
+            "appointment slot can run to several weeks, and sometimes months. "
+            "These are estimates and can vary."
         )},
     },
     {
@@ -2059,11 +2071,17 @@ UPDATES += [
     {
         "where": {"question": "How long does passport renewal take for a Myanmar helper?",
                   "service_type": "passport_renewal"},
-        "reason": "same wording; the wait for a slot is kept because it IS the timeline",
+        # The word "appointment" STAYS, unlike in the process rows this same
+        # meeting stripped: here the wait for a slot IS the timeline, and
+        # removing it leaves a sentence that cannot explain itself.
+        "reason": "the wait for a slot is kept because it IS the timeline; reworded "
+                  "so 'approximately' cannot attach to a range with no number in it",
         "set": {"answer": (
-            "Approximately a day in person once a slot is available, but the "
-            "wait for one can run to weeks or months. This is an estimate and "
-            "can vary with document verification."
+            "The in-person part is generally completed within a day, once an "
+            "appointment slot is available. The wait for that slot is the "
+            "unpredictable part - it can run to several weeks, and sometimes "
+            "months, depending on what the embassy has available, so it is "
+            "worth starting early. Document verification can add to it."
         )},
     },
     {
