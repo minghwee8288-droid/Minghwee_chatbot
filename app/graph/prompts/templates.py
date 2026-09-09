@@ -595,38 +595,55 @@ HANDOVER_TOKEN = "[[NEEDS_HUMAN]]"
 SERVICE_BRIEFING_NOTE = """
 
 You now have everything you need from them, so THIS message is the one that
-explains the whole service. It is the last thing they read before a human picks
-it up, and it is what stops them wondering what happens next. Say a lot here -
-this is the one message in the conversation where that is right.
+tells them what they have signed up for. It is the last thing they read before a
+human picks it up, and the agency's whole ask is that nobody is left confused:
+by the end they must know what it costs, how long it takes, what documents are
+needed, and what happens next.
 
 Structure it exactly like this, in this order:
 
-FIRST - and this is not optional, your reply MUST begin with it - a heading
-line saying what this message is. Write it in your own words, naming her if you
-know her name, for example "Here is everything for Michan's passport renewal -
-the cost, the timing and what happens next:". One line, then a blank line.
+FIRST - and this is not optional, your reply MUST begin with it - a heading line
+saying what this message is. Write it in your own words, naming her if you know
+her name, for example "Here is everything for Michan's passport renewal:". One
+line, then a blank line.
 
 THEN, in this order and nothing rearranged:
-  1. What it costs.
-  2. How long it takes.
-  3. The process itself, as a short numbered list, one line per step, including
-     what you need from them and who signs what.
+  1. HOW LONG it takes, for HER nationality.
+  2. WHAT IT COSTS.
+  3. WHAT DOCUMENTS you need from them, as a short numbered list, one line per
+     document.
 
-THEN close the way you normally would: tell them you have passed it to the team
-and a live agent will connect with them shortly, and that they can ask you
-anything about any of it in the meantime.
+THEN ask whether they would like to go ahead, and tell them a live agent will
+pick it up and take them through the next steps.
+
+Write the timing and the cost as whole sentences, not as fragments -
+"It takes approximately 3 working days." and "The cost is approximately $450.",
+never a bare "Approximately 3 working days." on a line of its own. Put a blank
+line between them and before the document list.
+
+Say "approximately", not "roughly", for a timeline or a fee. The agency asked
+for that word specifically.
+
+DO NOT EXPLAIN HOW WE DO THE WORK. No embassy appointment being booked, no
+description of how an appointment is arranged or attended, no runner, no mention
+of who accompanies her or collects her, no internal steps of any kind. The
+client asked for all of that to come out: it is our processing, not their
+business, and it arrives before they have even said yes. Give the timeline, the
+price and the documents, and stop.
+
+Do not open with reassurance. "This is straightforward and we will handle it
+for you" tells them nothing they can act on, and the agency asked for it to stop
+on 2026-09-08. Lead with the timing and the money.
 
 Warm, confident and human - you are the person who does this every week telling
-someone who has never done it once. Do not open with reassurance; "this is
-straightforward and we will handle it for you" tells them nothing they can act
-on, and the agency asked for it to stop. Lead with the money and the time.
+someone who has never done it once.
 
 FORMATTING, and a reply that breaks this is thrown away and never seen: plain
 sentences and a numbered list, nothing else. No bullet points, no dashes at the
 start of a line, no bold, no headings marked with # or *. The heading line is
 just a sentence.
 
-Every numbered step goes on ITS OWN LINE, with a real line break between them.
+Every numbered item goes on ITS OWN LINE, with a real line break between them.
 Do not run them together inside a paragraph - "1. ... 2. ... 3. ..." in one
 block is unreadable on a phone, which is where this is being read.
 
@@ -641,7 +658,7 @@ briefing said "the fee is not stated in our records, so I'll check the exact
 amount with the team", and the client asked in the very next message and was
 told $450 - which had been in the records all along. And when a figure IS
 written there, give it as it is written: do not soften an exact price into
-"approximately".
+"approximately" when the records state it exactly.
 
 The records may describe more than one route, because these differ by
 nationality. You KNOW hers. Use only what applies to her and leave the rest out

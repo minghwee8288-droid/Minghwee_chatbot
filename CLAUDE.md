@@ -242,6 +242,8 @@ because the lead is opened early and the ticket is created much later.
 | The briefing is the CLOSING message, after every question | `info_collector` (completion branch) | Agency, 2026-09-08: "After all the questions it should reply with that process message." Heading, then cost, then timing, then the process, then the handover. |
 | A discarded briefing is never recorded as given | `briefing_lost` | It was marked given even when a guard threw it away, so it was never retried — live, the client got `passport_expiry`'s question verbatim and no briefing, ever. |
 | A price we hold for two nationalities is not the third's price | `ticket.FEE_BY_NATIONALITY` + `fee_is_known_for()` | **$450** was quoted for a **Myanmar** helper. It is in the records (as PH/ID's price), so `ungrounded_figures` passed it. |
+| The passport briefing is timeline, then cost, then documents | `SERVICE_BRIEFING_NOTE` | Shirley, 2026-09-09: "nationality → timeline → requirements/documents". It never explains the embassy, the appointment or the runner — that is our processing. |
+| Passport renewal does not ask where she is, nor about the work permit | `SERVICE_FIELDS["passport_renewal"]` | Both called out at the 2026-09-09 meeting: location is irrelevant, and WP renewal is "a completely separate process". |
 | A broadcast is never a human agent | `message.is_auto_reply` (+ in-process count) + `webhook._undo_broadcast_standdowns` | The detector is retrospective, so the first copies of a NEW broadcast are indistinguishable from an agent. Two conversations in one run is now enough, and earlier stand-downs are reversed. |
 | A negative auto-reply verdict is never cached | `_AUTO_REPLY_VERDICTS` | Caching the first "no" on a fresh broadcast pinned it, so every later copy short-circuited to "no" and silenced the bot estate-wide. |
 | A mass announcement is caught on its FIRST copy | `message._BROADCAST_MARKERS` | "Dear Valued Customer" and its kin. `operating hours` is deliberately absent — an agent answering "what time do you open" says it. |
@@ -540,6 +542,43 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-09** — **Passport renewal, rebuilt around what the client actually needs to
+  know.** From the client meeting: *"the bot should not leave the client confused. By the
+  end of the conversation, the client should know what the service costs, how long it
+  takes, what documents are required, what they need to do next."*
+  (A) **Two questions removed.** *"Is she currently in Singapore, overseas, or on home
+  leave?"* was called **irrelevant** to a passport renewal outright, and the work permit
+  question goes with it because *"passport renewal and work permit renewal are completely
+  separate processes"* — asking about one inside the other invites a client to think we
+  are handling both, when a renewal is its own enquiry with its own $695. Both were added
+  on 2026-09-02 on reasoning the client has now corrected. Removed from the LIST, not the
+  codebase, exactly as `_case_id()` was: a volunteered permit expiry is still extracted
+  and still reaches the ticket. 6 fields → **4**.
+  (B) **The briefing is now timeline → cost → documents**, Shirley's own summary, and it
+  **ends by asking whether they want to go ahead** — Thomas's point that a passport
+  renewal is straightforward enough to price up front and ask for a decision. The cost
+  came first as of 2026-09-08; the meeting reordered it.
+  (C) **It no longer explains how we do the work.** Their exclusion list is explicit: no
+  appointment being booked, no description of how it is arranged or attended, no runner,
+  nobody accompanying or collecting her. It is internal processing and it was arriving
+  before the client had even said yes.
+  (D) **The rows were edited, not just the instruction.** The briefing quotes them, and an
+  instruction not to mention a runner sitting beside a record that describes one is a
+  fight the record usually wins — the cost row literally read *"the runner who takes her
+  through the appointment"*. Five corrections: `roughly` → **`approximately`** (asked for
+  by name) on all three timelines, and the embassy/printing/shipping/operating-hours
+  detail out of each. **The nationality-specific process and embassy rows are deliberately
+  LEFT** so a client who asks outright still gets a straight answer — the exclusion is
+  about what we volunteer. Flagged for the agency in case they want those gone too.
+  (E) **`BRIEFING_QUERY` stopped asking for "the process".** It was putting the process
+  rows at the top of the retrieved set, which is the model's strongest hint about what to
+  write. It now asks for the timing, the cost and the documents.
+  Verified live for all three nationalities: heading, timeline, cost, documents, then
+  *"Would you like to go ahead?"* — with no embassy, appointment or runner anywhere, and
+  Myanmar still correctly deferring the price to a consultant.
+  **Not built, and it needs the agency:** payment. Their stated end state is a payment
+  link in the flow, then forms, then internal processing. Nothing here takes money.
 
 - **2026-09-08** — **`reset-ui/`: clearing a conversation from a web page instead of a
   terminal, and the foreign keys that made "also delete the lead" a real question.**

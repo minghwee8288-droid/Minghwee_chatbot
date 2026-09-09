@@ -1966,6 +1966,84 @@ UPDATES += [
     },
 ]
 
+
+# --- 2026-09-09: the client meeting reworded the passport timings and fee ----
+#
+# Two things they asked for, both about what reaches the client rather than
+# what is true:
+#
+#   * "approximately", not "roughly". Asked for by name.
+#   * No embassy/appointment mechanics and no runner. Their exclusion list is
+#     explicit - the bot must not explain that an appointment is booked, how it
+#     is handled, or that we accompany her. It is internal processing, and it
+#     was arriving before the client had even agreed to proceed.
+#
+# The timing rows are edited rather than the briefing alone, because the
+# briefing quotes THESE, and an instruction not to mention a runner sitting
+# beside a record that describes one is a fight the record usually wins.
+#
+# The nationality-specific PROCESS and embassy rows are deliberately LEFT: a
+# client who asks outright "does someone go with her" still gets a straight
+# answer. The exclusion is about what we volunteer, not about refusing to
+# answer. Flagged for the agency in case they want those gone too.
+UPDATES += [
+    {
+        "where": {"question": "How long does a passport renewal take for a helper?",
+                  "service_type": "passport_renewal"},
+        "reason": "2026-09-09 meeting: 'approximately' not 'roughly', and no embassy mechanics",
+        "set": {"answer": (
+            "It depends on her nationality. For a Filipino helper it is "
+            "approximately 6 to 8 weeks. For an Indonesian helper it is "
+            "approximately 3 working days. For a Myanmar helper it is "
+            "approximately a day in person, though the wait for a slot can run "
+            "to weeks or months. These are estimates and can vary."
+        )},
+    },
+    {
+        "where": {"question": "How long does passport renewal take for a Filipino helper?",
+                  "service_type": "passport_renewal"},
+        "reason": "same - and the printing/shipping detail is our processing, not theirs",
+        "set": {"answer": (
+            "Approximately 6 to 8 weeks. This is an estimate and can vary with "
+            "appointment availability and document verification."
+        )},
+    },
+    {
+        "where": {"question": "How long does passport renewal take for an Indonesian helper?",
+                  "service_type": "passport_renewal"},
+        "reason": "same - the operating-hours and online-appointment detail is ours",
+        "set": {"answer": (
+            "Approximately 3 working days. This is an estimate and can vary with "
+            "appointment availability and document verification."
+        )},
+    },
+    {
+        "where": {"question": "How long does passport renewal take for a Myanmar helper?",
+                  "service_type": "passport_renewal"},
+        "reason": "same wording; the wait for a slot is kept because it IS the timeline",
+        "set": {"answer": (
+            "Approximately a day in person once a slot is available, but the "
+            "wait for one can run to weeks or months. This is an estimate and "
+            "can vary with document verification."
+        )},
+    },
+    {
+        # "That covers us handling the embassy paperwork, the forms and the
+        # runner who takes her through the appointment" - the runner is exactly
+        # what the meeting asked to stop mentioning.
+        "where": {"question": "How much does it cost to renew my helper's passport?",
+                  "service_type": "passport_renewal"},
+        "reason": "2026-09-09 meeting: the runner is an internal step and must not be quoted",
+        "set": {"answer": (
+            "It is approximately $450 for a Filipino helper and approximately "
+            "$450 for an Indonesian helper. That covers us handling the "
+            "paperwork and the forms from end to end. If your helper is of "
+            "another nationality, tell us and a consultant will confirm the "
+            "cost for her embassy."
+        )},
+    },
+]
+
 # Where each relocated row now lives, derived from UPDATES so the two can
 # never disagree. Keyed by question, which is what the ROWS skip check has.
 _RELOCATED: dict[str, str] = {

@@ -53,9 +53,14 @@ _MONEY_SERVICES = {"fee_enquiry", "salary_enquiry"}
 # phrasing is the one that brings back all four kinds of row (process,
 # documents, cost AND timing); the shorter "the full process, the documents,
 # the cost and how long it takes" returned no timing row for either.
+# Reworded 2026-09-09 with the flow itself: the client asked for the process
+# and the embassy/appointment detail to come OUT of what we tell them, so the
+# briefing turn no longer goes looking for it. Asking for "the process" put the
+# process rows at the top of the retrieved set, which is the model's strongest
+# hint about what to write.
 BRIEFING_QUERY = (
-    "what is the process, what documents are needed, how much does it cost "
-    "and how long does it take"
+    "how long does it take, how much does it cost, and what documents are "
+    "needed from me"
 )
 
 # Four kinds of answer have to arrive together, and the nationality-specific

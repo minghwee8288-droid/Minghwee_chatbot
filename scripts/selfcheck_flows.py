@@ -432,10 +432,35 @@ rows = [
  # then the process ... add the heading of the message."
  ("the briefing leads with a heading",
   "your reply MUST begin with it" in tpl.SERVICE_BRIEFING_NOTE, True),
- ("then the cost, then the timing, then the process",
-  tpl.SERVICE_BRIEFING_NOTE.index("What it costs")
-  < tpl.SERVICE_BRIEFING_NOTE.index("How long it takes")
-  < tpl.SERVICE_BRIEFING_NOTE.index("The process itself"), True),
+ # Reordered 2026-09-09 at the client meeting. Shirley's summary of what the
+ # client must be told is "nationality -> timeline -> requirements/documents",
+ # with the fee up front so they can say yes or no.
+ ("timeline first, then the cost, then the documents",
+  tpl.SERVICE_BRIEFING_NOTE.index("HOW LONG it takes")
+  < tpl.SERVICE_BRIEFING_NOTE.index("WHAT IT COSTS")
+  < tpl.SERVICE_BRIEFING_NOTE.index("WHAT DOCUMENTS"), True),
+ # Their exclusion list, in their words: the bot must not explain that an
+ # appointment is booked, how it is handled, or that a runner accompanies her.
+ ("the briefing never explains how we do the work",
+  "DO NOT EXPLAIN HOW WE DO THE WORK" in tpl.SERVICE_BRIEFING_NOTE, True),
+ ("no runner, no appointment mechanics",
+  all(w in tpl.SERVICE_BRIEFING_NOTE for w in ("no runner", "No embassy appointment")),
+  True),
+ ("and it asks whether they want to go ahead",
+  "whether they would like to go ahead" in tpl.SERVICE_BRIEFING_NOTE, True),
+ # "approximately" was asked for by name, over "roughly".
+ ("'approximately', not 'roughly'",
+  'Say "approximately", not "roughly"' in tpl.SERVICE_BRIEFING_NOTE, True),
+ # Where she is was called irrelevant; the work permit is a separate service.
+ ("passport renewal is four questions now",
+  [f.key for f in t.SERVICE_FIELDS["passport_renewal"]],
+  ["full_name", "helper_name", "nationality", "passport_expiry"]),
+ ("it no longer asks where the helper is",
+  any(f.key == "helper_location" for f in t.SERVICE_FIELDS["passport_renewal"]), False),
+ ("nor when the work permit expires",
+  any(f.key == "permit_expiry" for f in t.SERVICE_FIELDS["passport_renewal"]), False),
+ ("the briefing turn no longer goes looking for the process",
+  "process" in rr.BRIEFING_QUERY, False),
  ("every step gets its own line",
   "ITS OWN LINE" in tpl.SERVICE_BRIEFING_NOTE, True),
  # A briefing discarded by a guard used to be recorded as GIVEN, so it was
@@ -477,8 +502,8 @@ rows = [
  # straight forward, like 'We handle it for you.' We don't want this thing:
  # We have to tell the estimated time and the cost. and then We move forward
  # to the process."
- ("the briefing leads with the money and the time",
-  "Lead with the money and the time" in tpl.SERVICE_BRIEFING_NOTE, True),
+ ("the briefing leads with the timing and the money",
+  "Lead with the timing and the money" in tpl.SERVICE_BRIEFING_NOTE, True),
  ("and no longer opens by reassuring them",
   "Do not open with reassurance" in tpl.SERVICE_BRIEFING_NOTE, True),
  # It claimed the fee was not in the records and produced it a message later.

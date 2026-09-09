@@ -1098,28 +1098,24 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             "When does her current passport expire?",
             max_asks=2,
         ),
-        # Added 2026-09-02: the flow used to stop at the expiry date and hand
-        # over, and a tester said "you didnt asked any thing more related to the
-        # helper for passport renewal". These are what the agent has to chase
-        # next — where she is decides which embassy handles it, and whether the
-        # permit expires alongside the passport changes the order of the work.
-        # Deliberately NOT the passport number, her date of birth or her address:
-        # Rule 4a keeps the whole Singpass block off WhatsApp.
-        Field(
-            "helper_location",
-            "where the helper is",
-            "Is she currently in Singapore?",
-            max_asks=2,
-            optional=True,
-            options=("in Singapore", "overseas", "on home leave"),
-        ),
-        Field(
-            "permit_expiry",
-            "work permit expiry",
-            "And when does her work permit expire?",
-            max_asks=2,
-            optional=True,
-        ),
+        # `helper_location` and `permit_expiry` were added on 2026-09-02 after a
+        # tester said "you didnt asked any thing more related to the helper for
+        # passport renewal", on the reasoning that where she is decides which
+        # embassy handles it and that a permit expiring alongside the passport
+        # changes the order of the work.
+        #
+        # Both removed 2026-09-09 at the client meeting, and the reasoning above
+        # is what they corrected. Where she is was called **irrelevant** to a
+        # passport renewal outright. And the work permit is a **separate
+        # service**: "passport renewal and work permit renewal are completely
+        # separate processes", so asking about one inside the other invites a
+        # client to think we are handling both. A renewal that is genuinely due
+        # is its own enquiry with its own flow, its own $695 and its own steps.
+        #
+        # Removed from the LIST, not the codebase, the same way `_case_id()` was
+        # on 2026-09-04: the objection is to ASKING. A volunteered permit expiry
+        # is still extracted, still in the transcript and still on the ticket.
+        #
         # The urgency question ("How soon does she need the new passport?") was
         # removed on 2026-09-04 at the client's instruction: a passport that is
         # expiring IS the urgency, the answer is always "as soon as possible",
