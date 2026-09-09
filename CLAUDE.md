@@ -552,6 +552,8 @@ python scripts/unsilence_conversation.py +6591234567  # put the bot back, thread
 
 # DESTRUCTIVE — test numbers only
 python scripts/reset_conversation.py +6591234567
+python scripts/purge_test_contact.py +6591234567         # show what holds the number
+python scripts/purge_test_contact.py +6591234567 --yes   # ...and delete it
 ```
 
 **`selfcheck_flows.py` reads data; `smoke_nodes.py` runs code. You need both.**
@@ -573,6 +575,21 @@ a candidate; the hiring total is blocked while salary is not; neither renewal fl
 for a case ID) and exits non-zero on any failure. Note `scripts/` is NOT in the image, so
 it needs `docker compose cp scripts chatbot:/app/scripts` first — and that copy lives
 only in the running container's writable layer, so it is lost on the next recreate.
+
+**A reset does NOT make a converted number look new again.** `reset_conversation.py`
+clears the chat — messages, tickets, handovers, the checkpoint, the identity on the
+conversation row — and stops at the platform's own tables, which is correct for a real
+client. But the moment the portal converts a lead it creates an `employers` row **and** a
+synthetic `profiles` row (`employer+<hex>@no-email.local`), and `identify()` matches a
+phone against `employers` FIRST. So a converted test number stays recognised through any
+number of resets: live on 2026-09-09 the agency reset conversation 3766, deleted its
+lead, and still got *"Hi tunaktun"*. `scripts/purge_test_contact.py` closes that gap —
+it prints everything first, deletes nothing without `--yes`, **refuses a contact that has
+any placement** (a placement means a real client, not a test number), and keys every
+delete on a resolved row id rather than the phone. Note the order it has to use:
+`wp_chat_conversations.matched_employer_id` is a foreign key to `employers(id)`, so the
+conversation's identity is blanked BEFORE the employer row goes — the other way round
+fails on the constraint, after the leads and tickets have already been deleted.
 
 **Resetting test data.** `reset_conversation.py` deliberately never deletes from `leads`.
 Because of §1B a reset number therefore keeps its lead and will not produce a new one —
