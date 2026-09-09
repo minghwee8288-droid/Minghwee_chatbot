@@ -187,7 +187,8 @@ because the lead is opened early and the ticket is created much later.
 | A helper asking to be transferred keeps the helper flow | `intent_classifier._HELPER_SPEAKING` | Beats the employer fallback for `transfer`. "transfer my helper" excluded by lookahead. |
 | The employer flow asks what the candidate form profiles | `SERVICE_FIELDS["new_hiring"]` | `helper_room`, `helper_profile`, `special_duties` come straight from `candidates.biodata.commitments`. |
 | A new hire's cost is never quoted before a salesperson speaks to them | `guards.quotes_hiring_package_cost` + `COST_WITHHELD_SERVICES` | Salary, levy and the $5,000 bond deliberately still go out. |
-| A small-ticket service explains itself before it collects | `info_collector._SMALL_TICKET_SERVICES` | `renewal`, `passport_renewal`. Opening turn only; strictly grounded in `rag_context`. |
+| A small-ticket service explains itself before it collects | `info_collector.briefs_on_this_turn` | `renewal` and `insurance`, on the turn after the first question. NOT `passport_renewal` — it briefs at the END instead, and an opening overview there reintroduced the embassy. Asserted across a turn SEQUENCE, because the condition this replaced could never be true. |
+| The overview turn searches for the SERVICE, not the client's answer | `rag_retriever.OVERVIEW_QUERY` | That turn's message is usually a name, so the query built from it retrieved nothing — `renewal` measured 0.000. Same trick `BRIEFING_QUERY` already used. |
 | A renewal never asks for a case ID | `SERVICE_FIELDS["passport_renewal"]`, `["renewal"]` | `_case_id()` deliberately absent. Client instruction, 2026-09-04. |
 | Nobody is asked whether they have hired with us before | `info_collector._known_fields` | Filled from `prior_hires` either way now — zero reads as "first time with us". |
 | An existing client is not asked for a helper we placed | `contact.get_placed_helper` | Only when there is exactly ONE live placement naming a candidate. |
@@ -603,6 +604,63 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-09** — **All seven services walked end to end, and the small-ticket
+  briefing had never once happened.** The agency asked for a full check that every
+  service talks the way they want. `scripts/e2e_services.py` is that check: it runs each
+  service from the opening message to the ticket through the real nodes and the real
+  model, with a scripted client that answers whatever it is actually **asked** (by field
+  key, so a reworded question still gets a sensible answer and a NEW field shows up as
+  unscripted rather than quietly derailing the run), and grades the transcript against
+  the rules this file records.
+  (A) **The harness found its own bug first, which is the reason to trust the rest.**
+  `collected_info`, `asked_field_counts` and `briefed_services` are LangGraph reducer
+  fields — the graph merges them, it does not overwrite them. A plain `dict.update()`
+  threw away everything collected on earlier turns, so the collector re-asked the
+  helper's name and the run graded a conversation that cannot happen in production. The
+  harness now applies the real reducers.
+  (B) **`_SMALL_TICKET_SERVICES` has been dead since 2026-09-04.** The condition was
+  `brief_on_turn = 1 if _is_first_contact(state) else 0` tested against
+  `sum(asked.values()) == brief_on_turn` — and `_is_first_contact` is only true while the
+  history is empty, which is only true while nothing has been asked. So `brief_on_turn`
+  was 1 exactly when the sum was 0, and 0 exactly when the sum was 1 or more: **the two
+  sides could never be equal.** Neither `renewal` nor `passport_renewal` has explained
+  itself to a client since the day the "wait a turn" fix landed. Nothing caught it
+  because a briefing that never happens looks exactly like one working quietly — the
+  client gets a perfectly reasonable question either way. Same signature as the budget
+  guard. Now a named predicate, `briefs_on_this_turn`, asserted across a whole turn
+  sequence rather than as one call, which is the only shape that would have caught it.
+  (C) **Fixing the condition was not enough: the turn had no records.** That turn's
+  incoming message is the answer to the first question — a NAME, usually — so the query
+  built from it matched nothing at all: `renewal` measured **0.000**. The note is
+  strictly grounded, so it correctly stayed silent. `OVERVIEW_QUERY` searches for the
+  SERVICE instead, exactly as `BRIEFING_QUERY` does for the closing briefing, and
+  deliberately avoids the word "process" for the same reason. Measured after: 0.000 →
+  **0.536**.
+  (D) **And that still was not enough: a general instruction beats a specific one.**
+  `COLLECTOR_INSTRUCTION` says "ask for that one detail and nothing else", which is a
+  flat contradiction of "tell them what the job involves first", and it won every time —
+  the 2026-09-04 introduction defect exactly. The note now names the rule it is
+  overriding, the way `COLLECTOR_INTRO_NOTE` does. **Partly fixed, and it is worth being
+  honest about the number: it produces the overview on roughly two runs in four.** When
+  it stays quiet the client simply gets the plain question, which is what they got every
+  time before, so the failure mode is unchanged and strictly better than never.
+  (E) **`passport_renewal` was REMOVED from the opening overview, and that was a
+  regression caught the moment (B) started working.** Its first attempt read *"We handle
+  the passport renewal from the embassy appointment through to the renewed passport being
+  returned to you"* — the embassy and the appointment, which the 2026-09-09 meeting
+  removed from this flow by name, arriving before the client had even given the helper's
+  name. The overview query retrieves the process rows and those rows describe OUR
+  processing. It also had nothing to add: `BRIEFING_AFTER` already gives that flow a full
+  closing briefing. So no service briefs at both ends, and that is asserted over
+  `BRIEFING_AFTER` as a set rather than by naming passport renewal.
+  **Also found, NOT fixed, and needing a decision: `insurance` is unreachable.** It is a
+  defined service — 4 fields, small-ticket, its own lead type — but the classifier does
+  not produce it: *"i need insurance for my helper"* lands on `other` with no service,
+  and *"renew my helper insurance"* lands on **`renewal`**. The §5 row claiming `insuran`
+  is matched before `renew` is about the alias table, which only ever runs against the
+  model's returned intent STRING, so it never gets the chance. Insurance is not one of
+  the agency's seven services, which is why this is recorded rather than fixed.
 
 - **2026-09-09** — **"it still didn't ask name" — it knew the name and would not say
   it.** The agency tested a passport renewal and got *"Hi, I'm Claire, Ming Hwee's AI

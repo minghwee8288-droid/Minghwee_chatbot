@@ -46,6 +46,8 @@ from app.graph.prompts.system import _known_cases_block as _cases_block
 _APP_DIR = _pathlib.Path(__file__).resolve().parents[1] / "app"
 _APP_SRC = {f: f.read_text(encoding="utf-8") for f in _APP_DIR.rglob("*.py")}
 _CONTACT_SRC = (_APP_DIR / "services" / "contact.py").read_text(encoding="utf-8")
+_COLLECTOR_SRC = (_APP_DIR / "graph" / "nodes" / "info_collector.py").read_text(encoding="utf-8")
+_RAG_SRC = (_APP_DIR / "graph" / "nodes" / "rag_retriever.py").read_text(encoding="utf-8")
 
 # The eleven case tables, named rather than pattern-matched: a `case_[a-z_]+`
 # pattern also catches "case_enquiry", "case_id" and "case_summary", which are
@@ -929,6 +931,48 @@ rows = [
  # them; the generic "drop two or three in" rule was overriding that.
  ("enumerated options are named in full",
   "name them" in ico._field_guidance("new_hiring", {}, lang_f), True),
+
+ # --- the small-ticket overview, 2026-09-09 ---------------------------
+ # It had been DEAD since 2026-09-04 and nothing caught it, because a
+ # briefing that never happens looks exactly like one working quietly: the
+ # client gets a perfectly reasonable question either way. The old
+ # condition was
+ #     brief_on_turn = 1 if _is_first_contact(state) else 0
+ #     ... and sum(asked.values()) == brief_on_turn
+ # and _is_first_contact is only true while nothing has been asked, so the
+ # two sides could never be equal. Asserted across a whole turn sequence
+ # rather than as one call, which is the only shape that would have caught
+ # it.
+ ("the overview turn can actually happen, exactly once",
+  [n for n in range(6) if ico.briefs_on_this_turn("renewal", {"f": n})], [1]),
+ ("it never lands on the introduction turn",
+  ico.briefs_on_this_turn("renewal", {}), False),
+ ("a service that briefs at the END does not brief at the start too",
+  ico.briefs_on_this_turn("passport_renewal", {"f": 1}), False),
+ ("...and that holds for every service with a closing briefing",
+  [k for k in t.BRIEFING_AFTER if ico.briefs_on_this_turn(k, {"f": 1})], []),
+ ("an ordinary flow never gives an overview",
+  ico.briefs_on_this_turn("new_hiring", {"f": 1}), False),
+ # The old expression still appears verbatim - inside the docstring that
+ # explains why it could never be true, which is an incident note and
+ # stays (section 0.4). So assert the call site uses the PREDICATE
+ # instead; that plus the turn-sequence check above is what makes the
+ # dead condition unable to come back.
+ ("the collector decides via the predicate, not an inline condition",
+  "if briefs_on_this_turn(service_type, asked):" in _COLLECTOR_SRC, True),
+ # That turn's incoming message is the answer to the first question - a
+ # NAME, usually - so the query built from it retrieved NOTHING: renewal
+ # measured 0.000 on that turn. The records have to be searched for by
+ # SERVICE, the same way the closing briefing already does it.
+ ("the overview turn searches for the service, not the client's answer",
+  "OVERVIEW_QUERY" in _RAG_SRC and "briefs_on_this_turn" in _RAG_SRC, True),
+ ("and its query avoids the word that pulls up our own processing",
+  "process" in rr.OVERVIEW_QUERY.lower(), False),
+ # A general instruction beats a specific one unless the specific one names
+ # the rule it is overriding - the 2026-09-04 introduction defect, and the
+ # reason this note was silent even once it fired and had records.
+ ("the overview note names the rule it overrides",
+  "THIS MESSAGE IS THE ONE" in _COLLECTOR_SRC, True),
 
  # --- a name we already hold is USED, 2026-09-09 ----------------------
  # Live, conversation 3766: an employer whose name is on file was opened

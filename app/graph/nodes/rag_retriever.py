@@ -8,6 +8,7 @@ from typing import Any
 
 from app.config import settings
 from app.graph.guards import FEE_STATED_SERVICES, last_bot_line
+from app.graph.nodes.info_collector import briefs_on_this_turn
 from app.graph.state import ConversationState, effective_contact_type
 from app.services import contact as contact_service
 from app.services import rag
@@ -80,6 +81,26 @@ BRIEFING_QUERY = (
 # over again. 10 keeps every one of the five for PH, ID and MM.
 BRIEFING_MATCH_COUNT = 10
 
+# The OTHER briefing, and it had the same problem for a different reason.
+#
+# A small-ticket service is supposed to say what the job involves before it
+# collects (CLAUDE.md section 5), on the turn after its first question. That
+# turn's incoming message is the answer to the first question - a NAME, most of
+# the time - so the query built from it retrieved nothing at all: measured
+# 2026-09-09, `renewal` scored **0.000** on turn two, with the client's message
+# being "Vaidik Dubey". The note is strictly grounded and correctly said
+# nothing, so the briefing was silent even once the dead condition above it was
+# fixed.
+#
+# The fix is the one _briefing_turn already uses: on the turn we plan to explain
+# the service, search for the SERVICE rather than for whatever the client just
+# typed. Deliberately asks what it involves and what we need, and NOT "what is
+# the process" - the same reason BRIEFING_QUERY avoids that word.
+OVERVIEW_QUERY = (
+    "what does this service involve, what do you need from me, "
+    "how long does it take and what does it cost"
+)
+
 
 def _briefing_turn(state: ConversationState) -> bool:
     """Whether THIS turn is the one that lays the whole service out.
@@ -129,6 +150,16 @@ def _search_query(state: ConversationState) -> str:
     if _briefing_turn(state):
         service = (state.get("service_type") or "").replace("_", " ")
         return f"{BRIEFING_QUERY}\n({service})"
+
+    # The small-ticket overview turn — same trick, different briefing. The
+    # predicate is imported from the collector rather than copied, because the
+    # two must agree about WHICH turn this is or the records arrive on a turn
+    # that is not going to use them (section 9.8 on duplicated constants).
+    # rag_retriever runs before info_collector on the same turn and reads the
+    # same asked_field_counts, so both see the same answer.
+    if briefs_on_this_turn(state.get("service_type"), state.get("asked_field_counts")):
+        service = (state.get("service_type") or "").replace("_", " ")
+        return f"{OVERVIEW_QUERY}\n({service})"
 
     # A greeting or a piece of small talk is searched as it stands: it is not a
     # question, and biasing it towards whatever is in flight would go looking

@@ -874,6 +874,56 @@ _WHY_WE_ASK: dict[str, str] = {
 # it did before.
 
 
+def briefs_on_this_turn(service_type: str | None, asked: dict | None) -> bool:
+    """Whether this is the turn a small-ticket service explains itself.
+
+    Exactly one turn per collection — the one after the first question, so the
+    briefing never shares a message with the introduction (see the note at the
+    call site for the 2026-09-04 reason).
+
+    This is a function, and asserted by scripts/selfcheck_flows.py across a
+    whole turn sequence, because the condition it replaces COULD NOT EVER BE
+    TRUE and nobody noticed for five days:
+
+        brief_on_turn = 1 if _is_first_contact(state) else 0
+        if service_type in _SMALL_TICKET_SERVICES
+           and sum(asked.values()) == brief_on_turn:
+
+    `_is_first_contact` is only true while the history is empty, which is only
+    true while nothing has been asked. So brief_on_turn was 1 exactly when
+    sum(asked) was 0, and 0 exactly when sum(asked) was 1 or more — the two
+    sides could never meet. Introduced 2026-09-04 in the commit that made the
+    briefing "wait a turn"; found 2026-09-09 by walking both small-ticket
+    services end to end and noticing that neither of them ever explained
+    itself.
+
+    It is the same failure signature as the budget guard: a feature that
+    silently does nothing looks exactly like a feature working quietly, because
+    what the client gets is a perfectly reasonable question either way.
+    """
+    if service_type not in _SMALL_TICKET_SERVICES:
+        return False
+
+    # A service that briefs at the END does not also brief at the start.
+    #
+    # passport_renewal is the only one, and letting it do both was a straight
+    # regression: measured 2026-09-09 the moment the dead condition above was
+    # fixed, the opening overview came back as "We handle the passport renewal
+    # from the embassy appointment through to the renewed passport being
+    # returned to you" — the embassy and the appointment, which the 2026-09-09
+    # meeting removed from this flow by name, arriving before the client has
+    # even given the helper's name. The overview query retrieves the process
+    # rows, and those rows describe OUR processing.
+    #
+    # It also has nothing to add: BRIEFING_AFTER gives that flow a full closing
+    # briefing with the timeline, the cost, the documents and the client's own
+    # next steps, which is what the agency asked for and what they now get.
+    if service_type in ticket_service.BRIEFING_AFTER:
+        return False
+
+    return sum((asked or {}).values()) == 1
+
+
 # What a client whose name is already on their file is greeted with, once, at
 # the top of a collection. A module constant rather than an inline string so
 # selfcheck_flows.py can assert it greets AND forbids re-asking. See the note
@@ -1417,13 +1467,17 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # briefing waits a turn; by then an answer or two is in and it can be
     # concrete.
     small_ticket_note = ""
-    brief_on_turn = 1 if _is_first_contact(state) else 0
-    if service_type in _SMALL_TICKET_SERVICES and sum(asked.values()) == brief_on_turn:
+    if briefs_on_this_turn(service_type, asked):
         small_ticket_note = (
             f"{chr(10)}{chr(10)}This is a short, well-defined job we handle end to end, not "
-            "something to hand straight to a colleague. Before your question, tell "
-            "them in one sentence what the process involves or how long it takes — "
-            "but ONLY what the records above actually state. If the records say "
+            "something to hand straight to a colleague. THIS MESSAGE IS THE ONE "
+            "EXCEPTION to \"ask for that one detail and nothing else\" above: open "
+            "with a single sentence saying what the job involves or how long it "
+            "takes, and THEN ask your question. Two sentences, and the first one is "
+            "not optional — a client four questions into a form has been told "
+            "nothing about what they are buying."
+            f"{chr(10)}{chr(10)}Ground that sentence strictly: ONLY what the records "
+            "above actually state. If the records say "
             "nothing about it, just ask your question and add nothing. Never "
             "estimate a price, a duration or a document list that is not written "
             "there."
