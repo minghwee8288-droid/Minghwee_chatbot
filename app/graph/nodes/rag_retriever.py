@@ -58,15 +58,27 @@ _MONEY_SERVICES = {"fee_enquiry", "salary_enquiry"}
 # briefing turn no longer goes looking for it. Asking for "the process" put the
 # process rows at the top of the retrieved set, which is the model's strongest
 # hint about what to write.
+# Reworded again 2026-09-09, the same afternoon: the agency read the first
+# briefing that went out and asked for the process back - "after the document,
+# tell the user, this is the further process you have to follow". That is not
+# the process this query stopped asking for. What came out was OUR processing
+# (the appointment, the runner); what they want is THEIRS - confirm, send the
+# documents, sign the forms, hear back. So the query asks for what happens next
+# from the client's side, and deliberately still never says "process", which is
+# the word that pulls the embassy rows to the top of the set.
 BRIEFING_QUERY = (
-    "how long does it take, how much does it cost, and what documents are "
-    "needed from me"
+    "how long does it take, how much does it cost, what documents are "
+    "needed from me, and what happens next once I confirm"
 )
 
-# Four kinds of answer have to arrive together, and the nationality-specific
+# FIVE kinds of answer have to arrive together now, and the nationality-specific
 # document row has to survive alongside them. At the ordinary 5 the timing row
-# was the one that fell off the end.
-BRIEFING_MATCH_COUNT = 8
+# was the one that fell off the end; at 8, once the query started asking what
+# happens next as well, the COST row fell off it instead - measured 2026-09-09
+# at rank 9 (0.461) for all three nationalities, i.e. the briefing would have
+# had to say the price was not in our records, which is the 2026-09-08 defect
+# over again. 10 keeps every one of the five for PH, ID and MM.
+BRIEFING_MATCH_COUNT = 10
 
 
 def _briefing_turn(state: ConversationState) -> bool:

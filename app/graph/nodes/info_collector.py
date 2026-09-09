@@ -1706,10 +1706,12 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         # the client was left at a dead end straight after a handover.
         #
         # ...unless this is the turn that also explains the whole service, which
-        # is a heading, a cost, a timing, a numbered process and then the
-        # handover. The list-marker masking in clamp_reply means a numbered step
-        # is not counted as a sentence.
-        max_sentences=14 if briefing_due else 3,
+        # is a heading, a timing, a cost, a lead-in and a document list, a
+        # second lead-in and the client's own next steps, and then the handover
+        # close. clamp_reply masks the list MARKER's full stop but not the one
+        # at the end of a step, so every step still counts as a sentence - two
+        # lists of five is ten of the budget before a word of prose.
+        max_sentences=20 if briefing_due else 3,
         stepped=briefing_due,
     )
 

@@ -248,6 +248,9 @@ because the lead is opened early and the ticket is created much later.
 | A field's own options are grounded figures | `_write(grounded_options=)` | `budget`'s options ARE salary bands, `_field_guidance` tells the model to offer two or three, and `ungrounded_figures` then binned every budget reply. |
 | An auxiliary after a comma still makes a yes/no question | `info_collector._yes_no_question` | "Beyond the usual cleaning and cooking, **would** she need to…" — a bare "no" was being re-asked. |
 | A returning client is told what we last spoke about | `info_collector.RETURNING_NOTE` | One enquiry, what it was about, and "follow-up or something new?" — never dates, counts, or their history read back. |
+| A numbered list is never handed over without a sentence saying what it is | `SERVICE_BRIEFING_NOTE` | "The cost is approximately $450." straight into "1. Copy of your NRIC" — the agency asked how the client is meant to know that is the document list. |
+| The briefing ends with the client's own steps, not ours | `SERVICE_BRIEFING_NOTE` (`THE STEPS ARE THEIRS`) + the `what happens next` KB row | Confirm, pay, send documents, sign forms, hear back. The embassy/runner rows stay out of it — that is the same processing the 2026-09-09 meeting excluded. |
+| The briefing has ONE ending | `SERVICE_BRIEFING_NOTE` (`CLOSE IT ONCE`) | It asked "Would you like to go ahead?" **and** said it had already passed everything on. The ticket is raised on that same turn, so the question is the half that goes. |
 | A broadcast is never a human agent | `message.is_auto_reply` (+ in-process count) + `webhook._undo_broadcast_standdowns` | The detector is retrospective, so the first copies of a NEW broadcast are indistinguishable from an agent. Two conversations in one run is now enough, and earlier stand-downs are reversed. |
 | A negative auto-reply verdict is never cached | `_AUTO_REPLY_VERDICTS` | Caching the first "no" on a fresh broadcast pinned it, so every later copy short-circuited to "no" and silenced the bot estate-wide. |
 | A mass announcement is caught on its FIRST copy | `message._BROADCAST_MARKERS` | "Dear Valued Customer" and its kin. `operating hours` is deliberately absent — an agent answering "what time do you open" says it. |
@@ -546,6 +549,55 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-09** — **The first briefing to reach a real client, and three things wrong
+  with it.** The agency's own reading of the transcript, in their words.
+  (A) **A numbered list arrived with nothing said in front of it.** The reply went from
+  *"The cost is approximately $450."* straight into *"1. Copy of your NRIC"* — no sentence
+  naming what the list was. Their question is the whole argument: *"it didn't acknowledge
+  that these are the documents, so how will the user know these are the documents?"* Every
+  list now gets a lead-in sentence, written by the model rather than fixed, because a
+  fixed one repeated twice in the same message is the formula `strip_repeated_opener`
+  exists to stop.
+  (B) **The process is back — but only the client's half of it.** *"After the document,
+  tell the user, this is the further process you have to follow."* This is NOT the process
+  removed at the 2026-09-09 meeting: that was the embassy appointment and the runner, our
+  own processing, and it stays out. What they are asking for is the other half — confirm,
+  pay, send the documents, sign the forms, hear back — and **nothing in the knowledge base
+  said it.** Every row that answers "what is the process for renewing a passport" describes
+  the embassy visit, so widening the instruction alone would have been an invitation to
+  improvise a process, which is the single worst thing this bot can do. One row was written
+  (*"What happens next once I confirm my helper's passport renewal?"*) and it names no
+  appointment, no runner and no embassy — asserted mechanically. `BRIEFING_QUERY` asks for
+  it and still deliberately never says **"process"**, which is the word that pulls the
+  embassy rows to the top of the set. The payment step is the agency's own, from the same
+  meeting: confirm → payment → forms → processing. **Nothing in the bot takes money**; the
+  row only tells the client who will raise it and when.
+  (C) **`BRIEFING_MATCH_COUNT` 8 → 10, and this was the trap.** With the query asking for
+  next steps as well, the **cost** row fell off the end of the retrieved set — measured at
+  rank 9 (0.461) for all three nationalities. The briefing would then have said the price
+  was not in our records, which is precisely the 2026-09-08 defect. Verified at 10: the
+  next-steps, timing, cost, documents and nationality rows all survive for PH, ID and MM.
+  (D) **It asked for a decision it had already acted on.** *"Would you like to go ahead? I
+  have passed everything to our team, and a live agent will connect with you shortly. In
+  the meantime, is there anything else I can help you with?"* — three endings, two of them
+  contradictory. The agency: *"If it is asking, would you like to go ahead, then why is it
+  telling, I have passed everything to our team?"* The ticket **is** raised on that turn, so
+  the handover line is the true half and the question is the one that goes. The go-ahead
+  question was Thomas's ask on 2026-09-09 and lasted one live conversation; it was right in
+  a flow where the briefing came before the handover, and this briefing does not.
+  (E) **The clamp had to grow with the message.** 14 → 20 sentences on a briefing turn.
+  `clamp_reply` masks a list MARKER's full stop but not the one ending the step, so two
+  lists of five spend ten of the budget before a word of prose.
+  **Checked, and already correct: the ticket is raised.** Their last line was *"We have to
+  raise the ticket after all the information we have collected"*, so the conversation in the
+  screenshot was read from the database rather than assumed — **CB-2026-0003**, opened
+  10:45:44, four seconds before the briefing was sent, carrying all four collected fields, a
+  description and a lead. It reached the portal **unassigned**, which is §9.1 and needs two
+  business decisions, not code.
+  Verified live for all three nationalities: heading, timing, cost, an introduced document
+  list, an introduced list of the client's own steps, and one closing line. No runner, no
+  appointment being booked, nobody accompanying her.
 
 - **2026-09-09** — **Warmth, from Thomas's note: *"she currently feels quite
   transactional — like a form, not a conversation. Since she has persistent memory, we'd

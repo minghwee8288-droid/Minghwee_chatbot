@@ -1655,6 +1655,45 @@ ROWS: list[dict[str, Any]] = [
             "case."
         ),
     },
+
+    # --- 2026-09-09: the client's OWN next steps ----------------------------
+    #
+    # The briefing that went out on 2026-09-09 gave the timing, the cost and a
+    # numbered document list and then stopped, and the agency asked for the
+    # process back: "after the document, tell the user, this is the further
+    # process you have to follow for the passport renewal."
+    #
+    # That is NOT the process taken out at the 2026-09-09 meeting. The rows
+    # that answer "what is the process for renewing a passport" describe the
+    # embassy appointment and the runner - our processing, and the meeting was
+    # explicit that it comes out of what we volunteer. What the client is
+    # asking for here is the half from THEIR side: confirm, pay, send the
+    # documents, sign the forms, hear back. Nothing in the KB said that, so the
+    # briefing had nothing to build a next-steps list out of and adding it to
+    # the instruction alone would have been an invitation to improvise one.
+    #
+    # The payment step is the agency's own, from the 2026-09-09 meeting: the
+    # order they described is client confirms -> payment -> forms -> internal
+    # processing. Nothing in the bot takes money; this only tells the client
+    # who will raise it and when.
+    #
+    # Deliberately no appointment, no runner, no embassy, and no figures.
+    {
+        "service_type": "passport_renewal",
+        "nationality": "all",
+        "section_heading": "Passport renewal - what happens from here",
+        "question": "What happens next once I confirm my helper's passport renewal?",
+        "answer": (
+            "Once you confirm you want to go ahead, our team gets in touch to run "
+            "through the details and the payment with you. You send us a copy of your "
+            "NRIC and a copy of her work permit, together with her passport - the "
+            "original for a Filipino helper, a copy for an Indonesian helper. We "
+            "prepare the forms and send them over, and you and your helper sign them "
+            "and return the signed set to us. From there we take care of the rest and "
+            "keep you updated, and we let you know as soon as her new passport is "
+            "ready."
+        ),
+    },
 ]
 
 

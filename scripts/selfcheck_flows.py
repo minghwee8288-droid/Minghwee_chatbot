@@ -498,8 +498,42 @@ rows = [
  ("no runner, no appointment mechanics",
   all(w in tpl.SERVICE_BRIEFING_NOTE for w in ("no runner", "No embassy appointment")),
   True),
- ("and it asks whether they want to go ahead",
-  "whether they would like to go ahead" in tpl.SERVICE_BRIEFING_NOTE, True),
+ # It asked "Would you like to go ahead?" AND told them it had already been
+ # passed to the team AND offered further help - three endings, two of which
+ # contradict each other. The agency, 2026-09-09: "If it is asking, would you
+ # like to go ahead, then why is it telling, I have passed everything to our
+ # team?" The ticket is raised on this same turn, so the handover line is the
+ # true half and the question is the one that goes.
+ ("it no longer asks for a decision it has already acted on",
+  "Do NOT ask whether they would like to go ahead" in tpl.SERVICE_BRIEFING_NOTE,
+  True),
+ ("there is exactly one ending",
+  all(w in tpl.SERVICE_BRIEFING_NOTE
+      for w in ("CLOSE IT ONCE", "One ending, not")), True),
+ # "1. Copy of your NRIC" arrived with no sentence in front of it, and the
+ # agency asked how the user is meant to know that is the document list.
+ ("every list is introduced by a sentence",
+  all(w in tpl.SERVICE_BRIEFING_NOTE
+      for w in ("Say what the list IS before you write", "Every list gets a "
+                "sentence naming what it is")), True),
+ # The process is back, but only the client's half of it.
+ ("the documents are followed by what happens next",
+  tpl.SERVICE_BRIEFING_NOTE.index("WHAT DOCUMENTS")
+  < tpl.SERVICE_BRIEFING_NOTE.index("WHAT HAPPENS NEXT"), True),
+ ("and those steps are the client's, not our processing",
+  "THE STEPS ARE THEIRS, NOT OURS" in tpl.SERVICE_BRIEFING_NOTE, True),
+ ("the briefing turn asks the records what happens next",
+  "what happens next" in rr.BRIEFING_QUERY, True),
+ # ...and the KB has to hold an answer, or the instruction is an invitation to
+ # improvise a process, which is the worst thing this bot can do.
+ ("the records carry the client-side steps",
+  any(r["question"] == "What happens next once I confirm my helper's passport "
+      "renewal?" for r in lsn.ROWS), True),
+ ("and they name no runner, no appointment and no embassy",
+  [w for w in ("runner", "appointment", "embassy")
+   for r in lsn.ROWS
+   if r["question"].startswith("What happens next once I confirm")
+   and w in r["answer"].lower()], []),
  # "approximately" was asked for by name, over "roughly".
  ("'approximately', not 'roughly'",
   'Say "approximately", not "roughly"' in tpl.SERVICE_BRIEFING_NOTE, True),
