@@ -426,6 +426,58 @@ rows = [
   ms._AUTO_REPLY_MIN_IN_PROCESS, 2),
  ("a stand-down can be undone without minting a new thread",
   hasattr(hs, "undo_agent_takeover"), True),
+ # --- warmth, 2026-09-09 ----------------------------------------------
+ # Thomas: "she currently feels quite transactional - like a form, not a
+ # conversation ... Customers are more likely to answer fully and feel at ease
+ # if she briefly explains why she's asking." He named four; he was equally
+ # clear that the plain ones stay plain: "Keep the simpler ones (number of
+ # children, home type) short and direct as they are now."
+ ("the intrusive questions say why they are asked",
+  sorted(ico._WHY_WE_ASK), ["additional_notes", "pets", "rest_day"]),
+ ("the plain ones are left plain",
+  [k for k in ("home_type", "household", "languages", "home_size")
+   if k in ico._WHY_WE_ASK], []),
+ # budget was named too and is deliberately absent - see the note beside it.
+ # Explaining why we want a budget made the model volunteer a salary range.
+ ("budget deliberately does not explain itself",
+  "budget" in ico._WHY_WE_ASK, False),
+ ("and explaining is never an excuse to quote a figure",
+  "NOT an invitation to give examples" in ico._field_guidance(
+      "new_hiring", {}, next(f for f in t.SERVICE_FIELDS["new_hiring"]
+                             if f.key == "pets")), True),
+ # A field's own options are OUR figures, written in SERVICE_FIELDS, and
+ # _field_guidance tells the model to offer two or three as examples. The
+ # guard checked the message, the history, the records and the collected
+ # values - never the field list the question came from - so every budget
+ # turn was discarded and fell back to the bare question.
+ ("a field's own options count as grounded",
+  gd.ungrounded_figures(
+      "Do you have a budget in mind, such as $500-600 or $600-700?",
+      " ".join(next(f for f in t.SERVICE_FIELDS["new_hiring"]
+                    if f.key == "budget").options)), []),
+ ("a figure that is NOT one of them is still caught",
+  gd.ungrounded_figures(
+      "Most families pay around $1,200 a month.",
+      " ".join(next(f for f in t.SERVICE_FIELDS["new_hiring"]
+                    if f.key == "budget").options)), ["1200"]),
+ # "Beyond the usual cleaning and cooking, WOULD she need to..." is a yes/no
+ # question wearing a subordinate clause, and "no" was being re-asked.
+ ("an auxiliary after a comma still makes it a yes/no question",
+  ico._yes_no_question(
+      next(f for f in t.SERVICE_FIELDS["new_hiring"]
+           if f.key == "special_duties").question), True),
+ ("'no' to the extra-duties question is an answer",
+  [f.key for f in ico._unfinished("new_hiring", {"special_duties": "no"},
+                                  {"special_duties": 1})[0]], []),
+ ("a question with no auxiliary anywhere still re-asks a bare yes",
+  [f.key for f in ico._unfinished("new_hiring", {"helper_profile": "Yes"},
+                                  {"helper_profile": 1})[0]], ["helper_profile"]),
+ # "Recognise them by name if known, reference their last enquiry ... This
+ # alone will make repeat customers feel remembered rather than processed."
+ ("a returning client is asked whether this follows on from last time",
+  "follow-up on that or something new" in ico.RETURNING_NOTE, True),
+ ("but is never read their own file",
+  "reading out their file" in ico.RETURNING_NOTE, True),
  # --- the briefing moved to the END of the collection, 2026-09-08 -----
  # Agency, after testing: "After all the questions it should reply with that
  # process message ... the cost should be first, then the estimated time, and

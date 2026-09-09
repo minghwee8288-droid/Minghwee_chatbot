@@ -244,6 +244,10 @@ because the lead is opened early and the ticket is created much later.
 | A price we hold for two nationalities is not the third's price | `ticket.FEE_BY_NATIONALITY` + `fee_is_known_for()` | **$450** was quoted for a **Myanmar** helper. It is in the records (as PH/ID's price), so `ungrounded_figures` passed it. |
 | The passport briefing is timeline, then cost, then documents | `SERVICE_BRIEFING_NOTE` | Shirley, 2026-09-09: "nationality → timeline → requirements/documents". It never explains the embassy, the appointment or the runner — that is our processing. |
 | Passport renewal does not ask where she is, nor about the work permit | `SERVICE_FIELDS["passport_renewal"]` | Both called out at the 2026-09-09 meeting: location is irrelevant, and WP renewal is "a completely separate process". |
+| The intrusive questions say why they are asked | `info_collector._WHY_WE_ASK` | Pets, rest days, house rules. The plain ones (home type, household) stay plain — Thomas asked for exactly that split. |
+| A field's own options are grounded figures | `_write(grounded_options=)` | `budget`'s options ARE salary bands, `_field_guidance` tells the model to offer two or three, and `ungrounded_figures` then binned every budget reply. |
+| An auxiliary after a comma still makes a yes/no question | `info_collector._yes_no_question` | "Beyond the usual cleaning and cooking, **would** she need to…" — a bare "no" was being re-asked. |
+| A returning client is told what we last spoke about | `info_collector.RETURNING_NOTE` | One enquiry, what it was about, and "follow-up or something new?" — never dates, counts, or their history read back. |
 | A broadcast is never a human agent | `message.is_auto_reply` (+ in-process count) + `webhook._undo_broadcast_standdowns` | The detector is retrospective, so the first copies of a NEW broadcast are indistinguishable from an agent. Two conversations in one run is now enough, and earlier stand-downs are reversed. |
 | A negative auto-reply verdict is never cached | `_AUTO_REPLY_VERDICTS` | Caching the first "no" on a fresh broadcast pinned it, so every later copy short-circuited to "no" and silenced the bot estate-wide. |
 | A mass announcement is caught on its FIRST copy | `message._BROADCAST_MARKERS` | "Dear Valued Customer" and its kin. `operating hours` is deliberately absent — an agent answering "what time do you open" says it. |
@@ -542,6 +546,63 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-09** — **Warmth, from Thomas's note: *"she currently feels quite
+  transactional — like a form, not a conversation. Since she has persistent memory, we'd
+  like to use that to make her warmer and smarter."*** Three asks; two done as asked, one
+  refused with evidence, and a latent defect found underneath.
+  (A) **A returning client is greeted by what we last talked about.** `returning_note` had
+  forbidden ALL detail — *"no details of who, when or how many, we are not showing them
+  their file"* — written to stop the bot reciting somebody's record at them. Thomas asked
+  for the opposite of the half that matters: *"Recognise them by name if known, reference
+  their last enquiry ... This alone will make repeat customers feel remembered rather than
+  processed."* It now refers to **one** enquiry, the most recent, and only what it was
+  about, then asks whether this follows on or is new. The rest of the ban stands: no
+  dates, no counts, no history read back. Verified live on three states — with a previous
+  enquiry (*"Welcome back — is this for the childcare arrangement you previously enquired
+  about, or something new?"*), with nothing on file (welcomes back, invents nothing), and
+  a first-timer (no welcome back at all).
+  (B) **The intrusive questions say why.** `_WHY_WE_ASK` supplies the REASON and not the
+  wording, the same rule `_COLLECTION_PURPOSE` follows, because a fixed lead-in repeated
+  four times in one conversation is the formula `strip_repeated_opener` exists to stop.
+  Live: *"Got it — do you have any pets at home, such as dogs or cats? We ask so we only
+  recommend helpers who are comfortable around animals."* and *"so we can set clear
+  expectations with her beforehand, how would you prefer to arrange her rest days…"*.
+  **The plain ones are untouched**, which he was equally explicit about: home type and
+  household still go out short and direct. Keyed on the field key, so the three carry into
+  `transfer_employer` through `_hiring_field` with no second copy (§9.8).
+  (C) **`budget` is deliberately NOT in that set, and Thomas named it.** Measured four
+  times: told to explain why it wants a budget, the model supplies a helpful salary range
+  from its own knowledge, `ungrounded_figures` discards the entire reply, and the client
+  receives the bare question **with no reason at all** — worse than not explaining, plus a
+  wasted call. Rewording the reason to contain no money word did not help. The way to
+  close it is data: a grounded salary band in the knowledge base would survive the guard
+  and carry the explanation with it. That is Ming Hwee's to supply.
+  (D) **And that testing found a live defect that predates all of it.** Every `budget`
+  turn was already being discarded. `budget`'s own **options are the salary bands**
+  (`below $500, $500-600, $600-700, $700-800, above $800`) and `_field_guidance` tells the
+  model to offer two or three as examples — but `ungrounded_figures` checks the message,
+  the history, the records and the collected values, and **never the field list the
+  question came from**. So the bot was instructed to say a figure and punished for saying
+  it, on every hiring conversation, silently, because a guard falling back to a correct
+  question looks like nothing going wrong. `_write` now takes the asked field's options as
+  grounding. After: *"Do you have a monthly salary budget in mind, such as $500–600 or
+  $600–700?"* — and an invented *"$1,200"* is still caught.
+  (E) **A bare "no" to the extra-duties question was being re-asked.** `_YES_NO_QUESTION`
+  only recognised an auxiliary **opening** the question, and `special_duties` is written
+  *"Beyond the usual cleaning and cooking, **would** she need to…"* — a yes/no question
+  wearing a subordinate clause. Exactly the anchoring mistake `_ASKS_SOMETHING` made in
+  the other direction on 2026-09-08. `_yes_no_question()` now also tests the clause after
+  a comma; `helper_profile` has no auxiliary anywhere and still re-asks, which is the case
+  the rule was written for.
+  **Not done, and it needs a decision.** Thomas suggested a closing line with timing —
+  *"A live agent will reach out within 24 hours"*. `strip_handover_talk` removes promised
+  times on purpose, and a promise the agency cannot keep is worse than none. If 24 hours
+  is a commitment Ming Hwee wants to make, say so and it becomes a deliberate carve-out;
+  it should not be smuggled in as a prompt tweak. The rest of his closing ask — reassuring
+  next steps — is already the handover line.
+  **Also observed working:** the acknowledgement he asked for more of. Every verified turn
+  opened *"Got it"* / *"Got it, no smoking"* before the question.
 
 - **2026-09-09** — **Passport renewal, rebuilt around what the client actually needs to
   know.** From the client meeting: *"the bot should not leave the client confused. By the

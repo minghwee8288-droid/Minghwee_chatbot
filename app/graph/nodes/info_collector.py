@@ -713,6 +713,27 @@ _YES_NO_QUESTION = re.compile(
     re.IGNORECASE,
 )
 
+def _yes_no_question(question: str) -> bool:
+    """Whether a bare yes or no actually answers this question.
+
+    The auxiliary does not have to be the first word. Live, 2026-09-09:
+    `special_duties` is written "Beyond the usual cleaning and cooking, WOULD
+    she need to do things like high-rise window cleaning...", which is a
+    yes/no question wearing a subordinate clause - and a client who answered
+    "no" had it read as an unfinished answer and got the whole question again.
+    Exactly the anchoring mistake `_ASKS_SOMETHING` made in the other
+    direction on 2026-09-08.
+    So: the opening of the question, or the opening of any clause after a
+    comma. `helper_profile` ("Any preference on her age or how much experience
+    she should have?") still has no auxiliary anywhere and still re-asks,
+    which is the case the rule was written for.
+    """
+    text = (question or "").strip()
+    if _YES_NO_QUESTION.match(text):
+        return True
+    return any(_YES_NO_QUESTION.match(part.strip()) for part in text.split(",")[1:])
+
+
 # Deliberately a BARE yes or no and nothing else. "Yes all" answers the
 # extra-duties question completely and must not be re-asked; "Yes" alone
 # answers nothing.
@@ -775,7 +796,7 @@ def _unfinished(
         elif (
             asked.get(field.key, 0) <= min(field.max_asks, MAX_ASKS_PER_FIELD)
             and _BARE_YES_NO.match(value)
-            and not _YES_NO_QUESTION.match(field.question)
+            and not _yes_no_question(field.question)
         ):
             note = (
                 f'\n\nThey answered "{value}", which does not tell you anything '
@@ -808,6 +829,69 @@ def _states_a_care_type(text: str) -> bool:
     """
     remainder = _CARE_TYPE_FILLER.sub(" ", text or "")
     return bool(re.sub(r"[^a-z0-9]+", "", remainder.lower()))
+
+
+# Why we are asking, for the questions where a client would reasonably wonder.
+#
+# Thomas, 2026-09-09: "Right now Claire fires off questions back-to-back with no
+# context ... Customers are more likely to answer fully and feel at ease if she
+# briefly explains why she's asking." He named the four - pets, house rules,
+# budget, rest days - and was equally clear about the rest: "We don't need this
+# on every single question ... Keep the simpler ones (number of children, home
+# type) short and direct as they are now." A reason attached to "how many
+# bedrooms" is padding, and padding on every turn is its own kind of robotic.
+#
+# The REASON is supplied and the wording is not, the same rule
+# _COLLECTION_PURPOSE follows: a fixed lead-in repeated at four points in one
+# conversation is exactly the formula strip_repeated_opener exists to stop.
+#
+# Keyed on the field key, so the ones shared with transfer_employer through
+# _hiring_field get it in both flows without a second copy (§9.8).
+_WHY_WE_ASK: dict[str, str] = {
+    "pets": "so we only put forward helpers who are genuinely comfortable "
+            "around animals - it is one of the things every helper is asked "
+            "about, and a mismatch here goes wrong quickly",
+    "rest_day": "so we can set the expectation with the helper before she "
+                "accepts, which is where most rest-day disagreements start",
+    "additional_notes": "so anything that matters to them is agreed with the "
+                        "helper up front rather than discovered later",
+}
+
+# BUDGET IS DELIBERATELY ABSENT from _WHY_WE_ASK, and Thomas named it. Measured four times on
+# 2026-09-09, twice with no retrieval and twice through the real path with the
+# salary rows in context: told to explain WHY it wants a budget, the model
+# supplies a helpful salary range out of its own knowledge - "$500 to $700" -
+# ungrounded_figures bins the entire reply, and the client receives the bare
+# "Do you have a monthly salary budget in mind?" with no reason attached at all.
+# That is strictly worse than not explaining, and it costs an extra LLM call to
+# get there. Rewording the reason to contain no money word did not help; the
+# question is about salary, so the model completes it with one.
+#
+# The way to close this is data, not prompt: with a grounded salary band in the
+# knowledge base for the nationality and experience in hand, the figure would
+# survive ungrounded_figures and the explanation with it. That is Ming Hwee's to
+# supply. Until then the budget question stays short and direct, which is what
+# it did before.
+
+
+# What a returning client is told, once, at the top of a collection. A module
+# constant rather than an inline string so selfcheck_flows.py can assert its
+# two halves: that it DOES refer to the last enquiry, and that it does not
+# read their file back at them. See the note at the call site.
+RETURNING_NOTE = (
+    "\n\nOur own records show they have hired a helper through us before, so "
+    "that is already established and you must never ask it. Open by welcoming "
+    "them back, by name if you know it.\n\n"
+    "If the notes above show a previous enquiry, refer to it in the same "
+    "breath — what it was about, in a few words — and ask whether this is a "
+    "follow-up on that or something new. It is the difference between being "
+    "remembered and being processed, and they have told us so.\n\n"
+    "ONE enquiry, the most recent, and only what it was about. Do not give "
+    "them dates, do not tell them how many times they have hired, and do not "
+    "list their history back at them — that is reading out their file, which "
+    "is a different and much worse thing. If the notes show no previous "
+    "enquiry, just welcome them back and ask your question; never invent one."
+)
 
 
 def _field_guidance(
@@ -850,6 +934,24 @@ def _field_guidance(
         "question that gets one of them is not this question. Never read it out "
         "verbatim like a form."
     )
+
+    why = _WHY_WE_ASK.get(field.key)
+    if why:
+        parts.append(
+            f"\n\nThis is one of the questions a client can reasonably wonder about, "
+            f"so say WHY you are asking before you ask it. The reason is: {why}. "
+            "Put that in your own words, in a short clause — not a sentence of its "
+            "own, and never the same phrasing you used the last time you explained "
+            "yourself. Do not do this on the plain questions; it is for this one "
+            "because it would otherwise feel intrusive or arbitrary.\n\n"
+            "Explaining yourself is NOT an invitation to give examples. Quote no "
+            "figure, no range and no salary while you do it. Live, 2026-09-09: the "
+            "reason for the budget question ('so we shortlist helpers whose asking "
+            "salary is within their range') led straight to an invented "
+            "'$500 to $700', ungrounded_figures binned the whole reply, and the "
+            "client got the bare question with no reason attached at all — the "
+            "exact opposite of what this note is for."
+        )
 
     if field.options:
         # A field whose own written question already spells the options out is
@@ -1230,12 +1332,21 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         and not recognised_note
         and ("first_time_hire" in known or not any(asked.values()))
     ):
-        returning_note = (
-            "\n\nOur own records show they have hired a helper through us before, so "
-            "that is already established and you must never ask it. Open this message "
-            "by welcoming them back in one short clause — no details of who, when or "
-            "how many, we are not showing them their file — and then ask your question."
-        )
+        # Widened 2026-09-09. It used to forbid ALL detail ("no details of who,
+        # when or how many, we are not showing them their file") - written to
+        # stop the bot reciting somebody's file back at them. Thomas asked for
+        # the opposite of the half that matters: "Recognise them by name if
+        # known, reference their last enquiry or helper status (e.g. 'Welcome
+        # back, Vaidik! Last time we spoke about a childcare helper - are you
+        # following up on that, or is this a new request?') ... This alone will
+        # make repeat customers feel remembered rather than processed."
+        #
+        # So ONE enquiry, the most recent, in a clause - and the rest of the
+        # ban stands: no counts, no dates, no listing their history. The
+        # previous-enquiry block in the system prompt is the only source; there
+        # is nothing to reference when it is empty, and inventing one is worse
+        # than a plain welcome.
+        returning_note = RETURNING_NOTE
 
     # A small-ticket service, on its opening turn: say what the job involves
     # before asking about it. Gated on nothing having been asked yet, so it
@@ -1539,6 +1650,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
                 or nationality_note or location_note)
             else 2,
             withhold_cost=service_type in COST_WITHHELD_SERVICES,
+            grounded_options=next_field.options or (),
         )
         counts[next_field.key] = 1
         logger.info(
@@ -1644,6 +1756,7 @@ async def _write(
     max_sentences: int = 2,
     withhold_cost: bool = False,
     stepped: bool = False,
+    grounded_options: tuple[str, ...] = (),
 ) -> str:
     system_prompt = build_system_prompt(
         prompt_state,
@@ -1707,6 +1820,19 @@ async def _write(
             state.get("incoming_text", ""),
             state.get("history_text", ""),
             state.get("rag_context", ""),
+            # The options of the field being asked. They are OUR figures,
+            # written by hand in SERVICE_FIELDS, and _field_guidance tells the
+            # model to offer two or three of them as examples - so a reply
+            # carrying them is doing as it was told, not inventing.
+            #
+            # Live, 2026-09-09: `budget`'s options are "below $500, $500-600,
+            # $600-700, $700-800, above $800", the model duly asked "are you
+            # thinking $500-600 or $600-700?", and this guard discarded the
+            # whole reply as ungrounded and sent the bare question instead.
+            # Four runs out of four, on every hiring conversation, and nothing
+            # surfaced it because a guard falling back to a correct question
+            # looks like nothing going wrong.
+            " ".join(grounded_options),
         ]
         + [str(v) for v in (prompt_state.get("collected_info") or {}).values()]
     )
