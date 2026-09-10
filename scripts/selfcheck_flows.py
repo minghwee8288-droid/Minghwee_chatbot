@@ -1230,6 +1230,51 @@ rows = [
  # shape above, and the push name there is the 2026-09-01 fix.
  ("new_hiring is deliberately not in the set",
   "new_hiring" in t.NAME_FROM_RECORD_ONLY, False),
+
+ # --- the parked-topic net, 2026-09-10 ---------------------------------
+ # Live on a parked home leave: "Ok but tell what is the further process"
+ # got the holding line while "And what are the documents needed" one
+ # message later was answered in full. Two misses at once - the classifier
+ # returned intent=home_leave (a SERVICE, not a question type, so
+ # _answerable's KB_QUESTION_INTENTS test failed) and the deterministic net
+ # wanted "what is (the) process" with nothing in between. An adjective
+ # defeated it, exactly as a missing "the" did on 2026-09-08.
+ ("an adjective before the noun does not hide the question",
+  [m for m in ("Ok but tell what is the further process",
+               "what is the further process", "what is the next process",
+               "what is the whole process", "what is the entire process")
+   if not btr.asks_general_info(m)], []),
+ ("nor does asking for it as an instruction",
+  [m for m in ("tell me the process", "just tell the steps",
+               "what are the next steps")
+   if not btr.asks_general_info(m)], []),
+ ("and the 2026-09-08 cost phrasings still pass",
+  [m for m in ("Ok what is cost", "what is the cost", "what documents do I need",
+               "how long does it take")
+   if not btr.asks_general_info(m)], []),
+ # The widening must not swallow a chase - that is what parking a topic is
+ # FOR, and answering it with records instead of a human is the opposite
+ # failure.
+ ("a chase is still a chase",
+  [m for m in ("any update on my case", "what is the status", "how far is it",
+               "still waiting", "any news", "is it done")
+   if btr.asks_general_info(m)], []),
+ # ...and this is the one that actually exercises the _CHASING_STATUS guard.
+ # The six above never reach _GENERAL_INFO at all, so they stay False whether
+ # the guard is there or not - a check that passes for a reason unrelated to
+ # what it is checking, which is the trap caught earlier the same day. A
+ # COMPOUND hits both patterns, so removing the guard flips it.
+ ("a chase carrying a question with it is still held",
+  btr.asks_general_info("any update? and what is the cost"), False),
+ # The home-leave process was NOT missing when the agency reported it - the
+ # row already carried all six of the steps they sent. Asserted so nobody
+ # "fixes" this by loading a second copy (section 9.8).
+ ("the home leave process row covers all six steps",
+  [w for w in ("nationality", "embassy appointments", "documents",
+               "endorsement forms", "levy waiver", "six-monthly medical",
+               "flights")
+   if w not in "".join(r["answer"] for r in lsn.ROWS
+                       if r["service_type"] == "home_leave")], []),
  # --- home leave, 2026-09-08 ------------------------------------------
  # The nationality decides the documents, the lead time AND the price - PH
  # needs her ORIGINAL passport plus a ticket itinerary, 4 weeks, $400; ID

@@ -276,6 +276,24 @@ def _chasing(state: ConversationState) -> bool:
 # question failed the same membership test in two places at once: the router
 # never ran retrieval, and _answerable() would have refused anyway. Asking about
 # a service is not the same as chasing a case.
+# An ADJECTIVE between the article and the noun used to defeat this, and that
+# is the whole of the 2026-09-10 home-leave failure: the client asked
+# "Ok but tell what is the further process" with a home leave parked, and got
+# the holding line - while "And what are the documents needed" one message
+# later was answered in full. Two things had to miss at once, and did:
+#
+#   * the classifier returned intent=home_leave (the SERVICE, not a question
+#     type), so _answerable's KB_QUESTION_INTENTS test failed. On its own
+#     "what is the further process" classifies as process_question - it is the
+#     "Ok but tell" preamble that tips it, which is exactly why there is a
+#     deterministic net underneath the model at all;
+#   * and the net required "what is (the) process" with nothing in between.
+#
+# Same shape as 2026-09-08, when this pattern required "what is THE cost" and
+# a client asking "Ok what is cost" was handed to a human for a $450 answer.
+# The adjective slot, a bare 'tell me the process', and 'the next steps' are
+# all now covered. _CHASING_STATUS still gates the whole thing, so an actual
+# chase ("any update", "what's the status", "how far") is unaffected.
 _GENERAL_INFO = re.compile(
     r"\bhow\s+long\s+(?:does|do|will|is|it)\b"
     r"|\bhow\s+much\b"
@@ -283,12 +301,18 @@ _GENERAL_INFO = re.compile(
     r"|\bwhat\s+(?:documents?|papers?|forms?)\b"
     # "the" is optional and the money words are spelled out. Live, 2026-09-08:
     # a client with a passport renewal parked asked "Ok what is cost" and then
-    # "I'll ask you the feesa", and got the holding line twice - the pattern
+    # "I\'ll ask you the feesa", and got the holding line twice - the pattern
     # required "what is THE cost" and knew nothing of fee/price/charge here, so
     # a question we answer for $450 was passed to a human.
-    r"|\bwhat(?:'?s|\s+is|\s+are)\s+(?:the\s+)?"
+    r"|\bwhat(?:\'?s|\s+is|\s+are)\s+(?:the\s+)?"
+    r"(?:further|next|whole|entire|full|complete|overall|remaining|rest\s+of\s+the)?\s*"
     r"(?:process|procedure|steps?|requirements?|timeline|cost|costs|price|"
     r"prices|fee|fees|charge|charges)\b"
+    # "tell me the process", "just tell the steps" - an imperative, not a
+    # question, and the client is entitled to the same answer either way.
+    r"|\btell\s+(?:me|us)?\s*(?:the\s+)?"
+    r"(?:further|next|whole|entire|full|complete|overall|remaining)?\s*"
+    r"(?:process|procedure|steps?)\b"
     r"|\bwhat\s+do\s+i\s+need\b"
     r"|\bis\s+there\s+(?:a|any)\s+(?:fee|cost|charge)\b",
     re.IGNORECASE,

@@ -233,6 +233,7 @@ because the lead is opened early and the ticket is created much later.
 | An undecidable gate only re-asks where the gates cover the whole answer | `info_collector._gates_are_exhaustive` | `requirement`'s gates are childcare/eldercare; "general housework" is a real option opening neither, and was blanked and re-asked three times. |
 | A trailing "are there" is a statement | `info_collector._ASKS_SOMETHING` (anchored) | "6 bedroom and 6 bathrooms are there" read as a question and drew a promise to come back with an answer. |
 | A bare yes/no does not close a question that is not yes/no | `_BARE_YES_NO` + `_YES_NO_QUESTION` | "Yes" closed "Any preference on her age or experience?". `<=` on the ask count, since both affected fields are `max_asks=1`. |
+| An adjective or an imperative does not hide the question on a parked topic | `blocked_topic_responder._GENERAL_INFO` | "what is the **further** process" and "tell me the process" both fell through, so a home leave with the process in the KB was handed to a human. The same shape as the missing "the" below. |
 | A parked topic still answers a bare price question | `blocked_topic_responder._GENERAL_INFO` | "Ok what is cost" needed "what is **the** cost" to match, so a $450 answer was handed to a human. |
 | The widening retry cannot undo the fee filter | `rag_retriever._PRICE_QUESTION` + `FEE_STATED_SERVICES` | Below the floor it dropped the filter and reached $695 inside a $450 service. Timing questions still widen. |
 | An elongated acknowledgement is an acknowledgement | `closure._unstretched` | "okayyyyyy" drew the handover line a third time. Both collapsed readings are tried — one for "okayyyy", two for "goooood". |
@@ -745,6 +746,46 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-10** — **"the bot is not telling the process" on home leave — and the
+  process was in the knowledge base all along.** The agency asked me to check whether it
+  was there and to load it if not, and sent the full six steps. It is there, and the
+  stored row already says all six of them: intake and nationality, checking embassy
+  appointment availability and the lead time (PH 4 weeks / ID 2 weeks), the documents by
+  nationality, the endorsement forms and signatures, **the levy waiver and the deferred
+  six-monthly medical**, and the flights and the return. Nothing was loaded — a second
+  copy is how two rows drift apart (§9.8), and `selfcheck_flows.py` now asserts the six
+  are present so nobody "fixes" this by adding one.
+  (A) **The defect was that the bot would not USE it.** On a parked topic
+  `_answerable()` requires the intent to be one of `KB_QUESTION_INTENTS` **or**
+  `asks_general_info()` to match the message. Both missed, which is why the documents
+  question one message later was answered in full and this one was not:
+  the classifier returned **`intent=home_leave`** — the SERVICE, not a question type —
+  and the deterministic net wanted *"what is (the) process"* with nothing in between,
+  while the client wrote *"Ok but tell what is the **further** process"*.
+  (B) **On its own, "what is the further process" classifies correctly** as
+  `process_question`. It is the *"Ok but tell"* preamble that tips the model — which is
+  the entire argument for having a deterministic net underneath it, and the net had a
+  gap. Exactly the 2026-09-08 failure, where this pattern required *"what is THE cost"*
+  and *"Ok what is cost"* was handed to a human for a $450 answer.
+  (C) **Fixed by allowing an adjective and an imperative**: `further`, `next`, `whole`,
+  `entire`, `full`, `complete`, `overall`, `remaining`, `rest of the`, plus
+  *"tell me the process"* / *"just tell the steps"* / *"what are the next steps"*.
+  `_CHASING_STATUS` still gates the whole thing, so a real chase is unaffected — verified
+  in both directions.
+  (D) **Verified live on the exact failing turn**, with the intent the classifier really
+  returned: it now answers with the six steps, one per line, lead-in and closing sentence
+  — and *"any update on my case"* still gets the holding line.
+  (E) **And a new assertion was, again, green for the wrong reason.** "A chase is still a
+  chase" listed six phrases, none of which reaches `_GENERAL_INFO` at all, so it passed
+  whether or not the chase guard existed. It now also tests a COMPOUND — *"any update?
+  and what is the cost"* — which hits both patterns, so deleting the guard flips it.
+  Second time in one day that injecting the fault found an assertion proving nothing.
+  **Noticed while doing that and NOT changed:** that compound is currently held as a
+  chase, so the cost question inside it goes unanswered. Arguably the same class as the
+  defect above; not reported by anyone, and the guard is there for a reason, so it is
+  recorded rather than tinkered with.
+  `selfcheck_flows.py` is **300 assertions**; `smoke_nodes.py` is 36 states.
 
 - **2026-09-10** — **The name rule closed across every flow that asks about a helper,
   and asserted as a rule instead of a list.** Shown the three flows the entry below
