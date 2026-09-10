@@ -571,8 +571,8 @@ Ordered by what will hurt first.
     row is correctly `contact_type='candidate'` so an employer never sees it.
     Worth having Ming Hwee confirm rather than assuming.
 
-16. **WhatsApp is migrating senders to LIDs, and a migrated payload carries
-    no phone number at all.** Fixed the same day — see the change log — but
+16. **WhatsApp has migrated most of this channel to LIDs, and a migrated
+    payload carries no phone number at all.** Fixed the same day — see the change log — but
     kept here because it will keep happening as more accounts migrate, and
     because the wrong fix is tempting. Live 2026-09-10: both `from` and
     `chat_id` were `116909177569373@lid`, `normalize_phone` turned that into
@@ -586,6 +586,15 @@ Ordered by what will hurt first.
     a phone number — the split-conversation bug `fix_split_conversations.py`
     exists to repair. If Whapi ever cannot resolve one, the bot stands down and
     says so in the log rather than guessing whose number it might be.
+    **The scale, measured rather than assumed (2026-09-10):** the channel holds
+    **3,422 chats**; of 2,000 scanned, **1,892 (94%) are already LIDs** and only
+    40 still arrive as a phone JID. All three allowlisted Indian test numbers are
+    LID chats. **Every one of the 1,892 carries a phone number Whapi returns**,
+    so resolution covers the whole estate — but it also means this was never a
+    one-tester problem: without the fix the bot stands down on nearly every
+    conversation. It is *not* intermittent, which is what it looks like from the
+    outside: it is a rollout that is nearly complete, and the ~2% still on phone
+    JIDs are the only messages that get through untouched.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it

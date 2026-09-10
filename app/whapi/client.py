@@ -14,9 +14,22 @@ from app.utils import digits_only, normalize_phone
 logger = logging.getLogger(__name__)
 
 
-# How many LID -> phone pairs to remember. One per client on a migrated
-# WhatsApp account; a few hundred covers the estate many times over.
-_LID_CACHE_MAX = 500
+# How many LID -> phone pairs to remember.
+#
+# Sized from the live channel rather than guessed, and the first guess (500)
+# was wrong. Measured 2026-09-10: the channel holds **3,422 chats**, and of
+# 2,000 scanned, **1,892 (94%) are already LIDs** - every one of them carrying
+# a phone number Whapi can return. So this is not a handful of migrated
+# testers, it is nearly the whole estate.
+#
+# That matters here because resolution happens BEFORE the allowlist (it has
+# to - the allowlist is keyed on the phone number), so every inbound message
+# on the shared number needs one lookup the first time its chat is seen,
+# including the thousands of conversations the portal owns and the bot then
+# immediately stands down on. At 500 the long tail would have churned and
+# re-fetched forever. An entry is two short strings, so covering the estate
+# costs nothing worth measuring.
+_LID_CACHE_MAX = 5000
 
 
 class WhapiError(RuntimeError):
