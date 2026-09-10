@@ -269,6 +269,9 @@ because the lead is opened early and the ticket is created much later.
 | A document list says WHOSE documents they are | `SERVICE_FIELDS["transfer_employer"]`'s two directions + the row text | Retrieval cannot know whether the client is taking a helper on or releasing one, so the row answers both. A releasing employer asked for the new employer's income proof has been asked for a document that is not theirs. |
 | A row written for one side of the desk is labelled for that side | `contact_type` on `cb_knowledge_base_updated` + `selfcheck_flows.py` | `service_type='transfer'` survives `resolve_service` only for a CANDIDATE, so an employer-facing checklist filed `contact_type='all'` is served to the HELPER. `contact_type` narrows to this audience plus `all`; the default stays `all`. |
 | A LID is never mistaken for a phone number | `parser._is_phone_jid` / `_counterparty` | `normalize_phone` splits on `@` and keeps the front, so `116909177569373@lid` became the "number" `+116909177569373` and an allowlisted client was stood down. The counterparty is resolved from the first identifier whose JID is actually a phone. |
+| Every numbered item goes on its own line, on BOTH answering paths | `PROCESS_INSTRUCTION` / `PROCESS_ADDENDUM` (+ `SERVICE_BRIEFING_NOTE`) | The rule was written for the passport briefing on 2026-09-08 and never reached the two general paths, so a documents answer arrived as one paragraph with `1. ... 2. ...` buried in it — one message after a correctly formatted process answer on the same conversation. |
+| A value that restates the REQUEST does not answer a preference field | `info_collector._PREFERENCE_FIELDS` / `_states_a_preference` | `replacement_preferences` was filled with "replace her", so it was never asked and the ticket read "Wants in the replacement: replace her". Same shape as the 2026-09-07 care-type defect, one field along. |
+| Handing the choice back to us is not a preference | `info_collector._NO_PREFERENCE` | Anchored hard at `^`, so "whatever you want" matched and "you do whatever you want" did not. A short filler lead-in is now allowed; "want" is deliberately not in it. |
 | A LID is resolved to its phone number before ANY lookup keyed on the number | `webhook._resolve_lid` + `whapi.resolve_lid` | `GET /chats/<lid>` carries `phone`; `/contacts/<lid>` does not. Done in the webhook because parsing is sync and this is an HTTP call. Unresolvable ⇒ stand down, never a guess at whose number it is. |
 | A service the KB has never been labelled with searches under the label it HAS | `rag_retriever._RETRIEVAL_ALIASES` | `transfer_employer` is not a `service_type` any row uses, so the filter narrowed it to `general` forever. Retrieval only — the ticket, the lead, the field list and the **blocked-topic key** all still see `transfer_employer`, which is what keeps a new transfer off a parked hiring topic. |
 
@@ -742,6 +745,48 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-10** — **The replacement flow, tested end to end now that the bot can see
+  who is messaging it. Two defects, and the one nobody reported is the worse one.**
+  (A) **A documents answer arrived as a wall of text.** The agency's screenshot: the
+  *process* answer came out as a properly broken-up list, and the *documents* answer one
+  message later — same conversation, same parked path, same template — arrived as a
+  single paragraph with `1. ... 2. ...` buried inside it. Nothing was stripping the line
+  breaks (`clamp_reply` has sliced rather than re-joined since 2026-09-08); the model
+  simply was not told to put them in. `SERVICE_BRIEFING_NOTE` has carried
+  *"Every numbered item goes on ITS OWN LINE, with a real line break between them"*
+  since 2026-09-08, when exactly this reached a client — and **neither of the two general
+  answering paths ever got it**. That is the same "written for the one flow that was
+  reported" shape §9 has already forced twice. Both now carry it; three live runs, three
+  correctly formatted lists.
+  (B) **The ticket said "Wants in the replacement: replace her", and that field was never
+  asked.** CB-2026-0006. The client wrote *"I have not decided yet but I don't want her
+  anymore you do whatever you want just replace her"*, the extractor filed
+  `replacement_preferences = 'replace her'`, the field looked answered, and the
+  collection went straight from the timeline to the handover. So the one field that
+  exists to tell a consultant **who to look for** reached them saying nothing, and the
+  transcript gives no hint that anything was missed — this is only visible in the ticket.
+  Identical in shape to the 2026-09-07 care-type defect (a value that restates the
+  ENQUIRY, filed as the answer to it), one field along. `_PREFERENCE_FIELDS` +
+  `_states_a_preference` mirror `_CARE_TYPE_FIELDS` + `_states_a_care_type`, with **their
+  own filler** so `requirement` is untouched — adding words to the shared one makes that
+  test stricter and would start dropping real care types.
+  (C) **And "you do whatever you want" should have been caught anyway.** `_NO_PREFERENCE`
+  was anchored hard at `^`, so *"whatever you want"* matched and *"you do whatever you
+  want"* did not — and the second is how people actually say it. A short filler lead-in
+  is now allowed. **"want" is deliberately not in that prefix list**: *"I want any
+  Filipino"* is a preference, not the absence of one, and it is asserted both ways.
+  (D) **A new assertion was green for the wrong reason, and the fault injection caught
+  it.** The formatting check tested for the words "own line" — but `PROCESS_INSTRUCTION`
+  already said the LEAD-IN sentence goes *"on its own line"*, so the test passed with the
+  per-item rule deleted. It now tests "real line break", the phrase unique to the rule it
+  is about, and deleting the rule turns it red. **A check that passes for a reason
+  unrelated to what it is checking is worse than no check**, and the only thing that
+  found it was injecting the fault rather than reading the assertion.
+  Verified: the exact live extractor output — `{'current_helper_exit': 'not decided yet',
+  'replacement_preferences': 'replace her'}` — now keeps the first and drops the second,
+  so the field stays open and gets asked. `selfcheck_flows.py` is **290 assertions**;
+  `smoke_nodes.py` is 36 states.
 
 - **2026-09-10** — **The LID had no phone number behind it, so we asked Whapi for one.**
   Follow-up to the entry below, which shipped a fallback and a diagnostic. The diagnostic

@@ -1161,6 +1161,47 @@ rows = [
  ("the LID cache cannot grow without limit",
   isinstance(getattr(wc, "_LID_CACHE_MAX", None), int)
   and wc._LID_CACHE_MAX > 0, True),
+
+ # --- the replacement round, 2026-09-10 --------------------------------
+ # A numbered list has to arrive as a LIST. Live on a parked replacement:
+ # the process answer came out correctly formatted and the documents answer
+ # one message later arrived as one solid paragraph with "1. ... 2. ..."
+ # buried in it. SERVICE_BRIEFING_NOTE had carried the rule since
+ # 2026-09-08; neither answering path had it - the same "written for the one
+ # flow that was reported" shape section 9 has forced twice already.
+ # Tested on "real line break", NOT on "own line": PROCESS_INSTRUCTION already
+ # said the LEAD-IN sentence goes "on its own line", so an "OWN LINE" test
+ # passed whether or not the per-ITEM rule was there - it was green with the
+ # rule deleted. Caught by injecting exactly that.
+ ("both answering paths require one item per line",
+  [n for n in ("PROCESS_INSTRUCTION", "PROCESS_ADDENDUM")
+   if "REAL LINE BREAK" not in getattr(tpl, n).upper()], []),
+ ("and so does the briefing that had it first",
+  "REAL LINE BREAK" in tpl.SERVICE_BRIEFING_NOTE.upper(), True),
+ # Ticket CB-2026-0006 reached an agent reading "Wants in the replacement:
+ # replace her" - the client's own words for the REQUEST, filed as their
+ # description of the helper they want. The field looked answered, so it was
+ # never asked. Same shape as the 2026-09-07 care-type defect.
+ ("the preference field is guarded against restating the request",
+  "replacement_preferences" in ico._PREFERENCE_FIELDS, True),
+ ("a request restated is not a preference",
+  [t for t in ("replace her", "just replace her", "a new helper", "change her",
+               "someone else", "a different one", "new maid")
+   if ico._states_a_preference(t)], []),
+ ("but a real preference survives",
+  [t for t in ("a Filipino helper who can cook", "must speak Mandarin",
+               "someone experienced with children", "older, patient, no pets",
+               "a different nationality this time")
+   if not ico._states_a_preference(t)], []),
+ # _NO_PREFERENCE was anchored hard at ^, so "whatever you want" matched and
+ # "you do whatever you want" did not - and the second is how people say it.
+ ("deferring the choice back to us is not a preference",
+  [t for t in ("you do whatever you want", "whatever you want", "up to you",
+               "you decide", "anything")
+   if not ico._NO_PREFERENCE.match(t)], []),
+ ("but naming something still is",
+  [t for t in ("i want any Filipino helper", "a Filipino who cooks")
+   if ico._NO_PREFERENCE.match(t)], []),
  # --- home leave, 2026-09-08 ------------------------------------------
  # The nationality decides the documents, the lead time AND the price - PH
  # needs her ORIGINAL passport plus a ticket itinerary, 4 weeks, $400; ID

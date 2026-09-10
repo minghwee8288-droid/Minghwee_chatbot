@@ -554,8 +554,17 @@ FALLBACK_ACKNOWLEDGEMENT = (
 # produced a complete new_hiring ticket claiming the client had no preference on
 # experience, budget and timeline. Sales then works a lead whose requirements
 # were never established, and the client is never asked.
+# Deferring the choice back to us is not a preference. The optional lead-in
+# matters: this was anchored hard at ^, so "whatever you want" matched and
+# "you do whatever you want" did not - and the second is how people say it.
+# Live, 2026-09-10, on a replacement enquiry (ticket CB-2026-0006).
+#
+# The prefix list is deliberately pure filler - pronouns and auxiliaries that
+# cannot introduce a real answer. "want" is NOT in it: "I want any Filipino"
+# is a preference, not the absence of one.
 _NO_PREFERENCE = re.compile(
-    r"^(any|anything|any\s?one|no\s+preference|no\s+pref|up\s+to\s+you|you\s+decide|"
+    r"^(?:(?:i|you|we|it|its|it'?s|that|that'?s|thats|just|do|really|honestly|please)\s+){0,3}"
+    r"(any|anything|any\s?one|no\s+preference|no\s+pref|up\s+to\s+you|you\s+decide|"
     r"doesn'?t\s+matter|does\s+not\s+matter|whatever|either|both|flexible|open)\b",
     re.IGNORECASE,
 )
@@ -569,6 +578,46 @@ UNANSWERED = "not provided"
 
 # Fields that must name the work, not the enquiry.
 _CARE_TYPE_FIELDS = {"requirement", "care_type"}
+
+# The same trap as _CARE_TYPE_FIELDS, one field along: a value that restates
+# the REQUEST rather than describing the helper they want.
+#
+# Live 2026-09-10, ticket CB-2026-0006. The client wrote "I have not decided
+# yet but I don't want her anymore you do whatever you want just replace her",
+# the extractor filed `replacement_preferences = 'replace her'`, the field
+# looked answered, and so it was NEVER PUT TO THEM - the collection went
+# straight from the timeline to the handover. The agent opened a ticket
+# reading "Wants in the replacement: replace her", which says nothing about
+# who to look for, on the one field that exists to say exactly that.
+#
+# Its own filler rather than _CARE_TYPE_FILLER, so `requirement` is untouched:
+# adding words there makes THAT test stricter and could start dropping real
+# care types. The words to strip here are the ones belonging to the request -
+# replace/change/new - plus the pronouns standing in for the helper.
+_PREFERENCE_FIELDS = {"replacement_preferences"}
+
+_PREFERENCE_FILLER = re.compile(
+    r"\b(replace|replaces|replaced|replacing|replacement|change|changing|changed|"
+    r"swap|switch|new|another|next|other|else|different|"
+    r"her|him|his|she|he|them|they|it|this|that|one|someone|somebody|anyone|"
+    r"i|we|my|our|me|us|you|your|a|an|the|to|for|of|in|is|am|are|and|but|just|do|"
+    r"want(?:ed|ing|s)?|need(?:ed|ing|s)?|look(?:ing)?|get(?:ting)?|find(?:ing)?|"
+    r"like|please|kindly|asap|soon|now|"
+    r"helper|helpers|maid|maids|domestic|worker|mdw|fdw)\b",
+    re.IGNORECASE,
+)
+
+
+def _states_a_preference(text: str) -> bool:
+    """Whether the value says anything about the helper they actually want.
+
+    Subtractive for the same reason as _states_a_care_type: the agency's
+    vocabulary keeps growing, and a whitelist would drop the first unfamiliar
+    thing anyone asks for.
+    """
+    remainder = _PREFERENCE_FILLER.sub(" ", text or "")
+    return bool(re.sub(r"[^a-z0-9]+", "", remainder.lower()))
+
 
 # Facts about the CLIENT that stay true when the service changes, and so survive
 # the switch-reset below.
@@ -1157,6 +1206,18 @@ async def _extract(
             logger.info(
                 "Conversation %s: ignoring '%s' for '%s' - the client's message "
                 "named no care type, so the value was inferred rather than given",
+                state.get("conversation_id"),
+                text[:40],
+                key,
+            )
+            continue
+        # "replace her" is the request restated, not a description of the
+        # helper they want - and a field that already looks answered is never
+        # asked. See _PREFERENCE_FIELDS for the ticket this reached.
+        if key in _PREFERENCE_FIELDS and not _states_a_preference(text):
+            logger.info(
+                "Conversation %s: ignoring '%s' for '%s' - it restates the request "
+                "rather than describing the helper they want",
                 state.get("conversation_id"),
                 text[:40],
                 key,
