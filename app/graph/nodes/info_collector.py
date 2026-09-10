@@ -31,6 +31,7 @@ from app.graph.guards import (
 from app.graph.llm import complete, complete_json
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
+    CANDIDATE_BRIEFING_NOTE,
     SERVICE_BRIEFING_NOTE,
     ACKNOWLEDGE_ONLY_INSTRUCTION,
     ANSWER_THEN_ASK_INSTRUCTION,
@@ -1665,11 +1666,26 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         and not client_asked
     )
     if briefing_due:
-        briefing_note = SERVICE_BRIEFING_NOTE
+        # A job seeker gets her own version. SERVICE_BRIEFING_NOTE is written
+        # for somebody buying a service - it REQUIRES a cost section - and
+        # pointed at a registration on 2026-09-10 it quoted the passport
+        # renewal's $450 as the price of applying for work. See the note above
+        # CANDIDATE_BRIEFING_NOTE.
+        briefing_note = (
+            CANDIDATE_BRIEFING_NOTE
+            if service_type in ticket_service.CANDIDATE_SERVICES
+            else SERVICE_BRIEFING_NOTE
+        )
         # ...and if we have no price for HER nationality, say so rather than
         # reaching for the one sitting beside it in the same record.
-        if not ticket_service.fee_is_known_for(
-            service_type, _known_nationality(state)
+        #
+        # Never on a candidate flow: that addendum tells the model to say a
+        # consultant will confirm "the cost for her embassy", which is a
+        # sentence about an employer's service. CANDIDATE_BRIEFING_NOTE already
+        # forbids every figure outright, and bolting this on would reintroduce
+        # the word cost to the one message that must not contain it.
+        if service_type not in ticket_service.CANDIDATE_SERVICES and not (
+            ticket_service.fee_is_known_for(service_type, _known_nationality(state))
         ):
             briefing_note += (
                 "\n\nWe do NOT have a fee on record for a helper of this "

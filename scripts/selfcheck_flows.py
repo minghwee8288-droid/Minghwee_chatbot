@@ -58,6 +58,13 @@ _MATCHED_PAIRS = {
     "preferred_nationality": "nationality",
     "helper_profile": "age",
     "languages": "languages_spoken",
+    # `cooking_ability` is still the counterpart - an employer IS asked whether
+    # she must handle pork or beef, and that has to be matchable - but since
+    # 2026-09-10 it is GATED. A helper who said she does childcare and
+    # eldercare was asked what cooking she can do and objected, rightly: the
+    # question presumed an answer she never gave. Cooking is now one of the
+    # duties she is asked whether she is WILLING to take on, and only if she
+    # says yes is she asked which cuisines. The pets -> pet_detail shape.
     "cooking": "cooking_ability",
     "special_duties": "duties_willing",
     "pets": "pet_comfort",
@@ -66,6 +73,11 @@ _MATCHED_PAIRS = {
     "budget": "expected_salary",
     "additional_notes": "candidate_notes",
 }
+
+
+def _question_of(service: str, key: str) -> str:
+    field = next((f for f in t.SERVICE_FIELDS[service] if f.key == key), None)
+    return field.question if field else ""
 
 
 def _options_of(service: str, key: str) -> tuple:
@@ -1066,11 +1078,40 @@ rows = [
   {r.get("contact_type", "all") for r in lsn.ROWS
    if r["section_heading"].startswith("Transfer - ")
    and r["service_type"] == "general"}, {"employer"}),
- # And the default is still 'all', so no other row changed audience.
- ("every other row is still written for anyone",
-  {r.get("contact_type", "all") for r in lsn.ROWS
-   if not (r["section_heading"].startswith("Transfer - ")
-           and r["service_type"] == "general")}, {"all"}),
+ # And the default is still 'all', so a row only ever narrows on purpose.
+ # Stated as a RULE now rather than as "everything except the transfer
+ # checklist": the helper's own journey rows added on 2026-09-10 are the
+ # second set to narrow, and a list of the exceptions would have to be
+ # edited every time - which is how a tripwire stops being read. Every
+ # narrowed row must declare its audience in its own section heading, so
+ # the label and the text cannot drift apart.
+ ("a row that narrows its audience says so in its heading",
+  sorted({r["section_heading"] for r in lsn.ROWS
+          if r.get("contact_type", "all") != "all"
+          and not r["section_heading"].startswith(("Transfer - ", "Helper - "))}),
+  []),
+ ("the transfer checklist is for employers, the journey rows for helpers",
+  {(r["section_heading"].split(" - ")[0], r.get("contact_type", "all"))
+   for r in lsn.ROWS if r.get("contact_type", "all") != "all"},
+  {("Transfer", "employer"), ("Helper", "candidate")}),
+ # The helper's journey is filed `general` DELIBERATELY, and that is what
+ # makes a routing change unnecessary: candidate_new_hiring is not a
+ # service_type any row uses, so _labelled_filter narrows her to 'general'
+ # forever (the section 9.15 shape) - and 'general' is exactly where these
+ # are. Filed under new_hiring instead, she would never see them.
+ ("the helper's journey is reachable from a service the KB never labels",
+  sorted({r["service_type"] for r in lsn.ROWS
+          if r["section_heading"].startswith("Helper - ")}), ["general"]),
+ # ...and it never tells her what she pays. There is no helper-side fee
+ # policy in the knowledge base, and a placement fee is the one figure a
+ # job seeker acts on, so it is Ming Hwee's to give rather than something
+ # to reason out of the employer's price list (CLAUDE.md section 9).
+ ("and it quotes her no fee",
+  [r["question"] for r in lsn.ROWS
+   if r["section_heading"].startswith("Helper - ")
+   and any(w in r["answer"].lower()
+           for w in ("agency fee", "placement fee", "you pay us",
+                     "service fee", "deducted from your salary"))], []),
 
  # --- the transfer retrieval alias, 2026-09-10 -------------------------
  # transfer_employer is not a service_type any KB row uses, so
@@ -1307,11 +1348,113 @@ rows = [
  # the country she is actually from, and constraining her to those three would
  # turn a Sri Lankan or Cambodian applicant away at the first question - while
  # "no preference" is not a thing anyone can be.
+ # `duties_willing` answers TWO employer questions, so it carries cooking on
+ # top of the extra duties rather than the same list - the test is that the
+ # employer's options are all present, not that the two lists are identical.
  ("and both halves of a pairing offer the same options",
   sorted(emp for emp, cand in _MATCHED_PAIRS.items()
          if emp != "preferred_nationality" and _options_of("new_hiring", emp)
-         and _options_of("candidate_new_hiring", cand) != _options_of("new_hiring", emp)),
+         and not set(_options_of("new_hiring", emp))
+                 <= set(_options_of("candidate_new_hiring", cand))),
   []),
+ # ...and cooking is on that list by name, which is the agency's own wording:
+ # "Would you be willing to do other duties such as cooking, high-rise window
+ # cleaning, car washing, gardening, grocery shopping, or hand-washing
+ # laundry?"
+ ("cooking is one of the duties she is asked about, not a question of its own",
+  "cooking" in _question_of("candidate_new_hiring", "duties_willing").lower(),
+  True),
+ # The detail question still exists for the helpers it applies to - an
+ # employer IS asked whether she must handle pork or beef, and that has to be
+ # matchable - but it is gated, so a helper who never mentions cooking is
+ # never asked it. That is the whole complaint.
+ # Gated on `work_scope`, whose options are a controlled vocabulary, and NOT
+ # on the duties answer - that was tried and measured: Gate matches on
+ # substrings, so "no i dont want to cook, only the window cleaning" contains
+ # "cook" and opened it, which is the complaint again in writing.
+ ("and the cooking detail is gated on the work she says she does",
+  (lambda f: f is not None and f.gate is not None
+   and f.gate.field == "work_scope")(
+      next((f for f in t.SERVICE_FIELDS["candidate_new_hiring"]
+            if f.key == "cooking_ability"), None)), True),
+ ("so a childcare-and-eldercare helper is never asked about cooking",
+  [f.key for f in t.missing_fields(
+      "candidate_new_hiring", {"work_scope": "childcare and eldercare"})
+   if f.key == "cooking_ability"], []),
+ ("...nor a childcare-only one",
+  [f.key for f in t.missing_fields(
+      "candidate_new_hiring", {"work_scope": "childcare"})
+   if f.key == "cooking_ability"], []),
+ ("but a helper who says she cooks still is",
+  sorted({w for w in ("general housework and cooking", "all of the above")
+          if "cooking_ability" not in [f.key for f in t.missing_fields(
+              "candidate_new_hiring", {"work_scope": w})]}), []),
+
+ # --- the candidate's closing briefing, 2026-09-10 ---------------------
+ # "the bot did not explain the next steps/process to the candidate." An
+ # employer finishing a passport renewal is told what happens next; a helper
+ # who had just answered seventeen questions was thanked and handed over.
+ ("a registration explains what happens next before handing over",
+  t.BRIEFING_AFTER.get("candidate_new_hiring"), "availability"),
+ # .get() rather than [] on purpose: with the entry removed this has to FAIL
+ # and name itself, not raise a KeyError and take the whole run down - a check
+ # that crashes tells you less than one that goes red.
+ ("keyed on a field that is always answered",
+  next((f.optional for f in t.SERVICE_FIELDS["candidate_new_hiring"]
+        if f.key == t.BRIEFING_AFTER.get("candidate_new_hiring")), None), False),
+ # SERVICE_BRIEFING_NOTE is written for somebody BUYING a service and
+ # REQUIRES a cost section. Pointed at a registration it did as it was told
+ # and quoted the passport renewal's $450 as the price of applying for work;
+ # ungrounded_figures binned the reply and it was logged as a lost briefing,
+ # so she got the bare handover line. A job seeker gets her own note.
+ ("a job seeker's closing message is not the one written for a buyer",
+  tpl.CANDIDATE_BRIEFING_NOTE != tpl.SERVICE_BRIEFING_NOTE, True),
+ ("and it forbids quoting her any figure at all",
+  all(p in tpl.CANDIDATE_BRIEFING_NOTE
+      for p in ("NEVER quote her a fee", "not what she might earn")), True),
+ ("nor promising her a job or a date",
+  "Do not promise her a job" in tpl.CANDIDATE_BRIEFING_NOTE, True),
+ ("and it still says what the list is, one step per line",
+  all(p in tpl.CANDIDATE_BRIEFING_NOTE
+      for p in ("heading line", "REAL LINE BREAK", "closing sentence")), True),
+ ("the buyer's note still requires the cost it was written for",
+  "WHAT IT COSTS" in tpl.SERVICE_BRIEFING_NOTE, True),
+ # The query is the other half, and the word `cost` is absent from it on
+ # purpose: "how much does it cost" matches _PRICE_QUESTION, which DROPS the
+ # service filter - which is how the passport renewal's $450 reached a
+ # registration in the first place.
+ ("her briefing query does not go looking for a price",
+  [w for w in ("cost", "price", "fee", "how much")
+   if w in rr.CANDIDATE_BRIEFING_QUERY.lower()], []),
+ ("and it asks for her journey instead",
+  all(w in rr.CANDIDATE_BRIEFING_QUERY
+      for w in ("after I register", "interview", "arrive")), True),
+ ("the buyer's query still asks the price",
+  "how much does it cost" in rr.BRIEFING_QUERY, True),
+
+ # --- who the ROWS are written for, 2026-09-10 -------------------------
+ # effective_contact_type puts a master record above one message, rightly.
+ # For retrieval that has a hole: a job seeker messaging from a number this
+ # database holds an EMPLOYER record for could not see one of the 27
+ # helper-facing rows, and "what is the process" came back at 0.397 - four
+ # thousandths under the floor - so she was handed to a human for something
+ # the knowledge base answers. As a candidate the same question scores 0.437.
+ ("a candidate flow searches the candidate's shelf, whatever the record says",
+  rr._retrieval_audience({"service_type": "candidate_new_hiring",
+                          "contact_type": "employer",
+                          "matched_employer_id": "e1"}), "candidate"),
+ ("a helper's own transfer too",
+  rr._retrieval_audience({"service_type": "transfer",
+                          "contact_type": "employer",
+                          "matched_employer_id": "e1"}), "candidate"),
+ ("and an employer flow is untouched",
+  rr._retrieval_audience({"service_type": "new_hiring",
+                          "contact_type": "employer",
+                          "matched_employer_id": "e1"}), "employer"),
+ ("as is an employer's transfer, which is a different service key",
+  rr._retrieval_audience({"service_type": "transfer_employer",
+                          "contact_type": "employer",
+                          "matched_employer_id": "e1"}), "employer"),
  ("except the nationality pair, which deliberately does not",
   bool(_options_of("candidate_new_hiring", "nationality")), False),
  # The keys are deliberately NEW rather than the employer's own. `languages`

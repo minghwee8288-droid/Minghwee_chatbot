@@ -72,6 +72,20 @@ BRIEFING_QUERY = (
     "needed from me, and what happens next once I confirm"
 )
 
+# The same turn for a JOB SEEKER, and it deliberately does not contain the word
+# cost. Two reasons, both measured on 2026-09-10. The obvious one: she is not
+# buying a service, so a price has no place in her closing message. The one that
+# actually bit: "how much does it cost" matches _PRICE_QUESTION, which drops the
+# service filter - so the candidate briefing searched the WHOLE knowledge base
+# and came back with the passport renewal's $450, which the model then wrote
+# into her briefing. ungrounded_figures binned the reply and it was logged as a
+# lost briefing, so she got the plain handover line and no explanation at all.
+CANDIDATE_BRIEFING_QUERY = (
+    "what happens after I register, what documents do you need from me, "
+    "what happens at the interview, what happens after an employer chooses "
+    "me, and what happens when I arrive in Singapore"
+)
+
 # FIVE kinds of answer have to arrive together now, and the nationality-specific
 # document row has to survive alongside them. At the ordinary 5 the timing row
 # was the one that fell off the end; at 8, once the query started asking what
@@ -148,7 +162,12 @@ def _search_query(state: ConversationState) -> str:
     intent = state.get("intent") or ""
 
     if _briefing_turn(state):
-        service = (state.get("service_type") or "").replace("_", " ")
+        service_key = state.get("service_type") or ""
+        service = service_key.replace("_", " ")
+        # A job seeker's closing message asks a different question, and the
+        # difference is not cosmetic - see the note on CANDIDATE_BRIEFING_QUERY.
+        if service_key in ticket_service.CANDIDATE_SERVICES:
+            return f"{CANDIDATE_BRIEFING_QUERY}\n({service})"
         return f"{BRIEFING_QUERY}\n({service})"
 
     # The small-ticket overview turn — same trick, different briefing. The
@@ -295,6 +314,40 @@ def _aliased(service: str | None) -> str | None:
     return _RETRIEVAL_ALIASES.get(service or "", service)
 
 
+def _retrieval_audience(state: ConversationState) -> str:
+    """Who the ROWS should be written for - not necessarily who is on file.
+
+    `effective_contact_type` weighs a master record above anything one message
+    says, and it is right to: an employers row is a fact, and a single sentence
+    that sounds otherwise must not turn a client into a job seeker (see the note
+    on that function).
+
+    For RETRIEVAL that rule has a hole, and it is measured. Live, 2026-09-10, a
+    job seeker was collected all the way through `candidate_new_hiring` from a
+    number this database already holds an EMPLOYER record for - a tester's
+    number, but a helper messaging from the household phone produces exactly the
+    same state. `contact_type` narrows a search to that audience plus 'all', so
+    every one of the 27 helper-facing rows was invisible to her, and "what is
+    the process" came back at **0.397** - four thousandths under the 0.40 floor,
+    so `_answerable()` read False and she was handed to a human for something
+    the knowledge base answers. As a candidate the same question scores 0.437
+    and returns her own journey row.
+
+    So when the flow in hand is one of the CANDIDATE services, the search reads
+    the candidate's shelf. The service key is the stronger evidence here: it is
+    not one message's tone, it is the questionnaire we have been putting to her
+    for the last dozen turns.
+
+    Retrieval only, exactly like `_RETRIEVAL_ALIASES` above. The contact type on
+    the conversation, the lead it opens, the ticket and every master record are
+    untouched - this decides which ROWS are searched and nothing else.
+    """
+    contact = effective_contact_type(state)
+    if state.get("service_type") in ticket_service.CANDIDATE_SERVICES:
+        return "candidate"
+    return contact
+
+
 def _service_filter(state: ConversationState) -> str | None:
     """Which service to narrow retrieval to — None means search everything."""
     # Widening a money question is right when the figures live somewhere else
@@ -368,7 +421,7 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
     # Each one is inclusive of its catch-all bucket inside the match function;
     # anything we cannot determine is passed as None and simply not filtered on.
     query = _search_query(state)
-    contact = effective_contact_type(state)
+    contact = _retrieval_audience(state)
     nationality = _nationality(state)
     service = _service_filter(state)
     briefing = _briefing_turn(state)

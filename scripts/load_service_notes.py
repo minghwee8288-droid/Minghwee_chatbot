@@ -1836,6 +1836,167 @@ ROWS += [
 # Idempotent in both directions: if `set` moves the row's service_type, a
 # re-run looks for it under the NEW value too and skips when it is already
 # there, so this can be run as often as ROWS can.
+# ---------------------------------------------------------------------------
+# The helper's own journey, written for HER.
+#
+# Agency, 2026-09-10, after testing the flow as a job seeker: "the bot did not
+# explain the next steps/process to the candidate."
+#
+# It could not. Counted the same day: 27 rows carry contact_type='candidate'
+# and every one of them is rights, behaviour or settling-in advice - what she
+# is owed on food, rest days, her passport and her phone, who to call in an
+# emergency. There was nothing at all about the journey she is actually on:
+# register, be matched, be interviewed, be confirmed, get a permit, fly, land.
+#
+# And nothing is what she got. Measured through the real retriever, as a
+# candidate: `candidate_new_hiring` is not a service_type any row uses, so
+# _labelled_filter narrows her to `general` (the section 9.15 shape, one
+# service along) and the top match for "what is the process" was the
+# CANDIDATE APPLICATION CHECKLIST clause at 0.440; "what happens next"
+# returned "I am applying of my own free will, without being forced" at 0.426;
+# "what is the further process I have to follow" returned "Do I need to attend
+# a course before hiring a helper?" - an EMPLOYER's question answered to a
+# helper. Every one of those is ABOVE the 0.40 floor, so _answerable() read
+# True and the widening retry never fired. That is the same silent-success
+# signature as section 9.15: a wrong answer that scores well is
+# indistinguishable from a working one.
+#
+# Filed `general` + `candidate`, which is the whole decision and is what makes
+# a routing change unnecessary:
+#   * `general` is in scope for EVERY service, so these are reachable without
+#     aliasing candidate_new_hiring onto new_hiring.
+#   * an alias was measured and rejected. Pointed at `new_hiring`, "what is the
+#     process" returns "What is the process for HIRING a new helper" (0.455)
+#     and the documents question returns "What documents do I need to provide
+#     to HIRE a helper?" (0.584) - both contact_type='all', both written to the
+#     employer, and both would have told a job seeker to produce her NRIC and
+#     her income tax assessment. Confidently addressed to the wrong person is
+#     worse than a holding line, and it is the defect the transfer checklist
+#     produced on 2026-09-10 before contact_type was used properly.
+#   * `candidate` means an employer never sees them, so none of this can
+#     displace an employer's own row - the collision that had to be measured
+#     and reworded when the transfer checklist went into `general`.
+#
+# REWRITTEN, NOT COPIED. Every fact here is already in the knowledge base on
+# the employer's side - the IPA, the fit-to-fly medical, the Settling-In
+# Programme, the documents collected through the overseas partner - and is
+# re-expressed from hers. Nothing new is asserted. What is deliberately NOT
+# here: what she pays. There is no helper-side fee policy anywhere in the
+# knowledge base, and a placement fee is the single figure a job seeker is most
+# likely to act on, so it is left for Ming Hwee (see CLAUDE.md section 9)
+# rather than reasoned out of the employer's price list.
+ROWS += [
+    {
+        "service_type": "general",
+        "contact_type": "candidate",
+        "nationality": "all",
+        "section_heading": "Helper - what happens after she registers",
+        "question": "What happens after I register with Ming Hwee for a job?",
+        "answer": (
+            "There are six steps. First we take your details - your experience, the "
+            "work you can take on, the languages you speak, when you are free to "
+            "start and what you are looking for. Second we look for employers whose "
+            "household matches what you can do, and send them your profile. Third, if "
+            "an employer is interested, we arrange an interview - usually a video "
+            "call on WhatsApp if you are still in your home country. Fourth, if you "
+            "and the employer agree, you sign the job offer and your employment "
+            "contract, and we collect your documents through our partner in your "
+            "country. Fifth we apply to MOM for your Work Permit, and once the "
+            "In-Principle Approval comes back you sign it and your embassy paperwork "
+            "is done. Sixth we arrange your travel, and when you land we meet you and "
+            "take you through your arrival formalities. We will tell you where you "
+            "are at each step - you do not have to chase us."
+        ),
+    },
+    {
+        "service_type": "general",
+        "contact_type": "candidate",
+        "nationality": "all",
+        "section_heading": "Helper - documents she provides",
+        "question": "What documents do I need to give Ming Hwee to apply for a job?",
+        "answer": (
+            "A copy of your passport, your medical report and your school "
+            "certificate. If you have worked in Singapore before, we also need your "
+            "employment history. We collect these through our partner in your "
+            "country, so you hand them over there rather than sending them yourself. "
+            "Your medical fitness has to be confirmed before your Work Permit "
+            "application can go to MOM, so the medical is the one that decides when "
+            "everything else can start. Keep your own copies of everything you sign."
+        ),
+    },
+    {
+        "service_type": "general",
+        "contact_type": "candidate",
+        "nationality": "all",
+        "section_heading": "Helper - the interview",
+        "question": "What happens at the interview with the employer?",
+        "answer": (
+            "It is usually a video call on WhatsApp, and we arrange it and sit with "
+            "it. The employer will ask about the work you have actually done - "
+            "children, elderly care, cooking - the languages you are comfortable in, "
+            "why you left your last job, and what you are hoping for. Answer "
+            "honestly, including about anything you would rather not do. Saying so "
+            "now is far better than arriving in a home that does not suit you. You "
+            "are not obliged to accept a job you are interviewed for."
+        ),
+    },
+    {
+        "service_type": "general",
+        "contact_type": "candidate",
+        "nationality": "all",
+        "section_heading": "Helper - after an employer confirms her",
+        "question": "What happens after an employer chooses me?",
+        "answer": (
+            "You sign the job offer and your employment contract, and we apply to "
+            "MOM for your Work Permit. MOM issues an In-Principle Approval, which "
+            "you and the employer both sign - that is also what lets your embassy "
+            "paperwork go ahead. What happens at the embassy depends on your "
+            "country: if you are Filipino your contract is submitted to your embassy "
+            "and you attend an accredited clinic for a fit-to-fly medical; if you "
+            "are Indonesian a job order goes through your embassy's portal and the "
+            "contract is signed once it is approved; if you are from Myanmar our "
+            "partner there handles it with you. After that your travel is booked."
+        ),
+    },
+    {
+        "service_type": "general",
+        "contact_type": "candidate",
+        "nationality": "all",
+        "section_heading": "Helper - arrival in Singapore",
+        "question": "What happens when I arrive in Singapore?",
+        "answer": (
+            "Someone meets you at the airport - you are not left to find your own "
+            "way. We take you through your arrival formalities: your medical "
+            "examination, your fingerprinting for your Work Permit, and the "
+            "Settling-In Programme, which is a one-day course every helper new to "
+            "Singapore attends. It covers life here, your rights and "
+            "responsibilities, safety and how to look after yourself while you are "
+            "away from home. Your employer pays for it. Then we bring you to your "
+            "employer's home and go through a handover with you both together, so "
+            "everyone starts with the same understanding of the job."
+        ),
+    },
+    {
+        "service_type": "general",
+        "contact_type": "candidate",
+        "nationality": "all",
+        "section_heading": "Helper - how long it takes",
+        "question": "How long will it take before I can start work in Singapore?",
+        "answer": (
+            "Two parts, and only one of them has a timeline. How long it takes to be "
+            "matched depends on which employers are looking when you register and "
+            "what they need, so nobody can promise you a date for that. Once an "
+            "employer has confirmed you, the paperwork usually takes about 4 to 6 "
+            "weeks - the Work Permit application, the In-Principle Approval, your "
+            "embassy stage and your travel. If you are already in Singapore on a "
+            "valid Work Permit it is shorter, because there is no embassy stage and "
+            "no flight. We will tell you where your application is rather than "
+            "leaving you waiting."
+        ),
+    },
+]
+
+
 UPDATES: list[dict[str, Any]] = [
     {
         "where": {"question": "How long does a direct hire take?",

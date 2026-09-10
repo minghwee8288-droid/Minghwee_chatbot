@@ -1541,6 +1541,51 @@ SERVICE_FIELDS[CANDIDATE_HIRING] += [
         group="what else she can do",
         options=_matched_options("languages"),
     ),
+    # Cooking is a DUTY she may be willing to take on, not a thing to assume she
+    # does. Live, 2026-09-10: a helper who had just said she does childcare and
+    # eldercare was asked "What kind of cooking can you do ... and are you able
+    # to handle pork or beef?" and pushed back - "but i am not going to do
+    # cooking work then why asked me cooking related question i am applying for
+    # childcare and eldercare jobs". She is right: the question presumes an
+    # answer she never gave. The agency's instruction was to fold it into the
+    # duties question, and their wording is used.
+    Field(
+        "duties_willing",
+        "the extra duties she is willing to take on",
+        "Would you be willing to do other duties such as cooking, high-rise "
+        "window cleaning, car washing, gardening, grocery shopping, or "
+        "hand-washing laundry?",
+        max_asks=1,
+        optional=True,
+        group="what else she can do",
+        options=("cooking",) + _matched_options("special_duties"),
+    ),
+    # ...and only THEN, and only if cooking is actually in play, the detail an
+    # employer's `cooking` question has to be matched against - which cuisines,
+    # and whether she handles pork or beef. Exactly the pets -> pet_detail
+    # idiom: the general question first, the detail only for the people it
+    # applies to. A helper who never mentions cooking is never asked it, which
+    # is the whole complaint.
+    #
+    # Gated on `work_scope` and NOT on `duties_willing`, which was tried first
+    # and measured: `Gate` matches on substrings, so "no i dont want to cook,
+    # only the window cleaning" contains "cook" and opened it. Catching that
+    # needs a list of every way a person writes a negation, which is the trap
+    # the note on Gate.excludes describes for pets - and getting it wrong here
+    # means asking the cooking question of somebody who has just refused it in
+    # writing, i.e. the exact complaint, twice.
+    #
+    # `work_scope` has a controlled vocabulary - childcare, eldercare, general
+    # housework and cooking, all of the above - so the test is decidable rather
+    # than a guess at phrasing. It is also precisely what the agency described:
+    # "when the employee says she can work in elderly care and childcare, the
+    # bot should not separately ask about cooking".
+    #
+    # KNOWN AND ACCEPTED: a helper whose scope is childcare only, who then says
+    # in the duties answer that she would also cook, is not asked which cuisines
+    # or about pork and beef. A consultant can ask her. That is the right way
+    # round - the cost of missing it is one follow-up call, the cost of getting
+    # the negation wrong is the complaint again.
     Field(
         "cooking_ability",
         "the cooking she can do",
@@ -1550,17 +1595,11 @@ SERVICE_FIELDS[CANDIDATE_HIRING] += [
         optional=True,
         group="what else she can do",
         options=_matched_options("cooking"),
-    ),
-    Field(
-        "duties_willing",
-        "the extra duties she is willing to take on",
-        "Beyond the usual cleaning and cooking, which of these are you willing "
-        "to do - high-rise window cleaning, car washing, gardening, grocery "
-        "marketing, or hand-washing laundry?",
-        max_asks=1,
-        optional=True,
-        group="what else she can do",
-        options=_matched_options("special_duties"),
+        gate=Gate(
+            "work_scope",
+            matches=("cook", "housework", "all of the above", "all of these",
+                     "everything", "anything"),
+        ),
     ),
     Field(
         "pet_comfort",
@@ -1739,6 +1778,30 @@ NAME_FROM_RECORD_ONLY = frozenset(
 # followed by the question it depends on.
 BRIEFING_AFTER: dict[str, str] = {
     "passport_renewal": "nationality",
+    # The helper's own registration, 2026-09-10. Agency, testing as a job
+    # seeker: "the bot did not explain the next steps/process to the
+    # candidate." It did not, and she had to ask - twice, and the first one got
+    # a holding line. An employer who finishes a passport renewal is told what
+    # happens next; a helper who has just answered seventeen questions about
+    # herself was thanked and handed over.
+    #
+    # Keyed on `availability` rather than on the last field asked, because the
+    # RETRIEVER has to know one turn AHEAD: it runs before the collector, so at
+    # the final turn the state it reads does not yet contain the final answer.
+    # `availability` is the last of the eight non-optional fields, so it is
+    # always answered and always answered early enough.
+    #
+    # The cost is that _briefing_turn then reads True for the optional half of
+    # the flow as well, so those turns retrieve the briefing set rather than the
+    # client's own words. Measured against the alternatives and accepted: those
+    # are turns where she is plainly ANSWERING (a question from her stands the
+    # briefing down already), her answers there are things like "32" and "next
+    # month" which match nothing anyway, and the retrieved rows are only used as
+    # grounding. Keying it on a late OPTIONAL field instead would be tighter and
+    # would silently lose the briefing whenever she declined that one question -
+    # a briefing with no records is the 2026-09-09 defect, and that is the worse
+    # failure of the two.
+    CANDIDATE_HIRING: "availability",
 }
 
 

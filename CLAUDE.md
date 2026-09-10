@@ -274,6 +274,11 @@ because the lead is opened early and the ticket is created much later.
 | A value that restates the REQUEST does not answer a preference field | `info_collector._PREFERENCE_FIELDS` / `_states_a_preference` | `replacement_preferences` was filled with "replace her", so it was never asked and the ticket read "Wants in the replacement: replace her". Same shape as the 2026-09-07 care-type defect, one field along. |
 | Handing the choice back to us is not a preference | `info_collector._NO_PREFERENCE` | Anchored hard at `^`, so "whatever you want" matched and "you do whatever you want" did not. A short filler lead-in is now allowed; "want" is deliberately not in it. |
 | A LID is resolved to its phone number before ANY lookup keyed on the number | `webhook._resolve_lid` + `whapi.resolve_lid` | `GET /chats/<lid>` carries `phone`; `/contacts/<lid>` does not. Done in the webhook because parsing is sync and this is an HTTP call. Unresolvable ⇒ stand down, never a guess at whose number it is. |
+| Cooking is a duty she is asked whether she will take on, not a thing assumed of her | `SERVICE_FIELDS["candidate_new_hiring"]` + the `work_scope` gate | A helper who had just said she does childcare and eldercare was asked what cooking she can do, and objected. The detail question survives for the pairing with the employer's `cooking`, gated the way `pet_detail` is off `pets`. Gated on `work_scope` and NOT on the duties answer: `Gate` matches substrings, so "no i dont want to cook" contains "cook" and opened it. |
+| A registration explains what happens next before it hands over | `ticket.BRIEFING_AFTER["candidate_new_hiring"]` + `CANDIDATE_BRIEFING_NOTE` | An employer finishing a passport renewal is told what happens next; a helper who had just answered seventeen questions was thanked and handed over. |
+| ...and a job seeker's closing message is not the one written for a buyer | `templates.CANDIDATE_BRIEFING_NOTE` + `rag_retriever.CANDIDATE_BRIEFING_QUERY` | `SERVICE_BRIEFING_NOTE` REQUIRES a cost section, so pointed at a registration it quoted the passport renewal's **$450** as the price of applying for work. `ungrounded_figures` binned it and it was logged as a lost briefing, so she got the bare handover line. The word `cost` is also absent from her query: it matches `_PRICE_QUESTION`, which DROPS the service filter, which is how $450 was in reach at all. |
+| A candidate flow searches the candidate's shelf, whatever the master record says | `rag_retriever._retrieval_audience` | `effective_contact_type` puts an employers row above one message, rightly. For RETRIEVAL that hid all 27 helper-facing rows from a job seeker whose number we hold as an employer, and "what is the process" came back at **0.397** — four thousandths under the floor. As a candidate it is 0.437. Retrieval only; the lead, the ticket and the contact type are untouched. |
+| A row that narrows its audience says so in its heading | `selfcheck_flows.py` | Was "everything except the transfer checklist". The helper's journey rows are the second set to narrow, and a list of exceptions has to be edited every time — which is how a tripwire stops being read. |
 | A candidate's own name is never read off her WhatsApp profile | `ticket.NAME_FROM_RECORD_ONLY` + `selfcheck_flows.py` | The fifth arrival of the same complaint, and the derived rule could not catch it: that one sweeps `EMPLOYER_LEAD_SERVICES`, and a job seeker is not in it. `get_record_name` reads `employers`, so `record_name` is always empty for a helper and the question is always asked — which is right, because this name goes on a Work Permit application. A name she gave on an earlier enquiry still greets her, off `leads_candidate`. |
 | Every question the employer is asked ABOUT a helper has a counterpart she is asked about herself | `selfcheck_flows._MATCHED_PAIRS` + `ticket._matched_options` | Or the consultant matches the two tickets by eye. The employer was asked 25 questions about the helper they want; she was asked 9 about herself, six of them identity and logistics. Nine of the eleven pairings had no candidate half at all. |
 | ...and both halves of a pairing offer the SAME words | `ticket._matched_options` | Taken from the employer's `Field`, never retyped, for the reason `_hiring_field` exists (§9.8). `preferred_nationality` is the one pair that deliberately cannot share a list — an employer picks from the three we place, a helper states the country she is from. |
@@ -646,6 +651,17 @@ at a time.
   end to end, and the figure excludes finding and shortlisting the helper. If they mean a
   longer number for the whole thing, it is one row to change.
 - **Whether the helper-facing "2-4 weeks" is the same span or a different one** (§9.15).
+- **What a HELPER pays us, if anything.** Measured 2026-09-10: there is no helper-side
+  fee anywhere in the knowledge base, while a job seeker asking *"do i have to pay any
+  fee"* retrieves the **employer's** direct-hire cost comparison at 0.488. A placement
+  fee is the single figure a job seeker will act on, so `CANDIDATE_BRIEFING_NOTE`
+  forbids quoting her any figure at all and the journey rows state none. The existing
+  helper-rights content covers a **placement loan** taken by her home-country agency,
+  which is a different thing. If Ming Hwee charges a helper nothing, saying so plainly
+  is worth a row of its own.
+- **What a helper can expect to earn.** *"What salary will I get"* scores **0.000** for a
+  candidate - nothing in the KB answers it. The same missing grounded salary band as
+  §9's entry above, from the other side of the desk.
 
 ## 10. Operations
 
@@ -751,6 +767,99 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-10** — **Retested as a job seeker: a cooking question she never invited,
+  and no explanation of what happens next.** Their words: *"when the employee says that
+  she can work in elderly care and childcare, the bot should not separately ask about
+  cooking ... Also, the bot did not explain the next steps/process to the candidate."*
+  (A) **The cooking question presumed an answer she never gave**, and she said so:
+  *"but i am not going to do cooking work then why asked me cooking related question i
+  am applying for childcare and eldercare jobs"*. Cooking is now one of the DUTIES she
+  is asked whether she is willing to take on, in the agency's own words. The detail
+  question — which cuisines, and pork or beef — survives, because the EMPLOYER is asked
+  it and it has to be matchable, but it is **gated**, the same shape as `pets` →
+  `pet_detail`.
+  (B) **Gated on `work_scope`, and the first attempt is why.** Keying it on the duties
+  answer was tried and measured: `Gate` matches on substrings, so *"no i dont want to
+  cook, only the window cleaning"* contains "cook" and opened it — asking the cooking
+  question of someone who had just refused it in writing, which is the complaint again.
+  Catching that needs a list of every way a person writes a negation, which is the trap
+  the note on `Gate.excludes` describes for pets. `work_scope` has a controlled
+  vocabulary, so the test is decidable. **Accepted cost, recorded rather than hidden:** a
+  childcare-only helper who volunteers in the duties answer that she would also cook is
+  not asked which cuisines. A consultant can ask her; that is the right way round.
+  (C) **"The bot did not explain the next steps" was three defects stacked, and the
+  first is the one nobody would have found by reading.** Counted: **27 rows carry
+  `contact_type='candidate'` and every one is rights, behaviour or settling-in advice**
+  — what she is owed on food, rest days, her passport, who to call in an emergency.
+  There was nothing at all about the journey she is on. Measured through the real
+  retriever: `candidate_new_hiring` is not a `service_type` any row uses, so
+  `_labelled_filter` narrows her to `general` (the §9.15 shape, one service along), and
+  the top match for *"what is the process"* was the **candidate application checklist**
+  at 0.440; *"what happens next"* returned *"I am applying of my own free will, without
+  being forced"* at 0.426; *"what is the further process I have to follow"* returned
+  **"Do I need to attend a course before hiring a helper?"** — an employer's question
+  answered to a helper. Every one **above** the floor, so `_answerable()` read True and
+  the widening retry never fired. Six rows written for her: what happens after she
+  registers, the documents she provides, the interview, what happens once an employer
+  chooses her, arrival, and how long it takes. **Rewritten, not copied** — every fact is
+  already in the KB on the employer's side and is re-expressed from hers.
+  (D) **Filed `general` + `candidate`, and the alias was measured and REJECTED.** Pointed
+  at `new_hiring`, *"what is the process"* returns *"What is the process for **hiring** a
+  new helper"* (0.455) and the documents question returns *"What documents do I need to
+  provide **to hire** a helper?"* (0.584) — both `contact_type='all'`, both written to the
+  employer, and both would have told a job seeker to produce her NRIC and her income tax
+  assessment. `general` is in scope for every service, so her rows are reachable with no
+  routing change at all, and `candidate` means an employer never sees them — so none of
+  this can displace an employer's own row, which is the collision the transfer checklist
+  had to be reworded for. **Six employer controls re-measured, every one unmoved.**
+  (E) **And the reason SHE got a holding line was none of the above.** With the rows
+  loaded it still failed, and the diagnosis is worth keeping: `effective_contact_type`
+  puts a master record above anything one message says — rightly — but the tester's
+  number is on file as an **employer**, so `contact_type` narrowed her search to employer
+  rows and **all 27 helper-facing rows were invisible to her**. *"What is the process"*
+  came back at **0.397**, four thousandths under the 0.40 floor. As a candidate the same
+  question scores 0.437 and returns her own row. `_retrieval_audience` reads the
+  candidate's shelf whenever the flow in hand is a candidate service — the service key is
+  the stronger evidence, being the questionnaire we have been putting to her for a dozen
+  turns. **Retrieval only**, exactly like `_RETRIEVAL_ALIASES`: the lead, the ticket and
+  every master record are untouched. This is not only a tester's problem — a helper
+  messaging from the household phone produces the identical state.
+  (F) **The closing briefing quoted her $450, and the guard is what caught it.**
+  `SERVICE_BRIEFING_NOTE` is written for somebody buying a service and **requires** a
+  cost section, so pointed at a registration it did as it was told and offered the
+  passport renewal's fee as the price of applying for work. `ungrounded_figures` binned
+  the whole reply and `briefing_lost` logged it, so what she would have seen is the bare
+  handover line — the 2026-09-08 lost-briefing signature. Two causes: the note, and
+  `BRIEFING_QUERY` literally containing *"how much does it cost"*, which matches
+  `_PRICE_QUESTION` and **drops the service filter**, which is how another service's
+  fee was in reach at all. She now has her own note and her own query, and the note
+  forbids every figure outright — no fee, no salary, no deduction — because **there is no
+  helper-side fee anywhere in the knowledge base**, so every number within reach belongs
+  to somebody else. It also forbids promising her a job or a date for being matched.
+  (G) **A condition I added and then took back out.** `_briefing_turn` was given a
+  "collection nearly done" test to stop the briefing query hijacking retrieval for the
+  nine optional turns of the new flow. It broke an existing assertion, and looking at why
+  showed the change was worse than the thing it fixed: if a client answers two fields at
+  once, the briefing turn arrives with no records and the briefing is silently lost,
+  which is the 2026-09-09 defect. The hijack is benign by comparison — those are turns
+  where she is plainly answering, a question from her stands the briefing down already,
+  and the rows are only used as grounding. Reverted, with the trade-off written at
+  `BRIEFING_AFTER` rather than left as a silent choice.
+  (H) **Verified live end to end.** The closing message now reads *"Here is what happens
+  next, Muang:"* followed by eight steps one per line, nationality-correct (*"our partner
+  in Indonesia"*), a closing sentence, and no figure anywhere. On the parked path the
+  exact turn that failed — *"what is the process"* — returns her eight steps; *"what are
+  the documents required"* returns **her** documents rather than an employer's NRIC; and
+  *"any update on my application"* still gets the holding line. The duties question goes
+  out as *"Would you also be willing to do duties like cooking, high-rise window
+  cleaning, car washing, gardening, grocery shopping, or hand-washing laundry?"* and a
+  childcare-and-eldercare helper is never asked about cuisines.
+  Eight faults injected, eight red — and two of them exposed a check that **crashed**
+  rather than failing, which tells you less than one that goes red; that assertion now
+  uses `.get()` and names itself.
+  The loader is a no-op on two consecutive runs. `selfcheck_flows.py` is **333
+  assertions**; `smoke_nodes.py` is **40 states**.
 
 - **2026-09-10** — **Tested as a job seeker: the candidate flow read her name off
   WhatsApp and then ended after nine questions.** The agency's words: *"bot didnt ask

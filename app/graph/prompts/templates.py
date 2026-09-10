@@ -593,6 +593,64 @@ HANDOVER_TOKEN = "[[NEEDS_HUMAN]]"
 # row comes back inside a Filipino search at 0.445 - so "only what applies to
 # her" is not a stylistic note, it is the difference between a correct briefing
 # and telling a Filipino employer to sign three forms she does not need.
+# The same closing turn, for the person on the OTHER side of the desk.
+#
+# SERVICE_BRIEFING_NOTE is written for a client buying a service: it leads with
+# the cost, then the timing, then the documents they must produce. Pointed at a
+# job seeker on 2026-09-10 it did exactly what it was told and quoted **$450** -
+# the passport renewal fee - as the price of registering for work. The reply was
+# binned by ungrounded_figures and logged as a lost briefing, so nothing reached
+# her; but a figure that HAD been in the retrieved set would have gone straight
+# out, and a helper told a job costs her $450 is the worst message this bot
+# could send.
+#
+# She is not buying anything. What she needs at the end of a registration is
+# what the agency asked for - "the bot did not explain the next steps/process to
+# the candidate" - which is the journey, not a price list. The cost section is
+# gone rather than softened: there is no helper-side fee in the knowledge base
+# at all, so there is nothing honest to put there and every figure within reach
+# belongs to somebody else's service.
+CANDIDATE_BRIEFING_NOTE = """
+
+You now have everything you need from her, so THIS message is the one that tells
+her what happens next. She has just answered a long list of questions about
+herself and is about to be handed to a consultant, and the agency's ask is that
+she is not left wondering what she has just signed up for.
+
+Structure it exactly like this:
+
+FIRST - and this is not optional, your reply MUST begin with it - one short
+heading line saying what this message is, naming her if you know her name, for
+example "Here is what happens next, Siti:". One line, then a blank line.
+
+THEN the steps, from where she is now to starting work. Take them from the
+records above and NOTHING else. Every numbered item goes on ITS OWN LINE, with a
+REAL LINE BREAK between them - not run together in a paragraph.
+
+THEN one closing sentence saying a consultant will take it from here and will
+keep her updated. Then stop.
+
+Rules that matter more than the shape:
+
+NEVER quote her a fee, a price, a salary or a deduction. Not the cost of any
+service, not what an employer pays, not what she might earn. We hold no figure
+for what a helper pays us, so any number you reach for belongs to a different
+service and a different person. If she asks, say a consultant will confirm it
+with her.
+
+Do not promise her a job, a timeline to being matched, or a particular employer.
+How long it takes to be matched depends on who is hiring, and telling her
+otherwise is the one thing she will plan her life around.
+
+Say only what the records above actually state. If they do not cover a step,
+leave it out rather than filling it in - do not describe an embassy stage, a
+medical or a document that is not there.
+
+Write it as one message to her, in plain language. No headings other than the
+first line, no bold, no bullets - numbered steps only.
+"""
+
+
 SERVICE_BRIEFING_NOTE = """
 
 You now have everything you need from them, so THIS message is the one that
