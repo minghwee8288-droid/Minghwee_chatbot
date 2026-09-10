@@ -414,10 +414,16 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         Field(
             "household",
             "household size",
-            "How many people live in your household - 1-2, 3-4, 5-6, or 7 or more?",
+            # No brackets, and no options for _field_guidance to read into the
+            # question. The agency, 2026-09-10: "do not ask for no. like 1-2,
+            # 3-4, 5-6 which is looking wierd so only how many family members
+            # are there". The brackets also capped the answer at the largest
+            # one - a household of seven was shown "5-6" as the top choice
+            # (2026-09-08, fixed then by naming all four, which is what they
+            # have now asked to remove). A plain question takes any number.
+            "How many people live in your household?",
             max_asks=2,
             group="their household",
-            options=("1-2", "3-4", "5-6", "7 or more"),
         ),
         Field(
             "home_type",
@@ -522,18 +528,18 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         Field(
             "helper_profile",
             "the age and experience they want",
-            "Any preference on her age or how much experience she should have?",
+            "Any preference on her age, or how much experience she should have?",
             max_asks=1,
             optional=True,
             group="their preferences",
-            options=(
-                "no preference",
-                "younger, 21-30",
-                "30-40",
-                "40 and above",
-                "at least 2 years experience",
-                "experienced with Singapore employers",
-            ),
+            # Options deliberately REMOVED, not reworded. _field_guidance drops
+            # a field's options into the question as examples, so these came out
+            # live as "how old would you prefer her to be, and should she have
+            # at least 2 years of experience or previous Singapore experience?"
+            # The agency, 2026-09-10: "dont now write these numbers 30-40 just
+            # normaly ask age and experiece in good manner". The written
+            # question already asks for both, and the brackets only narrowed the
+            # answer a client would otherwise give in their own words.
         ),
         # The agency's process asks for the preferred EXPERIENCE type, and
         # names four: first-timer, ex-Singapore, ex-abroad, transfer

@@ -929,11 +929,17 @@ def briefs_on_this_turn(service_type: str | None, asked: dict | None) -> bool:
 # selfcheck_flows.py can assert it greets AND forbids re-asking. See the note
 # at the call site for the live conversation that produced it.
 RECORD_NAME_NOTE = (
-    "\n\nWe already hold their name on their file with us: {name}. Greet them "
-    "by it, once, at the start of this message, and then ask your question - "
-    "they are not a stranger, and they must never be asked for a name we are "
-    "holding. Use it exactly as written here: do not correct its spelling, "
-    "expand it, shorten it or guess a fuller version."
+    "\n\nUse their name in THIS message: {name}. Open with a short greeting or "
+    "acknowledgement that CARRIES the name - \"Thanks, {name}\", \"Hi {name}\", "
+    "\"Good to meet you, {name}\" - and then ask your question.\n\n"
+    "NOT the bare name with a comma after it. \"{name}, how many people live in "
+    "your household?\" is a form calling out a row, not a person saying hello.\n\n"
+    "If they gave a full name, their first name on its own is the friendlier "
+    "address and the one a colleague would use. Never change the SPELLING of "
+    "what they wrote, never expand it, and never invent a fuller version.\n\n"
+    "This is the first message since we learned their name, and it is the one "
+    "place it belongs - do not go on using it in every later message. And never "
+    "ask for a name we are already holding."
 )
 
 
@@ -1438,15 +1444,36 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # The two notes above already open the message when they fire — one
     # welcomes them back by name, the other opens on the helper we can see — so
     # this is gated behind both. One opener, never two.
+    # Greet them by name on the FIRST turn we know it, however we learned it,
+    # and never again.
+    #
+    # Two live reports, 2026-09-09 and 2026-09-10, and they are the same defect
+    # from opposite ends. An EXISTING client got "Hi, I'm Claire ... Welcome
+    # back - may I know how many children you have", with the name on their file
+    # never used, and asked outright: "You didn't ask me for my name. What is
+    # the reason behind it?" A NEW client who had just typed their name got the
+    # next question with no greeting at all - "Vaidik Dubey" -> "How many people
+    # live in your household?".
+    #
+    # The agency's rule covers both: "if user is existing then it should greet
+    # by name at starting then move forward to our flow; if user is new then ask
+    # the user name, then in next message greet the user with our followup
+    # question."
+    #
+    # So it is no longer gated behind returning_note and recognised_note. This
+    # is NOT a competing opener - those two decide what the message opens WITH,
+    # and this decides that whatever it opens with carries the client's name.
+    # Gating it behind them is exactly what silenced it for every returning
+    # client, which is most of them.
+    #
+    # `previous` is what was collected before this turn, so the test is "the
+    # name became known on THIS turn" - true on the opening turn for a client
+    # whose name is on file, and true on the turn after a new client types it.
+    client_name = str(collected.get("full_name") or "").strip()
+    already_greeted = bool(str(previous.get("full_name") or "").strip())
     record_name_note = ""
-    if (
-        str(state.get("record_name") or "").strip()
-        and known.get("full_name")
-        and not recognised_note
-        and not returning_note
-        and not any(asked.values())
-    ):
-        record_name_note = RECORD_NAME_NOTE.format(name=known["full_name"])
+    if client_name and not already_greeted and client_name != UNANSWERED:
+        record_name_note = RECORD_NAME_NOTE.format(name=client_name)
 
     # A small-ticket service, on its opening turn: say what the job involves
     # before asking about it. Gated on nothing having been asked yet, so it

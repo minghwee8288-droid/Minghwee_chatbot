@@ -258,7 +258,9 @@ because the lead is opened early and the ticket is created much later.
 | A case is reachable three ways, not one | `contact.get_cases` | `leads.converted_case_id`, `employer_service_requests.converted_case_id`, then `cases.placement_id`. `cases` has no `employer_id` column at all, and `placement_id` is NOT NULL. |
 | A case is never excluded by its status | `contact.get_cases` | The old `status = 'active'` filter hid `completed`, `cancelled` and `on_hold` — and the client whose case is on hold is the likeliest of all of them to be chasing us. Statuses only ORDER the list now. |
 | A case number is context, never a line to read out | `system._known_cases_block` | The same rule as `RETURNING_NOTE`: referring to what is under way is warmth, reading their file back at them is not. |
-| A name we already hold is USED, not just filed | `info_collector.RECORD_NAME_NOTE` | Skipping the question is right; skipping the greeting too makes it look like the name was never handled. Fires only when `returning_note` and `recognised_note` do not — one opener, never two. |
+| A name we already hold is USED, not just filed | `info_collector.RECORD_NAME_NOTE` | Skipping the question is right; skipping the greeting too makes it look like the name was never handled. Fires on the FIRST turn the name is known, whichever way we learned it — off our records, or because they just typed it. NOT gated behind `returning_note`/`recognised_note`: those decide what the message opens WITH, this decides that it carries the name. |
+| A numbered list is never sent without a sentence saying what it is | `templates.PROCESS_INSTRUCTION` + `PROCESS_ADDENDUM` | The same rule the passport briefing got on 2026-09-09, now on both answering paths, so it holds for every service and for a parked topic. Both also close on a sentence rather than on step 8. |
+| A question never reads its own bracket options out | `household`, `helper_profile` (no `options`) | "1-2, 3-4, 5-6, or 7 or more" and "30-40, at least 2 years" were `_field_guidance` dropping the field's options in as examples. Removed, not reworded — a question with no options takes any answer. `languages` keeps its options, which ARE the answer. |
 | A broadcast is never a human agent | `message.is_auto_reply` (+ in-process count) + `webhook._undo_broadcast_standdowns` | The detector is retrospective, so the first copies of a NEW broadcast are indistinguishable from an agent. Two conversations in one run is now enough, and earlier stand-downs are reversed. |
 | A negative auto-reply verdict is never cached | `_AUTO_REPLY_VERDICTS` | Caching the first "no" on a fresh broadcast pinned it, so every later copy short-circuited to "no" and silenced the bot estate-wide. |
 | A mass announcement is caught on its FIRST copy | `message._BROADCAST_MARKERS` | "Dear Valued Customer" and its kin. `operating hours` is deliberately absent — an agent answering "what time do you open" says it. |
@@ -623,6 +625,54 @@ every ticket insert failed the foreign key, silently, ten times in twenty minute
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-10** — **Four things from the agency's new-hiring test, and the name one is
+  the same defect from both ends.** Their words: *"the flow runs good but with some
+  issues ... first thing they didnt ask user name at starting and then after taking the
+  name it didnt greet user by name so we want these thing also in every flow."*
+  (A) **The greeting was gated behind the two notes that fire most often.**
+  `RECORD_NAME_NOTE` was added on 2026-09-09 with `not returning_note and not
+  recognised_note`, reasoned as "one opener, never two". That silenced it for every
+  RETURNING client — which is most of them — so an existing client got *"Hi, I'm Claire
+  ... Welcome back — may I know how many children you have"* with the name on their file
+  never used, and asked outright: *"You didn't ask me for my name. What is the reason
+  behind it?"* The bot then had to explain *"We already have your name recorded as Project
+  Manager Growwstacks"*, which is the worst possible way for them to find that out. It is
+  **not** a competing opener: `returning_note` and `recognised_note` decide what the
+  message opens WITH, and this decides that whatever it opens with carries their name.
+  (B) **And the other end of it: a NEW client got no greeting at all.** *"Vaidik Dubey"*
+  → *"How many people live in your household?"*. The note only ever considered
+  `record_name`, so a name the client had just typed did not count. The test is now "the
+  name became known on THIS turn", which is true on the opening turn for a client whose
+  name is on file **and** on the turn after a new client types it — the agency's rule
+  covering both halves in one sentence: *"if user is existing then it should greet by name
+  at starting then move forward to our flow, if user is new then ask th user name then in
+  next message greet the user with our followup question."*
+  (C) **A bare name with a comma is not a greeting.** First attempt produced *"Vaidik
+  Dubey, how many people live in your household?"* — correct by the letter and a form
+  calling out a row by the sound of it. The note now requires the name inside a greeting
+  or acknowledgement (*"Thanks, Vaidik."*), says the first name alone is the friendlier
+  address when they gave a full one, and still forbids changing the SPELLING of what they
+  wrote. Live after: *"Hi Project Manager Growwstacks, welcome back..."* and *"Thanks,
+  Vaidik. How many people live in your household?"*
+  (D) **The bracket questions are gone.** *"do not ask for no. like 1-2, 3-4, 5-6 which is
+  looking wierd so only how many family members are there"*, and *"dont now write these
+  numbers 30-40 just normaly ask age and experiece in good manner"*. Both were
+  `_field_guidance` reading the field's own `options` into the question, so the fix is to
+  remove the OPTIONS, not to reword the question — a question with no options takes any
+  answer, including the household of seven that the brackets were added to accommodate on
+  2026-09-08. That earlier assertion is inverted rather than deleted, and named, because it
+  was right for its day. `languages` keeps its options: there they ARE the answer.
+  (E) **Every numbered list now says what it is first, on every service.** *"the bot is
+  directly listing the documents and process like 1 2 3 so on so it should firstly write
+  the heading in same message."* Exactly the 2026-09-09 briefing rule, applied to the two
+  general answering paths instead of one service — `PROCESS_INSTRUCTION` for an ordinary
+  answer and `PROCESS_ADDENDUM` for a question asked while a topic sits with an agent.
+  Both also **close on a sentence rather than on step 8**, which is the *"ending should be
+  satisfied for user"* half; the parked one is explicitly told that closing line does not
+  reopen the topic. Verified live on new hiring, work permit renewal, direct hire and the
+  parked path: lead-in present, list intact, closing sentence present.
+  `selfcheck_flows.py` is 252 assertions; `smoke_nodes.py` is 32 states.
 
 - **2026-09-09** — **"approximately weeks or months", and three checks that were wrong
   about a bot that was right.** Follow-up to the end-to-end run above.

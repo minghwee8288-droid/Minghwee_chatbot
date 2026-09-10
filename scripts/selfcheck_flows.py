@@ -235,7 +235,7 @@ rows = [
  ("a parked topic can still answer in steps",
   "numbered" in tpl.PROCESS_ADDENDUM.lower(), True),
  ("the addendum does not reopen the parked topic",
-  "leave that where it is" in tpl.PROCESS_ADDENDUM, True),
+  "leave the topic where it is" in tpl.PROCESS_ADDENDUM, True),
  # A determiner settles noun-vs-verb; the word after it does not. Testing the
  # verb first rejected "the full process for hiring a helper" - the most
  # natural phrasing of the very question the detector exists for.
@@ -360,9 +360,27 @@ rows = [
  # A household of seven was told the largest bracket was 5-6, because the
  # written question named none of its four options so the generic "drop two or
  # three in as examples" rule applied. Same defect as `languages`, same fix.
- ("the household question names all four brackets",
-  all(o in next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "household").question
-      for o in ("1-2", "3-4", "5-6", "7 or more")), True),
+ # INVERTED 2026-09-10, and the old assertion is left named here because it
+ # was right for its day: the brackets were added on 2026-09-08 so that a
+ # household of seven was not shown "5-6" as the largest choice. The agency has
+ # now asked for the brackets themselves to go - "do not ask for no. like 1-2,
+ # 3-4, 5-6 which is looking wierd so only how many family members are there" -
+ # which solves the same problem the other way round: a question with no
+ # options takes any number, including seven.
+ ("no bracket is read out as a question",
+  [f.key for f in t.SERVICE_FIELDS["new_hiring"]
+   if f.key in ("household", "helper_profile")
+   and any(ch.isdigit() for ch in f.question)], []),
+ ("...and there are no options left to leak into it either",
+  [f.key for f in t.SERVICE_FIELDS["new_hiring"]
+   if f.key in ("household", "helper_profile") and f.options], []),
+ ("the same in the transfer flow, which reuses the field",
+  [f.key for f in t.SERVICE_FIELDS["transfer_employer"]
+   if f.key in ("household", "helper_profile")
+   and (f.options or any(ch.isdigit() for ch in f.question))], []),
+ ("but a field whose options ARE the answer keeps them",
+  bool(next(f for f in t.SERVICE_FIELDS["new_hiring"]
+            if f.key == "languages").options), True),
  # "Bot doesn't ask for my name or addresses me if it knows."
  ("transfer_employer asks the client's name",
   t.SERVICE_FIELDS["transfer_employer"][0].key, "full_name"),
@@ -988,11 +1006,40 @@ rows = [
  ("and the WhatsApp push name is not evidence on these flows",
   sorted(t.NAME_FROM_RECORD_ONLY), ["home_leave", "passport_renewal", "renewal"]),
  ("a name we hold is greeted with, not just filed",
-  "Greet them by it" in ico.RECORD_NAME_NOTE, True),
+  "CARRIES the name" in ico.RECORD_NAME_NOTE, True),
  ("and it is still never re-asked",
-  "never be asked for a name we are holding" in ico.RECORD_NAME_NOTE, True),
+  "ask for a name we are already holding" in ico.RECORD_NAME_NOTE, True),
+ ("and the bare name with a comma is not a greeting",
+  "is a form calling out a row" in ico.RECORD_NAME_NOTE, True),
  ("nor tidied up on the client's behalf",
-  "do not correct its spelling" in ico.RECORD_NAME_NOTE, True),
+  "never change the spelling" in ico.RECORD_NAME_NOTE.lower(), True),
+ # 2026-09-10. It used to be gated behind returning_note and recognised_note,
+ # which silenced it for every RETURNING client - most of them - so an existing
+ # client got "Welcome back" with the name on their file never used, and asked
+ # why they had not been asked for it. It is not a competing opener: those two
+ # decide what the message opens WITH, this decides that it carries the name.
+ ("the greeting is not gated behind the other two notes",
+  "not returning_note" in _COLLECTOR_SRC and "not recognised_note" in _COLLECTOR_SRC,
+  False),
+ # And the other end of the same defect: a NEW client who had just typed their
+ # name got the next question with no greeting at all.
+ ("it fires on the turn the name becomes known, however we learned it",
+  "already_greeted" in _COLLECTOR_SRC and "not already_greeted" in _COLLECTOR_SRC, True),
+
+ # --- a numbered list always says what it is, 2026-09-10 --------------
+ # "the bot is directly listing the documents and process like 1 2 3 so on so
+ # it should firstly write the heading in same message." Already true of the
+ # passport briefing since 2026-09-09; this is the same rule on the two
+ # answering paths, so it holds for every service.
+ ("a process answer says what the list is before writing it",
+  "SAY WHAT THE LIST IS BEFORE YOU WRITE IT" in tpl.PROCESS_INSTRUCTION, True),
+ ("so does one given while a topic is parked",
+  "saying what the list is" in tpl.PROCESS_ADDENDUM, True),
+ ("and it closes on a sentence, not on step 8",
+  "CLOSE IT PROPERLY" in tpl.PROCESS_INSTRUCTION, True),
+ ("the parked path closes properly too, without reopening the topic",
+  ("End on a SENTENCE" in tpl.PROCESS_ADDENDUM
+   and "does NOT reopen the topic" in tpl.PROCESS_ADDENDUM), True),
 
  # --- Case ID resolution, 2026-09-09 ----------------------------------
  # The agency's hard constraint was that this layer is purely additive and
