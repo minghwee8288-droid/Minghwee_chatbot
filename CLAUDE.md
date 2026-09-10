@@ -274,6 +274,11 @@ because the lead is opened early and the ticket is created much later.
 | A value that restates the REQUEST does not answer a preference field | `info_collector._PREFERENCE_FIELDS` / `_states_a_preference` | `replacement_preferences` was filled with "replace her", so it was never asked and the ticket read "Wants in the replacement: replace her". Same shape as the 2026-09-07 care-type defect, one field along. |
 | Handing the choice back to us is not a preference | `info_collector._NO_PREFERENCE` | Anchored hard at `^`, so "whatever you want" matched and "you do whatever you want" did not. A short filler lead-in is now allowed; "want" is deliberately not in it. |
 | A LID is resolved to its phone number before ANY lookup keyed on the number | `webhook._resolve_lid` + `whapi.resolve_lid` | `GET /chats/<lid>` carries `phone`; `/contacts/<lid>` does not. Done in the webhook because parsing is sync and this is an HTTP call. Unresolvable ⇒ stand down, never a guess at whose number it is. |
+| A candidate's own name is never read off her WhatsApp profile | `ticket.NAME_FROM_RECORD_ONLY` + `selfcheck_flows.py` | The fifth arrival of the same complaint, and the derived rule could not catch it: that one sweeps `EMPLOYER_LEAD_SERVICES`, and a job seeker is not in it. `get_record_name` reads `employers`, so `record_name` is always empty for a helper and the question is always asked — which is right, because this name goes on a Work Permit application. A name she gave on an earlier enquiry still greets her, off `leads_candidate`. |
+| Every question the employer is asked ABOUT a helper has a counterpart she is asked about herself | `selfcheck_flows._MATCHED_PAIRS` + `ticket._matched_options` | Or the consultant matches the two tickets by eye. The employer was asked 25 questions about the helper they want; she was asked 9 about herself, six of them identity and logistics. Nine of the eleven pairings had no candidate half at all. |
+| ...and both halves of a pairing offer the SAME words | `ticket._matched_options` | Taken from the employer's `Field`, never retyped, for the reason `_hiring_field` exists (§9.8). `preferred_nationality` is the one pair that deliberately cannot share a list — an employer picks from the three we place, a helper states the country she is from. |
+| A candidate key never reuses a portable employer key | `selfcheck_flows.py` | `languages` and `budget` are in `_PORTABLE_ACROSS_SERVICES`, so reusing them would carry an employer's "Mandarin spoken at home" into a helper's file as a language SHE speaks. The direct-hire flow avoided the same trap with its `helper_` prefix, from the other side. |
+| No bracket is read out on ANY service, not just the seven | `selfcheck_flows._reads_a_bracket` | The sweep was written over the agency's seven employer services, so a candidate flow was outside it entirely — the same "written for the set that was reported" shape the row itself was created to fix. |
 | A service the KB has never been labelled with searches under the label it HAS | `rag_retriever._RETRIEVAL_ALIASES` | `transfer_employer` is not a `service_type` any row uses, so the filter narrowed it to `general` forever. Retrieval only — the ticket, the lead, the field list and the **blocked-topic key** all still see `transfer_employer`, which is what keeps a new transfer off a parked hiring topic. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -746,6 +751,90 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-10** — **Tested as a job seeker: the candidate flow read her name off
+  WhatsApp and then ended after nine questions.** The agency's words: *"bot didnt ask
+  the name at first like all services then it should greet after taking name with
+  followup question as flow has also it didnt ask for the age and any other question
+  that are needed it end the conversation by taking few details"*.
+  (A) **The name half is the same defect for the fifth time, and the rule written on
+  2026-09-10 to stop it could not see this flow.** That rule is derived from
+  `EMPLOYER_LEAD_SERVICES` — correctly, for what it covers — and a job seeker is not in
+  that set, so the sweep passed while the flow opened *"Hi Vaidik Dubey, I'm Claire ...
+  Which country are you from?"* with no name question at all. Filed under
+  `NAME_FROM_RECORD_ONLY`, which behaves differently here on purpose:
+  `get_record_name()` reads `employers` and a helper has no employer record, so
+  `record_name` is **always** empty and the question is **always** asked. That is the
+  right outcome — this is the name that goes on a Work Permit application, and a
+  WhatsApp display label is not it. A helper who gave us her name on an earlier
+  enquiry is still greeted rather than asked: that comes off `leads_candidate.full_name`
+  in `_known_fields`, which runs before the push name is ever considered. The rule is
+  now asserted from **both** sides — `CANDIDATE_LEAD_SERVICES` as well.
+  (B) **The missing questions were an asymmetry, and it is measurable.** The EMPLOYER is
+  asked 25 questions about the helper they want — her age and experience, the languages
+  spoken at home, whether she would have her own room, whether she can handle pork or
+  beef, which extra duties are needed, how rest days would work, what they would pay.
+  The HELPER registering was asked **9**, six of them identity and logistics. So a
+  consultant holding a hiring ticket that reads *"no pork, sharing with a child, weekly
+  day off, around $600, window cleaning needed"* had, on her side of the desk, her
+  country, her work scope and her years — and had to ring her back for the rest. This is
+  the 2026-09-04 exercise (*"the employer flow now asks what the candidate form
+  profiles"*) run in the one direction it was never run in. **9 fields → 18**, 17
+  questions asked in practice, and the eight that identify and place her stay first so a
+  helper who stops answering has still told us the things that matter most.
+  (C) **Asserted as a RULE, not as the list of fields that were missing.**
+  `_MATCHED_PAIRS` maps each employer question about a helper to the one she is asked
+  about herself, and the self-check fails when one side gains a question and the other
+  does not. The option lists are taken FROM the employer's `Field` rather than retyped
+  (`_matched_options`), for the reason `_hiring_field` exists: *"eldercare"* against
+  *"caring for the elderly"*, or *"$600-700"* against *"600 to 700 dollars"*, is a match
+  made by eye — which is what the note on `work_scope` has said since that field was
+  written. **`preferred_nationality` is the one pair that deliberately cannot share a
+  list**, and it is named rather than skipped: an employer picks from the three
+  nationalities we place plus "no preference"; a helper states the country she is
+  actually from, and constraining her to those three would turn a Sri Lankan applicant
+  away at the first question.
+  (D) **Every new key is new on purpose.** `languages` and `budget` are in
+  `_PORTABLE_ACROSS_SERVICES`, so reusing them would carry an employer's *"Mandarin
+  spoken at home"* into a helper's file as a language **she** speaks — the same trap the
+  direct-hire flow avoided with its `helper_` prefix, from the other side. Her notes are
+  `candidate_notes` and not `additional_notes` for a related reason: `_WHY_WE_ASK` is
+  keyed on the field key with no idea which flow is asking, and that entry reads *"so
+  anything that matters to them is agreed with THE HELPER up front"* — said to the
+  helper herself, a sentence about somebody else. Both are asserted.
+  (E) **Deliberately NOT asked, each for its own reason.** Her health and any illness:
+  `biodata.health` holds it and the MOM medical examination is what establishes it, so a
+  self-report over WhatsApp is neither reliable nor ours to collect. Her passport number:
+  Rule 4a, the same reason `passportNo` is never read out of biodata even though it sits
+  beside the expiry we do read. Marital status and children: on the form, but the
+  employer flow asks no question they would be matched against, so they fail the rule in
+  (C) — the office takes them on the registration form.
+  (F) **The bracket sweep was widened from the seven services to every service there
+  is**, because the seven ARE the agency's employer-facing list and a candidate flow was
+  outside it — the same "written for the set that was reported" shape that row was
+  created to fix, one level up. Measured before widening: only `expected_salary` is new,
+  and it earns its digits for exactly the reasons `budget` does (the bands are salary
+  bands, and they are the grounding `ungrounded_figures` reads), so it is named in
+  `_DIGITS_ON_PURPOSE` rather than quietly allowed.
+  (G) **Two of the new assertions were wrong about correct code, and the run caught
+  them** — the nationality pair above, and one requiring every matching question to be
+  optional when her country, her scope and her age are deliberately not. Both are now
+  stated as decisions with their reason, which is the 2026-09-09 (C) lesson: a check that
+  fails on correct code is noise, and noise is how a real failure gets ignored.
+  (H) **Verified live against the real model, both halves and both directions.** A new
+  number gets *"Hi, I'm Claire, Ming Hwee's AI assistant. May I know your name so we can
+  match you with the right employers?"* and, on the very next message, *"Thanks, Siti.
+  Which country are you from?"* — the agency's own two-part rule. A helper already on
+  file is greeted rather than asked (*"Hi Siti Rahayu, I'm Claire ... May I know your
+  age..."*). The matching half runs (*"which languages do you speak, and how well?"*),
+  and the ticket a consultant receives now reads **Age / Languages she speaks / Cooking
+  she can do / Extra duties she will do / Comfortable with pets / Room / Rest days she
+  wants / Salary she is looking for** beside the employer's own headings.
+  The five new assertions were proved by injecting five faults — the flow dropped from
+  the name set, the age question removed, an option list retyped instead of derived, her
+  notes filed under the employer key, and the salary bands renamed past their allowance
+  — and each went red naming the problem.
+  `selfcheck_flows.py` is **311 assertions**; `smoke_nodes.py` is **39 states**.
 
 - **2026-09-10** — **"the bot is not telling the process" on home leave — and the
   process was in the knowledge base all along.** The agency asked me to check whether it

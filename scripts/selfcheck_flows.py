@@ -39,9 +39,38 @@ SEVEN_SERVICES = ("new_hiring", "direct_hiring", "transfer_employer", "renewal",
 #                     removing them silently reintroduces that defect
 #   home_type       - "HDB 4-5 room" is what the flat is called, not a bracket
 #   start_timeline  - a timeframe is not a count
-_DIGITS_ON_PURPOSE = {"budget", "home_type", "start_timeline"}
+#   expected_salary - the candidate half of `budget`, and it carries the SAME
+#                     bands for the same two reasons (2026-09-10)
+_DIGITS_ON_PURPOSE = {"budget", "home_type", "start_timeline", "expected_salary"}
 _BRACKET = re.compile(r"\d+\s*(?:-|to|\u2013)\s*\d+|\bat least \d+|"
                       r"\b\d+\s*(?:and\s+)?(?:above|or more)")
+
+
+# The two halves of the matching form. The EMPLOYER is asked the left-hand
+# question about the helper they want; the HELPER is asked the right-hand one
+# about herself. A consultant shortlisting reads both tickets side by side.
+#
+# Written here rather than in ticket.py because it is an assertion about two
+# independently maintained field lists: the point is to fail when one side
+# gains a question and the other does not.
+_MATCHED_PAIRS = {
+    "requirement": "work_scope",
+    "preferred_nationality": "nationality",
+    "helper_profile": "age",
+    "languages": "languages_spoken",
+    "cooking": "cooking_ability",
+    "special_duties": "duties_willing",
+    "pets": "pet_comfort",
+    "helper_room": "room_sharing",
+    "rest_day": "rest_day_preference",
+    "budget": "expected_salary",
+    "additional_notes": "candidate_notes",
+}
+
+
+def _options_of(service: str, key: str) -> tuple:
+    field = next((f for f in t.SERVICE_FIELDS[service] if f.key == key), None)
+    return tuple(field.options or ()) if field else ()
 
 
 def _reads_a_bracket(field) -> bool:
@@ -416,8 +445,13 @@ rows = [
  # ...and the same rule over the seven services as a SET, so a NEW field with
  # bracket options cannot land on a flow nobody thought to re-check. Three keys
  # are allowed through by name and the comment above says why each one earns it.
- ("no field on any of the seven reads a bracket out",
-  sorted({f.key for svc in SEVEN_SERVICES for f in t.SERVICE_FIELDS.get(svc, [])
+ # Widened on 2026-09-10 from the seven to EVERY service there is. The seven
+ # are the agency's employer-facing list, so a candidate flow was outside the
+ # sweep entirely - the same "written for the set that was reported" shape this
+ # row was created to fix, one level up. Measured before widening: only
+ # expected_salary is new, and it is named above.
+ ("no field on any service reads a bracket out",
+  sorted({f.key for fs in t.SERVICE_FIELDS.values() for f in fs
           if f.key not in _DIGITS_ON_PURPOSE and _reads_a_bracket(f)}), []),
  ("and the three that carry digits still do so deliberately",
   sorted({f.key for svc in SEVEN_SERVICES for f in t.SERVICE_FIELDS.get(svc, [])
@@ -1231,6 +1265,95 @@ rows = [
  ("new_hiring is deliberately not in the set",
   "new_hiring" in t.NAME_FROM_RECORD_ONLY, False),
 
+ # --- the candidate half of the matching form, 2026-09-10 -------------
+ # Tested as a job seeker: "bot didnt ask the name at first like all services
+ # then it should greet after taking name ... also it didnt ask for the age
+ # and any other question that are needed it end the conversation by taking
+ # few details".
+ #
+ # The name half is the SAME defect as the four employer complaints, and the
+ # derived rule above could not catch it because it sweeps
+ # EMPLOYER_LEAD_SERVICES - a candidate flow is not in that set. So the rule
+ # is stated from the other side too: a lead-producing intake never puts a
+ # WhatsApp profile label on the record it is opening.
+ ("a candidate is asked her name rather than read off WhatsApp",
+  sorted(svc for svc in _lead.CANDIDATE_LEAD_SERVICES
+         if svc not in t.NAME_FROM_RECORD_ONLY), []),
+ ("and it is still the first thing asked",
+  [f.key for f in t.SERVICE_FIELDS["candidate_new_hiring"]][:1], ["full_name"]),
+ # The complaint named age outright. It is a `candidates` column and the
+ # employer is asked an age preference on every hiring enquiry.
+ ("and her age is asked",
+  "age" in [f.key for f in t.SERVICE_FIELDS["candidate_new_hiring"]], True),
+
+ # THE RULE, not a list of the fields that were missing: every question the
+ # employer is asked ABOUT a helper has a counterpart the helper is asked
+ # about herself, or a consultant holding both tickets matches them by eye.
+ # Nine of these eleven had no counterpart at all before 2026-09-10, which is
+ # why a nine-question registration reached the desk saying her country, her
+ # work scope and her years.
+ ("every employer question about a helper has a candidate counterpart",
+  sorted(emp for emp, cand in _MATCHED_PAIRS.items()
+         if cand not in {f.key for f in t.SERVICE_FIELDS["candidate_new_hiring"]}),
+  []),
+ # ...and both halves offer the SAME words. "eldercare" against "caring for
+ # the elderly", or "$600-700" against "600 to 700 dollars", is a match made
+ # by eye - which is what the note on work_scope has said since it was
+ # written. Taken from the employer Field rather than retyped, so this cannot
+ # drift the way a copied constant does (section 9.8).
+ # `preferred_nationality` is the one pairing whose two halves CANNOT share an
+ # option list, and it is named rather than quietly skipped. The employer picks
+ # from the three nationalities we place plus "no preference"; a helper states
+ # the country she is actually from, and constraining her to those three would
+ # turn a Sri Lankan or Cambodian applicant away at the first question - while
+ # "no preference" is not a thing anyone can be.
+ ("and both halves of a pairing offer the same options",
+  sorted(emp for emp, cand in _MATCHED_PAIRS.items()
+         if emp != "preferred_nationality" and _options_of("new_hiring", emp)
+         and _options_of("candidate_new_hiring", cand) != _options_of("new_hiring", emp)),
+  []),
+ ("except the nationality pair, which deliberately does not",
+  bool(_options_of("candidate_new_hiring", "nationality")), False),
+ # The keys are deliberately NEW rather than the employer's own. `languages`
+ # and `budget` are portable across services, so reusing them would carry an
+ # employer's "Mandarin spoken at home" into a helper's file as a language she
+ # speaks - the direct-hire flow avoided the same trap with its helper_ prefix.
+ ("no candidate key collides with a portable employer key",
+  sorted({f.key for f in t.SERVICE_FIELDS["candidate_new_hiring"]}
+         & (ico._PORTABLE_ACROSS_SERVICES - {"full_name", "email",
+                                             "contact_number", "nationality"})),
+  []),
+ # _WHY_WE_ASK is keyed on the field key with no idea which flow is asking,
+ # and every reason in it is written from the employer's side ("so anything
+ # that matters to them is agreed with THE HELPER up front"). Said to the
+ # helper herself that is a sentence about somebody else, which is why
+ # candidate_notes is its own key and not `additional_notes`.
+ ("no candidate field inherits a reason written for an employer",
+  sorted({f.key for f in t.SERVICE_FIELDS["candidate_new_hiring"]}
+         & set(ico._WHY_WE_ASK)), []),
+ # How to reach her closes the collection rather than interrupting it - the
+ # order every other flow uses, and it was the last thing asked before the
+ # handover in the agency's own transcript.
+ ("staying in touch is still asked last",
+  [f.key for f in t.SERVICE_FIELDS["candidate_new_hiring"]][-2:],
+  ["update_channel", "email"]),
+ # A job seeker has less patience than an employer (the note on `transfer`
+ # says so), so the matching half is optional throughout: asked once each,
+ # and a collection completes without them.
+ ("the matching questions are asked once and are optional",
+  sorted(f.key for f in t.SERVICE_FIELDS["candidate_new_hiring"]
+         if f.key in set(_MATCHED_PAIRS.values())
+         - {"work_scope", "nationality", "age"}
+         and not (f.optional and f.max_asks == 1)), []),
+ # Three of the pairings are NOT optional, and that is the decision rather
+ # than an oversight: her country, what she can take on and her age are what a
+ # consultant filters on before reading anything else, and age is the one the
+ # agency named outright.
+ ("but her country, her scope and her age are asked properly",
+  sorted(f.key for f in t.SERVICE_FIELDS["candidate_new_hiring"]
+         if f.key in ("nationality", "work_scope", "age") and not f.optional),
+  ["age", "nationality", "work_scope"]),
+
  # --- the parked-topic net, 2026-09-10 ---------------------------------
  # Live on a parked home leave: "Ok but tell what is the further process"
  # got the holding line while "And what are the documents needed" one
@@ -1364,8 +1487,8 @@ rows = [
  # has already caught one field-set change it was meant to (2026-09-10).
  ("and the WhatsApp push name is not evidence on these flows",
   sorted(t.NAME_FROM_RECORD_ONLY),
-  ["direct_hiring", "home_leave", "insurance", "passport_renewal",
-   "renewal", "replacement", "transfer_employer"]),
+  ["candidate_new_hiring", "direct_hiring", "home_leave", "insurance",
+   "passport_renewal", "renewal", "replacement", "transfer_employer"]),
  ("a name we hold is greeted with, not just filed",
   "CARRIES the name" in ico.RECORD_NAME_NOTE, True),
  ("and it is still never re-asked",

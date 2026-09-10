@@ -709,8 +709,19 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     # §3 — candidate lead flow. Separate from new_hiring: a job seeker is never
     # asked an employer's questions. Same identity-first ordering.
     "candidate_new_hiring": [
-        Field("full_name", "name", "May I know your name?"),
-        Field("nationality", "nationality", "Which country are you from?"),
+        Field("full_name", "name", "May I know your name?", group="who she is"),
+        Field(
+            "nationality",
+            "nationality",
+            "Which country are you from?",
+            group="who she is",
+        ),
+        # Asked outright on 2026-09-10, and it is the first thing on the
+        # candidates table: `age` is a column, and the EMPLOYER is asked for an
+        # age preference (`helper_profile`) on every hiring enquiry. Without it
+        # a consultant holding "someone in her thirties" on one side has
+        # nothing to match on the other.
+        Field("age", "age", "May I know your age?", max_asks=2, group="who she is"),
         # The categories here are deliberately WORD FOR WORD the ones the
         # employer's `requirement` field offers. A consultant matching this
         # helper to a family reads both sides of the same pairing, so if one
@@ -755,10 +766,17 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             "where they are now",
             "Are you currently in Singapore or still overseas?",
             max_asks=2,
+            group="where she is and when she can start",
         ),
-        Field("availability", "availability", "When would you be able to start?", max_asks=2),
-        _UPDATE_CHANNEL,
-        _EMAIL,
+        Field(
+            "availability",
+            "availability",
+            "When would you be able to start?",
+            max_asks=2,
+            group="where she is and when she can start",
+        ),
+        # _UPDATE_CHANNEL and _EMAIL are appended with the matching questions
+        # below, so "how should we reach you" stays the LAST thing asked.
     ],
     # §6 — direct hire. Was an EMPTY LIST, which is not the same as "no
     # questions": the intent routed to the collector, the collector found
@@ -1454,6 +1472,155 @@ SERVICE_FIELDS[TRANSFER_EMPLOYER] += [
 ]
 
 
+def _matched_options(key: str) -> tuple[str, ...]:
+    """The option list the EMPLOYER's half of this pairing offers, verbatim.
+
+    A consultant shortlisting reads both sides of the same pairing: the
+    employer's ticket says what the household needs, the helper's says what she
+    can take on. If one side said "eldercare" and the other "caring for the
+    elderly", or one offered "$600-700" and the other "600 to 700 dollars", the
+    match has to be made by eye - which is exactly what the note on `work_scope`
+    has said since that field was written.
+
+    Taken from the Field rather than retyped, for the reason `_hiring_field`
+    exists: a duplicated constant that then diverges is a live problem here
+    (§9.8), and the agency has already had `languages` and `household`
+    reworded once each.
+    """
+    return next(f for f in SERVICE_FIELDS["new_hiring"] if f.key == key).options
+
+
+# The candidate half of the matching form. Agency, 2026-09-10, after testing
+# the flow as a job seeker: "it didnt ask for the age and any other question
+# that are needed it end the conversation by taking few details".
+#
+# The asymmetry was measurable and it was the whole defect. The EMPLOYER is
+# asked 25 questions about the helper they want - her age and experience, the
+# languages spoken at home, whether she would have her own room, whether she
+# can handle pork or beef, which extra duties are needed, how rest days would
+# work, what they would pay. The HELPER registering was asked 9, six of which
+# are identity and logistics. So a consultant with a hiring ticket reading
+# "no pork, sharing with a child, weekly day off, around $600, window cleaning
+# needed" had, on her side of the desk, her country, her work scope and her
+# years - and had to ring her back to ask the rest. That is the 2026-09-04
+# exercise ("the employer flow now asks what the candidate form profiles") run
+# in the one direction it was never run in.
+#
+# THE RULE, and it is asserted rather than left to judgement: every question
+# the employer is asked ABOUT a helper has a counterpart here, or the match is
+# made by eye. What is deliberately NOT here is everything that belongs to the
+# employer's own household - household size, home type, home size, how they
+# found us, when they want someone to start. She is not being qualified as a
+# client.
+#
+# Also deliberately absent, and each for its own reason:
+#   * Her health and any illness. `biodata.health` holds it, and the MOM
+#     medical examination is what establishes it. A self-report over WhatsApp
+#     is neither reliable nor ours to collect.
+#   * Her passport number. Rule 4a - the same reason `passportNo` is never read
+#     out of biodata even though it sits right beside the expiry we do read.
+#   * Marital status and children. On the form, but the employer flow asks no
+#     question it would be matched against, so it fails the rule above. The
+#     office takes it on the registration form.
+#
+# The keys are all NEW rather than the employer's own, and that is not
+# cosmetic: `languages` and `budget` are in _PORTABLE_ACROSS_SERVICES, so
+# reusing them would carry an employer's "Mandarin spoken at home" into a
+# helper's file as a language SHE speaks. Same trap the direct-hire flow
+# avoided with its `helper_` prefix, from the other side.
+SERVICE_FIELDS[CANDIDATE_HIRING] += [
+    # --- what she can do ---
+    Field(
+        "languages_spoken",
+        "the languages she speaks",
+        "Which languages do you speak, and how well? You can name more than "
+        "one - English, Mandarin, Malay, Hokkien, Teochew, Cantonese, Tamil, "
+        "or anything else.",
+        max_asks=1,
+        optional=True,
+        group="what else she can do",
+        options=_matched_options("languages"),
+    ),
+    Field(
+        "cooking_ability",
+        "the cooking she can do",
+        "What kind of cooking are you able to do, and are you able to handle "
+        "pork or beef?",
+        max_asks=1,
+        optional=True,
+        group="what else she can do",
+        options=_matched_options("cooking"),
+    ),
+    Field(
+        "duties_willing",
+        "the extra duties she is willing to take on",
+        "Beyond the usual cleaning and cooking, which of these are you willing "
+        "to do - high-rise window cleaning, car washing, gardening, grocery "
+        "marketing, or hand-washing laundry?",
+        max_asks=1,
+        optional=True,
+        group="what else she can do",
+        options=_matched_options("special_duties"),
+    ),
+    Field(
+        "pet_comfort",
+        "whether she is comfortable around pets",
+        "Are you comfortable working in a home with pets?",
+        max_asks=1,
+        optional=True,
+        group="what else she can do",
+        options=_matched_options("pets"),
+    ),
+    # --- what she is looking for ---
+    Field(
+        "room_sharing",
+        "whether she would share a room",
+        "Would you need your own room, or would you be willing to share?",
+        max_asks=1,
+        optional=True,
+        group="what she is looking for",
+        options=_matched_options("helper_room"),
+    ),
+    Field(
+        "rest_day_preference",
+        "how she would like rest days handled",
+        "How would you like your rest days to work?",
+        max_asks=1,
+        optional=True,
+        group="what she is looking for",
+        options=_matched_options("rest_day"),
+    ),
+    Field(
+        "expected_salary",
+        "the salary she is looking for",
+        "Do you have a monthly salary in mind?",
+        max_asks=1,
+        optional=True,
+        group="what she is looking for",
+        options=_matched_options("budget"),
+    ),
+    # --- anything else ---
+    #
+    # A NEW key rather than the employer's `additional_notes`, and the reason is
+    # _WHY_WE_ASK: it is keyed on the field key alone with no idea which flow is
+    # asking, and that entry reads "so anything that matters to them is agreed
+    # with THE HELPER up front". Said to the helper herself that is a sentence
+    # about somebody else.
+    Field(
+        "candidate_notes",
+        "anything else she wants noted",
+        "Anything else you would like me to note down before I pass this on?",
+        max_asks=1,
+        optional=True,
+        group="anything else",
+    ),
+    # Last, so "how should we reach you" closes the collection rather than
+    # interrupting it - the same order every other flow uses.
+    _UPDATE_CHANNEL,
+    _EMAIL,
+]
+
+
 # The nationalities a service actually has a PRICE for. Where a helper's
 # nationality is not listed, no fee has ever been given to us and none may be
 # quoted for her.
@@ -1527,6 +1694,21 @@ NAME_FROM_RECORD_ONLY = frozenset(
         "direct_hiring",
         "insurance",
         "transfer_employer",
+        # The CANDIDATE flow, added 2026-09-10 when the agency tested it as a
+        # job seeker: "bot didnt ask the name at first like all services then
+        # it should greet after taking name". Live, it opened "Hi Vaidik Dubey,
+        # I'm Claire ... Which country are you from?" - the WhatsApp push name
+        # used as her own, and no name question at all.
+        #
+        # It behaves differently from the seven above and that is the point.
+        # get_record_name() reads `employers`, and a helper has no employer
+        # record, so record_name is ALWAYS empty here and the question is
+        # always asked - which is the right outcome, because this name goes on
+        # a Work Permit application. A helper who gave us her name on an
+        # earlier enquiry is still greeted rather than asked: that comes off
+        # leads_candidate.full_name in _known_fields, which runs before the
+        # push name is ever considered.
+        CANDIDATE_HIRING,
     }
 )
 
@@ -1892,6 +2074,21 @@ _DETAIL_LABELS = {
     "passport_expiry": "Passport expires",
     "leave_dates": "Travel dates",
     "employer_consent": "Employer consent",
+    # The candidate's own half of the matching form. Every heading says whose
+    # answer it is, because a consultant reads this ticket beside an employer's
+    # and the two hold the opposite side of the same question - "Languages at
+    # home" against "Languages she speaks", "Her room" against "Room".
+    "age": "Age",
+    "work_scope": "Work she can take on",
+    "experience_field": "Worked in before",
+    "languages_spoken": "Languages she speaks",
+    "cooking_ability": "Cooking she can do",
+    "duties_willing": "Extra duties she will do",
+    "pet_comfort": "Comfortable with pets",
+    "room_sharing": "Room",
+    "rest_day_preference": "Rest days she wants",
+    "expected_salary": "Salary she is looking for",
+    "candidate_notes": "Also mentioned",
     # Direct hire — every one of these is about the helper the employer has
     # already chosen, so the headings say so. Without them the ticket falls
     # back to the Field.label, which is written to sit inside a spoken

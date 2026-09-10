@@ -165,6 +165,46 @@ CASES = [
       "incoming_text": "i want to renew my helper passport",
       "customer_name": "Vaidik", "record_name": "",
       "collected_info": {}, "asked_field_counts": {}}),
+    # The CANDIDATE flow, 2026-09-10. Live it opened "Hi Vaidik Dubey, I'm
+    # Claire ... Which country are you from?" - the push name used as her own
+    # and no name question at all. A helper has no employer record, so
+    # record_name is always empty here: the question must always be asked, and
+    # the push name must not reach the prompt.
+    ("info_collector", "candidate, new number, push name only",
+     {"service_type": "candidate_new_hiring", "intent": "candidate_registration",
+      "contact_type": "candidate",
+      "incoming_text": "hi i want job",
+      "customer_name": "Vaidik Dubey", "record_name": "",
+      "collected_info": {}, "asked_field_counts": {}}),
+    # ...and the turn after she types it, which is the half the agency asked
+    # for in the same sentence: "then it should greet after taking name with
+    # followup question".
+    ("info_collector", "candidate, greets on the name she just gave",
+     {"service_type": "candidate_new_hiring", "intent": "candidate_registration",
+      "contact_type": "candidate",
+      "incoming_text": "Siti",
+      "customer_name": "Vaidik Dubey", "record_name": "",
+      "collected_info": {"full_name": "Siti"},
+      "asked_field_counts": {"full_name": 1},
+      "history_text": "You: May I know your name?"}),
+    # Deep into the matching half - the questions that did not exist before
+    # 2026-09-10, so the ticket reached a consultant with her country, her
+    # scope and her years and nothing to match an employer's ticket against.
+    ("info_collector", "candidate, the matching questions",
+     {"service_type": "candidate_new_hiring", "intent": "candidate_registration",
+      "contact_type": "candidate",
+      "incoming_text": "from next month",
+      "collected_info": {"full_name": "Siti", "nationality": "Indonesia",
+                         "age": "32", "work_scope": "childcare and eldercare",
+                         "experience": "3 years childcare, 2 years eldercare",
+                         "experience_field": "childcare and eldercare",
+                         "current_location": "overseas",
+                         "availability": "next month"},
+      "asked_field_counts": {"full_name": 1, "nationality": 1, "age": 1,
+                             "work_scope": 1, "experience": 1,
+                             "experience_field": 1, "current_location": 1,
+                             "availability": 1},
+      "history_text": "You: When would you be able to start?"}),
     ("info_collector", "passport, name on our file",
      {"service_type": "passport_renewal", "intent": "passport_renewal",
       "incoming_text": "i want to renew my helper passport",
