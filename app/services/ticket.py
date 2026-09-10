@@ -871,11 +871,14 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     "replacement": [
         # Added 2026-09-09 alongside `renewal`, from the same complaint. Not
         # asked here either, so rule 1c had nothing to greet them with and the
-        # lead carried a phone number and a helper's name. Left OUT of
-        # NAME_FROM_RECORD_ONLY deliberately: nobody has objected to the push
-        # name on these two, and filling it from the profile is itself the
-        # 2026-09-01 fix - this only gives the flow a question to fall back on
-        # when there is no usable push name, so the lead carries a name.
+        # lead carried a phone number and a helper's name.
+        #
+        # It was left OUT of NAME_FROM_RECORD_ONLY that day, on the grounds
+        # that "nobody has objected to the push name on these two". On
+        # 2026-09-10 they objected: the flow opened "Hi Vaidik Dubey ... may I
+        # know your current helper's name?" on a number with no employer
+        # record at all, so that name came straight off the WhatsApp profile.
+        # It is in the set now.
         Field(
             "full_name",
             "name",
@@ -1497,7 +1500,19 @@ def fee_is_known_for(service_type: str | None, nationality_code: str | None) -> 
 # Scoped rather than global on purpose - the opposite behaviour was itself a
 # fix (2026-09-01, "stop asking for a name it just used in its greeting"), and
 # they asked for this flow.
-NAME_FROM_RECORD_ONLY = frozenset({"passport_renewal", "renewal", "home_leave"})
+# `replacement` joined on 2026-09-10, when the agency tested it and asked for
+# the same thing in the same words: "ask name of user before asking helper
+# name and then greet by name and then with followup question of helper name
+# like other flows". Read from the live row rather than assumed -
+# conversation 3766, matched_employer_id NULL, so there was no record name at
+# all, and "Hi Vaidik Dubey, I'm Claire ... may I know your current helper's
+# name?" was the WhatsApp push name used as the client's own, exactly as on
+# passport renewal. A replacement puts the client's name on the Replacement
+# form, the Replacement Services and Fees form and the Employer Particulars
+# form, which is the same reason the other three are here.
+NAME_FROM_RECORD_ONLY = frozenset(
+    {"passport_renewal", "renewal", "home_leave", "replacement"}
+)
 
 
 # A service that explains itself once, mid-collection, as soon as the one field

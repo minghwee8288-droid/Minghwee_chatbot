@@ -1202,6 +1202,29 @@ rows = [
  ("but naming something still is",
   [t for t in ("i want any Filipino helper", "a Filipino who cooks")
    if ico._NO_PREFERENCE.match(t)], []),
+
+ # The agency, twice in three days and in almost the same words: ask for the
+ # name when our records do not have it, greet them when they do. Live on
+ # 2026-09-10 the replacement flow opened "Hi Vaidik Dubey ... may I know
+ # your current helper's name?" on conversation 3766, whose
+ # matched_employer_id is NULL - so that was the WhatsApp push name being
+ # used as the client's own, which is the 2026-09-08 passport-renewal
+ # complaint exactly.
+ ("a replacement asks the client's name rather than reading it off WhatsApp",
+  "replacement" in t.NAME_FROM_RECORD_ONLY, True),
+ ("and every flow in that set asks the name FIRST",
+  [svc for svc in t.NAME_FROM_RECORD_ONLY
+   if [f.key for f in t.SERVICE_FIELDS[svc]][:1] != ["full_name"]], []),
+ # Recorded rather than fixed, because the agency has asked about the flows
+ # they tested and these three were not among them. All three ask for a
+ # HELPER's name while taking the client's own off the WhatsApp profile,
+ # which is the shape that has now been objected to twice. If a fourth
+ # complaint arrives, this is the list.
+ ("the flows still taking the client's name from WhatsApp are known",
+  sorted(svc for svc in _lead.EMPLOYER_LEAD_SERVICES
+         if any(f.key == "helper_name" for f in t.SERVICE_FIELDS.get(svc, []))
+         and svc not in t.NAME_FROM_RECORD_ONLY),
+  ["direct_hiring", "insurance", "transfer_employer"]),
  # --- home leave, 2026-09-08 ------------------------------------------
  # The nationality decides the documents, the lead time AND the price - PH
  # needs her ORIGINAL passport plus a ticket itinerary, 4 weeks, $400; ID
@@ -1286,8 +1309,10 @@ rows = [
                     "passport_renewal").get("full_name"), "tunaktun"),
  ("a number with nothing on file still gets the question",
   "full_name" in ico._known_fields({"record_name": ""}, "passport_renewal"), False),
+ # `replacement` joined 2026-09-10 - same complaint, same words, a third time.
  ("and the WhatsApp push name is not evidence on these flows",
-  sorted(t.NAME_FROM_RECORD_ONLY), ["home_leave", "passport_renewal", "renewal"]),
+  sorted(t.NAME_FROM_RECORD_ONLY),
+  ["home_leave", "passport_renewal", "renewal", "replacement"]),
  ("a name we hold is greeted with, not just filed",
   "CARRIES the name" in ico.RECORD_NAME_NOTE, True),
  ("and it is still never re-asked",
