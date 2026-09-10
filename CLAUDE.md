@@ -545,6 +545,38 @@ Ordered by what will hurt first.
 
 ---
 
+15. **`transfer_employer` cannot see a single one of its own knowledge-base
+    rows, and an old FAQ answers in their place with a figure the agency has
+    already corrected.** `service_type` on `cb_knowledge_base_updated` takes 12
+    values and **`transfer_employer` is not one of them** — every transfer row is
+    filed under `transfer`, which is the HELPER's service key. `_labelled_filter`
+    does the safe thing with an unknown value and narrows to `general`, so an
+    employer transfer conversation searches the generic FAQ bucket and nothing
+    else. Measured 2026-09-10 on *"how long does a transfer take"*: the filtered
+    set is **five `general` rows, best 0.472** — and 0.472 is **above** the 0.40
+    floor, so `_answerable()` reads True and the widening retry, which only fires
+    BELOW the floor, never runs. That is the 2026-09-08 direct-hire defect exactly,
+    in a new place. The answer the client gets is **"Around 2 to 3 weeks"**, taken
+    from the FAQ row *"Hire a transfer maid if you need someone quickly (2-3
+    weeks)"*, while the agency's own timeline row — `transfer`, written on
+    2026-09-08 to correct an earlier 3-4 weeks — says **"Around 1 to 2 weeks from
+    the interview to her starting work"**. Unfiltered, that correct row is top at
+    0.535. So the one flow that was given its own service key to keep its parked
+    topic separate (see section 8) pays for it in retrieval.
+    Not fixed here because it is a live routing change and needs a pass over what
+    an employer would then be shown: the `transfer` bucket also holds helper-facing
+    rows (*"You can ask to transfer to a new employer - It is your right"*), which
+    is presumably why the split existed. The likely fix is a retrieval alias —
+    `transfer_employer` searches under `transfer` — since the subject is the same
+    and only the QUESTIONS differ by who is asking; the alternative is relocating
+    the employer-relevant transfer rows to `general`, which is what 2026-09-08 did
+    for direct hire. **Whichever is chosen, the 2-3 weeks FAQ row and the 1-2 weeks
+    timeline row still contradict each other and one of them has to be corrected**
+    (`load_service_notes.UPDATES`), or widening will keep reaching the wrong one.
+    Measured the same day: documents 0.000 under the filter, cost correctly
+    deferred by `COST_WITHHELD_SERVICES`, and a documents question rescued by the
+    widening only when phrased with the word "transfer" in it.
+
 ## 10. Operations
 
 ```bash
@@ -2542,7 +2574,7 @@ Append here, newest first. One entry per behavioural change.
   after it emitted "好的下午".
 - **2026-09-01** — Email moved from question 2 to last in `new_hiring` and
   `candidate_new_hiring`; given `group="staying in touch"`.
-- **2026-09-01** — Model switched to `anthropic/claude-sonnet-5` (from Kimi K2.6).
+- **2026-09-01** — Model switched to `anthropic/claude-sonnet-5` (from gpt 5.6 luna).
 - **2026-09-01** — Survive a deleted lead row: ticket insert retries without
   `created_lead_id`; `update_from_collected` no longer logs success on a zero-row update;
   added `created_lead_kind` so `lead_kind` being reset per turn cannot misroute a
