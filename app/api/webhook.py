@@ -175,9 +175,44 @@ async def whapi_webhook_verify() -> dict[str, str]:
 
 # --- Pipeline --------------------------------------------------------------
 
+async def _resolve_lid(message: IncomingMessage) -> None:
+    """Put the client's real phone number on a message that arrived as a LID.
+
+    WhatsApp identifies some senders by an opaque LID once the business number
+    moves onto Meta's hosted service, and the payload can carry NO phone number
+    at all - measured live on 2026-09-10, both `from` and `chat_id` were
+    "116909177569373@lid". `normalize_phone` had been turning that into the
+    "phone number" +116909177569373, so an allowlisted client was stood down on
+    every message.
+
+    Everything downstream is keyed on the phone - the allowlist, get_by_phone,
+    identify, the lead, the ticket - so this has to happen before any of them,
+    which is why it is here and not in the parser (parsing is sync; this is an
+    HTTP call). Whapi's /chats endpoint carries the number.
+
+    Best effort. If it cannot be resolved the message keeps the LID and stands
+    down exactly as it did before, which is the honest outcome for a client we
+    cannot identify - and never a guess at whose number it might be.
+    """
+    if not message.lid:
+        return
+    phone = await whapi.resolve_lid(message.lid)
+    if not phone:
+        logger.warning(
+            "Message %s is from LID %s and Whapi could not give a phone number - "
+            "standing down, because every lookup here is keyed on the number",
+            message.whapi_message_id,
+            message.lid,
+        )
+        return
+    logger.info("Message %s: LID %s is %s", message.whapi_message_id, message.lid, phone)
+    message.customer_number = phone
+
+
 async def handle_payload(payload: dict[str, Any]) -> None:
     for message in parse_webhook(payload):
         try:
+            await _resolve_lid(message)
             if message.from_me:
                 await handle_outbound(message)
             else:

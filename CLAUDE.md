@@ -269,6 +269,7 @@ because the lead is opened early and the ticket is created much later.
 | A document list says WHOSE documents they are | `SERVICE_FIELDS["transfer_employer"]`'s two directions + the row text | Retrieval cannot know whether the client is taking a helper on or releasing one, so the row answers both. A releasing employer asked for the new employer's income proof has been asked for a document that is not theirs. |
 | A row written for one side of the desk is labelled for that side | `contact_type` on `cb_knowledge_base_updated` + `selfcheck_flows.py` | `service_type='transfer'` survives `resolve_service` only for a CANDIDATE, so an employer-facing checklist filed `contact_type='all'` is served to the HELPER. `contact_type` narrows to this audience plus `all`; the default stays `all`. |
 | A LID is never mistaken for a phone number | `parser._is_phone_jid` / `_counterparty` | `normalize_phone` splits on `@` and keeps the front, so `116909177569373@lid` became the "number" `+116909177569373` and an allowlisted client was stood down. The counterparty is resolved from the first identifier whose JID is actually a phone. |
+| A LID is resolved to its phone number before ANY lookup keyed on the number | `webhook._resolve_lid` + `whapi.resolve_lid` | `GET /chats/<lid>` carries `phone`; `/contacts/<lid>` does not. Done in the webhook because parsing is sync and this is an HTTP call. Unresolvable ⇒ stand down, never a guess at whose number it is. |
 | A service the KB has never been labelled with searches under the label it HAS | `rag_retriever._RETRIEVAL_ALIASES` | `transfer_employer` is not a `service_type` any row uses, so the filter narrowed it to `general` forever. Retrieval only — the ticket, the lead, the field list and the **blocked-topic key** all still see `transfer_employer`, which is what keeps a new transfer off a parked hiring topic. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -570,26 +571,21 @@ Ordered by what will hurt first.
     row is correctly `contact_type='candidate'` so an employer never sees it.
     Worth having Ming Hwee confirm rather than assuming.
 
-16. **WhatsApp is migrating senders to LIDs, and the fallback may not always
-    have a phone number to fall back TO.** Live 2026-09-10: every message from
-    an allowlisted tester arrived as `116909177569373@lid` and the bot stood
-    down, because `normalize_phone` had turned the LID into the "phone number"
-    `+116909177569373`. The trigger is the business number moving onto Meta's
-    hosted service — the client's own chat shows *"This business uses a secure
-    service from Meta to manage this chat"*. `parser._counterparty` now prefers
-    a phone JID (`@s.whatsapp.net` / `@c.us`) over a LID and falls back to
-    `chat_id`, then `to`, which fixes it **provided Whapi still puts the phone
-    number in one of those fields**. That was not verifiable from here — no raw
-    payload is stored or logged, and the stand-down path deliberately writes
-    nothing — so if a payload ever carries a LID and nothing else, the bot logs
-    a WARNING naming every identifier it did carry and stands down exactly as
-    before. **If that warning appears, this is not fixed**, and the options are
-    a Whapi channel setting, a Whapi contacts lookup (the client is send-only
-    today — no GET), or storing a LID→phone mapping the first time a number
-    identifies itself. Do NOT "fix" it by putting a LID in
-    `BOT_ALLOWED_NUMBERS`: every lookup is keyed on the number, so it would
-    open a second conversation on an identifier that is not a phone number,
-    which is the split-conversation bug `fix_split_conversations.py` repairs.
+16. **WhatsApp is migrating senders to LIDs, and a migrated payload carries
+    no phone number at all.** Fixed the same day — see the change log — but
+    kept here because it will keep happening as more accounts migrate, and
+    because the wrong fix is tempting. Live 2026-09-10: both `from` and
+    `chat_id` were `116909177569373@lid`, `normalize_phone` turned that into
+    the "number" `+116909177569373`, and an allowlisted tester was stood down
+    on every message. `whapi.resolve_lid()` now asks `GET /chats/<lid>`, which
+    carries `{"phone": "917970027379"}` — measured against the live channel;
+    `GET /contacts/<lid>` returns the push name and **no** phone, so it is the
+    wrong endpoint and reverting to it makes resolution return None silently.
+    **Do NOT put a LID in `BOT_ALLOWED_NUMBERS`**: every lookup is keyed on the
+    number, so it would open a second conversation on an identifier that is not
+    a phone number — the split-conversation bug `fix_split_conversations.py`
+    exists to repair. If Whapi ever cannot resolve one, the bot stands down and
+    says so in the log rather than guessing whose number it might be.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -737,6 +733,41 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-10** — **The LID had no phone number behind it, so we asked Whapi for one.**
+  Follow-up to the entry below, which shipped a fallback and a diagnostic. The diagnostic
+  answered the question on the first message: the payload carries **only** LIDs —
+  `{'chat_id': '116909177569373@lid', 'from': '116909177569373@lid'}` — so there was
+  nothing to fall back to, and the fallback stood down exactly as designed.
+  (A) **Whapi can resolve it, and only one endpoint can.** Probed read-only against the
+  live channel: `GET /chats/116909177569373@lid` returns
+  `{"id":"...@lid","phone":"917970027379", ...}` — the tester's real number — while
+  `GET /contacts/<lid>` returns the push name and **no phone**, and `GET /chats/<lid>`
+  without the suffix is a 400. So `resolve_lid()` reads `/chats` and nothing else, and
+  swapping it to `/contacts` makes it return None silently — verified by doing exactly
+  that.
+  (B) **It happens in the webhook, not the parser.** Parsing is sync and this is an HTTP
+  call, and everything downstream is keyed on the phone — the allowlist, `get_by_phone`,
+  `identify`, the lead, the ticket — so the number has to be right before any of them
+  run. `parse_message` flags the message (`IncomingMessage.lid`) and
+  `handle_payload` resolves it before dispatching to either handler, which covers the
+  agent-detection path as well as the client one.
+  (C) **The cache is bounded, which the four in §9.13 are not.** A LID identifies one
+  WhatsApp account and cannot change, so the mapping is cached — oldest out first at 500,
+  because a re-lookup is one cheap GET and a runaway LID stream must not grow it forever.
+  (D) **Unresolvable means stand down, never guess.** If Whapi returns no phone the
+  message keeps the LID and behaves exactly as it did before, with a log line saying so.
+  Guessing whose number it might be is the one outcome worse than silence.
+  (E) **A check that passed while the thing was broken, caught by injecting the fault.**
+  The first three LID checks called `_resolve_lid` directly, so deleting the call from
+  `handle_payload` left all three green — the exact failure mode `smoke_nodes.py` exists
+  to prevent, and the same shape as the 2026-09-10 self-check that ran an old copy of
+  itself. There is now a fourth that goes through `handle_payload` and reads what the
+  inbound handler was actually handed; re-injecting the fault turns it red.
+  Verified end to end against the live channel with the exact production payload:
+  `+116909177569373` → **`+917970027379`**, allowlisted **True**, and the second lookup
+  served from cache. `selfcheck_flows.py` is **283 assertions**; `smoke_nodes.py` is
+  **36 states**.
 
 - **2026-09-10** — **The bot went silent on an allowlisted tester, and the number in
   the log was not a phone number.** Reported from the server: every message logged

@@ -302,8 +302,78 @@ RUNNERS = {
 }
 
 
+async def _lid_checks() -> list[tuple[str, bool]]:
+    """The webhook's LID resolution, with Whapi stubbed.
+
+    Live 2026-09-10: a migrated sender's payload carried no phone number at all
+    (both `from` and `chat_id` were "116909177569373@lid"), normalize_phone
+    turned that into "+116909177569373", and an allowlisted client was stood
+    down on every message. Everything downstream is keyed on the phone, so the
+    resolution has to happen before any of it - which is why this exercises the
+    webhook rather than the parser.
+    """
+    from app.api.webhook import _resolve_lid
+    from app.whapi.parser import parse_webhook
+
+    def payload(**over):
+        msg = {"id": "lid-1", "type": "text", "from_me": False,
+               "chat_id": "116909177569373@lid", "from": "116909177569373@lid",
+               "text": {"body": "hi"}}
+        msg.update(over)
+        return {"messages": [msg]}
+
+    results = []
+
+    # Resolved: the real number replaces the LID.
+    m = parse_webhook(payload())[0]
+    with patch("app.api.webhook.whapi.resolve_lid",
+               new=AsyncMock(return_value="+917970027379")):
+        await _resolve_lid(m)
+    results.append(("a resolved LID becomes the client's number",
+                    m.customer_number == "+917970027379"))
+
+    # Unresolvable: unchanged, so it stands down exactly as before - never a
+    # guess at whose number it might be.
+    m = parse_webhook(payload())[0]
+    with patch("app.api.webhook.whapi.resolve_lid", new=AsyncMock(return_value=None)):
+        await _resolve_lid(m)
+    results.append(("an unresolvable LID is left alone, not guessed",
+                    m.customer_number == "+116909177569373"))
+
+    # And the wiring, not just the function. Removing the call from
+    # handle_payload left the three checks above green, because they call
+    # _resolve_lid directly - a check that passes while the thing it is about
+    # is broken, which is the failure mode this whole script exists for. This
+    # one goes through handle_payload and reads what the inbound handler was
+    # actually handed.
+    from app.api import webhook as _wh
+    seen: list[str] = []
+
+    async def _capture(message):
+        seen.append(message.customer_number)
+
+    with patch("app.api.webhook.whapi.resolve_lid",
+               new=AsyncMock(return_value="+917970027379")),          patch.object(_wh, "handle_inbound", new=_capture):
+        await _wh.handle_payload(payload())
+    results.append(("handle_payload resolves before it dispatches",
+                    seen == ["+917970027379"]))
+
+    # An ordinary message never calls Whapi at all.
+    m = parse_webhook(payload(**{"from": "917970027379@s.whatsapp.net",
+                                 "chat_id": "917970027379@s.whatsapp.net"}))[0]
+    stub = AsyncMock(return_value="+000")
+    with patch("app.api.webhook.whapi.resolve_lid", new=stub):
+        await _resolve_lid(m)
+    results.append(("an ordinary message never asks Whapi anything",
+                    m.customer_number == "+917970027379" and not stub.called))
+    return results
+
+
 async def main() -> int:
     failures = 0
+    for label, ok in await _lid_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  webhook  {label:44}")
+        failures += not ok
     for node, label, overrides in CASES:
         state = {**BASE, **overrides}
         full = f"{node}  {label}"

@@ -53,34 +53,27 @@ def _is_phone_jid(value: str) -> bool:
     return value.lower().endswith(_PHONE_JID_SUFFIXES)
 
 
-def _counterparty(message: dict[str, Any], *keys: str) -> str:
-    """The client's identifier, preferring a phone JID over a LID.
+def _counterparty(message: dict[str, Any], *keys: str) -> tuple[str, str | None]:
+    """The client's identifier, and the LID if that is all the payload had.
 
     `keys` are tried in order of how well each names the counterparty; a LID
-    is only used when nothing better is present, so behaviour is unchanged on
-    every payload that carries a phone number somewhere.
+    is only returned when nothing better is present, so behaviour is unchanged
+    on every payload that carries a phone number somewhere.
+
+    Measured live on 2026-09-10, a migrated sender's payload carries NO phone
+    number at all - both `from` and `chat_id` were "116909177569373@lid". The
+    LID comes back as the second element so the webhook can resolve it through
+    Whapi before anything keyed on the phone number runs; parsing is sync and
+    that resolution is an HTTP call, which is why it does not happen here.
     """
     candidates = [str(message.get(key) or "").strip() for key in keys]
     for candidate in candidates:
         if _is_phone_jid(candidate):
-            return candidate
+            return candidate, None
     lid = next((c for c in candidates if c.lower().endswith(_LID_SUFFIX)), "")
     if lid:
-        # Kept rather than dropped: standing down on a number we cannot read is
-        # the same outcome as today, and a dropped message logs nothing at all.
-        # This line is what makes the next occurrence diagnosable - it names
-        # every identifier the payload carried, which is what tells us where
-        # the real number is hiding (if it is there at all).
-        logger.warning(
-            "Whapi message %s carries only a LID (%s) and no phone JID - the "
-            "allowlist and every phone lookup will miss it. Identifiers in "
-            "this payload: %s",
-            message.get("id"),
-            lid,
-            {k: v for k, v in message.items()
-             if isinstance(v, str) and ("@" in v or k in ("from", "to", "chat_id"))},
-        )
-    return next((c for c in candidates if c), "")
+        return lid, lid
+    return next((c for c in candidates if c), ""), None
 
 
 @dataclass
@@ -102,6 +95,10 @@ class IncomingMessage:
     # Set once a voice note has been through speech-to-text. From here on the
     # message behaves as though the client typed it (system prompt rule 14).
     transcript: str | None = None
+    # The client's LID, when the payload carried no phone number anywhere and
+    # `customer_number` is therefore a LID wearing a "+". The webhook resolves
+    # it through Whapi before any phone lookup. None on an ordinary message.
+    lid: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -194,7 +191,7 @@ def parse_message(message: dict[str, Any]) -> IncomingMessage | None:
 
     # For outbound (from_me) messages the counterparty is the chat itself.
     # Either way the identifier has to be a PHONE, not a LID - see above.
-    counterparty = (
+    counterparty, lid = (
         _counterparty(message, "chat_id", "to", "from")
         if from_me
         else _counterparty(message, "from", "chat_id")
@@ -216,6 +213,7 @@ def parse_message(message: dict[str, Any]) -> IncomingMessage | None:
         message_type=msg_type,
         from_me=from_me,
         timestamp=_timestamp(message.get("timestamp")),
+        lid=lid,
         raw=message,
         **media,
     )

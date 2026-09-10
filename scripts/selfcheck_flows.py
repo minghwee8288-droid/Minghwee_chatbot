@@ -69,6 +69,7 @@ import app.services.message as ms
 import app.services.handover as hs
 btr = importlib.import_module("app.graph.nodes.blocked_topic_responder")
 wp = importlib.import_module("app.whapi.parser")
+wc = importlib.import_module("app.whapi.client")
 import re as _re
 import pathlib as _pathlib
 import app.services.contact as _contact
@@ -1139,6 +1140,27 @@ rows = [
                     "text": {"body": "hi"}, "from": "116909177569373@lid",
                     "chat_id": "116909177569373@lid"}).customer_number,
   "+116909177569373"),
+ # ...and it is FLAGGED, which is what lets the webhook resolve it through
+ # Whapi before anything keyed on the phone number runs. Measured against the
+ # live channel 2026-09-10: GET /chats/<lid> carries {"phone":"917970027379"}
+ # while GET /contacts/<lid> does not, which is why resolve_lid reads /chats.
+ ("a LID-only message is flagged for resolution",
+  wp.parse_message({"id": "x", "type": "text", "from_me": False,
+                    "text": {"body": "hi"}, "from": "116909177569373@lid",
+                    "chat_id": "116909177569373@lid"}).lid,
+  "116909177569373@lid"),
+ ("an ordinary message is not",
+  wp.parse_message({"id": "x", "type": "text", "from_me": False,
+                    "text": {"body": "hi"}, "from": "917970027379@s.whatsapp.net",
+                    "chat_id": "917970027379@s.whatsapp.net"}).lid, None),
+ ("nor is one where only the chat carries the phone",
+  wp.parse_message({"id": "x", "type": "text", "from_me": False,
+                    "text": {"body": "hi"}, "from": "116909177569373@lid",
+                    "chat_id": "917970027379@s.whatsapp.net"}).lid, None),
+ # The LID cache is bounded, unlike the four caches section 9.13 lists.
+ ("the LID cache cannot grow without limit",
+  isinstance(getattr(wc, "_LID_CACHE_MAX", None), int)
+  and wc._LID_CACHE_MAX > 0, True),
  # --- home leave, 2026-09-08 ------------------------------------------
  # The nationality decides the documents, the lead time AND the price - PH
  # needs her ORIGINAL passport plus a ticket itinerary, 4 weeks, $400; ID
