@@ -260,7 +260,7 @@ because the lead is opened early and the ticket is created much later.
 | A case number is context, never a line to read out | `system._known_cases_block` | The same rule as `RETURNING_NOTE`: referring to what is under way is warmth, reading their file back at them is not. |
 | A name we already hold is USED, not just filed | `info_collector.RECORD_NAME_NOTE` | Skipping the question is right; skipping the greeting too makes it look like the name was never handled. Fires on the FIRST turn the name is known, whichever way we learned it — off our records, or because they just typed it. NOT gated behind `returning_note`/`recognised_note`: those decide what the message opens WITH, this decides that it carries the name. |
 | A numbered list is never sent without a sentence saying what it is | `templates.PROCESS_INSTRUCTION` + `PROCESS_ADDENDUM` | The same rule the passport briefing got on 2026-09-09, now on both answering paths, so it holds for every service and for a parked topic. Both also close on a sentence rather than on step 8. |
-| A question never reads its own bracket options out | `household`, `helper_profile` (no `options`) | "1-2, 3-4, 5-6, or 7 or more" and "30-40, at least 2 years" were `_field_guidance` dropping the field's options in as examples. Removed, not reworded — a question with no options takes any answer. `languages` keeps its options, which ARE the answer. |
+| A question never reads its own bracket options out | `household`, `helper_profile` (no `options`) | "1-2, 3-4, 5-6, or 7 or more" and "30-40, at least 2 years" were `_field_guidance` dropping the field's options in as examples. Removed, not reworded — a question with no options takes any answer. `languages` keeps its options, which ARE the answer. **Now checked as a SET across all seven services**, not on the two fields the agency happened to name — the same correction §9 forced on the client's-name row. |
 | A broadcast is never a human agent | `message.is_auto_reply` (+ in-process count) + `webhook._undo_broadcast_standdowns` | The detector is retrospective, so the first copies of a NEW broadcast are indistinguishable from an agent. Two conversations in one run is now enough, and earlier stand-downs are reversed. |
 | A negative auto-reply verdict is never cached | `_AUTO_REPLY_VERDICTS` | Caching the first "no" on a fresh broadcast pinned it, so every later copy short-circuited to "no" and silenced the bot estate-wide. |
 | A mass announcement is caught on its FIRST copy | `message._BROADCAST_MARKERS` | "Dear Valued Customer" and its kin. `operating hours` is deliberately absent — an agent answering "what time do you open" says it. |
@@ -652,11 +652,83 @@ lead, **or delete the lead row and that thread's checkpoint together**. Deleting
 alone is what broke conversation 36: the checkpoint kept pointing at the dead row and
 every ticket insert failed the foreign key, silently, ten times in twenty minutes.
 
+**Commit the files you changed, not `git add -A`.** This repo is edited from an IDE and
+from scripts at the same time, so the working tree routinely holds changes the commit in
+front of you did not author. On 2026-09-10 a `git add -A` swept an unrelated one-line
+edit into a documentation commit and put a **false claim** on `main` — the 2026-09-01
+entry rewritten to say the model switched to Sonnet 5 *"from gpt 5.6 luna"*, a model that
+did not arrive until 2026-09-03 and is contradicted two entries above it. The change log
+is the only record of why the code looks the way it does, so a wrong line in it is worse
+than a wrong line in a comment. Run `git status` first and commit by name.
+
 ---
 
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-10** — **The same four fixes, checked against all seven services
+  instead of the one the agency tested.** Their question on reading the round below:
+  *"have you done these things for all services whichever services needed these
+  things"*. No behavioural change came out of it; what came out of it was one measured
+  defect (§9.15) and two deliberate non-changes, all three of which are worth having
+  written down.
+  (A) **The name and the list rule are structural, and that was verified rather than
+  reasoned.** `full_name` is **question 1 on every one of the seven**; `RECORD_NAME_NOTE`
+  fires off the turn the name becomes known and reads no service key; both
+  `PROCESS_INSTRUCTION` and `PROCESS_ADDENDUM` carry the lead-in and the closing rule,
+  and `asks_for_process` never looks at `service_type`. Run live against the model on the
+  six flows yesterday's round never touched: work permit renewal, home leave and the
+  employer transfer greet a client on file by name in the opening line (*"Hi Ratna,
+  welcome back to Ming Hwee"*), and passport renewal, replacement and direct hire ask a
+  new client for their name and greet them with it on the very next message (*"Thanks,
+  Sarah — may I know your current helper's name?"*). Five more list paths — passport
+  documents, home leave process, replacement documents, transfer process, and home leave
+  **while parked with an agent** — every one with a lead-in sentence and a closing
+  sentence.
+  (B) **The bracket fix was only ever two fields, and three others were left alone on
+  purpose.** Every option set on the seven services was dumped and read. Three still
+  carry digits: `budget` (`$500-600`, `$600-700`…), `home_type` (`HDB 1-3 room`,
+  `HDB 4-5 room`) and `start_timeline` (`within 2 weeks`, `within 1 month`). None is the
+  shape the agency objected to — a salary band is a real thing to pick from, *"HDB 4-5
+  room"* is what the flat is **called** rather than a bracket someone invented, and a
+  timeframe is not a count. `budget`'s options are also load-bearing in the other
+  direction: they are the grounding that stops `ungrounded_figures` binning the whole
+  reply (2026-09-09 D), so removing them would silently reintroduce that defect. Flagged
+  for the agency rather than changed. The §5 row is now asserted **as a set across all
+  seven**, which is the correction §9 already forced once on the client's-name row — a
+  rule written about the one flow that was reported is a rule that is false everywhere
+  else until somebody checks.
+  (C) **And the check found what checking is for: `transfer_employer` cannot see one of
+  its own knowledge-base rows.** Recorded in full as **§9.15**. Short version: it is not
+  a `service_type` any row uses, so the filter narrows to `general`; on *"how long does a
+  transfer take"* the filtered set is five generic FAQ rows at **0.472**, which is
+  **above** the 0.40 floor, so the widening retry never fires and the client is told
+  *"Around 2 to 3 weeks"* from an old FAQ — against the agency's own corrected row, filed
+  under `transfer`, which says **1 to 2 weeks**. Same shape as the 2026-09-08 direct-hire
+  defect. Not fixed here: it is a live routing change, and the `transfer` bucket also
+  holds helper-facing rows, so pointing an employer at it needs a decision rather than an
+  alias.
+  (D) **A false line was put on `main` and taken off again.** The 2026-09-01 entry was
+  rewritten to read *"Model switched to `anthropic/claude-sonnet-5` (from gpt 5.6
+  luna)"*, which the log disproves two entries further up — luna arrived on 2026-09-03,
+  from `moonshotai/kimi-k3`. It reached `main` inside a documentation commit that staged
+  with `git add -A`. Restored to `(from Kimi K2.6)`, and the rule is now in §10: commit
+  by name, because this file is edited from an IDE and from scripts at once.
+  (E) **The set-wide check is real, not a claim.** Saying in §5 that the rule is checked
+  across all seven was false when it was written — the assertion named `household` and
+  `helper_profile` on two flows. It now sweeps every field on all seven and fails on any
+  numeric range in an option list **or** in a written question, with exactly three keys
+  allowed through by name and a comment saying what each one earns. Verified the way this
+  file requires rather than by reading it: a bracket question was injected onto
+  `replacement.helper_tenure` — a flow neither of the old assertions looked at — and the
+  self-check went red on it and exited non-zero.
+  Deployed and verified in the container: **32 smoke states and every assertion, ALL
+  PASS**, safety gate unchanged at 17 numbers. The count is now **253**; the entry below
+  says 252 and the same count on that commit measures **251**, so that figure was one
+  out, and it is corrected here rather than carried forward — these counts are a
+  tripwire (2026-09-04 caught a field-count change by exactly this), and a tripwire
+  nobody trusts is not one.
 
 - **2026-09-10** — **Four things from the agency's new-hiring test, and the name one is
   the same defect from both ends.** Their words: *"the flow runs good but with some

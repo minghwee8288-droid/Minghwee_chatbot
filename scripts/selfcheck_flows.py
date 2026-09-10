@@ -14,6 +14,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import importlib
+import re
+
 import app.services.ticket as t
 import app.services.lead as _lead
 from app.graph.guards import quotes_hiring_package_cost as q
@@ -23,6 +25,34 @@ S = ico._SMALL_TICKET_SERVICES
 P = ico._COLLECTION_PURPOSE
 from app.graph.prompts.system import RULES
 D = chr(36)
+
+# The agency's seven services, in their words. Used by the bracket check below,
+# which is written as a SET on purpose: the row it replaced was written about
+# the two fields they happened to name and was silent on every other flow.
+SEVEN_SERVICES = ("new_hiring", "direct_hiring", "transfer_employer", "renewal",
+                  "passport_renewal", "home_leave", "replacement")
+
+# Every option set on those seven was read on 2026-09-10. These three carry
+# digits DELIBERATELY and are named here so a new one cannot arrive unnoticed:
+#   budget          - the bands are salary bands, and they are also the
+#                     grounding `ungrounded_figures` reads (2026-09-09 D), so
+#                     removing them silently reintroduces that defect
+#   home_type       - "HDB 4-5 room" is what the flat is called, not a bracket
+#   start_timeline  - a timeframe is not a count
+_DIGITS_ON_PURPOSE = {"budget", "home_type", "start_timeline"}
+_BRACKET = re.compile(r"\d+\s*(?:-|to|\u2013)\s*\d+|\bat least \d+|"
+                      r"\b\d+\s*(?:and\s+)?(?:above|or more)")
+
+
+def _reads_a_bracket(field) -> bool:
+    """Would this field put a numeric range in front of the client?
+
+    `_field_guidance` drops a field's own options into the question as
+    examples, so an option list is read out whether or not the written
+    question mentions it. Both halves are checked.
+    """
+    text = " | ".join(field.options or ()) + " " + (field.question or "")
+    return bool(_BRACKET.search(text))
 take = [f.key for f in t.applicable_fields("transfer_employer", {"transfer_direction": "taking on a transfer helper"})]
 rel  = [f.key for f in t.applicable_fields("transfer_employer", {"transfer_direction": "releasing my current helper"})]
 dh_emp  = [f.key for f in t.applicable_fields("direct_hiring", {"employment_status": "currently employed"})]
@@ -381,6 +411,16 @@ rows = [
  ("but a field whose options ARE the answer keeps them",
   bool(next(f for f in t.SERVICE_FIELDS["new_hiring"]
             if f.key == "languages").options), True),
+ # ...and the same rule over the seven services as a SET, so a NEW field with
+ # bracket options cannot land on a flow nobody thought to re-check. Three keys
+ # are allowed through by name and the comment above says why each one earns it.
+ ("no field on any of the seven reads a bracket out",
+  sorted({f.key for svc in SEVEN_SERVICES for f in t.SERVICE_FIELDS.get(svc, [])
+          if f.key not in _DIGITS_ON_PURPOSE and _reads_a_bracket(f)}), []),
+ ("and the three that carry digits still do so deliberately",
+  sorted({f.key for svc in SEVEN_SERVICES for f in t.SERVICE_FIELDS.get(svc, [])
+          if f.key in _DIGITS_ON_PURPOSE}),
+  ["budget", "home_type", "start_timeline"]),
  # "Bot doesn't ask for my name or addresses me if it knows."
  ("transfer_employer asks the client's name",
   t.SERVICE_FIELDS["transfer_employer"][0].key, "full_name"),
