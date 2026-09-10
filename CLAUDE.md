@@ -2574,7 +2574,7 @@ Append here, newest first. One entry per behavioural change.
   after it emitted "好的下午".
 - **2026-09-01** — Email moved from question 2 to last in `new_hiring` and
   `candidate_new_hiring`; given `group="staying in touch"`.
-- **2026-09-01** — Model switched to `anthropic/claude-sonnet-5` (from gpt 5.6 luna).
+- **2026-09-01** — Model switched to `anthropic/claude-sonnet-5` (from Kimi K2.6).
 - **2026-09-01** — Survive a deleted lead row: ticket insert retries without
   `created_lead_id`; `update_from_collected` no longer logs success on a zero-row update;
   added `created_lead_kind` so `lead_kind` being reset per turn cannot misroute a
