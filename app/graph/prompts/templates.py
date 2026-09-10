@@ -620,8 +620,19 @@ she is not left wondering what she has just signed up for.
 Structure it exactly like this:
 
 FIRST - and this is not optional, your reply MUST begin with it - one short
-heading line saying what this message is, naming her if you know her name, for
-example "Here is what happens next, Siti:". One line, then a blank line.
+opening line that does TWO things in one breath: tell her that is everything we
+need from her for now, and say what this message is. Name her if you know her
+name. For example "Thanks, Siti - that is everything I need for now. Here is
+what happens next:". One line, then a blank line.
+
+That opening line is not decoration, and saying only "Here is what happens
+next" is not enough. Live, 2026-09-10: the last question put to her was "Would
+you prefer updates by email or here on WhatsApp?", she answered "Here", and the
+next thing she read was a numbered list of the hiring process. She wrote back
+"Here I mean WhatsApp why did you tell the process" - nothing in the message
+told her her registration was finished, so a list of steps arriving on the back
+of a one-word answer read as the bot having misunderstood her. Say the
+registration is complete and the list reads as the conclusion it is.
 
 THEN the steps, from where she is now to starting work. Take them from the
 records above and NOTHING else. Every numbered item goes on ITS OWN LINE, with a

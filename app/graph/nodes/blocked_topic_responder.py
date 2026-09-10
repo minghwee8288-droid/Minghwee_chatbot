@@ -19,7 +19,11 @@ import re
 from typing import Any
 
 from app.graph.guards import (
+    COST_DEFERRAL_REPLY,
+    COST_WITHHELD_SERVICES,
+    asks_for_documents,
     asks_for_process,
+    quotes_hiring_package_cost,
     clamp_reply,
     is_degenerate,
     looks_like_document,
@@ -314,15 +318,36 @@ _GENERAL_INFO = re.compile(
     r"(?:further|next|whole|entire|full|complete|overall|remaining)?\s*"
     r"(?:process|procedure|steps?)\b"
     r"|\bwhat\s+do\s+i\s+need\b"
-    r"|\bis\s+there\s+(?:a|any)\s+(?:fee|cost|charge)\b",
+    # The PLURAL, and asking about paying rather than about a fee. Live,
+    # 2026-09-10: a job seeker wrote "Is there any fees I need to pay" and got
+    # a handover. "fee" was here and "fees" was not - (?:fee|cost|charge)\b
+    # cannot match "fees", because there is no word boundary inside it. The
+    # singular passed and the plural did not, which is the same one-word gap as
+    # "what is THE cost" (2026-09-08) and "what is the FURTHER process"
+    # (2026-09-10), and it is the third time it has cost a client an answer.
+    r"|\bis\s+there\s+(?:a|any|some)\s+(?:fees?|costs?|charges?|payments?)\b"
+    r"|\bwhat\s+(?:fees?|costs?|charges?)\b"
+    r"|\b(?:do|will|would|must)\s+i\s+(?:have\s+to\s+|need\s+to\s+)?pay\b"
+    r"|\bpay\s+(?:you|ming\s+hwee|the\s+agency)\s+(?:any|some)?\s*"
+    r"(?:fees?|money|amount|thing)\b",
     re.IGNORECASE,
 )
 
 
 def asks_general_info(message: str) -> bool:
-    """Whether the message asks about a service in general, not about their case."""
+    """Whether the message asks about a service in general, not about their case.
+
+    The documents half is shared with guards.asks_for_process rather than spelled
+    out twice (section 9.8). On 2026-09-10 the two disagreed about the same
+    sentence: "Tell me the documents I needed" matched neither, so a parked
+    registration held a question whose answer was sitting in the records - and
+    the follow-up that DID get through was answered as a paragraph, because the
+    other detector missed it too. One definition, so they cannot drift apart.
+    """
     text = message or ""
-    return bool(_GENERAL_INFO.search(text)) and not _CHASING_STATUS.search(text)
+    if _CHASING_STATUS.search(text):
+        return False
+    return bool(_GENERAL_INFO.search(text)) or asks_for_documents(text)
 
 
 def _answerable(state: ConversationState) -> bool:
@@ -540,7 +565,34 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
     # than no fee. Falling back to the holding line is the safe outcome — the
     # client is no worse off than before this path existed.
     invented = ungrounded_figures(reply, state.get("rag_context", "")) if answering else []
-    if invented:
+
+    # A new hire's price is never put in front of a client before a salesperson
+    # has spoken to them (agency instruction, 2026-09-04), and until now that
+    # rule held on two of the three paths that write a reply. This one was
+    # missed, and it is the worst one to miss: a topic is parked precisely
+    # because a consultant already has it, so this is the client asking about
+    # money AFTER the handover - the exact moment the rule is about.
+    #
+    # Found 2026-09-10 by running an employer control for an unrelated candidate
+    # fix. With a hiring ticket parked, "Is there any fees I need to pay" came
+    # back "The approximate total service fee and third-party costs are $4,225,
+    # with a combined total of about $4,285". Every other guard passed it, and
+    # correctly: those figures ARE in Form A, so ungrounded_figures waves them
+    # through. Grounded is not the same as sanctioned, which is the whole reason
+    # this guard exists separately from that one.
+    #
+    # First in the chain so the client gets the deferral - which says WHY - in
+    # place of the bare holding line, and deliberately identical to the two
+    # existing call sites rather than a cleverer test of its own (§9.8).
+    if state.get("service_type") in COST_WITHHELD_SERVICES and quotes_hiring_package_cost(
+        reply
+    ):
+        logger.info(
+            "Conversation %s: blocked-topic reply priced the hire - deferring to a consultant",
+            state.get("conversation_id"),
+        )
+        reply = COST_DEFERRAL_REPLY
+    elif invented:
         logger.warning(
             "Conversation %s: blocked-topic answer quoted ungrounded figure(s) %s — holding instead",
             state.get("conversation_id"),

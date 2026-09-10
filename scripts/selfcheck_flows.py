@@ -19,6 +19,11 @@ import re
 import app.services.ticket as t
 import app.services.lead as _lead
 from app.graph.guards import quotes_hiring_package_cost as q
+from app.graph.guards import (
+    COST_WITHHELD_SERVICES as _WITHHELD,
+    asks_for_documents as _docs_q,
+    asks_for_process as _proc_q,
+)
 ic = importlib.import_module("app.graph.nodes.intent_classifier")
 ico = importlib.import_module("app.graph.nodes.info_collector")
 S = ico._SMALL_TICKET_SERVICES
@@ -29,6 +34,51 @@ D = chr(36)
 # The agency's seven services, in their words. Used by the bracket check below,
 # which is written as a SET on purpose: the row it replaced was written about
 # the two fields they happened to name and was silent on every other flow.
+_BTR_SRC = (Path(__file__).resolve().parents[1]
+            / "app/graph/nodes/blocked_topic_responder.py").read_text(encoding="utf-8")
+_asks_general = importlib.import_module(
+    "app.graph.nodes.blocked_topic_responder").asks_general_info
+
+# Every node in the graph, as an imported MODULE. Whether a node applies a
+# guard is decided by whether it imported the symbol - not by whether the name
+# appears in the file, which on the first attempt matched rag_retriever purely
+# on four comments about ungrounded_figures and made the check red on correct
+# code. A check that fails on correct code is noise (2026-09-09 C).
+_NODES = {
+    n: importlib.import_module(f"app.graph.nodes.{n}")
+    for n in ("info_collector", "response_generator", "blocked_topic_responder",
+              "rag_retriever", "intent_classifier", "ticket_creator",
+              "handover_executor")
+}
+
+def _flat(text: str) -> str:
+    """The note as one line. These templates are hard-wrapped, so a phrase this
+    file asserts on is routinely split across two lines by a re-wrap that
+    changed nothing."""
+    return " ".join((text or "").split())
+
+
+_LOADER_SRC = (Path(__file__).resolve().parents[1]
+               / "scripts/load_service_notes.py").read_text(encoding="utf-8")
+
+
+def _row_by_question(fragment: str) -> dict:
+    """One ROWS entry from the loader, found by a fragment of its question."""
+    import ast
+    for node in ast.walk(ast.parse(_LOADER_SRC)):
+        if not isinstance(node, ast.Dict):
+            continue
+        try:
+            d = ast.literal_eval(node)
+        except Exception:
+            continue
+        if isinstance(d, dict) and fragment in str(d.get("question") or ""):
+            return d
+    return {}
+
+
+_FEE_ROW = _row_by_question("pay any fee to Ming Hwee")
+
 SEVEN_SERVICES = ("new_hiring", "direct_hiring", "transfer_employer", "renewal",
                   "passport_renewal", "home_leave", "replacement")
 
@@ -1414,9 +1464,12 @@ rows = [
       for p in ("NEVER quote her a fee", "not what she might earn")), True),
  ("nor promising her a job or a date",
   "Do not promise her a job" in tpl.CANDIDATE_BRIEFING_NOTE, True),
+ # "heading line" until 2026-09-10, when that line was given a second job -
+ # saying her registration is finished - and renamed. The tripwire fired, which
+ # is what it is for; the three things it guards are unchanged.
  ("and it still says what the list is, one step per line",
   all(p in tpl.CANDIDATE_BRIEFING_NOTE
-      for p in ("heading line", "REAL LINE BREAK", "closing sentence")), True),
+      for p in ("opening line", "REAL LINE BREAK", "closing sentence")), True),
  ("the buyer's note still requires the cost it was written for",
   "WHAT IT COSTS" in tpl.SERVICE_BRIEFING_NOTE, True),
  # The query is the other half, and the word `cost` is absent from it on
@@ -1431,6 +1484,133 @@ rows = [
       for w in ("after I register", "interview", "arrive")), True),
  ("the buyer's query still asks the price",
   "how much does it cost" in rr.BRIEFING_QUERY, True),
+
+ # --- what she is told AFTER the handover, 2026-09-10 ------------------
+ # Live, a job seeker whose registration was parked: "Tell me the documents I
+ # needed" -> "I'll check with the team and come back to you shortly.", and two
+ # messages later "No i ask for what are the documents I required" -> the full
+ # correct answer, from records that had been there the whole time. Her words:
+ # "if the bot knows the documents required, then why didn't it tell me when I
+ # said tell me the documents I needed".
+ #
+ # Measured: BOTH phrasings were False on BOTH detectors. The one turn that
+ # worked was the classifier happening to return document_question, and the
+ # deterministic net underneath it - the entire reason that net exists - caught
+ # neither. Asserted as the PAIR, because the two disagreeing about the same
+ # sentence is what let this through: one decides whether a parked topic
+ # answers at all, the other whether the answer may be a numbered list, and she
+ # needed both.
+ ("the way she actually asked for her documents reaches both detectors",
+  [m for m in ("Tell me the documents I needed",
+               "No i ask for what are the documents I required",
+               "what documents are required",
+               "which forms do i sign",
+               "what is the paperwork",
+               "papers I have to provide")
+   if not (_docs_q(m) and _proc_q(m) and _asks_general(m))], []),
+ # ...and the two callers read ONE definition rather than a copy each (9.8).
+ ("one definition, read by both paths",
+  ("asks_for_documents" in _BTR_SRC, "_DOCUMENTS_QUESTION" in _BTR_SRC),
+  (True, False)),
+ # A statement about documents is not a question about them. A false positive
+ # here only widens a sentence budget, but a rule that fires on everything has
+ # stopped being a rule.
+ ("but telling us about documents is not asking for them",
+  [m for m in ("I will send the documents tomorrow",
+               "the documents are ready",
+               "I already gave you my passport",
+               "ok noted thanks")
+   if _docs_q(m) or _asks_general(m)], []),
+ # The PLURAL. "(?:fee|cost|charge)\b" cannot match "fees" - there is no word
+ # boundary inside it - so the singular was answered and the plural was handed
+ # to a human. Third time a one-word gap in this pattern has cost a client an
+ # answer: "what is THE cost" (2026-09-08), "what is the FURTHER process"
+ # (2026-09-10), and now this.
+ ("a fee question survives being asked in the plural",
+  [m for m in ("Is there any fees I need to pay",
+               "is there any fee i need to pay",
+               "do i have to pay any fees",
+               "what fees do i need to pay",
+               "will i have to pay anything",
+               "Ok what is cost")
+   if not _asks_general(m)], []),
+ # ...and a chase is still a chase, which is what gates the whole thing.
+ ("chasing us about money is still chasing, not a question",
+  [m for m in ("any update on my payment",
+               "any update on my application")
+   if _asks_general(m)], []),
+
+ # --- the third path that writes a reply, 2026-09-10 -------------------
+ # A new hire's price is never quoted before a salesperson has spoken to the
+ # client. That held on info_collector and response_generator and NOT on
+ # blocked_topic_responder - the path used once a topic is parked, i.e. exactly
+ # when a consultant already has it. Live, with a hiring ticket parked, "Is
+ # there any fees I need to pay" returned "The approximate total service fee
+ # and third-party costs are $4,225, with a combined total of about $4,285".
+ # Every other guard passed it, correctly: those figures ARE in Form A, so
+ # ungrounded_figures waves them through. Grounded is not sanctioned.
+ #
+ # Derived, not a list of three: a node that runs ungrounded_figures over a
+ # generated reply is by definition a node that sends one, so it must apply
+ # this guard too. A fourth reply-writing path cannot reopen the gap.
+ ("every path that grounds a reply also refuses to price the hire",
+  sorted(n for n, m in _NODES.items()
+         if hasattr(m, "ungrounded_figures")
+         and not hasattr(m, "quotes_hiring_package_cost")), []),
+ ("and there are three such paths, not two",
+  sorted(n for n, m in _NODES.items() if hasattr(m, "ungrounded_figures")),
+  ["blocked_topic_responder", "info_collector", "response_generator"]),
+ ("the guard still fires on the figure that reached a client",
+  q("The approximate total service fee and third-party costs are "
+    f"{D}4,225, with a combined total of about {D}4,285."), True),
+ ("and new hiring is a service that withholds it",
+  "new_hiring" in _WITHHELD, True),
+ # Not withheld, deliberately: passport renewal states its own $450 and
+ # quoting it is the point of that flow.
+ ("a service that states its own fee still states it",
+  "passport_renewal" in _WITHHELD, False),
+
+ # --- what a HELPER pays us, answered by the agency 2026-09-10 ---------
+ # This was an open item in section 9 ("What a HELPER pays us, if anything")
+ # and the agency closed it: "there is no fees, the candidate does not have to
+ # pay any fees for this". Before the row, a job seeker asking it retrieved the
+ # EMPLOYER's direct-hire cost comparison at 0.488; after _retrieval_audience
+ # shut that shelf she got a handover instead.
+ ("a job seeker is told outright that she pays us nothing",
+  bool(_FEE_ROW), True),
+ ("and she is told it on her own shelf, where an employer cannot read it",
+  (_FEE_ROW.get("contact_type"), _FEE_ROW.get("service_type")),
+  ("candidate", "general")),
+ # No figure, for the reason CANDIDATE_BRIEFING_NOTE forbids one: there is no
+ # helper-side amount anywhere, so every number in reach belongs to somebody
+ # else's price list.
+ ("and no figure appears in it",
+  re.findall(r"\d", _FEE_ROW.get("answer", "")), []),
+ # The care that makes this row safe. "27.1a Your Placement Loan" is
+ # contact_type='candidate' and tells her money is often taken from her salary
+ # by an agency in her home country - and lists "Ming Hwee?" among the possible
+ # creditors. A flat "there are no fees at all" would contradict a row she can
+ # also retrieve, which is 9.14 in a new place. This row says what the agency
+ # said - she pays US nothing - and sends a loan question to a consultant,
+ # which is what the loan row itself instructs.
+ ("it does not deny the placement loan it cannot speak for",
+  ("loan" in _FEE_ROW.get("answer", "").lower(),
+   "consultant" in _FEE_ROW.get("answer", "").lower()),
+  (True, True)),
+
+ # --- the closing message says the registration is finished, 2026-09-10 -
+ # The last question was "Would you prefer updates by email or here on
+ # WhatsApp?", she answered "Here", and the next thing she read was a numbered
+ # list of the hiring process. She wrote back "Here I mean WhatsApp why did you
+ # tell the process" - nothing in the message said her registration was done,
+ # so a list of steps on the back of a one-word answer read as the bot having
+ # misunderstood her. It then APOLOGISED and disowned its own correct closing
+ # message, which is the half a prompt cannot be trusted to fix; saying the
+ # registration is complete stops the question being asked at all.
+ ("her closing message says that is everything we need",
+  "everything we need from her" in _flat(tpl.CANDIDATE_BRIEFING_NOTE), True),
+ ("and it still leads the list with a line saying what it is",
+  "say what this message is" in _flat(tpl.CANDIDATE_BRIEFING_NOTE), True),
 
  # --- who the ROWS are written for, 2026-09-10 -------------------------
  # effective_contact_type puts a master record above one message, rightly.

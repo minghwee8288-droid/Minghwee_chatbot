@@ -284,6 +284,12 @@ because the lead is opened early and the ticket is created much later.
 | ...and both halves of a pairing offer the SAME words | `ticket._matched_options` | Taken from the employer's `Field`, never retyped, for the reason `_hiring_field` exists (§9.8). `preferred_nationality` is the one pair that deliberately cannot share a list — an employer picks from the three we place, a helper states the country she is from. |
 | A candidate key never reuses a portable employer key | `selfcheck_flows.py` | `languages` and `budget` are in `_PORTABLE_ACROSS_SERVICES`, so reusing them would carry an employer's "Mandarin spoken at home" into a helper's file as a language SHE speaks. The direct-hire flow avoided the same trap with its `helper_` prefix, from the other side. |
 | No bracket is read out on ANY service, not just the seven | `selfcheck_flows._reads_a_bracket` | The sweep was written over the agency's seven employer services, so a candidate flow was outside it entirely — the same "written for the set that was reported" shape the row itself was created to fix. |
+| A documents question is recognised however it is phrased, and by BOTH paths at once | `guards._DOCUMENTS_QUESTION` / `asks_for_documents` | One definition, read by `asks_for_process` (may this reply be a list?) and by `asks_general_info` (does a parked topic answer at all?). They disagreed about the same sentence: "Tell me the documents I needed" matched neither, and "what are the documents I required" matched neither, so the one turn that worked was the classifier happening to return `document_question`. |
+| A fee question survives being asked in the plural | `blocked_topic_responder._GENERAL_INFO` | `(?:fee|cost|charge)\b` cannot match "fees" — there is no word boundary inside it — so "is there any fee" was answered and "Is there any fees" was handed to a human. Third time a one-word gap in this pattern has cost a client an answer. |
+| A new hire's cost is refused on ALL THREE paths that write a reply, not two | `blocked_topic_responder` (+ `info_collector`, `response_generator`) | The missing one is the path used once a topic is parked — i.e. exactly when a consultant already has it, which is what the rule is about. Live: with a hiring ticket parked, "Is there any fees I need to pay" returned **$4,225 / $4,285**. Every other guard passed it correctly; those figures ARE in Form A. Grounded is not sanctioned. |
+| ...and that is derived from which nodes ground a reply, not from a list of three | `selfcheck_flows.py` + `smoke_nodes.py` | A node that runs `ungrounded_figures` over a generated reply is a node that sends one. The import check alone is not enough — it stayed green with the guard disabled outright, so `smoke_nodes` now asserts the REPLY on that state. |
+| A job seeker is told plainly that she pays us nothing | `general` + `candidate` KB row, agency 2026-09-10 | And it does not deny the placement loan she can also retrieve: it says she pays **Ming Hwee** nothing and routes any loan question to a consultant, which is what the loan row itself instructs. No figure appears in it. |
+| Her closing message says the registration is finished before it lists the steps | `CANDIDATE_BRIEFING_NOTE` | She answered "Here" to the update-channel question and the next thing she read was the hiring process, so she asked "why did you tell the process" — and the bot then apologised and disowned its own correct closing message. |
 | A service the KB has never been labelled with searches under the label it HAS | `rag_retriever._RETRIEVAL_ALIASES` | `transfer_employer` is not a `service_type` any row uses, so the filter narrowed it to `general` forever. Retrieval only — the ticket, the lead, the field list and the **blocked-topic key** all still see `transfer_employer`, which is what keeps a new transfer off a parked hiring topic. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -610,6 +616,48 @@ Ordered by what will hurt first.
     outside: it is a rollout that is nearly complete, and the ~2% still on phone
     JIDs are the only messages that get through untouched.
 
+17. **A live candidate-facing row still carries an unfilled editorial
+    placeholder.** `27.1a Your Placement Loan (Very Important - Read This)`,
+    `contact_type='candidate'`, contains verbatim:
+    *"**[INSERT - Ming Hwee to complete before launch]** The actual loan
+    structure for each source country: who the creditor is, the typical total,
+    the monthly deduction ... Until this is filled in and verified, the bot
+    answers loan questions by routing to a human."* That is an instruction to
+    Ming Hwee sitting in the retrievable text, and **whatever is in the records
+    is what the model quotes** — the same rule that kept the internal pipeline
+    brief out of the KB on 2026-09-08. It has not been seen in a reply and it
+    did not top any of the fee probes run on 2026-09-10, so it is recorded
+    rather than edited: the content is the agency's, the instruction it carries
+    is still true (nothing here answers a loan question), and deleting somebody
+    else's row on a hunch is not this repo's call. Two ways out, both theirs:
+    fill it in, or have the placeholder stripped and the row left as the rights
+    material it otherwise is.
+18. **The candidate application checklist's preamble outranks her own journey
+    rows.** `Purpose & Important Note` is top for *"what is the process"*
+    (0.440 vs 0.428) and for both ways she asked for her documents (0.504 vs
+    0.482), measured through the real retriever on 2026-09-10. It is the
+    preamble to an internal consent form, written **about** her in the third
+    person. Both of her own rows are still inside the top 5 the model receives,
+    and the live replies used them and not this — verified, not assumed. So it
+    is the accepted state, the same shape as the 0.009 transfer/new-hiring
+    margin on 2026-09-10, and recorded because a future re-embed can flip it.
+    Rewording her rows to widen the gap was **not** done: that trade was
+    measured and rejected once already, and it swaps a real answer for a
+    comfortable margin.
+19. **The bot apologised for, and disowned, its own correct closing message.**
+    Live 2026-09-10: after the candidate briefing she asked *"why did you tell
+    the process"* and got *"Sorry, Ruru, I misunderstood - you meant WhatsApp
+    for updates, not that you wanted the hiring process."* Nothing had been
+    misunderstood; the briefing is the sanctioned closing message and the
+    agency asked for it. Addressed at the CAUSE rather than the symptom - the
+    message now says her registration is complete, so the question does not
+    arise - because the apology is written a turn later by
+    `response_generator`, which has no way to know that the message it is being
+    asked about was deliberate. A prompt rule telling it never to disown an
+    earlier reply is the obvious next move and is deliberately not taken on a
+    hunch: it is broad, it would also suppress genuine corrections, and nobody
+    has reported the shape twice.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
@@ -651,14 +699,16 @@ at a time.
   end to end, and the figure excludes finding and shortlisting the helper. If they mean a
   longer number for the whole thing, it is one row to change.
 - **Whether the helper-facing "2-4 weeks" is the same span or a different one** (§9.15).
-- **What a HELPER pays us, if anything.** Measured 2026-09-10: there is no helper-side
-  fee anywhere in the knowledge base, while a job seeker asking *"do i have to pay any
-  fee"* retrieves the **employer's** direct-hire cost comparison at 0.488. A placement
-  fee is the single figure a job seeker will act on, so `CANDIDATE_BRIEFING_NOTE`
-  forbids quoting her any figure at all and the journey rows state none. The existing
-  helper-rights content covers a **placement loan** taken by her home-country agency,
-  which is a different thing. If Ming Hwee charges a helper nothing, saying so plainly
-  is worth a row of its own.
+- ~~**What a HELPER pays us, if anything.**~~ **ANSWERED 2026-09-10** — *"there is no
+  fees, the candidate does not have to pay any fees for this"*. It is now a row of its
+  own (`general` + `candidate`), and a job seeker asking it is answered rather than
+  handed to a human. What is **still** open is the half beside it: the KB tells her, in
+  her own language, that *"Often you do not pay cash — instead, money is taken from your
+  salary for the first months. This is called a placement loan"*, and lists **"Ming
+  Hwee?"** among the possible creditors. Those two are compatible — we charge her
+  nothing, her home-country agency may not — but only Ming Hwee can say so, and the
+  new row deliberately does not deny the loan. **Does a helper placed by Ming Hwee
+  carry a placement loan, and to whom?** See also §9.17.
 - **What a helper can expect to earn.** *"What salary will I get"* scores **0.000** for a
   candidate - nothing in the KB answers it. The same missing grounded salary band as
   §9's entry above, from the other side of the desk.
@@ -767,6 +817,107 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-10** — **Third pass as a job seeker: two questions she asked twice, a fee
+  the agency has now put a number on (none), and a guard missing from a whole reply
+  path.** Their words: *"if the bot knows the documents required, then why didn't it
+  tell me when I said 'Tell me the documents I needed'"*, *"at this point if the
+  candidate is asking 'Are there any fees?' the bot has to tell them there is no
+  fees"*, and *"the documents needed response should be in a list, like 1, 2, 3, not in
+  this raw message"*.
+  (A) **The same question, asked twice, answered once — and the deterministic net
+  caught neither phrasing.** *"Tell me the documents I needed"* got *"I'll check with
+  the team and come back to you shortly."*; two messages later *"No i ask for what are
+  the documents I required"* got the full correct answer, off records that had been
+  there the whole time. Measured before touching anything: **both** phrasings were
+  `False` on `asks_general_info` (does a parked topic answer this?) **and** on
+  `asks_for_process` (may the answer be a list?). So the turn that worked was the
+  classifier happening to return `document_question`, and the net that exists precisely
+  for when it does not was blind to both. The old alternations wanted *"what documents"*
+  adjacent — *"what ARE THE documents"* missed — or *"documents needed"* adjacent —
+  *"documents I needed"* missed — and the imperative branch knew only about a process,
+  because it was written for *"tell me the process"* on 2026-09-10 and nobody asked it
+  about documents. Third time this exact shape has cost a client an answer: *"what is
+  THE cost"* (2026-09-08), *"what is the FURTHER process"* (2026-09-10).
+  (B) **One definition, read by both, rather than the same words typed into two
+  files.** `_DOCUMENTS_QUESTION` lives in `guards.py`; `asks_for_process` and
+  `asks_general_info` both call it. Those two disagreeing about one sentence is what
+  produced a holding line and then, on the phrasing that did get through, a paragraph
+  — because the second detector missed it too, which is (C). §9.8 is the reason it is
+  shared and not copied.
+  (C) **And that is why the answer was a wall of text.** The reply that did land read
+  *"For your application, we need a copy of your passport, medical report and school
+  certificate..."* — correct, and one paragraph, because `asks_for_process` was False so
+  `PROCESS_ADDENDUM` never applied and the two-sentence path did. Verified live after:
+  the same sentence now returns a lead-in, four numbered items one per line, and a
+  closing sentence — **including when the classifier returns `other`**, which is the
+  half that was luck before.
+  (D) **The fee question was lost to a missing letter.**
+  `\bis\s+there\s+(?:a|any)\s+(?:fee|cost|charge)\b` cannot match *"fees"* — there
+  is no word boundary inside it — so *"is there any fee"* was answered and *"Is there
+  any fees I need to pay"* was handed to a human. `do i have to pay any fees` and
+  `what fees do i need to pay` matched nothing either.
+  (E) **What a helper pays us is now a fact, not a gap — and it is worded around the row
+  that was already there.** This had been an open item in §9 since the day before. The
+  agency's answer is *no fee*, so there is a row for it, `general` + `candidate`.
+  **The care is in what it does NOT say.** `27.1a Your Placement Loan` is also
+  `contact_type='candidate'` and tells her *"Often you do not pay cash — instead, money
+  is taken from your salary for the first months"*, listing **"Ming Hwee?"** among the
+  possible creditors. A flat *"there are no fees at all"* would contradict a row she can
+  retrieve in the same breath, which is §9.14 in a new place. So the row says exactly
+  what the agency said — she pays **us** nothing — and routes any loan question to a
+  consultant, which is what the loan row itself instructs. No figure appears in it, and
+  that is asserted. Measured after loading: *"Is there any fees I need to pay"* **0.561**,
+  *"do i have to pay any fee"* **0.597**, *"do i need to pay money to ming hwee"*
+  **0.763**, top row every time, and it beats the employer's direct-hire cost comparison
+  that used to win at 0.488. Live: *"No, you do not need to pay Ming Hwee any fee to
+  register, apply, attend an interview or get placed."*
+  (F) **The closing briefing landed as a non-sequitur, and then the bot disowned it.**
+  The last question was *"Would you prefer updates by email or here on WhatsApp?"*, she
+  answered *"Here"*, and the next thing she read was the numbered hiring process. She
+  wrote *"Here I mean WhatsApp why did you tell the process"* — and the reply was
+  *"Sorry, Ruru, I misunderstood — you meant WhatsApp for updates, not that you wanted
+  the hiring process."* Nothing had been misunderstood: that briefing is the closing
+  message the agency asked for on 2026-09-10. The message simply never said her
+  registration was **finished**, so a list of steps arriving on the back of a one-word
+  answer read as a mistake. Fixed at the cause: the opening line now does two jobs.
+  Live after: *"Thanks, Ruru — your registration is complete and that is everything we
+  need from you for now. Here is what happens next:"*, then six steps, then the
+  consultant line, and no figure anywhere. The apology itself is recorded as §9.19
+  rather than prompted against — it is written a turn later by a node with no way of
+  knowing the message was deliberate, and a broad "never disown an earlier reply" rule
+  would also suppress genuine corrections.
+  (G) **Running the employer controls found a defect nobody reported, and it is the
+  worst thing in this commit.** With a **hiring** ticket parked, *"Is there any fees I
+  need to pay"* came back *"The approximate total service fee and third-party costs are
+  $4,225, with a combined total of about $4,285."* — a new hire's price, which has been
+  forbidden before a salesperson speaks to the client since 2026-09-04. Every guard
+  passed it, correctly: those figures **are** in Form A, so `ungrounded_figures` waves
+  them through — that is the entire reason `quotes_hiring_package_cost` exists
+  separately. It was wired into `info_collector` and `response_generator` and never into
+  `blocked_topic_responder`, which is the path used **after** the handover — i.e. the
+  exact moment the rule is about. Not caused by this round's changes: the intent alone
+  already made that turn answerable. Now first in that node's guard chain, so the client
+  gets the deferral, which says why, rather than the bare holding line.
+  (H) **A check that was green with the guard switched off.** The new assertion asked
+  whether every reply-writing node *imports* the guard — derived from which nodes ground
+  a reply, so a fourth path cannot reopen the gap. Injecting `if False:` left the import
+  in place and both scripts stayed green: **imported and never called is precisely the
+  state that guard had been in.** `smoke_nodes.py` states can now name the reply the
+  model would have written (`_stub_reply`) and what the reply must contain
+  (`_expect_reply`), so that state executes the guard and reads the result. Seven faults
+  injected, seven red — the first version of this list was six red and one green.
+  (I) **Employer controls, all unmoved or improved.** New hiring, passport renewal and
+  transfer documents questions now come back as numbered lists on phrasings that
+  previously fell through entirely; passport renewal still quotes its own **$450**
+  (`FEE_STATED_SERVICES` is untouched); the helper's fee row is `contact_type='candidate'`
+  so an employer can never retrieve it.
+  **Found, measured and deliberately NOT changed**, all three in §9: an unfilled
+  `[INSERT — Ming Hwee to complete before launch]` placeholder sitting in a live
+  candidate-facing row (§9.17); the candidate consent-form preamble outranking her own
+  journey rows, with both of hers still in the set and the live replies using hers
+  (§9.18); and the apology above (§9.19).
+  `selfcheck_flows.py` is **349 assertions**; `smoke_nodes.py` is **43 states**.
 
 - **2026-09-10** — **Retested as a job seeker: a cooking question she never invited,
   and no explanation of what happens next.** Their words: *"when the employee says that

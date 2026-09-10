@@ -1997,6 +1997,59 @@ ROWS += [
 ]
 
 
+# ---------------------------------------------------------------------------
+# What a helper pays US: nothing.
+#
+# This was an open item in CLAUDE.md section 9 ("What a HELPER pays us, if
+# anything") and the agency closed it on 2026-09-10, in these words: "if the
+# candidate is asking, 'Are there any fees?' so bot have to tell them that
+# there is no fees, the candidate does not have to pay any fees for this."
+#
+# It is the single figure a job seeker will act on, and until now there was
+# nothing: measured 2026-09-10, "do i have to pay any fee" as a candidate
+# retrieved the EMPLOYER's direct-hire cost comparison at 0.488, and after
+# _retrieval_audience shut the employer shelf she got a handover instead.
+#
+# WORDED AROUND THE ROW THAT ALREADY EXISTS, which is the whole care needed
+# here. "27.1a Your Placement Loan (Very Important - Read This)" is
+# contact_type='candidate' and tells her: "Many helpers pay an agency in their
+# home country to get the job. Often you do not pay cash - instead, money is
+# taken from your salary for the first months", and it lists "Ming Hwee?"
+# among the possible creditors. A flat "you pay nothing, there are no fees at
+# all" would flatly contradict a row she can also retrieve, and the knowledge
+# base contradicting itself in front of the same person is section 9.14 all
+# over again. So this row says exactly what the agency said and no more - she
+# pays MING HWEE nothing to register and nothing to be placed - and sends any
+# question about a loan or a deduction to a consultant rather than answering
+# it. That is also what the loan row itself instructs ("the bot answers loan
+# questions by routing to a human"), so the two agree.
+#
+# No figure appears here, deliberately: there is none to state, and a number
+# reached for in a reply about a helper's money belongs to the employer's price
+# list. CANDIDATE_BRIEFING_NOTE forbids quoting her one at all.
+ROWS += [
+    {
+        "service_type": "general",
+        "contact_type": "candidate",
+        "nationality": "all",
+        "section_heading": "Helper - what she pays Ming Hwee",
+        "question": "Do I have to pay any fee to Ming Hwee to get a job?",
+        "answer": (
+            "No. Ming Hwee does not charge you a fee to register with us, to be "
+            "put forward to employers, to be interviewed, or to be placed. You "
+            "do not pay us anything to apply for a job through us, and you "
+            "should never be asked to. Our fees are paid by the employer, not "
+            "by you. If anyone asks you for money on our behalf, tell us. "
+            "Anything you may have arranged separately with an agency in your "
+            "own country is a different matter and not something we can answer "
+            "for - if you have a question about a loan or about money being "
+            "taken from your salary, tell us and a consultant will go through "
+            "it with you properly."
+        ),
+    },
+]
+
+
 UPDATES: list[dict[str, Any]] = [
     {
         "where": {"question": "How long does a direct hire take?",

@@ -525,6 +525,64 @@ def strip_repeated_opener(reply: str, *previous: str) -> str:
 # widen the sentence budget, and ONLY ever alongside retrieved records - an
 # unanswerable process question still gets the holding line rather than a long
 # improvisation.
+# "What do I have to give you?" - asked four different ways in one conversation
+# and answered none of them.
+#
+# Live, 2026-09-10, a job seeker with her registration parked. She wrote "Tell me
+# the documents I needed" and got "I'll check with the team and come back to you
+# shortly."; two messages later she wrote "No i ask for what are the documents I
+# required" and was answered in full, from records that had been there the whole
+# time. Her own reading of it: "if the bot knows the documents required, then why
+# didn't it tell me when I said tell me the documents I needed".
+#
+# Measured, and it is worse than one unlucky turn: BOTH of those phrasings were
+# False on this detector AND on asks_general_info. The old alternations wanted
+# "what documents" adjacent ("what ARE THE documents" missed), or "documents
+# needed" adjacent ("documents I needed" missed), and the imperative branch in
+# _GENERAL_INFO knew only about a process ("tell me the documents" missed). So
+# the one turn that DID work was the classifier happening to return
+# document_question, and the deterministic net underneath it - the whole reason
+# that net exists - caught neither. Same shape as the home-leave "what is the
+# FURTHER process" gap on 2026-09-10 and the "what is THE cost" gap on
+# 2026-09-08: a pattern written around the exact words somebody reported.
+#
+# One definition, read by both callers rather than copied into each (§9.8): it
+# decides whether a numbered list is allowed HERE, and whether a parked topic
+# answers rather than holding, and those two must never disagree about the same
+# sentence again.
+_DOCUMENT_NOUN = r"(?:documents?|papers?|paperwork|forms?|certificates?)"
+
+_DOCUMENTS_QUESTION = re.compile(
+    # "what documents", "which forms", "what all paperwork"
+    rf"\b(?:what|which)\s+(?:all\s+)?{_DOCUMENT_NOUN}\b"
+    # "what are the documents", "what's the paperwork"
+    rf"|\bwhat(?:'?s|\s+is|\s+are)\s+(?:all\s+)?(?:the\s+)?{_DOCUMENT_NOUN}\b"
+    # "tell me the documents", "just tell the forms"
+    rf"|\btell\s+(?:me|us)?\s*(?:the\s+)?{_DOCUMENT_NOUN}\b"
+    # "documents I needed", "documents are required", "papers I have to provide".
+    # The pronoun and the auxiliary are optional and SEPARATE, which is the whole
+    # difference between "documents needed" (matched before) and "documents I
+    # needed" (did not).
+    rf"|\b{_DOCUMENT_NOUN}\s+(?:i\s+|you\s+|we\s+|she\s+)?"
+    r"(?:am\s+|are\s+|is\s+|will\s+|would\s+|should\s+|must\s+|"
+    r"have\s+to\s+|need\s+to\s+)?"
+    r"(?:need(?:ed|s)?|require[ds]?|provide|submit|bring|give|send)\b"
+    # "do you need any documents from me", "do i need to send any papers"
+    rf"|\bneed\s+(?:any\s+|some\s+)?{_DOCUMENT_NOUN}\b",
+    re.IGNORECASE,
+)
+
+
+def asks_for_documents(text: str) -> bool:
+    """Whether the client is asking what paperwork they have to produce.
+
+    Deliberately shared by asks_for_process (may this reply be a list?) and by
+    blocked_topic_responder.asks_general_info (does a parked topic answer this?)
+    - see the note above for the conversation where those two disagreed.
+    """
+    return bool(_DOCUMENTS_QUESTION.search(text or ""))
+
+
 _ASKS_FOR_PROCESS = re.compile(
     r"\bprocess\b|\bprocedure\b|\bsteps?\b|\bstages?\b|\bphases?\b"
     r"|\bwalk\s+me\s+through\b|\bstep[-\s]?by[-\s]?step\b"
@@ -573,6 +631,12 @@ def asks_for_process(text: str) -> bool:
     """
     body = text or ""
     if _PROCESS_AS_NOUN.search(body):
+        return True
+    # Tested BEFORE the verb exclusion, not after: that exclusion is about the
+    # word "process", and "can you process the documents I need to send" is
+    # still a question about her documents. Vetoing it on somebody else's word
+    # is how "the full process FOR hiring" was thrown out on 2026-09-08.
+    if asks_for_documents(body):
         return True
     if _PROCESS_AS_VERB.search(body):
         return False

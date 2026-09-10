@@ -329,6 +329,45 @@ CASES = [
       "incoming_text": "what is the full process for hiring a helper",
       "history_text": "client: hi\nbot: I've passed this to our team.",
       "blocked_topics": {"new_hiring": {"ticket_id": 1, "ticket_number": "CB-2026-0001"}}}),
+    # A job seeker asking for HER documents after the handover. Live
+    # 2026-09-10 this exact sentence got "I'll check with the team and come
+    # back to you shortly." while the answer sat in the records; the phrasing
+    # is kept verbatim so the state names the turn that failed.
+    ("blocked_topic_responder", "candidate, her documents while parked",
+     {"intent": "document_question", "service_type": "candidate_new_hiring",
+      "contact_type": "employer",
+      "incoming_text": "Tell me the documents I needed",
+      "history_text": "client: Here\nbot: Here is what happens next, Ruru:",
+      # Not the holding line. STEPPED_REPLY is what the stub returns, so this
+      # asserts the turn was ANSWERED rather than passed to a human - which is
+      # the whole complaint, and which asks_general_info alone decides.
+      "_expect_reply": "1.",
+      "blocked_topics": {"candidate_new_hiring": {"ticket_id": 1,
+                                                  "ticket_number": "CB-2026-0009"}}}),
+    # ...and asking about money. She pays us nothing, and the reply must not
+    # reach for a figure that belongs to the employer's price list.
+    ("blocked_topic_responder", "candidate, asking about fees while parked",
+     {"intent": "fee_enquiry", "service_type": "candidate_new_hiring",
+      "contact_type": "employer",
+      "incoming_text": "Is there any fees I need to pay",
+      "history_text": "client: hi\nbot: I've passed this to our team.",
+      "blocked_topics": {"candidate_new_hiring": {"ticket_id": 1,
+                                                  "ticket_number": "CB-2026-0009"}}}),
+    # The hiring-cost guard on the path that never had it. The stub is the
+    # reply that actually went out on 2026-09-10 with a hiring ticket parked -
+    # every figure in it is genuinely in Form A, which is why every other guard
+    # passed it.
+    ("blocked_topic_responder", "employer, a parked reply that prices the hire",
+     {"intent": "fee_enquiry", "service_type": "new_hiring",
+      "incoming_text": "Is there any fees I need to pay",
+      "history_text": "client: hi\nbot: I've passed this to our team.",
+      "_stub_reply": ("The approximate total service fee and third-party costs "
+                      "are $4,225, with a combined total of about $4,285."),
+      # The deferral, not the figure and not the bare holding line: the client
+      # is told WHY they are getting a person instead of a number.
+      "_expect_reply": "would rather one of our consultants",
+      "blocked_topics": {"new_hiring": {"ticket_id": 1,
+                                        "ticket_number": "CB-2026-0001"}}}),
     ("blocked_topic_responder", "ordinary message, parked",
      {"intent": "new_hiring", "service_type": "new_hiring",
       "incoming_text": "ok noted thanks",
@@ -337,9 +376,10 @@ CASES = [
 ]
 
 
-async def _run_info_collector(state):
+async def _run_info_collector(state, stub=None):
     with patch("app.graph.nodes.info_collector.complete",
-               new=AsyncMock(return_value="When does her passport expire?"), create=True), \
+               new=AsyncMock(return_value=stub or "When does her passport expire?"),
+               create=True), \
          patch("app.graph.nodes.info_collector.complete_json",
                new=AsyncMock(return_value={}), create=True), \
          patch("app.graph.nodes.info_collector._open_lead_early",
@@ -348,18 +388,18 @@ async def _run_info_collector(state):
         return await info_collector(state)
 
 
-async def _run_response_generator(state):
+async def _run_response_generator(state, stub=None):
     # Returns a stepped reply so the widened clamp and the list-marker masking
     # are exercised end to end, not just in a unit assertion.
     with patch("app.graph.nodes.response_generator.complete",
-               new=AsyncMock(return_value=STEPPED_REPLY), create=True):
+               new=AsyncMock(return_value=stub or STEPPED_REPLY), create=True):
         from app.graph.nodes.response_generator import response_generator
         return await response_generator(state)
 
 
-async def _run_blocked_topic_responder(state):
+async def _run_blocked_topic_responder(state, stub=None):
     with patch("app.graph.nodes.blocked_topic_responder.complete",
-               new=AsyncMock(return_value=STEPPED_REPLY), create=True):
+               new=AsyncMock(return_value=stub or STEPPED_REPLY), create=True):
         from app.graph.nodes.blocked_topic_responder import blocked_topic_responder
         return await blocked_topic_responder(state)
 
@@ -445,13 +485,33 @@ async def main() -> int:
         failures += not ok
     for node, label, overrides in CASES:
         state = {**BASE, **overrides}
+        # A state may name the reply the model would have written, so a guard
+        # that only fires on particular WORDS can be executed rather than only
+        # unit-tested. Added 2026-09-10 for the hiring-cost guard, which had
+        # never run on this path at all.
+        stub = state.pop("_stub_reply", None)
+        # What the reply must CONTAIN. Optional, and most states do not use it -
+        # this file's first job is execution cover. But a state that exists to
+        # prove a guard fires proves nothing while the only test is that a dict
+        # came back: on 2026-09-10 the hiring-cost guard was disabled outright
+        # (`if False:`) and every check in both scripts stayed green, because
+        # selfcheck asserts the module IMPORTS the guard and this one asserted
+        # only the shape of the return. Imported and never called is precisely
+        # the state that guard was in for two days.
+        expect = state.pop("_expect_reply", None)
         full = f"{node}  {label}"
-        with patch("app.graph.llm.complete", new=AsyncMock(return_value=STEPPED_REPLY)), \
+        with patch("app.graph.llm.complete",
+                   new=AsyncMock(return_value=stub or STEPPED_REPLY)), \
              patch("app.graph.llm.complete_json", new=AsyncMock(return_value={})):
             try:
-                out = await RUNNERS[node](state)
+                out = await RUNNERS[node](state, stub)
                 ok = isinstance(out, dict)
-                print(f"  {'PASS' if ok else 'FAIL'}  {full:44} -> {sorted(out)[:4]}")
+                detail = sorted(out)[:4] if ok else out
+                if ok and expect:
+                    got = out.get("reply") or out.get("reply_text") or ""
+                    ok = expect.lower() in got.lower()
+                    detail = f"expected {expect!r} in {got[:80]!r}"
+                print(f"  {'PASS' if ok else 'FAIL'}  {full:44} -> {detail}")
                 failures += not ok
             except Exception as exc:  # noqa: BLE001 - reporting is the whole job
                 print(f"  FAIL  {full:44} -> {type(exc).__name__}: {exc}")
