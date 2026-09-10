@@ -623,7 +623,9 @@ docker compose logs chatbot | grep "Safety gate"
 python scripts/smoke_nodes.py          # RUNS each node with the LLM and DB stubbed. Run this FIRST.
 python scripts/selfcheck_reset_ui.py   # reset-ui/ still clears what reset_conversation.py clears
 python scripts/selfcheck_flows.py      # behavioural assertions; also runs IN the container:
+                                       #   docker compose cp scripts/. chatbot:/app/scripts
                                        #   docker compose exec chatbot python /app/scripts/selfcheck_flows.py
+                                       # Note the `/.` — see "the second copy" below.
                                        # Verifies BEHAVIOUR, not grep counts — see the note below.
 python scripts/preflight.py            # go-live gate: KB, agents, branch, portal bridge
 python scripts/check_retrieval.py      # retrieval calibration; tunes RAG_SOFT_FLOOR
@@ -658,8 +660,21 @@ deploy. `scripts/selfcheck_flows.py` asserts the things that actually matter (an
 taking on a transfer is not asked the helper's name; a helper-initiated transfer reads as
 a candidate; the hiring total is blocked while salary is not; neither renewal flow asks
 for a case ID) and exits non-zero on any failure. Note `scripts/` is NOT in the image, so
-it needs `docker compose cp scripts chatbot:/app/scripts` first — and that copy lives
-only in the running container's writable layer, so it is lost on the next recreate.
+it has to be copied in first — and that copy lives only in the running container's
+writable layer, so it is lost on the next recreate.
+
+**And the second copy goes to the wrong place.** `docker cp` into a destination
+directory that **already exists** copies the source *into* it, so
+`docker compose cp scripts chatbot:/app/scripts` creates `/app/scripts` correctly on a
+freshly recreated container and then writes `/app/scripts/scripts/` on every run after
+that. It prints `✔ Copied` either way. Live on 2026-09-10: a self-check was run against
+a copy several commits old, reported **ALL PASS**, and was believed — the only thing that
+gave it away was that two assertions known to be in the file did not appear in the
+output. **A self-check that silently runs an old copy of itself is worse than no
+self-check**, because it is evidence pointing the wrong way. Use `scripts/.` (copy the
+contents, overwrite in place) or `rm -rf /app/scripts` first. Proven by the fix rather
+than by reading the docs: the same command produced a stale script with the directory
+present and the current one without it.
 
 **A reset does NOT make a converted number look new again.** `reset_conversation.py`
 clears the chat — messages, tickets, handovers, the checkpoint, the identity on the
@@ -774,6 +789,16 @@ Append here, newest first. One entry per behavioural change.
   end of §9, together with the agency decisions that were scattered across the change
   log. `reset-ui/README.md` and §0 both pointed at the deleted file and now point at
   §9.5 and at §9. Nothing is lost: the file is in git history.
+  (G) **And the deploy check was verifying an old copy of itself.** `scripts/` is not in
+  the image and has to be copied into the container, and `docker cp` into a directory
+  that already exists copies the source *inside* it — so the first copy after a recreate
+  lands correctly and every later one writes `/app/scripts/scripts/`, printing
+  `✔ Copied` all the same. The run reported **ALL PASS** against a script several commits
+  old. Nothing about the bot was affected — `app/` is in the image and had been rebuilt —
+  but the check that exists to catch a bad deploy was itself the thing quietly out of
+  date, which is the same silent-success signature as the dead briefing condition and the
+  budget guard. Caught only because two assertions known to be in the file were missing
+  from the output. §10 now carries the `scripts/.` form and the reason.
 
 - **2026-09-10** — **Four things from the agency's new-hiring test, and the name one is
   the same defect from both ends.** Their words: *"the flow runs good but with some
