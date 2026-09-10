@@ -1697,6 +1697,134 @@ ROWS: list[dict[str, Any]] = [
 ]
 
 
+# --- 2026-09-10: the transfer document checklist ---------------------------
+#
+# Transfer was the ONLY service with no document rows at all. Every other one
+# carries the same pair - "what I provide" and "what Ming Hwee prepares" - and
+# a transfer carried neither, so "what documents do I need" inside a transfer
+# had nothing to retrieve and could only ever be handed to a human.
+#
+# Filed as 'general' and NOT as 'transfer', deliberately, and this is the whole
+# reason the rows are worth reading before they are moved:
+#
+#   An EMPLOYER asking about a transfer runs under `transfer_employer` (see
+#   CLAUDE.md section 8), and `transfer_employer` is not a service_type any KB
+#   row uses - so `_labelled_filter` narrows the search to 'general' and every
+#   row filed under `transfer` is invisible to them (section 9.15, measured
+#   2026-09-10). This checklist is written FROM the employer's side of the
+#   desk - their NRIC, their income proof, the forms the new employer signs -
+#   so filing it under `transfer` would put it in the one bucket the person it
+#   is for cannot see, and the change would look done and do nothing.
+#
+#   'general' is the established catch-all: the match function passes
+#   `service_type in (filter, 'general')`, so these are reachable from
+#   `transfer`, from `transfer_employer`, and from every other service. It is
+#   what 2026-09-08 did for the steps direct hire shares with new hiring, and
+#   it is one of the two fixes section 9.15 names. It is also forward-
+#   compatible with the other one: if `transfer_employer` is later aliased to
+#   search under `transfer`, a 'general' row is still reachable, so nothing
+#   here has to move again.
+#
+# The cost of 'general' is that these rows compete inside every OTHER service
+# too, so the questions are worded so the word "transfer" carries them - and
+# the controls were measured rather than assumed (see the note at the end of
+# this block).
+ROWS += [
+    {
+        "service_type": "general",
+        # Employer-facing, and that is enforced rather than implied. Every item
+        # on this checklist is an EMPLOYER's document - their NRIC, their income
+        # proof, the forms the new employer signs. `service_type = 'transfer'`
+        # survives resolve_service only for a CANDIDATE (an employer always
+        # becomes `transfer_employer`), so with contact_type 'all' these rows
+        # were retrieved for a HELPER asking what she needs - and live, on
+        # 2026-09-10, that produced "Your NRIC or IC and proof of income"
+        # addressed to the helper, mixed with "the new employer provides their
+        # own identification" in the same reply. Narrowing to 'employer' is what
+        # the column is for: a candidate's search returns candidate + 'all' rows
+        # and never sees these, while an employer's returns employer + 'all'.
+        "contact_type": "employer",
+        "nationality": "all",
+        "section_heading": "Transfer - documents from the employer",
+        "question": "What documents do I need to provide for a transfer?",
+        "answer": (
+            "It depends which side of the transfer you are on. If you are taking the "
+            "helper on, we need a copy of your NRIC or IC and proof of income - either "
+            "your Income Tax Assessment or a Declaration of Monthly Income. If you are "
+            "a foreign employer that is your Employment Pass or S Pass together with "
+            "your passport, or a company letter together with your tenancy agreement. "
+            "We also need her current Work Permit number and its expiry date, and the "
+            "release or written agreement from her current employer. If you are the "
+            "one releasing her, that release and her Work Permit details are what we "
+            "need from you."
+        ),
+    },
+    {
+        "service_type": "general",
+        # Employer-facing, and that is enforced rather than implied. Every item
+        # on this checklist is an EMPLOYER's document - their NRIC, their income
+        # proof, the forms the new employer signs. `service_type = 'transfer'`
+        # survives resolve_service only for a CANDIDATE (an employer always
+        # becomes `transfer_employer`), so with contact_type 'all' these rows
+        # were retrieved for a HELPER asking what she needs - and live, on
+        # 2026-09-10, that produced "Your NRIC or IC and proof of income"
+        # addressed to the helper, mixed with "the new employer provides their
+        # own identification" in the same reply. Narrowing to 'employer' is what
+        # the column is for: a candidate's search returns candidate + 'all' rows
+        # and never sees these, while an employer's returns employer + 'all'.
+        "contact_type": "employer",
+        "nationality": "all",
+        "section_heading": "Transfer - forms we prepare",
+        # "documents" is the word that collides. Measured 2026-09-10: worded
+        # "What documents does Ming Hwee prepare for a transfer?" this row was
+        # top for new_hiring's OWN question "what documents does ming hwee
+        # prepare (new hiring)" at 0.754 against 0.726 - a 'general' row
+        # displacing the service-specific row it sits beside, which is the
+        # standing cost of the general bucket and the reason the controls are
+        # measured rather than assumed. "forms" separates them (0.708 vs 0.717,
+        # and 0.535 vs 0.551 on the other phrasing) while losing nothing on the
+        # transfer side, and it is the wording `replacement` and
+        # `passport_renewal` already use for their own version of this row.
+        "question": "What forms does Ming Hwee prepare for a transfer?",
+        "answer": (
+            "Seven, and we prepare all of them for you. The transfer agreement between "
+            "the current and the new employer, which sets out how the costs are shared "
+            "and is kept on file for a year in case MOM asks to see it. The "
+            "Authorisation Form, which the new employer signs through Singpass so we "
+            "can transact with MOM on their behalf. The Employer Particulars form for "
+            "the new employer. The Job Offer Form. And a fresh Employment Contract, "
+            "Safety Agreement and Rest-Day form for the new employer. You do not have "
+            "to source any of these yourself."
+        ),
+    },
+    {
+        "service_type": "general",
+        # Employer-facing, and that is enforced rather than implied. Every item
+        # on this checklist is an EMPLOYER's document - their NRIC, their income
+        # proof, the forms the new employer signs. `service_type = 'transfer'`
+        # survives resolve_service only for a CANDIDATE (an employer always
+        # becomes `transfer_employer`), so with contact_type 'all' these rows
+        # were retrieved for a HELPER asking what she needs - and live, on
+        # 2026-09-10, that produced "Your NRIC or IC and proof of income"
+        # addressed to the helper, mixed with "the new employer provides their
+        # own identification" in the same reply. Narrowing to 'employer' is what
+        # the column is for: a candidate's search returns candidate + 'all' rows
+        # and never sees these, while an employer's returns employer + 'all'.
+        "contact_type": "employer",
+        "nationality": "all",
+        "section_heading": "Transfer - releasing your helper",
+        "question": "What do I need to provide if I am releasing my helper to a new employer?",
+        "answer": (
+            "Two things from you: your written release or consent to the transfer, and "
+            "her current Work Permit number and expiry date. You will also be asked to "
+            "sign the transfer agreement between yourself and the new employer, which "
+            "sets out how the costs are shared - we prepare that for you. Her new "
+            "employer provides their own identification and proof of income, not you."
+        ),
+    },
+]
+
+
 # Rows that already exist and need CHANGING rather than adding. ROWS above is
 # purely additive and skips on question + service_type, which is right for new
 # material and wrong for a row that has become untrue, or that is filed where
@@ -2155,7 +2283,11 @@ async def main(dry_run: bool) -> None:
         payload: dict[str, Any] = {
             "namespace": namespace,
             "service_type": row["service_type"],
-            "contact_type": "all",
+            # Almost every row is written for anyone. A row addressed to ONE
+            # side of the desk says so: contact_type narrows the search to
+            # rows for this audience plus the 'all' bucket, so an 'employer'
+            # row is invisible to a candidate. See the transfer checklist.
+            "contact_type": row.get("contact_type", "all"),
             "nationality": row["nationality"],
             "chunk_type": "qa_pair",
             "question": row["question"],

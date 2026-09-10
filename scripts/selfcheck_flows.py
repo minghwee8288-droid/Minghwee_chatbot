@@ -959,6 +959,82 @@ rows = [
  ("and still state no insurance minimum",
   any(f"{D}15,000" in r["answer"] or f"{D}60,000" in r["answer"]
       for r in lsn.ROWS if r["service_type"] == "general"), False),
+
+ # --- the transfer document checklist, 2026-09-10 ----------------------
+ # Transfer was the only service with no document rows at all, so "what
+ # documents do I need" inside a transfer had nothing to retrieve.
+ ("a transfer asks and answers both halves of the checklist",
+  {"What documents do I need to provide for a transfer?",
+   "What forms does Ming Hwee prepare for a transfer?",
+   "What do I need to provide if I am releasing my helper to a new employer?"}
+  <= {r["question"] for r in lsn.ROWS}, True),
+ # THE decision in this change. An EMPLOYER asking about a transfer runs
+ # under `transfer_employer`, which is not a service_type any row uses, so
+ # _labelled_filter narrows to 'general' and every `transfer` row is
+ # invisible to them (section 9.15). This checklist is written from the
+ # employer's side, so filing it under `transfer` would put it in the one
+ # bucket the person it is for cannot see - the change would look done and
+ # do nothing. Measured 2026-09-10 before the load: "what documents do i
+ # need for the transfer" under transfer_employer scored 0.359, below the
+ # floor, and "what documents does ming hwee prepare" scored 0.570 - ABOVE
+ # the floor, topped by the PDPA privacy notice, which is worse than a
+ # holding line. After: 0.679 and 0.772 on the right rows.
+ ("the transfer checklist is filed where an employer can see it",
+  {r["service_type"] for r in lsn.ROWS
+   if r["section_heading"].startswith("Transfer - documents")
+   or r["section_heading"].startswith("Transfer - forms")
+   or r["section_heading"].startswith("Transfer - releasing")}, {"general"}),
+ # The cost of the 'general' bucket: these rows compete inside every OTHER
+ # service too. Worded "What DOCUMENTS does Ming Hwee prepare for a
+ # transfer?" this row was top for new_hiring's own question at 0.754
+ # against 0.726 - a general row displacing the service-specific row beside
+ # it. "forms" separates them (0.708 vs 0.717) and loses nothing on the
+ # transfer side. It is also what replacement and passport_renewal already
+ # call their own version of this row.
+ ("the forms row does not collide with new_hiring's documents row",
+  [r["question"] for r in lsn.ROWS
+   if r["section_heading"] == "Transfer - forms we prepare"],
+  ["What forms does Ming Hwee prepare for a transfer?"]),
+ # The four things the agency asks the client for. A checklist missing one
+ # of them sends somebody to an appointment without it.
+ ("the employer's four items are all asked for",
+  [term for term in ("Work Permit number", "expiry", "release", "NRIC",
+                     "Income Tax Assessment", "Declaration of Monthly Income",
+                     "Employment Pass", "tenancy agreement")
+   if term not in "".join(r["answer"] for r in lsn.ROWS
+                          if r["section_heading"].startswith("Transfer - "))], []),
+ # And the seven we prepare.
+ ("the seven forms we prepare are all named",
+  [term for term in ("transfer agreement", "Authorisation Form",
+                     "Employer Particulars form", "Job Offer Form",
+                     "Employment Contract", "Safety Agreement", "Rest-Day form")
+   if term not in "".join(r["answer"] for r in lsn.ROWS
+                          if r["section_heading"] == "Transfer - forms we prepare")], []),
+ # transfer_employer serves BOTH directions, and retrieval cannot know which
+ # one the client is. A releasing employer told to produce the NEW employer's
+ # income proof has been asked for a document that is not theirs to give, so
+ # every row that lists documents says whose they are.
+ ("the documents row says which side of the transfer the client is on",
+  all(w in r["answer"] for r in lsn.ROWS
+      if r["question"] == "What documents do I need to provide for a transfer?"
+      for w in ("taking the helper on", "releasing her")), True),
+ # ...and both sides are EMPLOYERS. resolve_service leaves service_type
+ # 'transfer' only for a CANDIDATE - an employer always becomes
+ # `transfer_employer` - so with contact_type 'all' this checklist was
+ # retrieved for a HELPER asking what she needs. Live, 2026-09-10, that
+ # produced "Your NRIC or IC and proof of income" addressed to the helper,
+ # in the same reply as "the new employer provides their own
+ # identification". contact_type narrows a search to this audience plus
+ # 'all', so 'employer' is what makes it invisible to her.
+ ("the transfer checklist is addressed to employers only",
+  {r.get("contact_type", "all") for r in lsn.ROWS
+   if r["section_heading"].startswith("Transfer - ")
+   and r["service_type"] == "general"}, {"employer"}),
+ # And the default is still 'all', so no other row changed audience.
+ ("every other row is still written for anyone",
+  {r.get("contact_type", "all") for r in lsn.ROWS
+   if not (r["section_heading"].startswith("Transfer - ")
+           and r["service_type"] == "general")}, {"all"}),
  # --- home leave, 2026-09-08 ------------------------------------------
  # The nationality decides the documents, the lead time AND the price - PH
  # needs her ORIGINAL passport plus a ticket itinerary, 4 weeks, $400; ID

@@ -264,6 +264,10 @@ because the lead is opened early and the ticket is created much later.
 | A broadcast is never a human agent | `message.is_auto_reply` (+ in-process count) + `webhook._undo_broadcast_standdowns` | The detector is retrospective, so the first copies of a NEW broadcast are indistinguishable from an agent. Two conversations in one run is now enough, and earlier stand-downs are reversed. |
 | A negative auto-reply verdict is never cached | `_AUTO_REPLY_VERDICTS` | Caching the first "no" on a fresh broadcast pinned it, so every later copy short-circuited to "no" and silenced the bot estate-wide. |
 | A mass announcement is caught on its FIRST copy | `message._BROADCAST_MARKERS` | "Dear Valued Customer" and its kin. `operating hours` is deliberately absent — an agent answering "what time do you open" says it. |
+| A transfer's document checklist is filed where the EMPLOYER can see it | `service_type = 'general'` + `selfcheck_flows.py` | `transfer_employer` is not a `service_type` any row uses, so retrieval narrows to `general` (§9.15) — a checklist written for the employer and filed under `transfer` is in the one bucket the person it is for cannot read. |
+| A `general` row does not displace the service-specific row beside it | `selfcheck_flows.py` (the forms-row wording) | The cost of the catch-all bucket. "What **documents** does Ming Hwee prepare for a transfer?" was top for `new_hiring`'s own question at 0.754 against 0.726. "forms" separates them; the controls are measured, not assumed. |
+| A document list says WHOSE documents they are | `SERVICE_FIELDS["transfer_employer"]`'s two directions + the row text | Retrieval cannot know whether the client is taking a helper on or releasing one, so the row answers both. A releasing employer asked for the new employer's income proof has been asked for a document that is not theirs. |
+| A row written for one side of the desk is labelled for that side | `contact_type` on `cb_knowledge_base_updated` + `selfcheck_flows.py` | `service_type='transfer'` survives `resolve_service` only for a CANDIDATE, so an employer-facing checklist filed `contact_type='all'` is served to the HELPER. `contact_type` narrows to this audience plus `all`; the default stays `all`. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -576,6 +580,20 @@ Ordered by what will hurt first.
     Measured the same day: documents 0.000 under the filter, cost correctly
     deferred by `COST_WITHHELD_SERVICES`, and a documents question rescued by the
     widening only when phrased with the word "transfer" in it.
+    **Update 2026-09-10, later the same day: the DOCUMENTS half of this is now
+    closed, the timing half is not.** The agency sent the transfer document
+    checklist and it is loaded as three `general` rows, which is the second of
+    the two fixes named above — so an employer transfer now retrieves its own
+    checklist (0.679 / 0.772 / 0.788 against 0.359 / 0.570 / 0.497 before) with
+    no routing change and no decision needed. That does **not** fix the routing:
+    every other `transfer` row is still invisible to `transfer_employer`, so the
+    steps, the timing and the cost rows are all still unreachable from the
+    employer side, and the alias question is still open. **And the timeline
+    contradiction is worse than recorded above — there are THREE figures, not
+    two.** Alongside the FAQ's "2-3 weeks" and the agency's corrected "1 to 2
+    weeks", the `transfer` FAQ row *"How do I release my helper to transfer to a
+    new employer?"* ends **"The transfer process typically takes 2-4 weeks"**.
+    One of the three is right and Ming Hwee has to say which.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -607,6 +625,13 @@ at a time.
   not a prompt tweak.
 - **Widening `cases_case_type_check`** so a passport renewal or a replacement can be
   opened as a typed case at all (§9.11). The portal's constraint, and their call.
+- **A helper-facing transfer document list.** The checklist they sent on 2026-09-10 is
+  the employer's — their NRIC, their income proof, the forms the new employer signs — so
+  it is filed `contact_type='employer'` and a HELPER asking what *she* needs gets a
+  holding line. If she should be answered rather than handed to a human, that content has
+  to come from them.
+- **Which of the THREE transfer timelines is right** (§9.15): the FAQ's "2-3 weeks", the
+  release FAQ's "2-4 weeks", or the row they corrected on 2026-09-08 to "1 to 2 weeks".
 
 ## 10. Operations
 
@@ -712,6 +737,88 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-10** — **The transfer document checklist, and the bucket it had to go in
+  for anyone to read it.** The agency sent the two halves — what they ask the client
+  for, and what Ming Hwee prepares — and asked that a documents question inside a
+  transfer be answered from them.
+  (A) **Transfer was the only service with no document rows at all.** Every other one
+  carries the same pair, "what I provide" and "what we prepare"; a transfer carried
+  neither, so the most practical question about it had nothing to retrieve. Three rows
+  now: the employer's four items (her Work Permit number and expiry, the current
+  employer's release, the new employer's NRIC or IC, and their income proof with the
+  foreign-employer variants), the seven forms we prepare, and a third for the employer
+  who is **releasing** rather than taking on.
+  (B) **Filed as `general` and NOT as `transfer`, which is the whole decision.** An
+  employer asking about a transfer runs under `transfer_employer`, which is not a
+  `service_type` any row uses, so `_labelled_filter` narrows to `general` and every
+  `transfer` row is invisible to them (§9.15). This checklist is written from the
+  employer's side of the desk — their NRIC, their income proof, the forms the new
+  employer signs — so filing it under `transfer` would have put it in the one bucket the
+  person it is for cannot read, and the change would have looked done and done nothing.
+  Measured before the load, under `transfer_employer`: *"what documents do i need for the
+  transfer"* **0.359**, below the floor. Worse, *"what documents does ming hwee prepare"*
+  scored **0.570 — above** the floor, topped by the **PDPA privacy notice**, and *"what
+  do i need to give you to release my helper"* **0.497**, topped by *"What if my helper
+  goes missing?"*. Three of six probes were confidently answerable from the wrong record,
+  which is worse than a holding line and is the 2026-09-08 direct-hire shape again.
+  After: **0.679, 0.772, 0.788**, every one on the right row. `general` is also
+  forward-compatible with the *other* fix §9.15 names — if `transfer_employer` is later
+  aliased onto `transfer`, a `general` row is still reachable, so none of this has to
+  move again.
+  (C) **The cost of the general bucket showed up immediately, and the control caught
+  it.** Worded *"What **documents** does Ming Hwee prepare for a transfer?"* the row was
+  top for **new_hiring's own** question — 0.754 against its 0.726 — so a new-hiring
+  client asking what we prepare would have been read a transfer form list. "documents" is
+  the colliding word; **"forms"** separates them (0.708 vs 0.717, and 0.535 vs 0.551 on
+  the other phrasing) and loses nothing on the transfer side, and it is what `replacement`
+  and `passport_renewal` already call their own version of this row. **13 controls across
+  all seven services, every one keeping its own document row on top; 14 transfer probes,
+  every one on a new row above the floor.** The row was reworded in place and re-embedded
+  rather than left, and the loader is a no-op on two consecutive runs.
+  **The margin on one control is thin and is recorded rather than rounded up:** on
+  *"what documents does ming hwee prepare (new hiring)"* the new_hiring row leads at
+  **0.717 against this row's 0.708**, so the transfer row is still rank 2 in the set the
+  model receives. That is the accepted state — the same shape as the 2026-09-08 note that
+  the older requirements row outranks the five-stages row, and both are in the top 5 — but
+  it is 0.009, so a future reworking of either row can flip it. The wording that widens
+  the gap properly (*"What forms do I sign to transfer a helper to a new employer?"*,
+  0.494 on that control) was measured and rejected: it drops the transfer side from 0.772
+  to 0.578, which trades a real answer for a comfortable margin.
+  (D) **The rows say whose documents they are**, because `transfer_employer` serves both
+  directions and retrieval cannot know which. A releasing employer told to produce the
+  *new* employer's income proof has been asked for a document that is not theirs to give.
+  (E) **The first live run found a defect the retrieval numbers could not show, and it
+  was one I had just introduced.** Every probe above measures whether the right ROW comes
+  back; none of them reads the reply. Run against the real model, the employer paths were
+  right — lead-in sentence, the four items, the seven forms, the release correctly
+  attributed to the *current* employer — but the **helper** path was not. `resolve_service`
+  leaves `service_type='transfer'` only for a CANDIDATE (an employer always becomes
+  `transfer_employer`), so `transfer` is the HELPER's key, and with `contact_type='all'`
+  she retrieved an employer's checklist. Live: *"Your NRIC or IC and proof of income..."*
+  addressed to the helper, in the same reply as *"The new employer provides their own
+  identification"* — the message contradicted itself about who was being spoken to. Fixed
+  with the column that exists for it: the three rows are `contact_type='employer'`, which
+  narrows a search to that audience plus `all`, so a candidate's search never returns
+  them. The loader's `contact_type` was hardcoded `"all"` and is now per-row, defaulting to
+  `"all"` so nothing else changed audience — asserted both ways. After: the employer paths
+  are unchanged (0.669 / 0.617 / 0.713, all three rows in the set) and the helper gets
+  *"I'll confirm the documents needed for the transfer and get back to you"* — a holding
+  line, which is the honest outcome for content we do not have, and strictly better than a
+  confident answer aimed at somebody else. **The gap that leaves is worth naming: there is
+  no helper-facing transfer document list.** The agency sent the employer's; if a helper
+  asking what SHE needs should get an answer rather than a human, that content has to come
+  from them.
+  (F) **Found while reading the existing rows, NOT fixed: the transfer timeline now has
+  THREE contradicting figures.** §9.15 recorded two — the FAQ's *"2-3 weeks"* against the
+  agency's corrected *"1 to 2 weeks"*. The release FAQ adds a third: *"The transfer
+  process typically takes **2-4 weeks**"*. Left alone deliberately — which one is right is
+  the agency's to say, and §9.15 already carries the question.
+  Verified: **8 new assertions, 261 in total, and `smoke_nodes.py` 32 states, ALL PASS**.
+  The assertions were proved by injecting four faults rather than by reading them — the
+  colliding wording, the checklist filed under `transfer`, one item dropped from the list,
+  and one row back to `contact_type='all'` — and each went red naming the problem. The
+  replies above are quoted from a run against the real model, not from a stub.
 
 - **2026-09-10** — **The same four fixes, checked against all seven services
   instead of the one the agency tested.** Their question on reading the round below:
