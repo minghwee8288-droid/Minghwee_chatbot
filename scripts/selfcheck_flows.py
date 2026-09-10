@@ -21,7 +21,6 @@ import app.services.lead as _lead
 from app.graph.guards import quotes_hiring_package_cost as q
 ic = importlib.import_module("app.graph.nodes.intent_classifier")
 ico = importlib.import_module("app.graph.nodes.info_collector")
-rr = importlib.import_module("app.graph.nodes.rag_retriever")
 S = ico._SMALL_TICKET_SERVICES
 P = ico._COLLECTION_PURPOSE
 from app.graph.prompts.system import RULES
@@ -69,6 +68,7 @@ import app.graph.closure as cl
 import app.services.message as ms
 import app.services.handover as hs
 btr = importlib.import_module("app.graph.nodes.blocked_topic_responder")
+wp = importlib.import_module("app.whapi.parser")
 import re as _re
 import pathlib as _pathlib
 import app.services.contact as _contact
@@ -1092,6 +1092,53 @@ rows = [
   all(w in u["set"]["answer"] for u in lsn.UPDATES
       if "transfer maid" in u["where"]["question"]
       for w in ("from the interview", "from signing")), True),
+
+ # --- a LID is not a phone number, 2026-09-10 --------------------------
+ # Live: every message from an allowlisted tester logged "Bot standing down
+ # on +116909177569373: number not in BOT_ALLOWED_NUMBERS" while they were
+ # messaging from +917970027379. 116909177569373 is a Meta LID, and
+ # normalize_phone splits on "@" and keeps the front, so "...@lid" became a
+ # phone number nobody has ever heard of. Allowlisting it would have been
+ # worse than the silence: every lookup is keyed on the number, so it would
+ # open a SECOND conversation on a non-number - the split-conversation bug
+ # scripts/fix_split_conversations.py exists to repair.
+ ("a phone JID is a phone number",
+  [j for j in ("917970027379@s.whatsapp.net", "6580119456@c.us", "917970027379")
+   if not wp._is_phone_jid(j)], []),
+ ("a LID is not", wp._is_phone_jid("116909177569373@lid"), False),
+ ("nor is an empty identifier", wp._is_phone_jid(""), False),
+ # The whole point: when the payload carries the phone anywhere, use it.
+ ("an inbound LID falls back to the chat's phone",
+  wp.parse_message({"id": "x", "type": "text", "from_me": False,
+                    "text": {"body": "hi"}, "from": "116909177569373@lid",
+                    "chat_id": "917970027379@s.whatsapp.net"}).customer_number,
+  "+917970027379"),
+ ("an outbound LID chat falls back to `to`",
+  wp.parse_message({"id": "x", "type": "text", "from_me": True,
+                    "text": {"body": "hi"}, "from": "6580119456@s.whatsapp.net",
+                    "chat_id": "116909177569373@lid",
+                    "to": "917970027379@s.whatsapp.net"}).customer_number,
+  "+917970027379"),
+ # And the ordinary shapes are untouched - this may only ever improve
+ # resolution, never change a payload that already worked.
+ ("an ordinary inbound message is unchanged",
+  wp.parse_message({"id": "x", "type": "text", "from_me": False,
+                    "text": {"body": "hi"}, "from": "917970027379@s.whatsapp.net",
+                    "chat_id": "917970027379@s.whatsapp.net"}).customer_number,
+  "+917970027379"),
+ ("an ordinary outbound message still names the CLIENT, not us",
+  wp.parse_message({"id": "x", "type": "text", "from_me": True,
+                    "text": {"body": "hi"}, "from": "6580119456@s.whatsapp.net",
+                    "chat_id": "917970027379@s.whatsapp.net"}).customer_number,
+  "+917970027379"),
+ # When there is genuinely nothing else, behaviour is unchanged (stand down)
+ # rather than dropped - a dropped message logs nothing at all, and the
+ # warning is what makes the next occurrence diagnosable.
+ ("a payload with only a LID still resolves to something",
+  wp.parse_message({"id": "x", "type": "text", "from_me": False,
+                    "text": {"body": "hi"}, "from": "116909177569373@lid",
+                    "chat_id": "116909177569373@lid"}).customer_number,
+  "+116909177569373"),
  # --- home leave, 2026-09-08 ------------------------------------------
  # The nationality decides the documents, the lead time AND the price - PH
  # needs her ORIGINAL passport plus a ticket itinerary, 4 weeks, $400; ID

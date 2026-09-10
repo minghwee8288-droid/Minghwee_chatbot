@@ -268,6 +268,7 @@ because the lead is opened early and the ticket is created much later.
 | A `general` row does not displace the service-specific row beside it | `selfcheck_flows.py` (the forms-row wording) | The cost of the catch-all bucket. "What **documents** does Ming Hwee prepare for a transfer?" was top for `new_hiring`'s own question at 0.754 against 0.726. "forms" separates them; the controls are measured, not assumed. |
 | A document list says WHOSE documents they are | `SERVICE_FIELDS["transfer_employer"]`'s two directions + the row text | Retrieval cannot know whether the client is taking a helper on or releasing one, so the row answers both. A releasing employer asked for the new employer's income proof has been asked for a document that is not theirs. |
 | A row written for one side of the desk is labelled for that side | `contact_type` on `cb_knowledge_base_updated` + `selfcheck_flows.py` | `service_type='transfer'` survives `resolve_service` only for a CANDIDATE, so an employer-facing checklist filed `contact_type='all'` is served to the HELPER. `contact_type` narrows to this audience plus `all`; the default stays `all`. |
+| A LID is never mistaken for a phone number | `parser._is_phone_jid` / `_counterparty` | `normalize_phone` splits on `@` and keeps the front, so `116909177569373@lid` became the "number" `+116909177569373` and an allowlisted client was stood down. The counterparty is resolved from the first identifier whose JID is actually a phone. |
 | A service the KB has never been labelled with searches under the label it HAS | `rag_retriever._RETRIEVAL_ALIASES` | `transfer_employer` is not a `service_type` any row uses, so the filter narrowed it to `general` forever. Retrieval only — the ticket, the lead, the field list and the **blocked-topic key** all still see `transfer_employer`, which is what keeps a new transfer off a parked hiring topic. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -569,6 +570,27 @@ Ordered by what will hurt first.
     row is correctly `contact_type='candidate'` so an employer never sees it.
     Worth having Ming Hwee confirm rather than assuming.
 
+16. **WhatsApp is migrating senders to LIDs, and the fallback may not always
+    have a phone number to fall back TO.** Live 2026-09-10: every message from
+    an allowlisted tester arrived as `116909177569373@lid` and the bot stood
+    down, because `normalize_phone` had turned the LID into the "phone number"
+    `+116909177569373`. The trigger is the business number moving onto Meta's
+    hosted service — the client's own chat shows *"This business uses a secure
+    service from Meta to manage this chat"*. `parser._counterparty` now prefers
+    a phone JID (`@s.whatsapp.net` / `@c.us`) over a LID and falls back to
+    `chat_id`, then `to`, which fixes it **provided Whapi still puts the phone
+    number in one of those fields**. That was not verifiable from here — no raw
+    payload is stored or logged, and the stand-down path deliberately writes
+    nothing — so if a payload ever carries a LID and nothing else, the bot logs
+    a WARNING naming every identifier it did carry and stands down exactly as
+    before. **If that warning appears, this is not fixed**, and the options are
+    a Whapi channel setting, a Whapi contacts lookup (the client is send-only
+    today — no GET), or storing a LID→phone mapping the first time a number
+    identifies itself. Do NOT "fix" it by putting a LID in
+    `BOT_ALLOWED_NUMBERS`: every lookup is keyed on the number, so it would
+    open a second conversation on an identifier that is not a phone number,
+    which is the split-conversation bug `fix_split_conversations.py` repairs.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
@@ -715,6 +737,39 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-10** — **The bot went silent on an allowlisted tester, and the number in
+  the log was not a phone number.** Reported from the server: every message logged
+  *"Bot standing down on +116909177569373: number not in BOT_ALLOWED_NUMBERS"* while the
+  tester was messaging from **+917970027379**, which is in the gate.
+  (A) **116909177569373 is a Meta LID, not a mangled phone number.** WhatsApp identifies
+  some senders by an opaque `@lid` instead of a phone JID, and the trigger is visible in
+  the client's own chat: *"This business uses a secure service from Meta to manage this
+  chat"*, dated the Monday. `normalize_phone` splits on `@` and keeps whatever is in
+  front — by design, so `917970027379@s.whatsapp.net` works — so `116909177569373@lid`
+  became the phone number `+116909177569373`. Reproduced exactly: that function turns
+  the LID into the precise string in the production log.
+  (B) **The gate did the right thing; minting the fake number was the bug.** Every
+  downstream lookup is keyed on the phone — the allowlist, `get_by_phone`, `identify`,
+  the lead — so a LID reaching them does not merely fail a gate. Allowlisting it, which
+  is the obvious "fix", would open a SECOND conversation keyed on a non-number: the
+  split-conversation bug `fix_split_conversations.py` exists to repair. Recorded in §9.16
+  as a thing not to do.
+  (C) **The counterparty is now resolved from the first identifier that is actually a
+  phone** — `@s.whatsapp.net`, `@c.us`, or a bare number — trying `from` then `chat_id`
+  inbound, and `chat_id`, `to`, `from` outbound. On every payload that already worked
+  this changes nothing, which is asserted both ways; on a LID payload that carries the
+  phone anywhere, it resolves.
+  (D) **What could NOT be verified from here, and is written down rather than assumed:**
+  whether Whapi still puts the phone in one of those fields. No raw payload is stored or
+  logged, the stand-down path deliberately writes nothing, and the test conversation had
+  been reset to zero messages — so there was no evidence to read. If a payload carries a
+  LID and nothing else, the bot logs a WARNING naming **every identifier the payload
+  did carry** and stands down as before. That line is the whole point: it is what makes
+  the next occurrence diagnosable instead of a second round of guessing.
+  `selfcheck_flows.py` is **279 assertions**; `smoke_nodes.py` is 32 states. The eight
+  new assertions were proved by injecting two faults — the old counterparty logic, and
+  treating every JID as a phone — and each went red naming the case.
 
 - **2026-09-10** — **§9.15 closed: an employer transfer can finally read its own
   knowledge base, and the four competing timelines are one.** Asked why this was still

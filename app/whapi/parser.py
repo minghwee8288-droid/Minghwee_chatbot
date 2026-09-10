@@ -17,6 +17,71 @@ logger = logging.getLogger(__name__)
 # Whapi message types that carry a media object of the same name.
 MEDIA_TYPES = ("image", "video", "audio", "voice", "document", "sticker")
 
+# A WhatsApp identifier is only a phone number if its JID says so.
+#
+# Live, 2026-09-10: every message from an allowlisted tester arrived as
+# "Bot standing down on +116909177569373: number not in BOT_ALLOWED_NUMBERS"
+# while they were messaging from +917970027379. 116909177569373 is not a
+# mangled phone number - it is a **LID**, the opaque identifier Meta uses in
+# place of a phone number once a business number is moved onto its hosted
+# service ("This business uses a secure service from Meta to manage this
+# chat"). normalize_phone() splits on "@" and keeps whatever is in front of
+# it, so "116909177569373@lid" became the phone number "+116909177569373",
+# the allowlist correctly refused a number nobody has ever heard of, and the
+# bot went silent on a client it was supposed to answer.
+#
+# Minting a fake phone number is the worse half of that bug. Every downstream
+# lookup is keyed on the number - the allowlist, conversation.get_by_phone,
+# contact.identify, the lead - so a LID that reaches them does not just fail
+# the gate: allowlist it and it would open a SECOND conversation keyed on an
+# identifier that is not a phone number, which is the split-conversation bug
+# scripts/fix_split_conversations.py exists to repair.
+#
+# So the counterparty is resolved from the first candidate whose JID is
+# actually a phone, rather than from whichever field came first.
+_PHONE_JID_SUFFIXES = ("@s.whatsapp.net", "@c.us")
+_LID_SUFFIX = "@lid"
+
+
+def _is_phone_jid(value: str) -> bool:
+    """Whether this identifier is a phone number rather than a LID."""
+    value = (value or "").strip()
+    if not value:
+        return False
+    if "@" not in value:
+        return True  # a bare number, which is what Whapi sends for some events
+    return value.lower().endswith(_PHONE_JID_SUFFIXES)
+
+
+def _counterparty(message: dict[str, Any], *keys: str) -> str:
+    """The client's identifier, preferring a phone JID over a LID.
+
+    `keys` are tried in order of how well each names the counterparty; a LID
+    is only used when nothing better is present, so behaviour is unchanged on
+    every payload that carries a phone number somewhere.
+    """
+    candidates = [str(message.get(key) or "").strip() for key in keys]
+    for candidate in candidates:
+        if _is_phone_jid(candidate):
+            return candidate
+    lid = next((c for c in candidates if c.lower().endswith(_LID_SUFFIX)), "")
+    if lid:
+        # Kept rather than dropped: standing down on a number we cannot read is
+        # the same outcome as today, and a dropped message logs nothing at all.
+        # This line is what makes the next occurrence diagnosable - it names
+        # every identifier the payload carried, which is what tells us where
+        # the real number is hiding (if it is there at all).
+        logger.warning(
+            "Whapi message %s carries only a LID (%s) and no phone JID - the "
+            "allowlist and every phone lookup will miss it. Identifiers in "
+            "this payload: %s",
+            message.get("id"),
+            lid,
+            {k: v for k, v in message.items()
+             if isinstance(v, str) and ("@" in v or k in ("from", "to", "chat_id"))},
+        )
+    return next((c for c in candidates if c), "")
+
 
 @dataclass
 class IncomingMessage:
@@ -128,7 +193,12 @@ def parse_message(message: dict[str, Any]) -> IncomingMessage | None:
     chat_id = message.get("chat_id") or message.get("from") or ""
 
     # For outbound (from_me) messages the counterparty is the chat itself.
-    counterparty = chat_id if from_me else (message.get("from") or chat_id)
+    # Either way the identifier has to be a PHONE, not a LID - see above.
+    counterparty = (
+        _counterparty(message, "chat_id", "to", "from")
+        if from_me
+        else _counterparty(message, "from", "chat_id")
+    )
 
     body = ""
     if msg_type == "text":
