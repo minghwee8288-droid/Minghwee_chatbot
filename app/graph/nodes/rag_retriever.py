@@ -253,6 +253,48 @@ _MONEY_TALK = re.compile(
 _MONEY_FIELDS = {"budget", "salary_expectation", "salary", "fee"}
 
 
+# A service the BOT has but the knowledge base has never been labelled with.
+#
+# `service_type` on cb_knowledge_base_updated is free-form varchar(60) with no
+# CHECK constraint, and the rows were labelled by a different pipeline that
+# never heard of `transfer_employer`. _labelled_filter does the safe thing with
+# a value no row carries - it narrows to 'general' rather than widening, which
+# is right (widening once quoted the $1,568 new-hire package as a passport
+# renewal fee) and which means this one service is PERMANENTLY restricted to
+# the generic bucket. Measured 2026-09-10, as an employer saw it: "how long
+# does a transfer take" 0.472, "what are the steps" 0.650, "how much does a
+# transfer cost" 0.453 - every one of them ABOVE the 0.40 floor, so
+# _answerable() read True and the widening retry never fired. The client was
+# told "around 2 to 3 weeks" from a marketing FAQ against the agency's own
+# corrected 1 to 2 weeks. A wrong answer that scores well is invisible.
+#
+# `transfer_employer` cannot simply BE `transfer`: the blocked-topic key is the
+# service key, and mapping an employer's transfer onto another service made a
+# brand-new request compute a parked topic's key, so the bot answered "a live
+# agent will connect with you shortly" indefinitely and collected nothing
+# (live, 2026-09-02 - see CLAUDE.md section 8). The key has to stay distinct
+# for ESCALATION; only retrieval needs them joined.
+#
+# What made this safe to do was measuring the bucket rather than assuming it.
+# CLAUDE.md section 9.15 held the alias open on the grounds that `transfer`
+# also holds helper-facing rows - "You can ask to transfer to a new employer,
+# it is your right" - which an employer should not be answered from. Counted
+# 2026-09-10, `transfer` is 18 rows: 12 employer, 5 'all', 1 candidate. The one
+# helper-facing row is already labelled contact_type='candidate', and
+# contact_type narrows a search to this audience plus 'all' - so an employer
+# reading `transfer` never sees it. The audience column already does the
+# separating that the service key was doing badly.
+#
+# Retrieval only. Nothing else keys off this map: the ticket, the lead, the
+# blocked topic and the field list all still see `transfer_employer`.
+_RETRIEVAL_ALIASES = {"transfer_employer": "transfer"}
+
+
+def _aliased(service: str | None) -> str | None:
+    """The label the KNOWLEDGE BASE uses for this service."""
+    return _RETRIEVAL_ALIASES.get(service or "", service)
+
+
 def _service_filter(state: ConversationState) -> str | None:
     """Which service to narrow retrieval to — None means search everything."""
     # Widening a money question is right when the figures live somewhere else
@@ -264,7 +306,7 @@ def _service_filter(state: ConversationState) -> str | None:
     # you charge". None of these flows collects a money field, so the two rules
     # below cannot want the filter dropped here either.
     if state.get("service_type") in FEE_STATED_SERVICES:
-        return state.get("service_type")
+        return _aliased(state.get("service_type"))
 
     if _MONEY_TALK.search(state.get("incoming_text") or ""):
         return None
@@ -289,7 +331,7 @@ def _service_filter(state: ConversationState) -> str | None:
     if _MONEY_TALK.search(last_bot_line(state.get("history_text") or "")):
         return None
 
-    return state.get("service_type")
+    return _aliased(state.get("service_type"))
 
 
 # A question about what WE charge, as opposed to money in general. Timing

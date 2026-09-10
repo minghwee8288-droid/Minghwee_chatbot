@@ -268,6 +268,7 @@ because the lead is opened early and the ticket is created much later.
 | A `general` row does not displace the service-specific row beside it | `selfcheck_flows.py` (the forms-row wording) | The cost of the catch-all bucket. "What **documents** does Ming Hwee prepare for a transfer?" was top for `new_hiring`'s own question at 0.754 against 0.726. "forms" separates them; the controls are measured, not assumed. |
 | A document list says WHOSE documents they are | `SERVICE_FIELDS["transfer_employer"]`'s two directions + the row text | Retrieval cannot know whether the client is taking a helper on or releasing one, so the row answers both. A releasing employer asked for the new employer's income proof has been asked for a document that is not theirs. |
 | A row written for one side of the desk is labelled for that side | `contact_type` on `cb_knowledge_base_updated` + `selfcheck_flows.py` | `service_type='transfer'` survives `resolve_service` only for a CANDIDATE, so an employer-facing checklist filed `contact_type='all'` is served to the HELPER. `contact_type` narrows to this audience plus `all`; the default stays `all`. |
+| A service the KB has never been labelled with searches under the label it HAS | `rag_retriever._RETRIEVAL_ALIASES` | `transfer_employer` is not a `service_type` any row uses, so the filter narrowed it to `general` forever. Retrieval only — the ticket, the lead, the field list and the **blocked-topic key** all still see `transfer_employer`, which is what keeps a new transfer off a parked hiring topic. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -549,51 +550,24 @@ Ordered by what will hurt first.
 
 ---
 
-15. **`transfer_employer` cannot see a single one of its own knowledge-base
-    rows, and an old FAQ answers in their place with a figure the agency has
-    already corrected.** `service_type` on `cb_knowledge_base_updated` takes 12
-    values and **`transfer_employer` is not one of them** — every transfer row is
-    filed under `transfer`, which is the HELPER's service key. `_labelled_filter`
-    does the safe thing with an unknown value and narrows to `general`, so an
-    employer transfer conversation searches the generic FAQ bucket and nothing
-    else. Measured 2026-09-10 on *"how long does a transfer take"*: the filtered
-    set is **five `general` rows, best 0.472** — and 0.472 is **above** the 0.40
-    floor, so `_answerable()` reads True and the widening retry, which only fires
-    BELOW the floor, never runs. That is the 2026-09-08 direct-hire defect exactly,
-    in a new place. The answer the client gets is **"Around 2 to 3 weeks"**, taken
-    from the FAQ row *"Hire a transfer maid if you need someone quickly (2-3
-    weeks)"*, while the agency's own timeline row — `transfer`, written on
-    2026-09-08 to correct an earlier 3-4 weeks — says **"Around 1 to 2 weeks from
-    the interview to her starting work"**. Unfiltered, that correct row is top at
-    0.535. So the one flow that was given its own service key to keep its parked
-    topic separate (see section 8) pays for it in retrieval.
-    Not fixed here because it is a live routing change and needs a pass over what
-    an employer would then be shown: the `transfer` bucket also holds helper-facing
-    rows (*"You can ask to transfer to a new employer - It is your right"*), which
-    is presumably why the split existed. The likely fix is a retrieval alias —
-    `transfer_employer` searches under `transfer` — since the subject is the same
-    and only the QUESTIONS differ by who is asking; the alternative is relocating
-    the employer-relevant transfer rows to `general`, which is what 2026-09-08 did
-    for direct hire. **Whichever is chosen, the 2-3 weeks FAQ row and the 1-2 weeks
-    timeline row still contradict each other and one of them has to be corrected**
-    (`load_service_notes.UPDATES`), or widening will keep reaching the wrong one.
-    Measured the same day: documents 0.000 under the filter, cost correctly
-    deferred by `COST_WITHHELD_SERVICES`, and a documents question rescued by the
-    widening only when phrased with the word "transfer" in it.
-    **Update 2026-09-10, later the same day: the DOCUMENTS half of this is now
-    closed, the timing half is not.** The agency sent the transfer document
-    checklist and it is loaded as three `general` rows, which is the second of
-    the two fixes named above — so an employer transfer now retrieves its own
-    checklist (0.679 / 0.772 / 0.788 against 0.359 / 0.570 / 0.497 before) with
-    no routing change and no decision needed. That does **not** fix the routing:
-    every other `transfer` row is still invisible to `transfer_employer`, so the
-    steps, the timing and the cost rows are all still unreachable from the
-    employer side, and the alias question is still open. **And the timeline
-    contradiction is worse than recorded above — there are THREE figures, not
-    two.** Alongside the FAQ's "2-3 weeks" and the agency's corrected "1 to 2
-    weeks", the `transfer` FAQ row *"How do I release my helper to transfer to a
-    new employer?"* ends **"The transfer process typically takes 2-4 weeks"**.
-    One of the three is right and Ming Hwee has to say which.
+15. **Stale transfer timelines survive in the raw bulk-import chunks.**
+    The routing half of this entry is FIXED — see the 2026-09-10 change log:
+    `transfer_employer` is aliased onto `transfer` for retrieval, and the three
+    marketing rows that stated a competing figure were corrected, so ten
+    timing phrasings now reach only the agency's own numbers. What remains is
+    the un-Q&A'd residue: the big `document_chunk` rows from
+    `minghwee FAQs and Overview.md` still carry **2-3 weeks**, **3-4 weeks**
+    and **6-8 weeks** for a transfer, and one is filed under `home_leave`.
+    They did not surface in the top 5 for any of ten timing phrasings, and
+    `UPDATES` cannot target them — it keys on `question`, and these have none —
+    so they are recorded rather than edited. If one ever does surface, it needs
+    a chunk-level correction path, not another `UPDATES` entry.
+    Separately and **not** a contradiction: `27-helper-rights-simple-english.md`
+    tells a helper a transfer takes **2-4 weeks**. That measures from her asking
+    us to transfer, which includes finding an employer; the agency's 1-2 weeks
+    is measured from the interview. Different clock, different audience, and the
+    row is correctly `contact_type='candidate'` so an employer never sees it.
+    Worth having Ming Hwee confirm rather than assuming.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -630,8 +604,12 @@ at a time.
   it is filed `contact_type='employer'` and a HELPER asking what *she* needs gets a
   holding line. If she should be answered rather than handed to a human, that content has
   to come from them.
-- **Which of the THREE transfer timelines is right** (§9.15): the FAQ's "2-3 weeks", the
-  release FAQ's "2-4 weeks", or the row they corrected on 2026-09-08 to "1 to 2 weeks".
+- **Whether "1 to 2 weeks from the interview" is the number they want quoted as the
+  transfer timeline overall.** Their 2026-09-08 table gives it, and every employer-facing
+  row now states it (2026-09-10) — but a client hears "how long does a transfer take" as
+  end to end, and the figure excludes finding and shortlisting the helper. If they mean a
+  longer number for the whole thing, it is one row to change.
+- **Whether the helper-facing "2-4 weeks" is the same span or a different one** (§9.15).
 
 ## 10. Operations
 
@@ -737,6 +715,60 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-10** — **§9.15 closed: an employer transfer can finally read its own
+  knowledge base, and the four competing timelines are one.** Asked why this was still
+  broken the day after the checklist landed. The answer was four causes stacked, and
+  measuring them is what showed that the objection holding the fix open no longer stood.
+  (A) **Why it happened at all.** `service_type` on the KB is free-form `varchar(60)`
+  with no CHECK, and the rows were labelled by a pipeline that never heard of
+  `transfer_employer`. `_labelled_filter` handles an unknown service by narrowing to
+  `general` rather than widening — correct, and bought with a real incident (widening once
+  quoted the **$1,568** new-hire package as a passport renewal fee) — so this one service
+  was *permanently* restricted to the generic bucket. And it cannot simply BE `transfer`,
+  because the blocked-topic key is the service key: that mapping is what answered a
+  brand-new request with "a live agent will connect with you shortly" indefinitely (live,
+  2026-09-02, §8).
+  (B) **Why nobody noticed.** The widening retry fires only BELOW 0.40. Measured as an
+  employer saw it: timing **0.472**, steps **0.650**, cost **0.453** — every one *above*
+  the floor, so `_answerable()` read True and nothing widened. A wrong answer that scores
+  well is indistinguishable from a working one, which is the same silent-success signature
+  as the dead briefing condition and the budget guard.
+  (C) **The objection that kept it open does not survive counting.** §9.15 argued an alias
+  was risky because `transfer` also holds helper-facing rows an employer should not be
+  answered from. Counted: **18 rows — 12 `employer`, 5 `all`, 1 `candidate`** — and the one
+  helper-facing row is already `contact_type='candidate'`, which `contact_type` filtering
+  excludes from an employer's search. The audience column was already doing the separating
+  the service key was doing badly. So `_RETRIEVAL_ALIASES = {"transfer_employer":
+  "transfer"}`, applied in `_service_filter` and **nowhere else** — the ticket, the lead,
+  the field list and the topic key all still see `transfer_employer`, asserted four ways.
+  (D) **The alias alone would have shipped a coin flip.** With it, the agency's corrected
+  row (**1 to 2 weeks**) and a row saying **2-4 weeks** arrived in the SAME retrieved set,
+  0.587 against 0.558, and the model could quote either. The 2026-09-08 correction had gone
+  through `UPDATES`, which keys on question + service_type — so it corrected the one row it
+  named and left ten others alone. The KB stated **four** transfer timelines across eleven
+  rows: 2-3 weeks in six, 2-4 in three, 3-4 in one, against the agency's 1-2 in one, almost
+  all from a single bulk import. Three rows corrected, each with its reason. **The
+  comparison rows now name both SPANS**, not just two numbers — "1 to 2 weeks from the
+  interview" against "4 to 6 weeks from signing" — because they are not the same clock, and
+  a bare pair invites exactly the reordering that produced "approximately weeks or months"
+  on 2026-09-09. Their 6-8 weeks half was also corrected to the agency's own 4-6.
+  (E) **Verified live, and the before/after is the whole point.** *"How long does a
+  transfer take"* was **"Around 2 to 3 weeks"**; it is now **"Around 1 to 2 weeks from the
+  interview to her starting work with the new employer. MOM approval usually takes 1 to 3
+  working days."** *"What are the steps"* returned nothing usable and now returns the real
+  eight-step list with a lead-in and a closing sentence. Cost still defers to a consultant,
+  which is `COST_WITHHELD_SERVICES` doing its job. The helper side is unchanged and still
+  never sees an employer row. **Ten timing phrasings swept: no stale figure reaches an
+  employer.**
+  (F) **What is left, and it is recorded rather than half-fixed.** The raw
+  `document_chunk` rows still carry 2-3 / 3-4 / 6-8 weeks; `UPDATES` keys on `question`
+  and they have none, so they need a chunk-level path if one ever surfaces — none did, in
+  any of the ten probes. And the helper-rights "2-4 weeks" is probably a different span
+  rather than a contradiction (§9.15).
+  `selfcheck_flows.py` is **271 assertions**; `smoke_nodes.py` is 32 states. The ten new
+  assertions were proved by injecting two faults — the alias removed, and an extra service
+  aliased — and an existing assertion caught the second one independently.
 
 - **2026-09-10** — **The transfer document checklist, and the bucket it had to go in
   for anyone to read it.** The agency sent the two halves — what they ask the client

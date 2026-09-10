@@ -21,6 +21,7 @@ import app.services.lead as _lead
 from app.graph.guards import quotes_hiring_package_cost as q
 ic = importlib.import_module("app.graph.nodes.intent_classifier")
 ico = importlib.import_module("app.graph.nodes.info_collector")
+rr = importlib.import_module("app.graph.nodes.rag_retriever")
 S = ico._SMALL_TICKET_SERVICES
 P = ico._COLLECTION_PURPOSE
 from app.graph.prompts.system import RULES
@@ -1035,6 +1036,62 @@ rows = [
   {r.get("contact_type", "all") for r in lsn.ROWS
    if not (r["section_heading"].startswith("Transfer - ")
            and r["service_type"] == "general")}, {"all"}),
+
+ # --- the transfer retrieval alias, 2026-09-10 -------------------------
+ # transfer_employer is not a service_type any KB row uses, so
+ # _labelled_filter narrowed every employer transfer search to 'general'
+ # (section 9.15). Measured before the alias, as an employer saw it:
+ # timing 0.472, steps 0.650, cost 0.453 - ALL above the 0.40 floor, so
+ # _answerable() read True and the widening retry never fired. The client
+ # was told "around 2 to 3 weeks" from a marketing FAQ against the
+ # agency's corrected 1 to 2 weeks.
+ ("an employer transfer searches the transfer bucket",
+  rr._service_filter({"service_type": "transfer_employer",
+                      "incoming_text": "how long does a transfer take",
+                      "history_text": ""}), "transfer"),
+ ("and the helper's own transfer is unchanged",
+  rr._service_filter({"service_type": "transfer",
+                      "incoming_text": "how long does a transfer take",
+                      "history_text": ""}), "transfer"),
+ ("no other service is aliased",
+  set(rr._RETRIEVAL_ALIASES), {"transfer_employer"}),
+ # The alias is RETRIEVAL ONLY. The blocked-topic key is the service key,
+ # and mapping an employer's transfer onto another service made a new
+ # request compute a parked topic's key - "a live agent will connect with
+ # you shortly", indefinitely, collecting nothing (live 2026-09-02). The
+ # key must stay distinct everywhere except the KB lookup.
+ ("the alias never reaches the topic key",
+  (t.topic_key_for("transfer_employer", "employer", "transfer"),
+   t.topic_key_for("transfer", "candidate", "transfer")),
+  ("transfer_employer", "transfer")),
+ ("an employer still resolves to its own service",
+  t.resolve_service("transfer", "employer"), "transfer_employer"),
+ ("and still has its own field list",
+  "transfer_employer" in t.SERVICE_FIELDS, True),
+ ("which is not transfer's",
+  [f.key for f in t.SERVICE_FIELDS["transfer_employer"]]
+  == [f.key for f in t.SERVICE_FIELDS["transfer"]], False),
+ # --- one transfer timeline, not four, 2026-09-10 ----------------------
+ # The agency's 2026-09-08 correction went through UPDATES, which keys on
+ # question + service_type, so it corrected the one row it named and left
+ # ten others carrying a different figure. Once the alias landed, the
+ # corrected row and a 2-4 weeks row arrived in the SAME set (0.587 and
+ # 0.558) and the model could quote either.
+ ("every corrected transfer row states the agency's figure",
+  [u["where"]["question"] for u in lsn.UPDATES
+   if "transfer maid" in u["where"]["question"]
+   or u["where"]["question"].startswith("How do I release")
+   if "1 to 2 weeks" not in u["set"].get("answer", "")], []),
+ ("and none of them still states a competing one",
+  [u["where"]["question"] for u in lsn.UPDATES
+   for bad in ("2-4 weeks", "2-3 weeks", "3-4 weeks", "6-8 weeks")
+   if bad in u["set"].get("answer", "")], []),
+ # The two spans are not the same clock - 1-2 weeks is measured from the
+ # INTERVIEW and 4-6 from SIGNING - so a row naming both names both.
+ ("a row that compares the two names both spans",
+  all(w in u["set"]["answer"] for u in lsn.UPDATES
+      if "transfer maid" in u["where"]["question"]
+      for w in ("from the interview", "from signing")), True),
  # --- home leave, 2026-09-08 ------------------------------------------
  # The nationality decides the documents, the lead time AND the price - PH
  # needs her ORIGINAL passport plus a ticket itinerary, 4 weeks, $400; ID

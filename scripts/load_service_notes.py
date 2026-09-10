@@ -2229,6 +2229,87 @@ UPDATES += [
     },
 ]
 
+# --- 2026-09-10: one transfer timeline, not four -----------------------------
+#
+# The agency corrected "How long does a transfer take and what is the process?"
+# on 2026-09-08 to "around 1 to 2 weeks from the interview to her starting
+# work", from their own service table. That correction went through UPDATES,
+# which keys on question + service_type - so it corrected exactly the row it
+# named and left every other row carrying a transfer duration untouched.
+#
+# Counted 2026-09-10, the knowledge base stated FOUR different transfer
+# timelines across eleven rows: 2-3 weeks in six, 2-4 weeks in three, 3-4 weeks
+# in one, against the agency's 1-2 weeks in one. All but one trace to a single
+# bulk import, minghwee FAQs and Overview.md. Until 2026-09-10 an employer
+# could not reach any of them (the service filter narrowed to 'general'); now
+# that `transfer_employer` is aliased onto `transfer` for retrieval, the
+# corrected row and a 2-4 weeks row arrive in the SAME set - 0.587 and 0.558 -
+# and the model may quote either. Widening will keep reaching the wrong one
+# until they agree.
+#
+# This is the 2026-09-08 rule applied to the rows that correction missed: three
+# rows ANSWER the question the agency's table answers and answer it with a
+# different number, and leaving them alongside puts a flat contradiction in
+# front of a model that quotes either.
+#
+# The comparison rows name BOTH spans rather than one number each, because
+# "1 to 2 weeks" is measured from the interview and "4 to 6 weeks" from
+# signing - the two are not the same clock, and a bare pair of numbers invites
+# exactly the reordering that produced "approximately weeks or months" on
+# 2026-09-09. The overseas figure is the agency's own corrected new_hiring one
+# (4 to 6 weeks, 2026-09-08); these rows still said 6-8, which contradicted it.
+UPDATES += [
+    {
+        "where": {"question": "How do I release my helper to transfer to a new employer?",
+                  "service_type": "transfer"},
+        "reason": "it said the transfer process typically takes 2-4 weeks; the agency's "
+                  "table gives 1-2 weeks from interview to starting work, and after the "
+                  "2026-09-10 retrieval alias both rows reach an employer at once",
+        "set": {"answer": (
+            "Contact Ming Hwee to initiate the transfer process. We handle employer "
+            "matching from our pre-screened family network, MOM documentation, and "
+            "coordinated interviews. Until a new work permit is issued to another "
+            "employer, you remain legally responsible for your helper - levies, "
+            "insurance and accommodation costs continue. From the interview to her "
+            "starting work with the new employer it usually takes around 1 to 2 weeks."
+        )},
+    },
+    {
+        "where": {"question": "What is the difference between a transfer maid and a new "
+                              "hire from overseas?",
+                  "service_type": "general"},
+        "reason": "'2-3 weeks vs 6-8 weeks' contradicts BOTH the agency's transfer "
+                  "figure (1-2 weeks) and their corrected new-hiring one (4-6 weeks); "
+                  "each span is now named so the two clocks cannot be read as one",
+        "set": {"answer": (
+            "A transfer maid is already in Singapore working for another employer and "
+            "is being released to a new employer. A new hire comes directly from her "
+            "home country. Transfer maids are faster to place - around 1 to 2 weeks "
+            "from the interview to her first day, against about 4 to 6 weeks from "
+            "signing for a helper coming from overseas - and they can be interviewed "
+            "in person and are already familiar with Singapore. However, you should "
+            "ask why she is transferring. New hires from overseas are freshly trained "
+            "and have no previous employer baggage, but require a longer settling-in "
+            "period."
+        )},
+    },
+    {
+        "where": {"question": "Should I hire a transfer maid or a new maid from overseas?",
+                  "service_type": "general"},
+        "reason": "same pair of figures as the row above, in the row a client asking "
+                  "which to choose is most likely to retrieve",
+        "set": {"answer": (
+            "Hire a transfer maid if you need someone quickly - around 1 to 2 weeks "
+            "from the interview to her first day - want to interview in person, and "
+            "value Singapore experience. Hire from overseas if you prefer a freshly "
+            "trained helper, want more candidates to choose from, and can wait about "
+            "4 to 6 weeks from signing. Transfer maids cost less in agency fees but "
+            "may command higher salaries due to local experience."
+        )},
+    },
+]
+
+
 # Where each relocated row now lives, derived from UPDATES so the two can
 # never disagree. Keyed by question, which is what the ROWS skip check has.
 _RELOCATED: dict[str, str] = {
