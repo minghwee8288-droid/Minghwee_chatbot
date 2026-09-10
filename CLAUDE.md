@@ -221,7 +221,7 @@ because the lead is opened early and the ticket is created much later.
 | An answer to our own question is never routed away from the collection that asked it | `guards.answering_our_question` + `route_after_rag` | The classifier's stickiness fixes `service_type` but not `intent`, and the money branch reads `intent`. |
 | Every employer flow asks the client's name | `SERVICE_FIELDS[...]["full_name"]` | `transfer_employer` had none, so rule 1c had nothing to use and the lead carried only a phone number. |
 | ...and that is now checked as a SET, not one flow at a time | `selfcheck_flows.py` | The row above was written for `transfer_employer` in 2026-09-08 and was simply false everywhere else: renewal, home leave, replacement and insurance never asked at all. Money enquiries are excluded — they are a question, not an intake. |
-| A renewal, a home leave, a passport renewal **and a replacement** ask the name rather than read it off WhatsApp | `ticket.NAME_FROM_RECORD_ONLY` | Adding the field alone changes nothing: `_with_push_name` fills it from the profile and the question is skipped before it is asked. |
+| No flow asks for a HELPER's name while reading the client's own off WhatsApp | `ticket.NAME_FROM_RECORD_ONLY` + `selfcheck_flows.py` | Adding the field alone changes nothing: `_with_push_name` fills it from the profile and the question is skipped before it is asked. |
 | A home leave never quotes a route we have not established | `info_collector._ROUTE_BY_NATIONALITY` | The nationality changes the documents, the lead time **and** the price (PH original passport + itinerary, 4 weeks, $400; ID copies, 2 weeks, $250). |
 | The home-leave caveat catches money and timing; the passport one deliberately does not | `_HOME_LEAVE_ROUTE_DEPENDENT` vs `_NATIONALITY_DEPENDENT` | A passport renewal is $450 either way, so suppressing that answer would help nobody. |
 | Home leave asks which country she is from | `SERVICE_FIELDS["home_leave"]` | It asked her name and the travel dates only, so there was nothing to route on. The agency's own step 1 is "confirm nationality and intended travel dates". |
@@ -745,6 +745,39 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-10** — **The name rule closed across every flow that asks about a helper,
+  and asserted as a rule instead of a list.** Shown the three flows the entry below
+  recorded as still open, the agency's answer was to close them: *"fill that gap in all
+  of these three services as well ... in direct hiring also if this gap is there"*. It
+  was: `direct_hiring`, `insurance` and `transfer_employer` all ask `full_name` FIRST and
+  all three had it pre-filled from the WhatsApp profile, so the question was skipped and
+  the flow opened by greeting the client with a label they set on their own account and
+  then asking about their helper.
+  (A) **That is the whole shape of the complaint, and it has now arrived four times** —
+  passport renewal (2026-09-08), renewal and home leave (2026-09-09), replacement and
+  now these three (2026-09-10). *"May I know your current helper's name?"* reads as
+  though we already know who the client is, when all we know is a WhatsApp display name.
+  (B) **Verified live on all three, both ways.** A new number is asked
+  (*"...May I know your name?"*) and greeted on the very next message (*"Thanks, Vaidik.
+  May I know the full name of the helper you would like to hire?"*), and a client on file
+  is greeted rather than asked (*"Hi Ratna Choukade, I'm Claire..."*). No other change:
+  `_contact_block` already drops `customer_name` for this whole set when no record name
+  exists, which is the 2026-09-08 fix that stopped the model saying "Hi Vaidik" and then
+  asking for the name.
+  (C) **The check is now a RULE, not a list.** *"No employer flow asks for a helper's
+  name while reading the client's own off WhatsApp"* is derived from
+  `EMPLOYER_LEAD_SERVICES`, so a flow added tomorrow cannot reopen the gap — proved by
+  injecting a new service that asks a helper's name and watching it go red by name,
+  rather than by reading the assertion. The hard-coded list of the seven stays alongside
+  it **on purpose**: it is the tripwire, and it has already caught one field-set change
+  it was written for.
+  (D) **`new_hiring` is deliberately still out**, and is now the only employer flow
+  reading the name off WhatsApp. It has no existing helper to ask about, so it never
+  produces the shape that drew all four complaints, and filling the name there is itself
+  the 2026-09-01 fix ("stop asking for a name it just used in its greeting"). Asserted
+  explicitly so it reads as a decision rather than an omission.
+  `selfcheck_flows.py` is **294 assertions**; `smoke_nodes.py` is 36 states.
 
 - **2026-09-10** — **A replacement asks the client their name instead of reading it off
   WhatsApp — the same request, in almost the same words, for the third time.** The

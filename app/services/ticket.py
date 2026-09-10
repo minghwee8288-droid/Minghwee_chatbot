@@ -1511,8 +1511,32 @@ def fee_is_known_for(service_type: str | None, nationality_code: str | None) -> 
 # form, the Replacement Services and Fees form and the Employer Particulars
 # form, which is the same reason the other three are here.
 NAME_FROM_RECORD_ONLY = frozenset(
-    {"passport_renewal", "renewal", "home_leave", "replacement"}
+    {
+        "passport_renewal",
+        "renewal",
+        "home_leave",
+        "replacement",
+        # The last three joined on 2026-09-10, when the agency was shown the
+        # list and said to close it everywhere: "fill that gap in all of these
+        # three services as well". Every one of them asks for a HELPER's name,
+        # which is the shape that produced the complaint three times running -
+        # "may I know your current helper's name?" reads as though we already
+        # know the client, when all we know is what they called themselves on
+        # WhatsApp. direct_hiring and transfer_employer both put the client's
+        # name on MOM paperwork as well.
+        "direct_hiring",
+        "insurance",
+        "transfer_employer",
+    }
 )
+
+# Still NOT in the set, and deliberately: `new_hiring`. It is the one employer
+# intake with no existing helper to ask about, so it never produces the
+# "you asked about her and not about me" shape that drove all four complaints,
+# and filling the name from the push name there is itself the 2026-09-01 fix
+# ("stop asking for a name it just used in its greeting"). It is now the only
+# employer flow that reads the client's name off WhatsApp, so if a fifth
+# complaint arrives, this is where it will be.
 
 
 # A service that explains itself once, mid-collection, as soon as the one field

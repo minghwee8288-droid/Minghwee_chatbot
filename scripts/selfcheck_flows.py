@@ -1215,16 +1215,21 @@ rows = [
  ("and every flow in that set asks the name FIRST",
   [svc for svc in t.NAME_FROM_RECORD_ONLY
    if [f.key for f in t.SERVICE_FIELDS[svc]][:1] != ["full_name"]], []),
- # Recorded rather than fixed, because the agency has asked about the flows
- # they tested and these three were not among them. All three ask for a
- # HELPER's name while taking the client's own off the WhatsApp profile,
- # which is the shape that has now been objected to twice. If a fourth
- # complaint arrives, this is the list.
- ("the flows still taking the client's name from WhatsApp are known",
+ # Closed on 2026-09-10, and asserted as a RULE rather than as a list, so a
+ # new flow cannot reopen it: asking for a helper's name while reading the
+ # client's own off WhatsApp is the shape that drew the same complaint four
+ # times - passport renewal, renewal/home leave, replacement, then these
+ # three. Derived, so it cannot go stale the way the hard-coded list above
+ # deliberately can.
+ ("no flow asks for a helper's name while assuming the client's",
   sorted(svc for svc in _lead.EMPLOYER_LEAD_SERVICES
          if any(f.key == "helper_name" for f in t.SERVICE_FIELDS.get(svc, []))
-         and svc not in t.NAME_FROM_RECORD_ONLY),
-  ["direct_hiring", "insurance", "transfer_employer"]),
+         and svc not in t.NAME_FROM_RECORD_ONLY), []),
+ # new_hiring is the one employer flow still reading it off WhatsApp, and that
+ # is deliberate: no existing helper to ask about, so it never produces the
+ # shape above, and the push name there is the 2026-09-01 fix.
+ ("new_hiring is deliberately not in the set",
+  "new_hiring" in t.NAME_FROM_RECORD_ONLY, False),
  # --- home leave, 2026-09-08 ------------------------------------------
  # The nationality decides the documents, the lead time AND the price - PH
  # needs her ORIGINAL passport plus a ticket itinerary, 4 weeks, $400; ID
@@ -1310,9 +1315,12 @@ rows = [
  ("a number with nothing on file still gets the question",
   "full_name" in ico._known_fields({"record_name": ""}, "passport_renewal"), False),
  # `replacement` joined 2026-09-10 - same complaint, same words, a third time.
+ # Spelled out rather than derived, on purpose: this is the tripwire, and it
+ # has already caught one field-set change it was meant to (2026-09-10).
  ("and the WhatsApp push name is not evidence on these flows",
   sorted(t.NAME_FROM_RECORD_ONLY),
-  ["home_leave", "passport_renewal", "renewal", "replacement"]),
+  ["direct_hiring", "home_leave", "insurance", "passport_renewal",
+   "renewal", "replacement", "transfer_employer"]),
  ("a name we hold is greeted with, not just filed",
   "CARRIES the name" in ico.RECORD_NAME_NOTE, True),
  ("and it is still never re-asked",
