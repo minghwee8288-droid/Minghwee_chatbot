@@ -92,7 +92,7 @@ two were blocked by `lead_activities` rows.
 
 `leads_candidate` has no inbound foreign keys, so it is never blocked.
 
-Once `scripts/ticket_lead_fk_set_null.sql` is applied (PENDING_CHANGES.md), the
+Once `scripts/ticket_lead_fk_set_null.sql` is applied (CLAUDE.md §9.5), the
 `cb_tickets` blocker disappears on its own. The other two still stand and should.
 
 ---

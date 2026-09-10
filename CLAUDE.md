@@ -9,15 +9,15 @@
 1. **Start here, not in the code.** This file describes what the system does, why it is
    built the way it is, and which rules are enforced mechanically rather than by prompt.
    Grep the code to confirm details, but form your mental model here first.
-2. **Then read `PENDING_CHANGES.md`** for work already agreed but not yet done.
-3. **After any change that alters behaviour, update this file in the same commit.**
+2. **After any change that alters behaviour, update this file in the same commit.**
    Specifically: §4 (graph), §5 (invariants), §6 (data), §7 (config), §8 (persona),
    §9 (known issues), and always append to §11 (change log). A change that leaves this
-   file wrong is an incomplete change.
-4. **Do not delete the incident notes.** Long comments in this codebase cite real
+   file wrong is an incomplete change. **§9 is the queue** — open work lives there, not
+   in a second file (see the 2026-09-10 entry for why there is no longer one).
+3. **Do not delete the incident notes.** Long comments in this codebase cite real
    conversation IDs and real failures. They are the reason the code is shaped the way it
    is. If you change that code, update the note — never strip it.
-5. **Never guess a schema.** The database is shared with two other products. Confirm
+4. **Never guess a schema.** The database is shared with two other products. Confirm
    column names and CHECK constraints against the live DB before writing to it.
 
 ---
@@ -577,6 +577,37 @@ Ordered by what will hurt first.
     deferred by `COST_WITHHELD_SERVICES`, and a documents question rescued by the
     widening only when phrased with the word "transfer" in it.
 
+**Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
+a figure only the agency can give, and the bot quotes or does the right thing the day it
+arrives. Gathered here so they are asked in one conversation instead of rediscovered one
+at a time.
+
+- **Which consultants receive new leads**, and how the 6 `wp_chat_users` rows map to
+  profiles (§9.1). 18 of the 20 `sales` profiles are `@growwstacks.com` development
+  accounts. **And: Shirley is in the portal's *sales* department but her platform
+  archetype is `admin`, which is the assault-escalation target — should she also take
+  ordinary leads?**
+- **The medical insurance minimum** (§9.14). Three figures in the knowledge base and the
+  bot may quote any of them.
+- **The Settling-In Programme window.** Their flow says seven days; MOM's requirement for
+  a first-time helper is tighter, and a missed registration is a penalty on the employer,
+  so the rows say "within the window MOM allows" until this is confirmed.
+- **Myanmar passport renewal**: no fee, no timeline and no confirmation that the
+  three-form route still stands as the 2026-09-07 document described it. Nothing is
+  quoted for Myanmar because nothing was given.
+- **A grounded salary band**, so the budget question can explain itself. Today the model
+  supplies a range from its own knowledge and `ungrounded_figures` bins the whole reply,
+  leaving the client the bare question (2026-09-09 C).
+- **Payment.** Their stated end state is a payment link in the flow, then forms, then
+  processing. **Nothing in this bot takes money**; the knowledge base only says who will
+  raise it and when.
+- **Whether "a live agent will reach out within 24 hours" is a commitment they want to
+  make.** `strip_handover_talk` removes promised times deliberately, and a promise the
+  agency cannot keep is worse than none — so this needs to be a carve-out they ask for,
+  not a prompt tweak.
+- **Widening `cases_case_type_check`** so a passport renewal or a replacement can be
+  opened as a typed case at all (§9.11). The portal's constraint, and their call.
+
 ## 10. Operations
 
 ```bash
@@ -729,6 +760,20 @@ Append here, newest first. One entry per behavioural change.
   out, and it is corrected here rather than carried forward — these counts are a
   tripwire (2026-09-04 caught a field-count change by exactly this), and a tripwire
   nobody trusts is not one.
+  (F) **`PENDING_CHANGES.md` is gone, and §9 is the queue.** The agency asked whether
+  it was still needed. It was not: every item on it except one was already a §9 entry
+  said twice, and the copy had **drifted into contradicting the original** — it still
+  listed the passport-renewal and work-permit fees as the outstanding content gap when
+  both landed on 2026-09-08 and are asserted in `selfcheck_flows.py`, and it still
+  repeated the claim that *"MOM's own figure is $15,000"*, which §9.14 corrects at
+  length (the $60,000 minimum has stood since October 2023). That is §9.8's duplication
+  hazard applied to prose, and prose has no self-check to catch it. The one thing on it
+  that lived nowhere else — whether Shirley should take ordinary leads, given she is in
+  the portal's sales department but carries the `admin` archetype the assault escalation
+  targets — is preserved in the new **"Waiting on Ming Hwee, not on code"** block at the
+  end of §9, together with the agency decisions that were scattered across the change
+  log. `reset-ui/README.md` and §0 both pointed at the deleted file and now point at
+  §9.5 and at §9. Nothing is lost: the file is in git history.
 
 - **2026-09-10** — **Four things from the agency's new-hiring test, and the name one is
   the same defect from both ends.** Their words: *"the flow runs good but with some
