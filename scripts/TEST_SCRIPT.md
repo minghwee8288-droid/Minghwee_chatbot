@@ -60,7 +60,7 @@ assignment even when one is made.
 ---
 
 
-Messages to send from the allowlisted test phone to `+65 8011 9456`, with what
+Messages to send from the allowlisted test phone to `+65 6534 2277`, with what
 each one is actually probing and what counts as a failure.
 
 **Before you start**
@@ -213,7 +213,7 @@ from philippines
 
 1. Send `hello, i have a question` from the test phone
 2. Wait for the bot's reply
-3. From the **WhatsApp Business app** on `+65 8011 9456`, type anything
+3. From the **WhatsApp Business app** on `+65 6534 2277`, type anything
 4. Log must show `Agent detected on conversation N — bot silenced`
 5. Send another message from the test phone — **the bot must stay silent**
 

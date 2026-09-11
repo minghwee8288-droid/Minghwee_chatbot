@@ -290,6 +290,9 @@ because the lead is opened early and the ticket is created much later.
 | ...and that is derived from which nodes ground a reply, not from a list of three | `selfcheck_flows.py` + `smoke_nodes.py` | A node that runs `ungrounded_figures` over a generated reply is a node that sends one. The import check alone is not enough — it stayed green with the guard disabled outright, so `smoke_nodes` now asserts the REPLY on that state. |
 | A job seeker is told plainly that she pays us nothing | `general` + `candidate` KB row, agency 2026-09-10 | And it does not deny the placement loan she can also retrieve: it says she pays **Ming Hwee** nothing and routes any loan question to a consultant, which is what the loan row itself instructs. No figure appears in it. |
 | Her closing message says the registration is finished before it lists the steps | `CANDIDATE_BRIEFING_NOTE` | She answered "Here" to the update-channel question and the next thing she read was the hiring process, so she asked "why did you tell the process" — and the bot then apologised and disowned its own correct closing message. |
+| The number the agency answers on is CONTENT, not configuration | `load_service_notes.TEXT_REPLACEMENTS` + `selfcheck_flows.py` | Changing the WhatsApp number is one `.env` line; 14 knowledge-base rows named the old one, 13 of them helper-facing, including the emergency and abuse-reporting rows. Swept from the loader's own needles, so a file nobody thought to check cannot keep a replaced string alive. |
+| A raw imported chunk can be corrected too, not just a Q&A row | `load_service_notes.TEXT_REPLACEMENTS` | `UPDATES` keys on `question` and a `document_chunk` row has none — §9.15 predicted this gap and said it would need a chunk-level path. Finds rows by SEARCHING for the old text, so a second run is a no-op, and re-embeds, because a row edited without that is still retrieved on its old wording. |
+| ...and a specific rewrite is never shadowed by a general one | `selfcheck_flows.py` | The rules run in sequence, so a general needle placed first rewrites the text the specific rule was looking for and that rule silently never fires. Directional, and the check had it backwards on its first run — it flagged the correct arrangement. |
 | A service the KB has never been labelled with searches under the label it HAS | `rag_retriever._RETRIEVAL_ALIASES` | `transfer_employer` is not a `service_type` any row uses, so the filter narrowed it to `general` forever. Retrieval only — the ticket, the lead, the field list and the **blocked-topic key** all still see `transfer_employer`, which is what keeps a new transfer off a parked hiring topic. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -406,6 +409,20 @@ Easy to get wrong:
 
 - `BOT_ALLOWED_NUMBERS` — the safety gate. Fails **closed** if malformed. The startup log
   prints the resolved list; trust that, not the file.
+- `WHAPI_SENDER_PHONE` — **our own** WhatsApp number, and it does less than the name
+  suggests: it drops self-chat messages in `parser.parse_webhook` and stamps
+  `to_number`/`from_number` on stored rows for the portal. It authenticates nothing and
+  routes nothing — that is `WHAPI_API_TOKEN` plus the webhook registered on the channel.
+  So when the agency's number changes, **which of the two happened decides the work**:
+  the same Whapi channel re-paired to a new handset keeps its token, its channel id and
+  its webhook, and this is the only line that moves (2026-09-11, channel `SPRWMN-VC9N4`);
+  a genuinely new channel also needs the new token and the webhook set on it. Confirm by
+  comparing the token, not by assuming: `docker compose exec chatbot sh -c 'printenv
+  WHAPI_API_TOKEN | tail -c 5'`. **Neither case touches the knowledge base, and that is
+  the half that bites** — see the 2026-09-11 change log.
+- `WHAPI_WEBHOOK_SECRET` — ours, not Whapi's. It is carried in the URL path
+  (`POST /webhook/whapi/{secret}`), which is how the portal's webhook on this channel is
+  configured, so a channel change does not require a new one.
 - `OPENROUTER_MODEL` — currently `openai/gpt-5.6-luna` (switched from `moonshotai/kimi-k3`
   on 2026-09-03; rollback = set it back and `docker compose up -d`). `llm.py` is
   model-agnostic: it reads this setting, sends `temperature`/`frequency_penalty` and a
@@ -582,8 +599,12 @@ Ordered by what will hurt first.
     and **6-8 weeks** for a transfer, and one is filed under `home_leave`.
     They did not surface in the top 5 for any of ten timing phrasings, and
     `UPDATES` cannot target them — it keys on `question`, and these have none —
-    so they are recorded rather than edited. If one ever does surface, it needs
-    a chunk-level correction path, not another `UPDATES` entry.
+    so they are recorded rather than edited. **The chunk-level correction path
+    predicted here now exists** — `load_service_notes.TEXT_REPLACEMENTS`, built
+    on 2026-09-11 when the agency's phone number changed and fourteen
+    question-less chunk rows named the old one. It keys on the text rather than
+    on `question`, so these timelines can be corrected with it the day one
+    surfaces; they still have not, in any of the ten probes.
     Separately and **not** a contradiction: `27-helper-rights-simple-english.md`
     tells a helper a transfer takes **2-4 weeks**. That measures from her asking
     us to transfer, which includes finding an employer; the agency's 1-2 weeks
@@ -817,6 +838,62 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-11** — **The agency's WhatsApp number changed, and the `.env` line was the
+  easy half.** Asked whether updating the number on the live server was enough. Read
+  against the Whapi dashboard they sent: channel **`SPRWMN-VC9N4`**, number now
+  **+65 6534 2277**, and the token in `.env` is **the same token** — so this is one
+  channel re-paired to a new handset, not a new channel. `WHAPI_API_TOKEN` does not move,
+  and neither does `WHAPI_WEBHOOK_SECRET`, which is ours rather than Whapi's and rides in
+  the URL path. **`WHAPI_SENDER_PHONE` is the only line that changes.**
+  (A) **What that setting actually does, checked rather than assumed**, because the name
+  invites the opposite conclusion: it drops self-chat in `parse_webhook` and stamps
+  `to_number`/`from_number` on stored rows for the portal. It authenticates nothing and
+  routes nothing. Had this been a new channel the answer would have been different, which
+  is why §7 now says how to tell the two apart in one command.
+  (B) **And then the half that is not configuration at all.** Swept the knowledge base:
+  **14 live rows named the old number, 13 of them `contact_type='candidate'`** — the
+  helper-rights material. Among them **`NOT EMERGENCY — Call Ming Hwee`** and
+  **`27.8a If Someone in the House Touches You or Pressures You`**. A helper reporting
+  abuse was being told, in simple English, to message a line the agency no longer
+  answers. Nothing in the codebase could have caught that: the number is content.
+  (C) **All 14 are `document_chunk` rows with no `question`, so `UPDATES` could not reach
+  one of them.** §9.15 predicted this exactly — *"If one ever does surface, it needs a
+  chunk-level correction path, not another `UPDATES` entry"* — and assumed it would be a
+  stale transfer timeline. `TEXT_REPLACEMENTS` is that path: it keys on the TEXT, applies
+  to `question`/`answer`/`content`, and **re-embeds**, for the reason `UPDATES` re-embeds.
+  Idempotent by construction rather than by bookkeeping — it finds its targets by
+  searching for the old string, so the second run finds nothing. Run twice, 14 edits then
+  **0**.
+  (D) **One row told us something we had not asked.** `Section E — My Rights & Where to
+  Get Help` read *"(WhatsApp: 80119456 / Tel: 6534 2277)"* — so **6534 2277 was already
+  the office telephone line** and WhatsApp has simply moved onto it, which is what the
+  agency confirmed when asked (*"same number"*). A blind digit swap there produces
+  *"(WhatsApp: 65342277 / Tel: 6534 2277)"* — true, and daft — so that sentence gets its
+  own specific rewrite, **ordered before** the general swap. The ordering is now a rule
+  rather than a coincidence: a needle contained in a LATER needle is dead, because the
+  earlier rule rewrites the text the later one was looking for.
+  (E) **Verified live, on the rows that matter most.** Through the real retriever and the
+  real model as a candidate: *"my employer has not paid my salary who do i call"* →
+  *"Please WhatsApp Ming Hwee at +65 6534 2277"*; *"someone in the house is touching me
+  what do i do"* → the police line first, then a live agent; *"what number do i contact
+  ming hwee on"* → *"6534 2277"*. Swept the whole KB for Singapore phone numbers
+  afterwards: **one number, 24 mentions, all of them the new one.**
+  (F) **The repo named it too**, and that is swept rather than listed:
+  `scripts/TEST_SCRIPT.md` told a tester to message the old number, and three parser
+  fixtures used it to stand for "us". The check reads the needles **from** the loader, so
+  it generalises to the next replacement — and the first version spelled the digits out
+  in its own comment and caught itself, which is the right answer to the wrong question.
+  (G) **One injected fault came back GREEN and the check was right.** The ordering
+  assertion was stated backwards on its first run — it flagged the correct arrangement —
+  and the injection that was meant to prove it moved the wrong rule, so neither the check
+  nor the test of the check meant anything. Both corrected; injecting the real hazard
+  (the short general needle first) now goes red naming the pair. Five faults, five red.
+  **Not done, and it is theirs:** the portal is subscribed to this same channel, so it
+  needs the same look-over; and Whapi's safety meter flags *Lifetime of phone number —
+  Needs Attention*, which is ordinary for a fresh number but means it is more ban-prone
+  under heavy outbound volume in its first weeks.
+  `selfcheck_flows.py` is **354 assertions**; `smoke_nodes.py` is 43 states.
 
 - **2026-09-10** — **Third pass as a job seeker: two questions she asked twice, a fee
   the agency has now put a number on (none), and a guard missing from a whole reply

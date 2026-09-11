@@ -79,6 +79,35 @@ def _row_by_question(fragment: str) -> dict:
 
 _FEE_ROW = _row_by_question("pay any fee to Ming Hwee")
 
+def _text_replacements() -> list[dict]:
+    """The loader's TEXT_REPLACEMENTS, read from source rather than imported.
+
+    Importing the loader builds a live Supabase client; this file must run with
+    no network (it runs in the container, and on a laptop with no .env).
+    """
+    import ast
+    for node in ast.walk(ast.parse(_LOADER_SRC)):
+        if (isinstance(node, ast.AnnAssign)
+                and getattr(node.target, "id", "") == "TEXT_REPLACEMENTS"):
+            return ast.literal_eval(node.value)
+    return []
+
+
+_REPLACEMENTS = _text_replacements()
+
+# Every file that could name a phone number, minus the loader, which names the
+# old one on purpose - it is the needle it searches for.
+_NUMBER_SWEEP = {
+    str(f.relative_to(Path(__file__).resolve().parents[1])): f.read_text(
+        encoding="utf-8", errors="replace")
+    for f in list((Path(__file__).resolve().parents[1] / "app").rglob("*.py"))
+    + list((Path(__file__).resolve().parents[1] / "scripts").glob("*.py"))
+    + list((Path(__file__).resolve().parents[1] / "scripts").glob("*.md"))
+    if f.name != "load_service_notes.py"
+}
+
+
+
 SEVEN_SERVICES = ("new_hiring", "direct_hiring", "transfer_employer", "renewal",
                   "passport_renewal", "home_leave", "replacement")
 
@@ -1229,7 +1258,7 @@ rows = [
  # open a SECOND conversation on a non-number - the split-conversation bug
  # scripts/fix_split_conversations.py exists to repair.
  ("a phone JID is a phone number",
-  [j for j in ("917970027379@s.whatsapp.net", "6580119456@c.us", "917970027379")
+  [j for j in ("917970027379@s.whatsapp.net", "6565342277@c.us", "917970027379")
    if not wp._is_phone_jid(j)], []),
  ("a LID is not", wp._is_phone_jid("116909177569373@lid"), False),
  ("nor is an empty identifier", wp._is_phone_jid(""), False),
@@ -1241,7 +1270,7 @@ rows = [
   "+917970027379"),
  ("an outbound LID chat falls back to `to`",
   wp.parse_message({"id": "x", "type": "text", "from_me": True,
-                    "text": {"body": "hi"}, "from": "6580119456@s.whatsapp.net",
+                    "text": {"body": "hi"}, "from": "6565342277@s.whatsapp.net",
                     "chat_id": "116909177569373@lid",
                     "to": "917970027379@s.whatsapp.net"}).customer_number,
   "+917970027379"),
@@ -1254,7 +1283,7 @@ rows = [
   "+917970027379"),
  ("an ordinary outbound message still names the CLIENT, not us",
   wp.parse_message({"id": "x", "type": "text", "from_me": True,
-                    "text": {"body": "hi"}, "from": "6580119456@s.whatsapp.net",
+                    "text": {"body": "hi"}, "from": "6565342277@s.whatsapp.net",
                     "chat_id": "917970027379@s.whatsapp.net"}).customer_number,
   "+917970027379"),
  # When there is genuinely nothing else, behaviour is unchanged (stand down)
@@ -1611,6 +1640,58 @@ rows = [
   "everything we need from her" in _flat(tpl.CANDIDATE_BRIEFING_NOTE), True),
  ("and it still leads the list with a line saying what it is",
   "say what this message is" in _flat(tpl.CANDIDATE_BRIEFING_NOTE), True),
+
+ # --- the number the agency answers on, 2026-09-11 ---------------------
+ # Ming Hwee's WhatsApp number changed - the same Whapi channel re-paired to a
+ # new handset, so WHAPI_SENDER_PHONE was the only .env line that moved. The
+ # part that was NOT config: 14 live rows named the old number and 13 were
+ # contact_type='candidate', including "NOT EMERGENCY - Call Ming Hwee" and
+ # "27.8a If Someone in the House Touches You or Pressures You". A helper
+ # reporting abuse was being told to call a line the agency no longer answers.
+ # The digits live in the loader's TEXT_REPLACEMENTS, with the full note; they
+ # are deliberately not repeated here, because the sweep below reads them.
+ #
+ # All 14 are document_chunk rows with NO question, so UPDATES could not reach
+ # them - section 9.15 predicted exactly this and said it would need a
+ # chunk-level path. TEXT_REPLACEMENTS is that path.
+ ("the loader can correct a chunk row, not just a Q&A row",
+  bool(_REPLACEMENTS), True),
+ # A replacement is a blunt instrument pointed at live client-facing text. Too
+ # short a needle ("9456") would also match a postcode, a licence number or a
+ # price, and nothing afterwards would show it had happened.
+ ("no replacement needle is short enough to hit something else",
+  [r["old"] for r in _REPLACEMENTS if len(r["old"]) < 8], []),
+ ("and none of them is a no-op or unexplained",
+  [r["old"] for r in _REPLACEMENTS
+   if r["old"] == r["new"] or not r.get("reason", "").strip()], []),
+ # ORDER. One row read "(WhatsApp: <old> / Tel: 6534 2277)" - which is how we
+ # learnt 6534 2277 was already the office phone line and WhatsApp had simply
+ # moved onto it. The specific rewrite of that sentence has to run BEFORE the
+ # general digit swap, or the general one gets there first, the specific
+ # needle no longer exists, and the row is left saying the same number twice
+ # under two labels.
+ #
+ # The rule is directional and this check had it backwards on the first run:
+ # it flagged the CORRECT arrangement. A later needle contained in an earlier
+ # one is fine - that is specific-then-general. An EARLIER needle contained in
+ # a later one is the dead case, because the earlier rule rewrites the text the
+ # later rule was looking for. (2026-09-09 C: a check that fails on correct
+ # code is noise, and noise is how a real failure gets ignored.)
+ ("a specific replacement is never shadowed by a general one",
+  [(a["old"], b["old"])
+   for i, a in enumerate(_REPLACEMENTS)
+   for b in _REPLACEMENTS[i + 1:]
+   if a["old"] in b["old"]], []),
+ # And it is gone from the repo itself, not just the database: TEST_SCRIPT.md
+ # told a tester to message it, and three parser fixtures used it to stand for
+ # "us". Swept rather than listed, so it cannot come back in a file nobody
+ # thought to check, and the needles are taken FROM the loader rather than
+ # retyped here - which is also why no digit of the old number appears in this
+ # file. The first version spelled it out in the comment above and the sweep
+ # caught itself, which is the right answer to the wrong question.
+ ("a replaced string survives nowhere but the loader that replaces it",
+  sorted(f for f, src in _NUMBER_SWEEP.items()
+         if any(r["old"] in src for r in _REPLACEMENTS)), []),
 
  # --- who the ROWS are written for, 2026-09-10 -------------------------
  # effective_contact_type puts a master record above one message, rightly.

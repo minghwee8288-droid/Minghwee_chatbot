@@ -2526,6 +2526,106 @@ UPDATES += [
 
 # Where each relocated row now lives, derived from UPDATES so the two can
 # never disagree. Keyed by question, which is what the ROWS skip check has.
+# ---------------------------------------------------------------------------
+# Corrections to the RAW IMPORTED CHUNKS, keyed on their text.
+#
+# UPDATES above keys on `question`, and the big `document_chunk` rows from the
+# bulk import have none - CLAUDE.md section 9.15 recorded that as a gap and said
+# outright: "If one ever does surface, it needs a chunk-level correction path,
+# not another UPDATES entry." This is that path, and the thing that forced it is
+# not a stale timeline but a phone number.
+#
+# 2026-09-11: Ming Hwee's WhatsApp number moved from +65 8011 9456 to
+# +65 6534 2277 (the same Whapi channel, SPRWMN-VC9N4, re-paired to a new
+# handset). Fourteen live rows named the old number and THIRTEEN of them are
+# contact_type='candidate' - they are the helper-rights material, and they
+# include "NOT EMERGENCY - Call Ming Hwee" and "27.8a If Someone in the House
+# Touches You or Pressures You". A helper reporting abuse was being told to call
+# a line the agency no longer answers. That is the worst possible row to leave
+# stale, and no amount of code could have caught it: the number is content.
+#
+# Applied to `question`, `answer` and `content`, and the row is RE-EMBEDDED,
+# for the reason UPDATES re-embeds - a row edited without it is still retrieved
+# on its old wording.
+#
+# ORDER MATTERS. The entries are applied in sequence, so the specific rewrite
+# has to come before the general number swap that would otherwise consume it:
+# "Section E - My Rights & Where to Get Help" read "(WhatsApp: 80119456 / Tel:
+# 6534 2277)", which tells you that 6534 2277 was ALREADY the office telephone
+# line and WhatsApp has now moved onto it. Swapping the digits blindly there
+# produces "(WhatsApp: 65342277 / Tel: 6534 2277)" - true, and daft.
+TEXT_REPLACEMENTS: list[dict[str, str]] = [
+    {
+        "old": "(WhatsApp: 80119456 / Tel: 6534 2277)",
+        "new": "(WhatsApp / Tel: 6534 2277)",
+        "reason": "WhatsApp moved onto the number that was already the phone "
+                  "line, so naming it twice reads as two different contacts.",
+    },
+    {
+        "old": "8011 9456",
+        "new": "6534 2277",
+        "reason": "Ming Hwee's WhatsApp number changed, 2026-09-11. The old "
+                  "line is in 13 helper-facing rows including the emergency "
+                  "and abuse-reporting ones.",
+    },
+    {
+        "old": "80119456",
+        "new": "65342277",
+        "reason": "The same number written without a space.",
+    },
+]
+
+# A replacement is a blunt instrument pointed at live client-facing text, so the
+# list is vetted at import rather than trusted: too short a needle ("9456")
+# would match a postcode, a licence number or a price, and there would be no
+# sign of it afterwards.
+for _r in TEXT_REPLACEMENTS:
+    assert len(_r["old"]) >= 8, f"replacement needle too short to be safe: {_r['old']!r}"
+    assert _r["old"] != _r["new"], f"replacement is a no-op: {_r['old']!r}"
+    assert _r["reason"].strip(), f"replacement without a stated reason: {_r['old']!r}"
+
+
+async def _apply_text_replacements(dry_run: bool) -> int:
+    """Rewrite a literal string wherever it appears, and re-embed the row.
+
+    Idempotent by construction: it finds rows by SEARCHING for the old text, so
+    a second run finds nothing. That is the property section 10 requires of this
+    script and the one the 2026-09-08 relocation bug broke - run it twice.
+    """
+    changed = 0
+    for rule in TEXT_REPLACEMENTS:
+        old, new = rule["old"], rule["new"]
+        # Fetched fresh per rule, so an earlier rule's edit is visible to a
+        # later one rather than being clobbered by a stale copy.
+        rows = await db.select_many(KB_TABLE, "id,question,answer,content", limit=2000)
+        for row in rows:
+            payload = {
+                col: row[col].replace(old, new)
+                for col in ("question", "answer", "content")
+                if row.get(col) and old in row[col]
+            }
+            if not payload:
+                continue
+            if dry_run:
+                logger.info("WOULD REPLACE %r -> %r in row %s", old, new, row["id"][:8])
+                changed += 1
+                continue
+            text = payload.get("content") or row.get("content")
+            if not text:
+                question = payload.get("question") or row.get("question") or ""
+                answer = payload.get("answer") or row.get("answer") or ""
+                text = f"{question}\n{answer}".strip()
+            if text:
+                payload["embedding"] = await embed_query(text)
+            await db.update(KB_TABLE, payload, id=row["id"])
+            logger.info(
+                "REPLACED %r -> %r in row %s (%s)",
+                old, new, row["id"][:8], sorted(k for k in payload if k != "embedding"),
+            )
+            changed += 1
+    return changed
+
+
 _RELOCATED: dict[str, str] = {
     u["where"]["question"]: u["set"]["service_type"]
     for u in UPDATES
@@ -2652,7 +2752,12 @@ async def main(dry_run: bool) -> None:
         logger.info("UPDATED  %s -> %s  (%s)", where["question"], sorted(changes), row["reason"])
         updated += 1
 
+    replaced = await _apply_text_replacements(dry_run)
+
     verb = "would write" if dry_run else "wrote"
+    logger.info(
+        "Text replacements: %d row edit(s).", replaced,
+    )
     logger.info(
         "Done — %s %d row(s), skipped %d already present, %s %d row(s).",
         verb, written, skipped,
