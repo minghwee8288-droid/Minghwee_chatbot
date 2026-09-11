@@ -765,6 +765,16 @@ python scripts/check_retrieval.py      # retrieval calibration; tunes RAG_SOFT_F
 python scripts/e2e_services.py         # walks all 7 services end to end against the
                                        #   real model and grades the transcripts.
                                        #   ~25 min, ~270 LLM calls. Writes nothing.
+python scripts/seed_case_testdata.py   # the ONLY selfcheck that writes. Creates three
+                                       #   cases down the three paths get_cases reads,
+                                       #   runs the real lookup, deletes them again.
+                                       #   `cases` is empty, so there is nothing live to
+                                       #   test against. Add --keep to leave them, and
+                                       #   --phone +65... to hang them off a number you
+                                       #   can message from, which is the only way to see
+                                       #   the case context in a reply. --remove clears
+                                       #   a --keep run. Never touches a row it did not
+                                       #   create.
 python scripts/watch_conversation.py --follow
 
 python scripts/unsilence_conversation.py --list       # stood-down threads the bot should own
@@ -845,6 +855,45 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-11** — **The case lookup could be proved to work and never be seen
+  working.** Asked how to test it. `seed_case_testdata.py` hardwired
+  `+65 9000 0399` — a reserved number nobody can send a WhatsApp message from — so
+  every path ended inside the script. `--phone` attaches the three test cases to a
+  number a tester actually messages from, which is the whole difference between
+  "`get_cases` returned three rows" and "the bot answered me about my case".
+  (A) **It BORROWS an employer record rather than adding one.** If the number already
+  resolves to an employer — most testers' numbers do, because the portal creates that
+  row the moment it converts a lead — the cases hang off that row untouched. Two
+  employer rows on one phone would be worse than no flag at all: `identify()` takes the
+  first match, so the cases could sit on the row the bot does not pick and the test
+  would fail for a reason with nothing to do with cases. Found with the **same** match
+  function the webhook uses, because `employers.phone` is stored spaced
+  (`+65 9188 4442`) and an exact comparison misses most of the table.
+  (B) **The delete had to widen with it, and this is the half that would have bitten.**
+  `remove()` deleted service requests by MARKED EMPLOYER — fine when the script owned
+  the employer, and a foreign-key failure the moment it borrows one, because the case
+  delete then hits an `employer_service_requests.converted_case_id` still pointing at
+  it. The run would have stopped half way, leaving test rows on a live employer, which
+  is the one outcome this script exists to avoid. Both it and the lead sweep are now
+  keyed on the test CASE they reference, never on the employer.
+  (C) **Verified against the live database, both shapes**, counting every table before
+  and after: with its own reserved number, and borrowing a real employer. Three cases,
+  three paths, the structural path still seeing only its own — then `employers 3,
+  placements 10, cases 0, leads 5, employer_service_requests 1` before and after, the
+  borrowed employer and its ten placements untouched.
+  (D) **And what a client actually sees, run against the real model with real seeded
+  rows.** *"any update on my case?"* → *"Your case is currently with our team for
+  documents."*; *"what is the status of my application now?"* → *"Your application is
+  currently at the documents stage."* — **no handover, and no case number, stage name or
+  status read out**. An unrelated question in the same state (*"do you also handle work
+  permit renewal?"*) leaks none of it. With NO case the same question still hands over,
+  which is `response_generator` reading `case_summary` and is correct.
+  **Worth knowing before testing:** a case question is answered from
+  `matched_case_id` → `case_summary`, and `_should_identify` re-reads the identity when
+  an employer has no case id on their row — so a case seeded now is picked up on the
+  next inbound message with no reset. Nothing was changed about the bot itself; it
+  still only ever READS the eleven `case_*` tables.
 
 - **2026-09-11** — **"or another country?" — the bot offering the one answer it
   would have to refuse on the very next turn.** From the first candidate conversation

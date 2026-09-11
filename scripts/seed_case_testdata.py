@@ -9,6 +9,19 @@ deletes everything again.
     python scripts/seed_case_testdata.py            create, verify, remove
     python scripts/seed_case_testdata.py --keep     leave the rows in place
     python scripts/seed_case_testdata.py --remove   delete a --keep run's rows
+    python scripts/seed_case_testdata.py --keep --phone +6591234567
+                                                    ...on a number you can
+                                                    actually message from
+
+`--phone` is what makes this testable over WhatsApp rather than only in this
+script. The default number is reserved and nobody can send from it, so the case
+context could be proved to resolve and never be seen in a reply. With a real
+tester's number the cases hang off whatever employer record that number already
+resolves to - or a marked test employer carrying it, if there is none - so the
+next inbound message identifies as an employer, picks the cases up and puts
+them in the system prompt. Use it on a TEST number; `--remove` takes the cases,
+the placements and the marked rows away again and never touches an employer it
+did not create.
 
 WRITES, unlike every other selfcheck in this folder. It is the one exception
 and it is confined to rows it created itself: every insert carries the marker
@@ -148,20 +161,31 @@ async def _insert_case(
     )
 
 
-async def create() -> dict:
+async def create(phone: str = TEST_PHONE) -> dict:
     branch_id = await _branch_id()
     candidate_id, helper_name = await _a_candidate()
 
     # The employer under test, and a decoy who owns the placements for the two
     # cases that must NOT be reachable structurally.
-    employer = await db.insert(
+    #
+    # An employer this number ALREADY resolves to is used as it stands, and
+    # nothing about it is edited. Two employer rows on one phone would be worse
+    # than useless here: identify() takes the first match, so the cases could
+    # hang off the row the bot does not pick, and the test would fail for a
+    # reason that has nothing to do with the case lookup. Found by the same
+    # match function the webhook uses, so "already resolves to" means the same
+    # thing in both places - employers.phone is stored spaced ('+65 9188 4442')
+    # and an exact comparison misses most of the table.
+    existing = await contact_service._first_match("employers", "*", phone)
+    borrowed = bool(existing)
+    employer = existing or await db.insert(
         "employers",
         {
             "id": str(uuid.uuid4()),
             "tenant_id": settings.tenant_id,
             "branch_id": branch_id,
             "display_name": f"{MARKER} EMPLOYER",
-            "phone": TEST_PHONE,
+            "phone": phone,
         },
     )
     decoy = await db.insert(
@@ -211,7 +235,7 @@ async def create() -> dict:
             "branch_id": branch_id,
             "lead_number": f"{LEAD_PREFIX}A",
             "full_name": f"{MARKER} LEAD",
-            "phone": TEST_PHONE,
+            "phone": phone,
             "source": "chatbot",
             "temperature": "warm",
             "status": "converted",
@@ -238,6 +262,7 @@ async def create() -> dict:
 
     return {
         "employer": employer, "decoy": decoy, "lead": lead, "request": request,
+        "phone": phone, "borrowed_employer": borrowed,
         "cases": [case_c, case_a, case_b],
         "placements": [own_placement, decoy_a, decoy_b],
         "helper_name": helper_name, "status_used": status_used,
@@ -258,16 +283,32 @@ async def remove() -> None:
         counts["employer_service_requests"] += await _delete(
             "employer_service_requests", employer_id=employer_id
         )
+
+    # ...and the same rows when they hang off an employer this script BORROWED
+    # rather than created (--phone). Keyed on the test case they point at, never
+    # on the employer, so a real employer's own service requests are untouched.
+    # Without this the case delete below fails on the foreign key and the run
+    # stops half way, leaving test rows behind on a live employer - which is the
+    # one outcome this script exists to avoid.
+    test_case_ids = [
+        str(row["id"]) for row in await db.select_many("cases", "id,case_number")
+        if str(row.get("case_number") or "").startswith(CASE_PREFIX)
+    ]
+    for case_id in test_case_ids:
+        counts["employer_service_requests"] += await _delete(
+            "employer_service_requests", converted_case_id=case_id
+        )
     # By number for the lead this script creates, and by NAME for any lead a
     # live turn opened on the way past: running the real info_collector against
     # the seeded employer calls _open_lead_early and mints an ordinary
     # L-YYYY-NNNN row carrying the employer's name. Found by counting the table
     # afterwards rather than by expecting it.
-    leads = await db.select_many("leads", "id,lead_number,full_name")
+    leads = await db.select_many("leads", "id,lead_number,full_name,converted_case_id")
     for row in leads:
         by_number = str(row.get("lead_number") or "").startswith(LEAD_PREFIX)
         by_name = MARKER in str(row.get("full_name") or "")
-        if by_number or by_name:
+        by_case = str(row.get("converted_case_id") or "") in test_case_ids
+        if by_number or by_name or by_case:
             counts["leads"] += await _delete("leads", id=row["id"])
 
     cases = await db.select_many("cases", "id,case_number,placement_id")
@@ -289,9 +330,13 @@ async def remove() -> None:
 async def verify(seeded: dict) -> bool:
     employer_id = seeded["employer"]["id"]
     print(f"\nInserted 3 cases with status={seeded['status_used']!r} "
-          f"(the first value cases_status_check accepted)\n")
+          f"(the first value cases_status_check accepted)")
+    print(f"On {seeded['phone']}, "
+          + ("hung off the employer record that number ALREADY resolves to"
+             if seeded["borrowed_employer"] else
+             "with a marked test employer created for it") + "\n")
 
-    found = await contact_service.get_cases(employer_id, TEST_PHONE)
+    found = await contact_service.get_cases(employer_id, seeded["phone"])
     numbers = sorted(c["case_number"] for c in found)
     print("contact.get_cases() returned:")
     for case in found:
@@ -328,6 +373,11 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--keep", action="store_true", help="leave the rows in place")
     parser.add_argument("--remove", action="store_true", help="delete them and stop")
+    parser.add_argument(
+        "--phone", default=TEST_PHONE,
+        help="attach the cases to THIS number instead of the reserved one, so "
+             "the context can be tested over WhatsApp. A test number only.",
+    )
     args = parser.parse_args()
 
     if args.remove:
@@ -336,13 +386,17 @@ async def main() -> None:
 
     # Clear anything a previous --keep run left, so this is repeatable.
     await remove()
-    seeded = await create()
+    seeded = await create(args.phone)
     try:
         ok = await verify(seeded)
     finally:
         if args.keep:
-            print(f"\n--keep: rows LEFT IN PLACE on {TEST_PHONE}. "
+            print(f"\n--keep: rows LEFT IN PLACE on {args.phone}. "
                   f"Remove them with --remove.")
+            if args.phone != TEST_PHONE:
+                print("        Message the bot from that number and ask "
+                      "about your case; the next inbound message "
+                      "re-identifies it.")
         else:
             print()
             await remove()
