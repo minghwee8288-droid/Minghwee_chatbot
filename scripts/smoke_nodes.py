@@ -321,6 +321,37 @@ CASES = [
       "incoming_text": "which nationality is cheapest",
       "history_text": "client: hi\nbot: Hello"}),
     ("response_generator", "first message", {"history_text": ""}),
+    # A job seeker from a country Ming Hwee does not recruit from. She is told
+    # so and her follow-ups are answered; she is NOT collected from and NOT
+    # handed to a human, because "we do not recruit from your country" is an
+    # answer we hold. Agency instruction, 2026-09-11.
+    ("info_collector", "candidate, a country we do not place from",
+     {"intent": "candidate_registration", "service_type": "candidate_new_hiring",
+      "contact_type": "candidate",
+      "incoming_text": "i am from india",
+      "history_text": "client: i need a job\nbot: Which country are you from?",
+      "collected_info": {"full_name": "Asha", "nationality": "India"},
+      "_expect_state": {"info_complete": False, "needs_handover": False,
+                        "missing_field_keys": []}}),
+    # ...and the follow-up two turns later still lands here rather than
+    # restarting the collection, which is what makes "why?" answerable.
+    ("info_collector", "candidate, still unplaceable, asking why",
+     {"intent": "candidate_registration", "service_type": "candidate_new_hiring",
+      "contact_type": "candidate",
+      "incoming_text": "why? i really want a job",
+      "history_text": "client: i am from india\nbot: We are only able to place "
+                      "helpers from the Philippines, Indonesia and Myanmar.",
+      "collected_info": {"full_name": "Asha", "nationality": "India"},
+      "_expect_state": {"info_complete": False, "missing_field_keys": []}}),
+    # The control: one of the three is collected from exactly as before, and
+    # the flow is NOT finished after her country.
+    ("info_collector", "candidate, a country we do place from",
+     {"intent": "candidate_registration", "service_type": "candidate_new_hiring",
+      "contact_type": "candidate",
+      "incoming_text": "i am from indonesia",
+      "history_text": "client: i need a job\nbot: Which country are you from?",
+      "collected_info": {"full_name": "Siti", "nationality": "Indonesia"},
+      "_expect_state": {"info_complete": False}}),
     # --- blocked_topic_responder -------------------------------------------
     # A question asked while a topic sits with an agent. The stepped branch is
     # allowed here too, and the holding branch must stay two sentences.
@@ -499,6 +530,13 @@ async def main() -> int:
         # only the shape of the return. Imported and never called is precisely
         # the state that guard was in for two days.
         expect = state.pop("_expect_reply", None)
+        # ...and what the returned STATE must say. A reply-writing branch also
+        # decides whether the turn hands over and whether the collection is
+        # finished, and neither shows up in the text. Added 2026-09-11 for the
+        # branch that declines a job seeker we cannot place: the assertion that
+        # it does NOT hand her to a human was, on its first attempt, a string
+        # search of the source that matched the import line instead.
+        expect_state = state.pop("_expect_state", None)
         full = f"{node}  {label}"
         with patch("app.graph.llm.complete",
                    new=AsyncMock(return_value=stub or STEPPED_REPLY)), \
@@ -511,6 +549,12 @@ async def main() -> int:
                     got = out.get("reply") or out.get("reply_text") or ""
                     ok = expect.lower() in got.lower()
                     detail = f"expected {expect!r} in {got[:80]!r}"
+                if ok and expect_state:
+                    wrong = {k: out.get(k) for k, v in expect_state.items()
+                             if out.get(k) != v}
+                    ok = not wrong
+                    detail = f"state {expect_state} -> " + ("as expected" if ok
+                                                            else f"got {wrong}")
                 print(f"  {'PASS' if ok else 'FAIL'}  {full:44} -> {detail}")
                 failures += not ok
             except Exception as exc:  # noqa: BLE001 - reporting is the whole job

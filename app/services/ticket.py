@@ -155,6 +155,71 @@ def service_label(service_type: str | None) -> str:
 
 CANDIDATE_HIRING = "candidate_new_hiring"
 
+# The three countries Ming Hwee recruits from, and the only three a job seeker
+# can be taken through the registration for.
+#
+# Agency, 2026-09-11: "The bot should only proceed with the hiring flow if the
+# candidate is from one of these three countries: Myanmar, Indonesia,
+# Philippines. If the candidate provides any other country, the bot should
+# clearly respond that we only help candidates from these three countries."
+PLACEABLE_NATIONALITIES: tuple[str, ...] = (
+    "the Philippines",
+    "Indonesia",
+    "Myanmar",
+)
+
+# Matched on SUBSTRINGS and tested in this order, because the alternative is a
+# list of every way a person writes the name of her own country.
+_PLACEABLE_PATTERN = re.compile(
+    r"phil+ipp?in|filipin|pilipin"      # Philippines, Filipina, Pilipinas
+    r"|indonesi|\bindo\b"               # Indonesia, Indonesian, "Indo"
+    r"|myanmar|burma|burmese",
+    re.IGNORECASE,
+)
+
+# The countries we do NOT place from, listed POSITIVELY rather than inferred
+# from "did not match the three" - and that is the whole safety of this.
+#
+# An unrecognised answer is left UNDECIDED and the question is simply asked
+# again, so a helper who answers "Java", "Cebu" or "from my village" is not
+# turned away by a vocabulary gap; only somebody who actually names a country
+# we cannot place is. The cost runs the right way round: a missed decline is
+# one conversation a consultant closes, a wrong decline is a woman told to go
+# away who should not have been.
+#
+# Singapore and Hong Kong are deliberately ABSENT. A helper already working
+# here, or who worked two contracts in Hong Kong, can easily answer this
+# question with where she IS rather than where she is from - and `current_location`
+# asks her that separately a few questions later.
+_UNPLACEABLE_PATTERN = re.compile(
+    r"\bindian?\b|\bsri\s?lanka|\bbangladesh|\bnepal|\bcambodia|\bkhmer"
+    r"|\bvietnam|\bthailand\b|\bthai\b|\bmalaysia|\bchina\b|\bchinese\b"
+    r"|\bpakistan|\bethiopia|\bkenya|\buganda|\bnigeria|\bghana"
+    r"|\btimor|\blaos?\b|\blaotian|\bbrunei",
+    re.IGNORECASE,
+)
+
+
+def nationality_state(value: Any) -> str:
+    """"supported" | "unsupported" | "undecided" for a job seeker's country.
+
+    Three states rather than two, for the same reason Gate has three: a value
+    nobody recognises is not evidence of anything, and closing on it is how a
+    correct answer gets treated as a wrong one (2026-09-08, `requirement`).
+
+    Placeable is tested FIRST, so "Chinese Indonesian" is Indonesian rather than
+    Chinese - the one collision in the two lists, and it resolves the right way.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return "undecided"
+    if _PLACEABLE_PATTERN.search(text):
+        return "supported"
+    if _UNPLACEABLE_PATTERN.search(text):
+        return "unsupported"
+    return "undecided"
+
+
 # An EMPLOYER's transfer request. Its own service rather than a remap onto
 # new_hiring, and that distinction is the whole point: the topic key a ticket is
 # blocked against is the service key. Folding an employer's transfer into
@@ -710,11 +775,28 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
     # asked an employer's questions. Same identity-first ordering.
     "candidate_new_hiring": [
         Field("full_name", "name", "May I know your name?", group="who she is"),
+        # The three countries, named in the question. Until 2026-09-11 this was
+        # a bare "Which country are you from?" with NO options, and the note
+        # beside the matched pair said constraining her to three would "turn a
+        # Sri Lankan applicant away at the first question". The agency has since
+        # said that is exactly the intended behaviour: "The bot should only
+        # proceed with the hiring flow if the candidate is from one of these
+        # three countries ... If the candidate provides any other country, the
+        # bot should clearly respond that we only help candidates from these
+        # three countries." So she is turned away - kindly, with the reason, and
+        # with her follow-up questions answered - by nationality_state() below
+        # and _UNPLACEABLE_NATIONALITY in info_collector.
+        #
+        # Naming them in the QUESTION is half the fix on its own: it constrains
+        # the answer space, so the extractor has something to map onto and a
+        # helper who would have written "Java" writes "Indonesia".
         Field(
             "nationality",
             "nationality",
-            "Which country are you from?",
+            "Which country are you from - the Philippines, Indonesia or "
+            "Myanmar?",
             group="who she is",
+            options=PLACEABLE_NATIONALITIES,
         ),
         # Asked outright on 2026-09-10, and it is the first thing on the
         # candidates table: `age` is a column, and the EMPLOYER is asked for an
@@ -1629,34 +1711,47 @@ SERVICE_FIELDS[CANDIDATE_HIRING] += [
         group="what she is looking for",
         options=_matched_options("rest_day"),
     ),
+    # "in SGD", spelled out. The agency, 2026-09-11: "The bot should
+    # consistently use SGD, not USD/dollars." The bands below are unchanged and
+    # still shared with the employer's `budget` (_matched_options), because they
+    # are the same money - it is the CURRENCY that was ambiguous, and only on
+    # this side of the desk: an employer asked about "$600-700" is in Singapore
+    # and cannot read it as anything else, while a helper answering this from
+    # Manila or Jakarta reasonably can.
     Field(
         "expected_salary",
         "the salary she is looking for",
-        "Do you have a monthly salary in mind?",
+        "Do you have a monthly salary in mind, in SGD?",
         max_asks=1,
         optional=True,
         group="what she is looking for",
         options=_matched_options("budget"),
     ),
-    # --- anything else ---
+    # --- and that is the end of it ---
     #
-    # A NEW key rather than the employer's `additional_notes`, and the reason is
-    # _WHY_WE_ASK: it is keyed on the field key alone with no idea which flow is
-    # asking, and that entry reads "so anything that matters to them is agreed
-    # with THE HELPER up front". Said to the helper herself that is a sentence
-    # about somebody else.
-    Field(
-        "candidate_notes",
-        "anything else she wants noted",
-        "Anything else you would like me to note down before I pass this on?",
-        max_asks=1,
-        optional=True,
-        group="anything else",
-    ),
-    # Last, so "how should we reach you" closes the collection rather than
-    # interrupting it - the same order every other flow uses.
-    _UPDATE_CHANNEL,
-    _EMAIL,
+    # THREE fields were removed here on 2026-09-11, and the flow now closes on
+    # the salary question and goes straight into the briefing. The agency, after
+    # testing it: "Remove the unnecessary final question ... once all required
+    # information has been collected, the bot should directly provide the
+    # registration-complete and next-steps message ... The bot should not ask
+    # the candidate for additional information at this point."
+    #
+    #   * `candidate_notes` - "Anything else you would like me to note down
+    #     before I pass this on?". Named by the agency for removal.
+    #   * `update_channel` and `email` - she is messaging us ON WhatsApp, so
+    #     asking which channel she would prefer is asking a question we can
+    #     already see the answer to, and the closing line says "keep you updated
+    #     on WhatsApp" either way. The agency's wording is "Do not ask the
+    #     communication preference again if WhatsApp has already been selected";
+    #     for a helper it always has been. Both stay on every EMPLOYER flow,
+    #     where a client may genuinely want profiles emailed.
+    #
+    # ACCEPTED COST, recorded rather than buried: `candidate_notes` is what
+    # produced "I do smoke and i can't leave that" in the agency's own test on
+    # 2026-09-10 - a real matching fact that a consultant would otherwise have
+    # to discover at the interview. It is their call and they have made it; a
+    # helper who volunteers something unprompted is still extracted into
+    # `bot_note` and still reaches the ticket.
 ]
 
 

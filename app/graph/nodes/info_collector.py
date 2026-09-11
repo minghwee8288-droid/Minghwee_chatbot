@@ -13,6 +13,8 @@ from typing import Any
 from app.graph.guards import (
     COST_DEFERRAL_REPLY,
     COST_WITHHELD_SERVICES,
+    asks_for_documents,
+    asks_for_process,
     clamp_reply,
     quotes_hiring_package_cost,
     is_degenerate,
@@ -31,6 +33,8 @@ from app.graph.guards import (
 from app.graph.llm import complete, complete_json
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
+    CANDIDATE_PROCESS_COMES_LAST_NOTE,
+    UNPLACEABLE_NATIONALITY_NOTE,
     CANDIDATE_BRIEFING_NOTE,
     SERVICE_BRIEFING_NOTE,
     ACKNOWLEDGE_ONLY_INSTRUCTION,
@@ -1796,10 +1800,84 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         # exact mistake before it could ship.
         system_prompt_state["customer_name"] = ""
 
+    # She is not from a country we can place her from, and nothing below this
+    # point should run: no next question, no completion, no briefing.
+    #
+    # Agency, 2026-09-11: "The bot should only proceed with the hiring flow if
+    # the candidate is from one of these three countries ... If the candidate
+    # provides any other country, the bot should clearly respond that we only
+    # help candidates from these three countries", and it must then handle her
+    # follow-ups - "Why?", "I want a job.", "Can you still help me?"
+    #
+    # The test runs on EVERY turn rather than once, which is what makes the
+    # follow-ups work: `nationality` lives in the checkpoint, so a second and a
+    # third message land here too and are answered against the history instead
+    # of being met with the refusal again. It also means a correction costs
+    # nothing - if she says she is actually Indonesian the extractor updates the
+    # field, nationality_state() reads "supported" on the next turn, and the
+    # registration carries on with no special case for it anywhere.
+    #
+    # Deliberately NOT a handover: "we do not recruit from your country" is an
+    # answer we hold, and putting it in front of a consultant spends their time
+    # to say the thing the bot has already said.
+    if service_type in ticket_service.CANDIDATE_SERVICES and (
+        ticket_service.nationality_state(collected.get("nationality")) == "unsupported"
+    ):
+        logger.info(
+            "Conversation %s: job seeker's country %r is not one we place from — "
+            "explaining rather than collecting",
+            state.get("conversation_id"),
+            collected.get("nationality"),
+        )
+        return {
+            **lead_fields,
+            "collected_info": carry,
+            "service_type": service_type,
+            "collected_service": service_type,
+            "asked_field_counts": counts,
+            "missing_field_keys": [],
+            "info_complete": False,
+            "reply": await _write(
+                state,
+                system_prompt_state,
+                UNPLACEABLE_NATIONALITY_NOTE,
+                fallback=(
+                    "I'm sorry - we are only able to place helpers from the "
+                    "Philippines, Indonesia and Myanmar, so we are not able to "
+                    "help you find work here."
+                ),
+                max_sentences=3,
+            ),
+            "needs_handover": False,
+        }
+
     # The client asked something while we were collecting. Retrieval now runs
     # before this node on every turn, so the records are in state and the answer
     # can go out with the next question rather than being ignored.
     answer_first = ANSWER_THEN_ASK_INSTRUCTION if client_asked else ""
+
+    # ...but the full step-by-step is the CLOSING message, not this one.
+    #
+    # Live, 2026-09-11: a job seeker asked "can you please tell me the further
+    # process" at the last question and got a compressed, out-of-order version
+    # of the briefing with the next question tacked on the end - then got the
+    # real briefing one turn later. She was told the process twice and the first
+    # telling was the wrong one. The agency: "the bot should not provide this
+    # process prematurely".
+    #
+    # Removing the three trailing fields is what mostly closes this (the
+    # briefing now follows the salary question directly); this covers her
+    # asking it earlier. A DOCUMENTS question is deliberately excluded - what
+    # she has to provide is answerable at any point, and answering it is its own
+    # agency instruction from 2026-09-10.
+    message = state.get("incoming_text") or ""
+    if (
+        answer_first
+        and service_type in ticket_service.CANDIDATE_SERVICES
+        and asks_for_process(message)
+        and not asks_for_documents(message)
+    ):
+        answer_first += CANDIDATE_PROCESS_COMES_LAST_NOTE
 
     # The greeting and the AI disclosure are two sentences before a single
     # question has been asked, so a two-sentence budget deletes the question

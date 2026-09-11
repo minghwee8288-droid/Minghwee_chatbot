@@ -34,6 +34,8 @@ D = chr(36)
 # The agency's seven services, in their words. Used by the bracket check below,
 # which is written as a SET on purpose: the row it replaced was written about
 # the two fields they happened to name and was silent on every other flow.
+_ICO_SRC = (Path(__file__).resolve().parents[1]
+            / "app/graph/nodes/info_collector.py").read_text(encoding="utf-8")
 _BTR_SRC = (Path(__file__).resolve().parents[1]
             / "app/graph/nodes/blocked_topic_responder.py").read_text(encoding="utf-8")
 _asks_general = importlib.import_module(
@@ -150,7 +152,15 @@ _MATCHED_PAIRS = {
     "helper_room": "room_sharing",
     "rest_day": "rest_day_preference",
     "budget": "expected_salary",
-    "additional_notes": "candidate_notes",
+    # `additional_notes` -> `candidate_notes` was here until 2026-09-11, when
+    # the agency had the candidate half removed by name: "Remove the
+    # unnecessary final question ... The bot should not ask the candidate for
+    # additional information at this point." So the employer is still asked
+    # what else we should know and the helper is not, and that asymmetry is a
+    # DECISION rather than the gap this table exists to catch - which is why it
+    # is written here instead of quietly deleted. The cost is real and is
+    # recorded at the field list: this question is what produced "I do smoke
+    # and i can't leave that" in their own test the day before.
 }
 
 
@@ -1494,11 +1504,21 @@ rows = [
  ("nor promising her a job or a date",
   "Do not promise her a job" in tpl.CANDIDATE_BRIEFING_NOTE, True),
  # "heading line" until 2026-09-10, when that line was given a second job -
- # saying her registration is finished - and renamed. The tripwire fired, which
- # is what it is for; the three things it guards are unchanged.
+ # saying her registration is finished - and renamed; "closing sentence" until
+ # 2026-09-11, when the agency asked for a second closing sentence offering
+ # further help and it became "TWO short sentences". The tripwire has now fired
+ # twice for the right reason; the three things it guards are unchanged.
  ("and it still says what the list is, one step per line",
   all(p in tpl.CANDIDATE_BRIEFING_NOTE
-      for p in ("opening line", "REAL LINE BREAK", "closing sentence")), True),
+      for p in ("opening line", "REAL LINE BREAK", "TWO short sentences")), True),
+ # The second of those two, asked for by name: "If you need any further help or
+ # have any questions, please let us know." It is rule 2's standing offer and
+ # this message IS a handover, so it belongs - but it must not reopen the
+ # collection, which is the 2026-09-09 "would you like to go ahead?" defect.
+ ("and it offers further help without reopening anything",
+  ("glad to help" in _flat(tpl.CANDIDATE_BRIEFING_NOTE),
+   "do not ask her for any more details" in _flat(tpl.CANDIDATE_BRIEFING_NOTE)),
+  (True, True)),
  ("the buyer's note still requires the cost it was written for",
   "WHAT IT COSTS" in tpl.SERVICE_BRIEFING_NOTE, True),
  # The query is the other half, and the word `cost` is absent from it on
@@ -1641,6 +1661,90 @@ rows = [
  ("and it still leads the list with a line saying what it is",
   "say what this message is" in _flat(tpl.CANDIDATE_BRIEFING_NOTE), True),
 
+ # --- only three countries, 2026-09-11 ---------------------------------
+ # Agency: "The bot should only proceed with the hiring flow if the candidate
+ # is from one of these three countries: Myanmar, Indonesia, Philippines. If
+ # the candidate provides any other country, the bot should clearly respond
+ # that we only help candidates from these three countries."
+ ("a helper from a country we place is taken through the flow",
+  [v for v in ("Indonesia", "indonesian", "i am from indonesia", "Indo",
+               "Philippines", "philippines", "filipina", "Filipino",
+               "Pilipinas", "Myanmar", "burmese", "from Burma",
+               "Chinese Indonesian")
+   if t.nationality_state(v) != "supported"], []),
+ ("a helper from one we do not is told so",
+  [v for v in ("India", "i am from india", "Indian", "Sri Lanka", "sri lankan",
+               "Bangladesh", "Nepal", "Cambodia", "Vietnam", "Thailand",
+               "Malaysia", "China", "Pakistan", "Ethiopia", "Kenya")
+   if t.nationality_state(v) != "unsupported"], []),
+ # THE SAFETY OF THE WHOLE THING. The unplaceable list is positive, never
+ # "did not match the three", so an answer nobody recognises is UNDECIDED and
+ # the question is simply asked again. A wrong decline is a woman told to go
+ # away who should not have been; a missed one is a conversation a consultant
+ # closes. Singapore and Hong Kong are the ones that would bite: a helper
+ # already working here can easily answer "which country are you from" with
+ # where she IS.
+ ("an answer nobody recognises is asked again, not turned away",
+  [v for v in ("Java", "Cebu", "Singapore", "in singapore", "Hong Kong",
+               "from my village", "idk", "", "   ")
+   if t.nationality_state(v) != "undecided"], []),
+ # The question names them, which constrains the answer space so the extractor
+ # has something to map onto - half the fix on its own.
+ ("and the question itself names the three",
+  all(c in _question_of("candidate_new_hiring", "nationality")
+      for c in ("Philippines", "Indonesia", "Myanmar")), True),
+ # What the refusal may not do. She has just been turned down, which is the
+ # worst possible audience for a promise we cannot keep - there is no waiting
+ # list, no file we keep her on and no fee anywhere in our records.
+ ("the refusal promises her nothing we do not have",
+  all(p in _flat(tpl.UNPLACEABLE_NATIONALITY_NOTE) for p in (
+      "do not promise to keep her details",
+      "do not ask her any more questions about herself",
+      "do not quote a fee")), True),
+ # ...and it is a conversation, not a canned line: it applies on every turn
+ # while her country reads as unplaceable, so "why?" is answered against the
+ # history instead of drawing the refusal a second time.
+ ("and it answers her follow-up instead of repeating itself",
+  ("ANSWER IT" in tpl.UNPLACEABLE_NATIONALITY_NOTE,
+   "Do not repeat the refusal" in _flat(tpl.UNPLACEABLE_NATIONALITY_NOTE)),
+  (True, True)),
+ # A correction costs nothing: the extractor updates the field, the state reads
+ # "supported" next turn, and the registration carries on with no special case.
+ ("a helper who corrects herself is simply taken at her word",
+  "take her at her word" in _flat(tpl.UNPLACEABLE_NATIONALITY_NOTE), True),
+ # Not a handover: "we do not recruit from your country" is an answer we hold,
+ # and putting it in front of a consultant spends their time saying it again.
+ # Proved by RUNNING the node - see smoke_nodes.py, "candidate, a country we
+ # do not place from". The first version of this check read the source and
+ # split it on the template's name, which matched the IMPORT line rather than
+ # the branch and was green for a reason unrelated to what it was checking.
+ ("the branch that declines her is wired to the note",
+  "UNPLACEABLE_NATIONALITY_NOTE," in _ICO_SRC, True),
+
+ # --- the currency, 2026-09-11 -----------------------------------------
+ # "The bot should consistently use SGD, not USD/dollars." Only on her side:
+ # an employer reading "$600-700" is in Singapore and cannot mean anything
+ # else, while a helper answering from Manila or Jakarta reasonably can.
+ ("the salary she is asked for is in SGD",
+  "SGD" in _question_of("candidate_new_hiring", "expected_salary"), True),
+ ("and the bands are still the employer's own, so the two match",
+  _options_of("candidate_new_hiring", "expected_salary")
+  == _options_of("new_hiring", "budget"), True),
+
+ # --- the process is the CLOSING message, 2026-09-11 -------------------
+ # She asked "can you please tell me the further process" at the last question
+ # and got a compressed, out-of-order version of the briefing with the next
+ # question tacked on - then the real briefing one turn later. Told twice, and
+ # the first telling was the wrong one.
+ ("a process question mid-collection does not pre-empt the briefing",
+  ("CANDIDATE_PROCESS_COMES_LAST_NOTE" in _ICO_SRC,
+   "Do not number the steps" in _flat(tpl.CANDIDATE_PROCESS_COMES_LAST_NOTE)),
+  (True, True)),
+ # A DOCUMENTS question is excluded, because answering that one at any point is
+ # its own agency instruction from the day before.
+ ("but a documents question is still answered on the spot",
+  "not asks_for_documents(message)" in _ICO_SRC, True),
+
  # --- the number the agency answers on, 2026-09-11 ---------------------
  # Ming Hwee's WhatsApp number changed - the same Whapi channel re-paired to a
  # new handset, so WHAPI_SENDER_PHONE was the only .env line that moved. The
@@ -1716,8 +1820,22 @@ rows = [
   rr._retrieval_audience({"service_type": "transfer_employer",
                           "contact_type": "employer",
                           "matched_employer_id": "e1"}), "employer"),
- ("except the nationality pair, which deliberately does not",
-  bool(_options_of("candidate_new_hiring", "nationality")), False),
+ # This one was inverted on 2026-09-11 and the tripwire caught it, which is
+ # what these counts are for. Until then the candidate's `nationality` had NO
+ # options, and the note here said constraining her to three countries "would
+ # turn a Sri Lankan applicant away at the first question". The agency has
+ # since said that IS the intended behaviour - so she is now offered the three,
+ # and turned away kindly with her questions answered if she names another.
+ # The two halves still cannot share a LIST: the employer picks a nationality
+ # ("Filipino") and plus "no preference", the helper names a country ("the
+ # Philippines"). Same three, different words, so the shared-options rule
+ # excludes the pair and this asserts the overlap instead.
+ ("the nationality pair now offers the same three countries",
+  (len(_options_of("candidate_new_hiring", "nationality")),
+   len(_options_of("new_hiring", "preferred_nationality"))), (3, 4)),
+ ("and a helper is offered countries, not nationalities",
+  _options_of("candidate_new_hiring", "nationality"),
+  t.PLACEABLE_NATIONALITIES),
  # The keys are deliberately NEW rather than the employer's own. `languages`
  # and `budget` are portable across services, so reusing them would carry an
  # employer's "Mandarin spoken at home" into a helper's file as a language she
@@ -1735,12 +1853,23 @@ rows = [
  ("no candidate field inherits a reason written for an employer",
   sorted({f.key for f in t.SERVICE_FIELDS["candidate_new_hiring"]}
          & set(ico._WHY_WE_ASK)), []),
- # How to reach her closes the collection rather than interrupting it - the
- # order every other flow uses, and it was the last thing asked before the
- # handover in the agency's own transcript.
- ("staying in touch is still asked last",
-  [f.key for f in t.SERVICE_FIELDS["candidate_new_hiring"]][-2:],
-  ["update_channel", "email"]),
+ # Until 2026-09-11 this ended on update_channel + email, "the order every
+ # other flow uses". It no longer asks either: she is messaging us ON WhatsApp,
+ # so the channel is not a question, and the agency asked for the collection to
+ # end and go straight into the next-steps message. Asserted as what it must
+ # NOT contain rather than as the new last two keys, because the point is that
+ # nothing administrative follows the last real question.
+ ("nothing is asked after the last question about her",
+  sorted({"candidate_notes", "update_channel", "email"}
+         & {f.key for f in t.SERVICE_FIELDS["candidate_new_hiring"]}), []),
+ # ...and the flows that DO ask it still do. A hard list, because it is a
+ # tripwire and not a rule: "every employer flow asks how to reach them" was
+ # written here first and was simply false - five of them never have, and the
+ # check went red on correct code the moment it ran (2026-09-09 C).
+ ("the flows that ask how to reach them are unchanged",
+  sorted(svc for svc, fl in t.SERVICE_FIELDS.items()
+         if any(f.key == "update_channel" for f in fl)),
+  ["direct_hiring", "new_hiring", "transfer_employer"]),
  # A job seeker has less patience than an employer (the note on `transfer`
  # says so), so the matching half is optional throughout: asked once each,
  # and a collection completes without them.

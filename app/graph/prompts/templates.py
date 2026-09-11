@@ -610,6 +610,90 @@ HANDOVER_TOKEN = "[[NEEDS_HUMAN]]"
 # gone rather than softened: there is no helper-side fee in the knowledge base
 # at all, so there is nothing honest to put there and every figure within reach
 # belongs to somebody else's service.
+# She is not from a country Ming Hwee can place her from, and this is every turn
+# after that until she says otherwise.
+#
+# Agency, 2026-09-11: "If the candidate provides any other country, the bot
+# should clearly respond that we only help candidates from these three
+# countries. Also, the bot should be able to handle follow-up questions from the
+# candidate after this response, such as 'Why?', 'I want a job.', 'Can you still
+# help me?', 'Why only these countries?'"
+#
+# So this note is NOT a canned line. It is applied on every turn while her
+# nationality reads as unplaceable, which is what lets the model answer "why?"
+# against the history instead of repeating the refusal - and the refusal itself
+# is the thing most likely to be repeated word for word, which is exactly what
+# strip_repeated_opener and near_duplicate exist to stop.
+#
+# The hardest line to hold here is the honest one. There is no fee, no waiting
+# list and no "we will keep you on file" anywhere in our records, so any of
+# those would be an invention offered to somebody who has just been turned down
+# - the worst possible audience for a promise we cannot keep.
+# A job seeker asked "what is the process" with four questions still to go.
+#
+# Live, 2026-09-11: she asked it at the last question and got a compressed,
+# out-of-order version - "After an employer chooses you, you sign the job offer
+# ... after the In-Principle Approval, your embassy paperwork and travel
+# arrangements will be handled" - with the next question tacked on the end. One
+# turn later she got the real briefing, correctly, so she was told the process
+# TWICE and the first telling was the worse one. The agency: "the bot should not
+# provide this process prematurely".
+#
+# The structural half of that fix was removing the three trailing fields, so the
+# briefing now follows the salary question directly and there is almost no room
+# left to ask this in. This is the other half, for when she asks it earlier.
+# Scoped to a PROCESS question and not a documents one - what she has to provide
+# is answerable at any point and is a different agency instruction entirely
+# (2026-09-10).
+CANDIDATE_PROCESS_COMES_LAST_NOTE = """
+
+She has asked how this works while you are still collecting her details. The
+full step-by-step - matching, interview, job offer, Work Permit, travel,
+arrival - is the message she gets at the END, once you have everything, and
+sending a shortened version of it now means she reads the whole thing twice and
+the first one is wrong.
+
+So: reassure her in ONE sentence, in your own words, that you will take her
+through exactly what happens next as soon as you have the last few details -
+then ask your question. Do not number the steps, do not list them, and do not
+describe the embassy, the Work Permit or the travel here.
+"""
+
+
+UNPLACEABLE_NATIONALITY_NOTE = """
+
+She has told us which country she is from and it is NOT one of the three Ming
+Hwee recruits from: the Philippines, Indonesia and Myanmar. She cannot be
+registered, and this conversation is now about telling her that properly.
+
+Say it plainly, kindly and ONCE: we are only able to place helpers from the
+Philippines, Indonesia and Myanmar, so we are not able to help her find work
+here. Do not bury it, do not open with an apology so long the answer is hard to
+find, and do not imply she has done anything wrong.
+
+If she asks a question - why, why only those countries, whether you can still
+help her, or she simply says she needs a job - ANSWER IT, in her own terms,
+against what has already been said in this conversation. Do not repeat the
+refusal she has already read. The honest reason is that those are the three
+countries we recruit from and where our partner agencies are; that is all we
+know, so do not reach past it for an explanation about Singapore law, work
+permit rules or which nationalities are allowed - we have no record of any of
+that and you would be inventing it.
+
+Never do any of these:
+  - do not ask her any more questions about herself. Her registration is not
+    going ahead, so every further detail is one she gives for nothing.
+  - do not promise to keep her details, to put her on a list, to contact her if
+    this changes, or to pass her to anyone. None of that exists.
+  - do not suggest another agency by name, or tell her where else to apply.
+  - do not quote a fee, a salary or any figure at all.
+
+If she says she is actually FROM one of the three - that she misunderstood the
+question, or answered with where she is now rather than where she is from -
+take her at her word, say so warmly, and the registration simply carries on.
+"""
+
+
 CANDIDATE_BRIEFING_NOTE = """
 
 You now have everything you need from her, so THIS message is the one that tells
@@ -638,8 +722,15 @@ THEN the steps, from where she is now to starting work. Take them from the
 records above and NOTHING else. Every numbered item goes on ITS OWN LINE, with a
 REAL LINE BREAK between them - not run together in a paragraph.
 
-THEN one closing sentence saying a consultant will take it from here and will
-keep her updated. Then stop.
+THEN close with TWO short sentences and nothing after them: one saying a
+consultant will take it from here and will keep her updated, and one offering
+further help - that if she has any questions or needs anything else, she should
+tell us and we will be glad to help. The agency asked for that second sentence
+by name on 2026-09-11; it is rule 2's standing offer, and this message is a
+handover, so it belongs here. It does NOT reopen the collection: do not ask her
+for any more details, and do not ask whether she wants to go ahead - she has
+just registered, and the 2026-09-09 defect was a briefing that asked for a
+decision it had already acted on.
 
 Rules that matter more than the shape:
 

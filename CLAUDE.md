@@ -280,8 +280,8 @@ because the lead is opened early and the ticket is created much later.
 | A candidate flow searches the candidate's shelf, whatever the master record says | `rag_retriever._retrieval_audience` | `effective_contact_type` puts an employers row above one message, rightly. For RETRIEVAL that hid all 27 helper-facing rows from a job seeker whose number we hold as an employer, and "what is the process" came back at **0.397** — four thousandths under the floor. As a candidate it is 0.437. Retrieval only; the lead, the ticket and the contact type are untouched. |
 | A row that narrows its audience says so in its heading | `selfcheck_flows.py` | Was "everything except the transfer checklist". The helper's journey rows are the second set to narrow, and a list of exceptions has to be edited every time — which is how a tripwire stops being read. |
 | A candidate's own name is never read off her WhatsApp profile | `ticket.NAME_FROM_RECORD_ONLY` + `selfcheck_flows.py` | The fifth arrival of the same complaint, and the derived rule could not catch it: that one sweeps `EMPLOYER_LEAD_SERVICES`, and a job seeker is not in it. `get_record_name` reads `employers`, so `record_name` is always empty for a helper and the question is always asked — which is right, because this name goes on a Work Permit application. A name she gave on an earlier enquiry still greets her, off `leads_candidate`. |
-| Every question the employer is asked ABOUT a helper has a counterpart she is asked about herself | `selfcheck_flows._MATCHED_PAIRS` + `ticket._matched_options` | Or the consultant matches the two tickets by eye. The employer was asked 25 questions about the helper they want; she was asked 9 about herself, six of them identity and logistics. Nine of the eleven pairings had no candidate half at all. |
-| ...and both halves of a pairing offer the SAME words | `ticket._matched_options` | Taken from the employer's `Field`, never retyped, for the reason `_hiring_field` exists (§9.8). `preferred_nationality` is the one pair that deliberately cannot share a list — an employer picks from the three we place, a helper states the country she is from. |
+| Every question the employer is asked ABOUT a helper has a counterpart she is asked about herself | `selfcheck_flows._MATCHED_PAIRS` + `ticket._matched_options` | Or the consultant matches the two tickets by eye. The employer was asked 25 questions about the helper they want; she was asked 9 about herself, six of them identity and logistics. Nine of the eleven pairings had no candidate half at all. **One pairing was dropped on 2026-09-11** — `additional_notes` → `candidate_notes` — because the agency had her half removed by name; it is written in the table as a decision rather than deleted. |
+| ...and both halves of a pairing offer the SAME words | `ticket._matched_options` | Taken from the employer's `Field`, never retyped, for the reason `_hiring_field` exists (§9.8). `preferred_nationality` is the one pair that cannot share a *list* — the employer picks a nationality (`Filipino`) plus "no preference", the helper names a country (`the Philippines`). **Same three countries since 2026-09-11**; until then she was asked an open question, and the note here argued that constraining her would turn a Sri Lankan applicant away. It now does exactly that, by instruction. |
 | A candidate key never reuses a portable employer key | `selfcheck_flows.py` | `languages` and `budget` are in `_PORTABLE_ACROSS_SERVICES`, so reusing them would carry an employer's "Mandarin spoken at home" into a helper's file as a language SHE speaks. The direct-hire flow avoided the same trap with its `helper_` prefix, from the other side. |
 | No bracket is read out on ANY service, not just the seven | `selfcheck_flows._reads_a_bracket` | The sweep was written over the agency's seven employer services, so a candidate flow was outside it entirely — the same "written for the set that was reported" shape the row itself was created to fix. |
 | A documents question is recognised however it is phrased, and by BOTH paths at once | `guards._DOCUMENTS_QUESTION` / `asks_for_documents` | One definition, read by `asks_for_process` (may this reply be a list?) and by `asks_general_info` (does a parked topic answer at all?). They disagreed about the same sentence: "Tell me the documents I needed" matched neither, and "what are the documents I required" matched neither, so the one turn that worked was the classifier happening to return `document_question`. |
@@ -293,6 +293,12 @@ because the lead is opened early and the ticket is created much later.
 | The number the agency answers on is CONTENT, not configuration | `load_service_notes.TEXT_REPLACEMENTS` + `selfcheck_flows.py` | Changing the WhatsApp number is one `.env` line; 14 knowledge-base rows named the old one, 13 of them helper-facing, including the emergency and abuse-reporting rows. Swept from the loader's own needles, so a file nobody thought to check cannot keep a replaced string alive. |
 | A raw imported chunk can be corrected too, not just a Q&A row | `load_service_notes.TEXT_REPLACEMENTS` | `UPDATES` keys on `question` and a `document_chunk` row has none — §9.15 predicted this gap and said it would need a chunk-level path. Finds rows by SEARCHING for the old text, so a second run is a no-op, and re-embeds, because a row edited without that is still retrieved on its old wording. |
 | ...and a specific rewrite is never shadowed by a general one | `selfcheck_flows.py` | The rules run in sequence, so a general needle placed first rewrites the text the specific rule was looking for and that rule silently never fires. Directional, and the check had it backwards on its first run — it flagged the correct arrangement. |
+| A job seeker is registered only if she is from one of the three countries we recruit from | `ticket.nationality_state` + `info_collector` (`UNPLACEABLE_NATIONALITY_NOTE`) | The Philippines, Indonesia, Myanmar — named in the question, which constrains the answer space so the extractor has something to map onto. Anyone else is told plainly, and **not** handed to a human: "we do not recruit from your country" is an answer we hold. |
+| ...and an answer nobody recognises is asked again, never declined | `ticket._UNPLACEABLE_PATTERN` (a POSITIVE list) | The refusal fires only on a country we can name, never on "did not match the three". `Singapore` and `Hong Kong` are deliberately absent — a helper already here answers "which country are you from" with where she IS. A missed decline is a conversation a consultant closes; a wrong one is a woman told to go away who should not have been. |
+| ...and the refusal is a conversation, not a canned line | `info_collector` (the branch runs every turn) | `nationality` lives in the checkpoint, so "why?", "can you still help me" and "I want a job" land in the same branch and are answered against the history instead of drawing the refusal a second time. A correction ("I meant I am IN India, I am FROM Indonesia") needs no special case at all — the field updates and the registration carries on. |
+| The salary a HELPER is asked for is in SGD | `expected_salary`'s question | Only on her side: an employer reading "$600-700" is in Singapore and cannot mean anything else, while she is answering from Manila or Jakarta. The bands are still the employer's own, so the pairing still matches. |
+| Nothing administrative follows the last question about her | `SERVICE_FIELDS["candidate_new_hiring"]` | `candidate_notes`, `update_channel` and `email` removed 2026-09-11 — she is messaging us ON WhatsApp, so the channel is not a question. The salary answer goes straight into the closing briefing. Asserted as what the flow must NOT contain. |
+| The full step-by-step is the CLOSING message, never a preview of it | `templates.CANDIDATE_PROCESS_COMES_LAST_NOTE` | Asked "the further process" at the last question, she got a compressed out-of-order version with the next question tacked on, then the real briefing a turn later — told twice, first telling wrong. A DOCUMENTS question is excluded: that one is answerable at any point (2026-09-10). |
 | A service the KB has never been labelled with searches under the label it HAS | `rag_retriever._RETRIEVAL_ALIASES` | `transfer_employer` is not a `service_type` any row uses, so the filter narrowed it to `general` forever. Retrieval only — the ticket, the lead, the field list and the **blocked-topic key** all still see `transfer_employer`, which is what keeps a new transfer off a parked hiring topic. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -838,6 +844,92 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-11** — **Four things from the agency's candidate retest, and two of them
+  reverse decisions this file had argued for.** Their words: *"the overall flow is good,
+  but I noticed a few small issues"* — country validation, SGD, the process arriving at
+  the wrong moment, and one question too many at the end.
+  (A) **Only three countries, and the note here said not to do this.** The agency:
+  *"The bot should only proceed with the hiring flow if the candidate is from one of
+  these three countries: Myanmar, Indonesia, Philippines."* Until now her `nationality`
+  was an open question with **no options**, and the note beside the matched pair said in
+  as many words that constraining her to three *"would turn a Sri Lankan applicant away
+  at the first question"*. That is now the intended behaviour, so the note is rewritten
+  rather than left to contradict the code, and the self-check assertion that asserted the
+  absence of options is inverted with its reason. **The tripwire caught it**, which is
+  what these assertions are for.
+  (B) **The safety of it is in the THIRD state, not the second.** `nationality_state()`
+  returns supported / unsupported / **undecided**, and the unplaceable list is
+  **positive** — a named country we cannot place — never "did not match the three". So
+  *"Java"*, *"Cebu"*, *"from my village"* and an empty answer are simply asked again,
+  and only *"India"*, *"Sri Lanka"*, *"Bangladesh"* and their kin are declined.
+  **`Singapore` and `Hong Kong` are deliberately absent from that list**: a helper
+  already working here, or who has worked two contracts in Hong Kong, can easily answer
+  *"which country are you from"* with where she **is** — and `current_location` asks her
+  that separately four questions later. The cost runs the right way round: a missed
+  decline is one conversation a consultant closes, a wrong decline is a woman told to go
+  away who should not have been. Naming the three **in the question** is half the fix on
+  its own, because it constrains what she writes in the first place.
+  (C) **The refusal is a conversation, and that is what the agency actually asked for** —
+  *"the bot should be able to handle follow-up questions ... such as 'Why?', 'I want a
+  job.', 'Can you still help me?'"* The branch therefore runs on **every** turn while her
+  country reads as unplaceable, rather than once: `nationality` is in the checkpoint, so
+  the follow-ups land in the same place and are answered against the history instead of
+  drawing the refusal a second time. Live: *"why?"* → *"Because Ming Hwee recruits only
+  from the Philippines, Indonesia and Myanmar, where we work with partner agencies."*;
+  *"but i really want a job can you still help me"* → honest, no false hope. **And a
+  correction needs no special case whatsoever**: *"sorry i meant i am in india now but i
+  am from indonesia"* → *"Got it, thanks for clarifying ... may I know your age?"*, the
+  registration simply carrying on. **Deliberately not a handover** — "we do not recruit
+  from your country" is an answer we hold, and a consultant spending their time to repeat
+  it is the 2026-09-08 shape of waste. The note forbids the three inventions that a
+  refusal invites: a waiting list, a promise to call if this changes, and another agency
+  by name. None of those exists in our records.
+  (D) **SGD, spelled out.** *"The bot should consistently use SGD, not USD/dollars."*
+  Changed on her side only, and that asymmetry is the point: an employer reading
+  *"$600-700"* is in Singapore and cannot read it as anything else, while she is
+  answering from Manila or Jakarta. The **bands are untouched** and still taken from the
+  employer's `budget` via `_matched_options`, so the pairing still matches word for word.
+  (E) **Three fields removed, which is what actually fixes the process defect.** She
+  asked *"can you please tell me the further process"* at the last question and got a
+  compressed, out-of-order version of the briefing with the channel question tacked on
+  the end — then the real briefing one turn later. **She was told the process twice and
+  the first telling was the wrong one.** `candidate_notes` goes because the agency named
+  it; `update_channel` and `email` go because **she is messaging us on WhatsApp**, so
+  asking which channel she would prefer is asking a question we can already see the
+  answer to (their wording: *"Do not ask the communication preference again if WhatsApp
+  has already been selected"* — for a helper it always has been). Both stay on every
+  employer flow, where a client may genuinely want profiles emailed. 18 fields → **15**,
+  and the salary answer now goes straight into the briefing with nothing in between.
+  **Accepted cost, recorded not buried:** `candidate_notes` is what produced *"I do smoke
+  and i can't leave that"* in their own test the day before — a real matching fact a
+  consultant will now meet at the interview instead.
+  (F) **And the other half, for when she asks it earlier.**
+  `CANDIDATE_PROCESS_COMES_LAST_NOTE` turns a mid-collection process question into one
+  sentence of reassurance plus the next question, with no numbered steps. Live: *"Yes,
+  Ruru. Once we have the last few details, I'll guide you through each step clearly.
+  Would you need your own room...?"* A **documents** question is deliberately excluded —
+  answering that one at any point is its own agency instruction from 2026-09-10.
+  (G) **The closing message offers further help**, asked for by name: *"If you need any
+  further help or have any questions, please let us know."* It is rule 2's standing offer
+  and this message is a handover, so it belongs — and the note says outright that it does
+  not reopen the collection, which is the 2026-09-09 *"would you like to go ahead?"*
+  defect.
+  (H) **Verified live end to end against the real model**, eight cases: the decline, the
+  three follow-ups, the correction, a supported country carrying on normally, the SGD
+  question, the premature-process question, and the close — which now reads *"Thanks,
+  Ruru — that is everything we need from you for now. Your registration with Ming Hwee is
+  complete, and here is what happens next:"*, six steps one per line, the consultant line,
+  and the offer of help. No figure anywhere.
+  (I) **Eight faults injected, eight red — after one came back GREEN for a reason worth
+  keeping.** The injection meant to prove the undecided state replaced `return
+  "undecided"` in **`Gate.state()`** instead: three functions in `ticket.py` end on that
+  same line, and the needle matched the first. So the check was never exercised and the
+  run said nothing. Re-anchored on `nationality_state`'s own tail, it goes red naming all
+  seven unrecognised answers. Second time in two days that a fault injection was itself
+  the thing that was wrong — **a green injection is a result about the injection, not
+  about the code.**
+  `selfcheck_flows.py` is **369 assertions**; `smoke_nodes.py` is **46 states**.
 
 - **2026-09-11** — **The agency's WhatsApp number changed, and the `.env` line was the
   easy half.** Asked whether updating the number on the live server was enough. Read
