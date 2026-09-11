@@ -294,6 +294,7 @@ because the lead is opened early and the ticket is created much later.
 | A raw imported chunk can be corrected too, not just a Q&A row | `load_service_notes.TEXT_REPLACEMENTS` | `UPDATES` keys on `question` and a `document_chunk` row has none — §9.15 predicted this gap and said it would need a chunk-level path. Finds rows by SEARCHING for the old text, so a second run is a no-op, and re-embeds, because a row edited without that is still retrieved on its old wording. |
 | ...and a specific rewrite is never shadowed by a general one | `selfcheck_flows.py` | The rules run in sequence, so a general needle placed first rewrites the text the specific rule was looking for and that rule silently never fires. Directional, and the check had it backwards on its first run — it flagged the correct arrangement. |
 | A job seeker is registered only if she is from one of the three countries we recruit from | `ticket.nationality_state` + `info_collector` (`UNPLACEABLE_NATIONALITY_NOTE`) | The Philippines, Indonesia, Myanmar — named in the question, which constrains the answer space so the extractor has something to map onto. Anyone else is told plainly, and **not** handed to a human: "we do not recruit from your country" is an answer we hold. |
+| ...and the question does not then offer a fourth | `Field.options_are_exhaustive` + `info_collector._field_guidance` | The one closed option set in the codebase. Every other one is EXAMPLES — `languages` exists in its current form because the bot hid four of its seven from a Tamil-speaking household — so the guidance ends by saying the client may give something not on the list. On her country that invites the single answer the next turn has to refuse. |
 | ...and an answer nobody recognises is asked again, never declined | `ticket._UNPLACEABLE_PATTERN` (a POSITIVE list) | The refusal fires only on a country we can name, never on "did not match the three". `Singapore` and `Hong Kong` are deliberately absent — a helper already here answers "which country are you from" with where she IS. A missed decline is a conversation a consultant closes; a wrong one is a woman told to go away who should not have been. |
 | ...and the refusal is a conversation, not a canned line | `info_collector` (the branch runs every turn) | `nationality` lives in the checkpoint, so "why?", "can you still help me" and "I want a job" land in the same branch and are answered against the history instead of drawing the refusal a second time. A correction ("I meant I am IN India, I am FROM Indonesia") needs no special case at all — the field updates and the registration carries on. |
 | The salary a HELPER is asked for is in SGD | `expected_salary`'s question | Only on her side: an employer reading "$600-700" is in Singapore and cannot mean anything else, while she is answering from Manila or Jakarta. The bands are still the employer's own, so the pairing still matches. |
@@ -844,6 +845,43 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-11** — **"or another country?" — the bot offering the one answer it
+  would have to refuse on the very next turn.** From the first candidate conversation
+  on the agency's new number, minutes after the country check went live: *"Thanks,
+  wooocom. Which country are you from — the Philippines, Indonesia, Myanmar, **or
+  another country?**"* → *"china"* → the decline. Their instruction: *"bot should not
+  ask for or another country thing in country question"*.
+  (A) **The field's own written question names exactly three.** The fourth was added by
+  `_field_guidance`, whose "name them all" branch ends by telling the model to make
+  clear the client may give *"something not on the list"* — so this is the same shape as
+  the 2026-09-07 languages defect and the 2026-09-04 bracket questions: **the prompt
+  instructing the behaviour outright**, not the model improvising. Reading the field list
+  and concluding the question was fine would have missed it entirely.
+  (B) **And that clause is right everywhere else, which is why it is a flag and not a
+  deletion.** It exists because `languages` was hiding four of its seven options from a
+  Tamil-speaking household (2026-09-04, and again on 2026-09-07 when the general rule
+  overrode the specific one). `requirement`, `work_scope` and the rest are examples of
+  what the office works with, and an answer outside them is still an answer — the
+  `Field.options` comment has said so since it was written. Her country is the one set
+  where the list IS the answer space, so `options_are_exhaustive` marks that one field
+  and the guidance takes the other branch: name all three, invite nothing else, and say
+  outright not to add *"or another country"*.
+  (C) **Checked through the real guidance builder, not by grepping for the sentence.**
+  What matters is the instruction the model is handed, so the assertion calls
+  `_field_guidance` and reads it — with the languages/requirement controls asserting the
+  opposite, that they still invite what they do not name. Plus a tripwire: hers is the
+  **only** closed option set anywhere, so a second one has to be a decision somebody
+  makes rather than a flag that spread. Three faults injected, three red (the flag
+  removed, the invitation restored unconditionally, and `languages` wrongly closed).
+  **One of the three initially SKIPPED rather than failing** — its anchor did not match,
+  because that field is built over two lines — and a skipped injection proves exactly as
+  little as a green one, so it was re-anchored and run.
+  (D) **Verified live, three runs of the exact failing turn**: *"Thanks, wooocom. Which
+  country are you from — the Philippines, Indonesia or Myanmar?"*, no fourth offered in
+  any of them; and the languages control still goes out naming all seven *"or any other
+  language"*.
+  `selfcheck_flows.py` is **374 assertions**; `smoke_nodes.py` is 46 states.
 
 - **2026-09-11** — **Four things from the agency's candidate retest, and two of them
   reverse decisions this file had argued for.** Their words: *"the overall flow is good,

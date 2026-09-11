@@ -93,6 +93,22 @@ class Field:
     # examples, never read out as a menu, and never used to reject what they
     # actually say — a client who answers "3 bedroom HDB" has answered.
     options: tuple[str, ...] = ()
+    # Whether that list is the WHOLE answer space rather than a set of examples.
+    # False everywhere but one field, and it has to be: "a client who answers
+    # '3 bedroom HDB' has answered" is the rule the line above states, and
+    # `languages` exists in its current form because the bot was hiding four of
+    # its seven options from a Tamil-speaking household.
+    #
+    # The exception is a helper's own country. Live, 2026-09-11, the first
+    # conversation on the new number: "Which country are you from - the
+    # Philippines, Indonesia, Myanmar, or another country?" - so the bot asked
+    # a question whose next turn can only be a refusal, and invited the answer
+    # it would then have to turn down. That trailing clause is not the model
+    # improvising: _field_guidance TELLS it to say the client may give
+    # "something not on the list", which is right for every other option set
+    # here and precisely wrong for this one. Agency: "bot should not ask for or
+    # another country thing in country question".
+    options_are_exhaustive: bool = False
     # Only asked once an earlier answer opens it. See Gate.
     gate: Gate | None = None
 
@@ -797,6 +813,9 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             "Myanmar?",
             group="who she is",
             options=PLACEABLE_NATIONALITIES,
+            # The three ARE the answer space, so the question must not offer a
+            # fourth - see Field.options_are_exhaustive.
+            options_are_exhaustive=True,
         ),
         # Asked outright on 2026-09-10, and it is the first thing on the
         # candidates table: `age` is a column, and the EMPLOYER is asked for an

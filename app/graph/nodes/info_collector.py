@@ -1096,9 +1096,30 @@ def _field_guidance(
                 + ", ".join(field.options)
                 + ". The written question above names them deliberately, so name them "
                 "all - the client cannot choose an option they were never shown. Keep "
-                "it one flowing sentence rather than a numbered menu, and make clear "
-                "they may give more than one, or something not on the list."
+                "it one flowing sentence rather than a numbered menu."
             )
+            # ...and whether anything outside the list is an answer at all.
+            # For `languages` and `requirement` it plainly is, and saying so is
+            # the whole reason this branch exists. For a helper's own country
+            # it is not: the three are the only ones we recruit from, so
+            # inviting a fourth asks a question whose only possible follow-up
+            # is a refusal. Live, 2026-09-11: "the Philippines, Indonesia,
+            # Myanmar, or another country?" - the bot offering the answer it
+            # would then have to turn down.
+            if field.options_are_exhaustive:
+                parts.append(
+                    " That list is the whole of it - do NOT invite anything "
+                    "outside it, do not add 'or another country', 'or "
+                    "somewhere else' or 'or another option', and do not hint "
+                    "that other answers might work. If she names a country we "
+                    "do not recruit from, that is dealt with on the next turn "
+                    "- it is not for this question to invite it."
+                )
+            else:
+                parts.append(
+                    " Make clear they may give more than one, or something not "
+                    "on the list."
+                )
         else:
             parts.append(
                 "\n\nThe answers the office works with here are: "

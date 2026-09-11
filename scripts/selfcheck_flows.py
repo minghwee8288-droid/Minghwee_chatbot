@@ -174,6 +174,18 @@ def _options_of(service: str, key: str) -> tuple:
     return tuple(field.options or ()) if field else ()
 
 
+def _guidance_for(service: str, key: str) -> str:
+    """The instruction the model is actually handed for this field.
+
+    Through the real builder, because the question the client reads is the
+    field's own wording PLUS this - and the trailing clause of this is what put
+    "or another country?" on the end of a question whose own text named exactly
+    three (2026-09-11).
+    """
+    field = next(f for f in t.SERVICE_FIELDS[service] if f.key == key)
+    return ico._field_guidance(service, {}, field)
+
+
 def _reads_a_bracket(field) -> bool:
     """Would this field put a numeric range in front of the client?
 
@@ -1693,6 +1705,39 @@ rows = [
  ("and the question itself names the three",
   all(c in _question_of("candidate_new_hiring", "nationality")
       for c in ("Philippines", "Indonesia", "Myanmar")), True),
+ # ...and it does not then offer a fourth. Live on the agency's new number,
+ # 2026-09-11, the very first candidate conversation: "the Philippines,
+ # Indonesia, Myanmar, or another country?" - the bot inviting the one answer
+ # it would have to refuse on the next turn. Not the model improvising:
+ # _field_guidance told it to say the client may give "something not on the
+ # list", which is correct for every other option set in this codebase and
+ # exactly wrong for this one. Checked through the REAL guidance builder rather
+ # than by grepping the source, because what matters is the sentence the model
+ # is handed.
+ ("the country question does not offer a fourth country",
+  [w for w in ("not on the list", "more than one")
+   if w in _guidance_for("candidate_new_hiring", "nationality")], []),
+ ("and it says outright not to add one",
+  all(w in _guidance_for("candidate_new_hiring", "nationality") for w in (
+      "whole of it", "another country")), True),
+ # The control, and the reason the clause exists at all: `languages` was
+ # rewritten on 2026-09-04 because the bot was hiding four of its seven options
+ # from a Tamil-speaking household. An option set that is a set of EXAMPLES
+ # must keep saying so.
+ ("an ordinary option list still invites what it does not name",
+  all("not on the list" in _guidance_for(svc, key) for svc, key in (
+      ("candidate_new_hiring", "languages_spoken"),
+      ("new_hiring", "languages"),
+      ("new_hiring", "requirement"))), True),
+ # Tripwire, not a rule: a closed answer space is a decision to make once, with
+ # somewhere for the answers it excludes to go. Her country has that - the
+ # refusal branch in info_collector. Nothing else does, so a second field
+ # turning up here should be read rather than assumed.
+ ("hers is the only closed option set anywhere",
+  sorted((svc, f.key) for svc, fields in t.SERVICE_FIELDS.items()
+         for f in fields if f.options_are_exhaustive),
+  [("candidate_new_hiring", "nationality")]),
+
  # What the refusal may not do. She has just been turned down, which is the
  # worst possible audience for a promise we cannot keep - there is no waiting
  # list, no file we keep her on and no fee anywhere in our records.
