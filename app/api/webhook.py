@@ -175,7 +175,7 @@ async def whapi_webhook_verify() -> dict[str, str]:
 
 # --- Pipeline --------------------------------------------------------------
 
-async def _resolve_lid(message: IncomingMessage) -> None:
+async def _resolve_lid(message: IncomingMessage) -> bool:
     """Put the client's real phone number on a message that arrived as a LID.
 
     WhatsApp identifies some senders by an opaque LID once the business number
@@ -190,29 +190,46 @@ async def _resolve_lid(message: IncomingMessage) -> None:
     which is why it is here and not in the parser (parsing is sync; this is an
     HTTP call). Whapi's /chats endpoint carries the number.
 
-    Best effort. If it cannot be resolved the message keeps the LID and stands
-    down exactly as it did before, which is the honest outcome for a client we
-    cannot identify - and never a guess at whose number it might be.
+    Returns False when the message must not be handled AT ALL, which is the
+    2026-09-14 correction to this function. It used to say "standing down" and
+    then simply `return`, so the message carried on into handle_inbound /
+    handle_outbound still holding the pseudo-number normalize_phone had minted
+    out of the LID. Inbound that was invisible - the allowlist blocked the
+    fabricated number, which is why the log reads "standing down ... not in
+    BOT_ALLOWED_NUMBERS" one line under the warning that says we already had.
+    OUTBOUND there is no allowlist at all: handle_outbound calls get_or_create
+    on whatever number it is handed, so an agent replying in an unresolvable
+    chat MINTED A CONVERSATION ROW keyed on a LID. Measured on the live
+    database, 2026-09-14: **145 such rows**, 14 messages and 3 handovers
+    against them, and `11875735592960` holding row 4417 while the same client's
+    real number holds row 4032 - the split conversation section 9.16 says not to
+    create, created by a path nobody had looked at.
     """
     if not message.lid:
-        return
+        return True
     phone = await whapi.resolve_lid(message.lid)
     if not phone:
         logger.warning(
             "Message %s is from LID %s and Whapi could not give a phone number - "
-            "standing down, because every lookup here is keyed on the number",
+            "dropping it, because every lookup here is keyed on the number and "
+            "%s is not one",
             message.whapi_message_id,
             message.lid,
+            message.customer_number,
         )
-        return
+        return False
     logger.info("Message %s: LID %s is %s", message.whapi_message_id, message.lid, phone)
     message.customer_number = phone
+    return True
 
 
 async def handle_payload(payload: dict[str, Any]) -> None:
     for message in parse_webhook(payload):
         try:
-            await _resolve_lid(message)
+            if not await _resolve_lid(message):
+                # Not "stand down" - handled at all. The bot already stayed
+                # quiet; what this stops is the WRITE on the way past.
+                continue
             if message.from_me:
                 await handle_outbound(message)
             else:

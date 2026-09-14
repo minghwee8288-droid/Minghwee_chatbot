@@ -476,9 +476,9 @@ async def _lid_checks() -> list[tuple[str, bool]]:
     # guess at whose number it might be.
     m = parse_webhook(payload())[0]
     with patch("app.api.webhook.whapi.resolve_lid", new=AsyncMock(return_value=None)):
-        await _resolve_lid(m)
+        ok = await _resolve_lid(m)
     results.append(("an unresolvable LID is left alone, not guessed",
-                    m.customer_number == "+116909177569373"))
+                    m.customer_number == "+116909177569373" and ok is False))
 
     # And the wiring, not just the function. Removing the call from
     # handle_payload left the three checks above green, because they call
@@ -497,6 +497,26 @@ async def _lid_checks() -> list[tuple[str, bool]]:
         await _wh.handle_payload(payload())
     results.append(("handle_payload resolves before it dispatches",
                     seen == ["+917970027379"]))
+
+    # And when Whapi cannot resolve it, the message is HANDLED AT ALL - which
+    # is a different claim from "the bot stays quiet", and the one that was
+    # false until 2026-09-14. Inbound the allowlist hid it; outbound there is
+    # no allowlist, so handle_outbound called get_or_create on a pseudo-number
+    # and minted a conversation row keyed on a LID. 145 of them on the live
+    # database. Asserted on BOTH handlers, because the write was on the side
+    # nobody was looking at.
+    for direction, handler in (("inbound", "handle_inbound"),
+                               ("outbound", "handle_outbound")):
+        reached: list[str] = []
+
+        async def _seen(message, _r=reached):
+            _r.append(message.customer_number)
+
+        with patch("app.api.webhook.whapi.resolve_lid",
+                   new=AsyncMock(return_value=None)),                patch.object(_wh, handler, new=_seen):
+            await _wh.handle_payload(payload(from_me=(direction == "outbound")))
+        results.append((f"an unresolvable LID never reaches {handler}",
+                        reached == []))
 
     # An ordinary message never calls Whapi at all.
     m = parse_webhook(payload(**{"from": "917970027379@s.whatsapp.net",

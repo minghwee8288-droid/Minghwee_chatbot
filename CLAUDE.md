@@ -274,6 +274,7 @@ because the lead is opened early and the ticket is created much later.
 | A value that restates the REQUEST does not answer a preference field | `info_collector._PREFERENCE_FIELDS` / `_states_a_preference` | `replacement_preferences` was filled with "replace her", so it was never asked and the ticket read "Wants in the replacement: replace her". Same shape as the 2026-09-07 care-type defect, one field along. |
 | Handing the choice back to us is not a preference | `info_collector._NO_PREFERENCE` | Anchored hard at `^`, so "whatever you want" matched and "you do whatever you want" did not. A short filler lead-in is now allowed; "want" is deliberately not in it. |
 | A LID is resolved to its phone number before ANY lookup keyed on the number | `webhook._resolve_lid` + `whapi.resolve_lid` | `GET /chats/<lid>` carries `phone`; `/contacts/<lid>` does not. Done in the webhook because parsing is sync and this is an HTTP call. Unresolvable ⇒ stand down, never a guess at whose number it is. |
+| An unresolvable LID is not handled at all, not merely not answered | `webhook._resolve_lid` returns False + `handle_payload` skips | It used to log "standing down" and then carry on holding the pseudo-number. Inbound the allowlist hid that; **outbound has no allowlist**, so `handle_outbound` called `get_or_create` and minted a conversation keyed on a LID — 145 rows on the live database by 2026-09-14, one of them a second thread for a client who already had one. |
 | Cooking is a duty she is asked whether she will take on, not a thing assumed of her | `SERVICE_FIELDS["candidate_new_hiring"]` + the `work_scope` gate | A helper who had just said she does childcare and eldercare was asked what cooking she can do, and objected. The detail question survives for the pairing with the employer's `cooking`, gated the way `pet_detail` is off `pets`. Gated on `work_scope` and NOT on the duties answer: `Gate` matches substrings, so "no i dont want to cook" contains "cook" and opened it. |
 | A registration explains what happens next before it hands over | `ticket.BRIEFING_AFTER["candidate_new_hiring"]` + `CANDIDATE_BRIEFING_NOTE` | An employer finishing a passport renewal is told what happens next; a helper who had just answered seventeen questions was thanked and handed over. |
 | ...and a job seeker's closing message is not the one written for a buyer | `templates.CANDIDATE_BRIEFING_NOTE` + `rag_retriever.CANDIDATE_BRIEFING_QUERY` | `SERVICE_BRIEFING_NOTE` REQUIRES a cost section, so pointed at a registration it quoted the passport renewal's **$450** as the price of applying for work. `ungrounded_figures` binned it and it was logged as a lost briefing, so she got the bare handover line. The word `cost` is also absent from her query: it matches `_PRICE_QUESTION`, which DROPS the service filter, which is how $450 was in reach at all. |
@@ -632,7 +633,13 @@ Ordered by what will hurt first.
     **Do NOT put a LID in `BOT_ALLOWED_NUMBERS`**: every lookup is keyed on the
     number, so it would open a second conversation on an identifier that is not
     a phone number — the split-conversation bug `fix_split_conversations.py`
-    exists to repair. If Whapi ever cannot resolve one, the bot stands down and
+    exists to repair. **And that happened anyway, by a door this entry did not
+    name** — see the 2026-09-14 change log. Nobody had to allowlist anything:
+    an unresolvable LID kept its pseudo-number, and `handle_outbound` has no
+    allowlist to stop it, so an agent replying in such a chat created the row.
+    Fixed at source; **the 145 rows already on `wp_chat_conversations` are left
+    alone and are the portal's call**, since that is their table and 14 real
+    messages hang off them. If Whapi ever cannot resolve one, the bot stands down and
     says so in the log rather than guessing whose number it might be.
     **The scale, measured rather than assumed (2026-09-10):** the channel holds
     **3,422 chats**; of 2,000 scanned, **1,892 (94%) are already LIDs** and only
@@ -855,6 +862,49 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-14** — **"Standing down" was doing half of what it said, and the other
+  half wrote 145 rows.** Found while answering why the bot is silent on the live
+  number (it is the allowlist, working as designed). The log line underneath is what
+  gave it away:
+  `Whapi could not resolve LID 95786411008174@lid ... standing down, because every
+  lookup here is keyed on the number`, and then, 400ms later,
+  `Bot standing down on +95786411008174: number not in BOT_ALLOWED_NUMBERS`.
+  **Two stand-downs for one message means the first one did not happen.**
+  (A) **`_resolve_lid` returned from ITSELF, not from the message.** It logged the
+  warning and `return`ed, and `handle_payload` carried straight on into the handler
+  with `customer_number` still holding the number `normalize_phone` had minted out of
+  the LID. Inbound that is invisible, because the allowlist blocks the fabricated
+  number and the log looks like the gate doing its job.
+  (B) **Outbound there is no allowlist, and that is where the damage is.**
+  `handle_outbound` has no `may_engage` call at all — it goes straight to
+  `get_by_phone` and then `get_or_create`. So an agent replying in a chat whose LID
+  Whapi cannot resolve **creates a `wp_chat_conversations` row keyed on a LID**.
+  Measured on the live database rather than reasoned about: **145 such rows**, first
+  on 2026-09-10 and still arriving (138 in one burst at 13:04–13:07 that day, then 2,
+  1, 1, 3 on the days since), carrying **14 messages, 3 handovers** and 3 rows in
+  `human_active`. And the split §9.16 warns about is among them, realised: LID
+  `11875735592960` holds conversation **4417** while the same client's real number
+  `+6598713652` holds **4032** — two threads, one person.
+  (C) **The pseudo-number is not always obviously fake, which is why this survived.**
+  The one in the agency's own log is `+95786411008174` — **`+95` is Myanmar's country
+  code**, so at a glance it reads like a helper's number rather than a LID wearing a
+  plus sign. The tell is `customer_name`: a fabricated row is named `+<its own
+  digits>`, because there is no push name to use. That is how the 145 were counted
+  apart from the six genuine `+62 88…` Indonesian mobiles, which are legitimately 14
+  digits.
+  (D) **The fix is the honest version of what the docstring already claimed.**
+  `_resolve_lid` returns False and `handle_payload` `continue`s, so the message is not
+  handled at all rather than merely not answered. **Asserted on BOTH handlers** — the
+  old check went through `handle_inbound` only, and outbound is the side that wrote.
+  Two faults injected (the old wiring restored; the failure branch reporting success),
+  both red, naming the handler each time.
+  **NOT done, deliberately: the 145 rows are still there.** `wp_chat_conversations` is
+  the portal's table, 14 real client messages hang off those rows, and deleting
+  somebody else's rows on a number we cannot identify is not this repo's call —
+  §9.16 now carries it. `fix_split_conversations.py` is the tool for the 4417/4032
+  pair if they want it. `smoke_nodes.py` is **48 states**; `selfcheck_flows.py` is
+  unchanged at 374.
 
 - **2026-09-11** — **The case lookup could be proved to work and never be seen
   working.** Asked how to test it. `seed_case_testdata.py` hardwired
