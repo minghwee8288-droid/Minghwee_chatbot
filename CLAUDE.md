@@ -274,6 +274,7 @@ because the lead is opened early and the ticket is created much later.
 | A value that restates the REQUEST does not answer a preference field | `info_collector._PREFERENCE_FIELDS` / `_states_a_preference` | `replacement_preferences` was filled with "replace her", so it was never asked and the ticket read "Wants in the replacement: replace her". Same shape as the 2026-09-07 care-type defect, one field along. |
 | Handing the choice back to us is not a preference | `info_collector._NO_PREFERENCE` | Anchored hard at `^`, so "whatever you want" matched and "you do whatever you want" did not. A short filler lead-in is now allowed; "want" is deliberately not in it. |
 | A LID is resolved to its phone number before ANY lookup keyed on the number | `webhook._resolve_lid` + `whapi.resolve_lid` | `GET /chats/<lid>` carries `phone`; `/contacts/<lid>` does not. Done in the webhook because parsing is sync and this is an HTTP call. Unresolvable ⇒ stand down, never a guess at whose number it is. |
+| `GET /chats/<lid>` is not the last word on a LID | `whapi._sweep_chats` | The same chat, the same minute: `/chats/95786411008174@lid` → `{"type":"unknown"}` with no phone, `/chats/917354708111@s.whatsapp.net` → that chat **with** its number. We cannot use the second form — the phone is what we are looking for — so a miss sweeps the chat LIST, which carries the resolvable record. One sweep learned **2,544** mappings, so it is rate-limited and serves every LID on the channel at once. |
 | An unresolvable LID is not handled at all, not merely not answered | `webhook._resolve_lid` returns False + `handle_payload` skips | It used to log "standing down" and then carry on holding the pseudo-number. Inbound the allowlist hid that; **outbound has no allowlist**, so `handle_outbound` called `get_or_create` and minted a conversation keyed on a LID — 145 rows on the live database by 2026-09-14, one of them a second thread for a client who already had one. |
 | Cooking is a duty she is asked whether she will take on, not a thing assumed of her | `SERVICE_FIELDS["candidate_new_hiring"]` + the `work_scope` gate | A helper who had just said she does childcare and eldercare was asked what cooking she can do, and objected. The detail question survives for the pairing with the employer's `cooking`, gated the way `pet_detail` is off `pets`. Gated on `work_scope` and NOT on the duties answer: `Gate` matches substrings, so "no i dont want to cook" contains "cook" and opened it. |
 | A registration explains what happens next before it hands over | `ticket.BRIEFING_AFTER["candidate_new_hiring"]` + `CANDIDATE_BRIEFING_NOTE` | An employer finishing a passport renewal is told what happens next; a helper who had just answered seventeen questions was thanked and handed over. |
@@ -630,6 +631,10 @@ Ordered by what will hurt first.
     carries `{"phone": "917970027379"}` — measured against the live channel;
     `GET /contacts/<lid>` returns the push name and **no** phone, so it is the
     wrong endpoint and reverting to it makes resolution return None silently.
+    **That endpoint is necessary and not sufficient** (2026-09-14): for some
+    chats it answers `{"type":"unknown"}` with no phone, or 404s outright,
+    while the chat LIST holds the same chat WITH its number — so a miss falls
+    back to sweeping the list. See the change log.
     **Do NOT put a LID in `BOT_ALLOWED_NUMBERS`**: every lookup is keyed on the
     number, so it would open a second conversation on an identifier that is not
     a phone number — the split-conversation bug `fix_split_conversations.py`
@@ -862,6 +867,51 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-14** — **An allowlisted tester went unanswered all morning, and the
+  allowlist was not why.** `+917354708111` was added to `BOT_ALLOWED_NUMBERS`, the
+  gate came up with all 18 numbers, and the bot still said nothing. There was no log
+  line for that number at all — which is the clue, because a number the gate rejects
+  says so.
+  (A) **The messages were arriving, under a LID.** Three inbound messages sat on
+  conversation 3968 at 10:29:35, 10:30:10 and 10:40:48, and the bot logged an
+  unresolvable LID `95786411008174@lid` at 10:29:37, 10:30:11 and 10:40:50. Three for
+  three, two seconds apart each time; `GET /contacts/95786411008174@lid` then returned
+  `pushname: "Kapil Puri"`, which is that conversation's own `customer_name`. The
+  allowlist had never been the blocker on this number.
+  (B) **`GET /chats/<lid>` is necessary and NOT sufficient, which is new.** Measured
+  against the live channel within one minute of itself:
+  `/chats/95786411008174@lid` → `{"type":"unknown"}`, **no phone**, while
+  `/chats/917354708111@s.whatsapp.net` → `{"id":"95786411008174@lid",
+  "phone":"917354708111","type":"contact"}` — the same chat, resolvable by phone JID
+  and not by its own LID. The second form is useless to us: the phone is the thing we
+  are looking for. And `77262519025804@lid` is worse, **404 "specified chat not
+  found"**, while the list gives it as `6589466562`.
+  (C) **So a miss sweeps the chat list, which has the record the single-chat endpoint
+  will not give.** One sweep of 3,622 chats learned **2,544** mappings, so the second
+  unresolvable client costs nothing — the tester's own lookup took 16s and every LID
+  after it returned in 0.00s. Rate-limited to one sweep per 5 minutes, because a
+  client on a genuinely unknown LID would otherwise sweep on every message. Verified
+  end to end against the live channel: `95786411008174@lid` → **`+917354708111`**,
+  `77262519025804@lid` → `+6589466562`, and `11875735592960@lid` (which already
+  worked) unchanged.
+  (D) **The duplicate is the trap, and it is the same one that made `/chats/<lid>`
+  wrong.** A chat appears in the list TWICE — once `type: "unknown"` with no phone,
+  once `type: "contact"` with one — so reading the list carelessly reproduces the bug
+  it is fixing. Entries with no phone are skipped, and the first entry that HAS one
+  wins.
+  (E) **Three fault injections came back GREEN and every one was about the check, not
+  the code.** The duplicate assertion tested only ONE ordering, so removing the
+  phone-less filter stayed green (the first-wins guard covered it) — it now tests both
+  orderings, each caught by a different half. The comment on that guard **described
+  the wrong mechanism** and was rewritten to say what it actually does (two different
+  numbers for one LID, not a phone-less one). And every fixture fitted on one page, so
+  an injection that stopped the sweep after the first page stayed green while the live
+  channel needs **eight** — there is now a LID on page two. Five faults, five red
+  after that. Third time in four days that a green injection was the injection's
+  fault; it has never once been the code's.
+  **Still true, and it is the honest limit:** a LID the chat list does not carry
+  either is dropped, not guessed. `smoke_nodes.py` is **56 states** (42 node states, 14 webhook checks).
 
 - **2026-09-14** — **"Standing down" was doing half of what it said, and the other
   half wrote 145 rows.** Found while answering why the bot is silent on the live

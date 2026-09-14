@@ -518,6 +518,100 @@ async def _lid_checks() -> list[tuple[str, bool]]:
         results.append((f"an unresolvable LID never reaches {handler}",
                         reached == []))
 
+    # --- the chat-list fallback, 2026-09-14 ------------------------------
+    # GET /chats/<lid> is not reliable. Measured on the live channel, same
+    # minute: /chats/95786411008174@lid returned {"type":"unknown"} with no
+    # phone, while /chats/917354708111@s.whatsapp.net returned that same chat
+    # WITH its number. We cannot use the second form - the phone is what we are
+    # looking for - so a miss falls back to sweeping the chat list. That LID is
+    # an allowlisted tester who went unanswered all morning because of it.
+    from app.whapi.client import WhapiClient
+
+    def _client(chat_reply, chats_pages):
+        c = WhapiClient()
+        calls: list[str] = []
+
+        async def _get(path):
+            calls.append(path)
+            if path.startswith("/chats/"):
+                return chat_reply
+            if path.startswith("/chats?"):
+                off = int(path.split("offset=")[1])
+                return {"chats": chats_pages.get(off, [])}
+            return None
+
+        c._get = _get
+        return c, calls
+
+    LIST = {0: [{"id": "95786411008174@lid", "phone": "917354708111",
+                 "type": "contact"}]}
+
+    c, calls = _client({"id": "95786411008174@lid", "type": "unknown"}, LIST)
+    got = await c.resolve_lid("95786411008174@lid")
+    results.append(("a LID /chats cannot resolve is found in the chat list",
+                    got == "+917354708111" and any(p.startswith("/chats?") for p in calls)))
+
+    # The duplicate is the whole reason /chats/<lid> is wrong, so reading the
+    # list carelessly reproduces the bug. BOTH orderings, because they are
+    # caught by different halves of the code and testing one ordering left an
+    # injection green: phone-less first is caught by the `not phone` test,
+    # phone-less second by first-wins.
+    for order, label in ((("contact", "unknown"), "phone-less second"),
+                         (("unknown", "contact"), "phone-less first")):
+        entries = []
+        for kind in order:
+            e = {"id": "95786411008174@lid", "type": kind}
+            if kind == "contact":
+                e["phone"] = "917354708111"
+            entries.append(e)
+        c, _ = _client({"type": "unknown"}, {0: entries})
+        results.append((f"a phone-less duplicate never wins ({label})",
+                        await c.resolve_lid("95786411008174@lid") == "+917354708111"))
+
+    # The live channel is 3,622 chats over 8 pages and the tester's LID was
+    # not on the first, so paging is load-bearing rather than incidental -
+    # an injection that stopped after one page stayed GREEN until this fixture
+    # put a LID on the second.
+    c, _ = _client({"type": "unknown"}, {
+        0: [{"id": f"filler{i}@lid", "phone": f"65900000{i:02d}", "type": "contact"}
+            for i in range(500)],
+        500: [{"id": "late@lid", "phone": "917354708111", "type": "contact"}]})
+    results.append(("a LID on the second page is still found",
+                    await c.resolve_lid("late@lid") == "+917354708111"))
+
+    # ...and the same LID listed twice with two DIFFERENT numbers takes the
+    # first, so a client's identity does not depend on page order.
+    c, _ = _client({"type": "unknown"}, {0: [
+        {"id": "x@lid", "phone": "6591111111", "type": "contact"},
+        {"id": "x@lid", "phone": "6599999999", "type": "contact"}]})
+    results.append(("two numbers for one LID: the first wins, not the last",
+                    await c.resolve_lid("x@lid") == "+6591111111"))
+
+    # One sweep serves every LID on the channel - live it learned 2,544 - so a
+    # second unresolvable lookup must be cheap, and a client messaging from a
+    # genuinely unknown LID must not sweep once per message.
+    c, calls = _client({"type": "unknown"}, {0: [
+        {"id": "aaa@lid", "phone": "6591111111", "type": "contact"},
+        {"id": "bbb@lid", "phone": "6592222222", "type": "contact"}]})
+    first = await c.resolve_lid("aaa@lid")
+    sweeps = sum(p.startswith("/chats?") for p in calls)
+    second = await c.resolve_lid("bbb@lid")
+    results.append(("one sweep resolves every LID on the channel",
+                    (first, second) == ("+6591111111", "+6592222222")
+                    and sweeps == sum(p.startswith("/chats?") for p in calls)))
+
+    c, calls = _client({"type": "unknown"}, {0: []})
+    await c.resolve_lid("nope-1@lid")
+    await c.resolve_lid("nope-2@lid")
+    results.append(("an unknown LID does not sweep once per message",
+                    sum(p.startswith("/chats?") for p in calls) == 1))
+
+    # And a LID nothing knows about still resolves to nothing, which is what
+    # makes the webhook drop the message rather than invent a number.
+    c, _ = _client({"type": "unknown"}, {0: []})
+    results.append(("a LID nobody can resolve still returns None",
+                    await c.resolve_lid("ghost@lid") is None))
+
     # An ordinary message never calls Whapi at all.
     m = parse_webhook(payload(**{"from": "917970027379@s.whatsapp.net",
                                  "chat_id": "917970027379@s.whatsapp.net"}))[0]

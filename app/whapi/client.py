@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -30,6 +31,13 @@ logger = logging.getLogger(__name__)
 # re-fetched forever. An entry is two short strings, so covering the estate
 # costs nothing worth measuring.
 _LID_CACHE_MAX = 5000
+# The fallback sweep: how many chats to read, in what page size, and how often
+# it may run at all. 3,622 chats on this channel (2026-09-14), so the cap is
+# headroom rather than a limit. The interval is what stops a client on an
+# unresolvable LID sweeping once per message.
+_LID_SWEEP_PAGE = 500
+_LID_SWEEP_MAX_CHATS = 6000
+_LID_SWEEP_INTERVAL = 300.0
 
 
 class WhapiError(RuntimeError):
@@ -48,6 +56,9 @@ class WhapiClient:
         self._lock = asyncio.Lock()
         # LID -> phone. See resolve_lid().
         self._lid_phones: dict[str, str] = {}
+        # Monotonic, so a clock change cannot make the sweep
+        # interval negative and let it run on every message.
+        self._last_sweep: float = 0.0
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -103,6 +114,67 @@ class WhapiClient:
             logger.warning("Whapi GET %s failed", path, exc_info=True)
             return None
 
+    def _remember_lid(self, lid: str, phone: str) -> str:
+        """Cache one LID -> phone mapping, oldest out first."""
+        resolved = normalize_phone(phone)
+        # Bounded, unlike the caches section 9.13 lists: a runaway LID stream
+        # must not grow this without limit. Oldest out first - a re-lookup is
+        # one cheap GET, and the active conversations are the recent ones.
+        if len(self._lid_phones) >= _LID_CACHE_MAX:
+            self._lid_phones.pop(next(iter(self._lid_phones)))
+        self._lid_phones[lid] = resolved
+        return resolved
+
+    async def _sweep_chats(self) -> None:
+        """Fill the LID cache from the chat LIST, for the LIDs /chats misses.
+
+        Rate-limited, because it is pages rather than one GET and a client
+        messaging from an unresolvable LID would otherwise sweep on every
+        message. One sweep serves every LID on the channel, so the second
+        unresolvable client costs nothing.
+
+        A chat can appear in the list TWICE - once as type "unknown" with no
+        phone, once as type "contact" with one. That duplicate is exactly what
+        made /chats/<lid> unreliable, so reading the list carelessly reproduces
+        the bug this is here to fix: entries without a phone are skipped, and
+        the first entry that HAS one wins.
+        """
+        now = time.monotonic()
+        if now - self._last_sweep < _LID_SWEEP_INTERVAL:
+            return
+        self._last_sweep = now
+
+        seen = offset = 0
+        learned = 0
+        while offset < _LID_SWEEP_MAX_CHATS:
+            data = await self._get(f"/chats?count={_LID_SWEEP_PAGE}&offset={offset}")
+            chats = (data or {}).get("chats") or []
+            if not chats:
+                break
+            for chat in chats:
+                seen += 1
+                chat_id = str(chat.get("id") or "").strip()
+                phone = str(chat.get("phone") or "").strip()
+                if not chat_id.endswith("@lid") or not phone:
+                    continue
+                if chat_id in self._lid_phones:
+                    # First entry wins. The phone-LESS duplicate is already
+                    # gone (the `not phone` test above), so what this catches
+                    # is the rarer shape: the same LID listed twice with two
+                    # DIFFERENT numbers. Overwriting there would make the
+                    # answer depend on page order, which is not something to
+                    # decide a client's identity on. Proved by injection: with
+                    # both this and `not phone` removed the duplicate check
+                    # goes red, with either one present it does not.
+                    continue
+                self._remember_lid(chat_id, phone)
+                learned += 1
+            offset += len(chats)
+        logger.info(
+            "Swept %s Whapi chats for LIDs the /chats endpoint could not resolve - "
+            "learned %s mapping(s)", seen, learned
+        )
+
     async def resolve_lid(self, lid: str) -> str | None:
         """The phone number behind a WhatsApp LID, or None.
 
@@ -121,8 +193,23 @@ class WhapiClient:
             GET /contacts/116909177569373@lid
               {"pushname":"Vaidik Dubey","saved":false,"id":"...@lid"}
 
-        so this reads /chats and nothing else. The result is cached because it
-        cannot change: a LID identifies one WhatsApp account.
+        so this reads /chats first. The result is cached because it cannot
+        change: a LID identifies one WhatsApp account.
+
+        **And /chats/<lid> is not enough, which cost a tester a whole morning**
+        (2026-09-14). For the same channel, the same minute:
+
+            GET /chats/95786411008174@lid           {"type":"unknown"}   no phone
+            GET /chats/917354708111@s.whatsapp.net  {"id":"95786411008174@lid",
+                                                     "phone":"917354708111",
+                                                     "type":"contact"}
+
+        - the same chat, resolvable by phone JID and not by its own LID. We
+        cannot use the second form, because the phone is the thing we are
+        looking for. But the chat LIST carries the resolvable record, so a miss
+        falls back to sweeping it. Measured: that recovers 95786411008174
+        (a tester, live and unanswerable until then) and 77262519025804, whose
+        /chats/<lid> 404s outright while the list gives 6589466562.
         """
         lid = (lid or "").strip()
         if not lid:
@@ -133,16 +220,16 @@ class WhapiClient:
         data = await self._get(f"/chats/{lid}")
         phone = str((data or {}).get("phone") or "").strip()
         if not phone:
+            # The list, not this one chat. One sweep fills the cache for EVERY
+            # unresolved LID on the channel, which is why it is worth the pages
+            # - and why it is rate-limited rather than run per message.
+            await self._sweep_chats()
+            if lid in self._lid_phones:
+                return self._lid_phones[lid]
             logger.warning("Whapi could not resolve LID %s to a phone number", lid)
             return None
 
-        resolved = normalize_phone(phone)
-        # Bounded, unlike the caches section 9.13 lists: a runaway LID stream
-        # must not grow this without limit. Oldest out first - a re-lookup is
-        # one cheap GET, and the active conversations are the recent ones.
-        if len(self._lid_phones) >= _LID_CACHE_MAX:
-            self._lid_phones.pop(next(iter(self._lid_phones)))
-        self._lid_phones[lid] = resolved
+        resolved = self._remember_lid(lid, phone)
         logger.info("Resolved LID %s to %s", lid, resolved)
         return resolved
 
