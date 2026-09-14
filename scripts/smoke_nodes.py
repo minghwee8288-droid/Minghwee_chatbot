@@ -518,6 +518,61 @@ async def _lid_checks() -> list[tuple[str, bool]]:
         results.append((f"an unresolvable LID never reaches {handler}",
                         reached == []))
 
+    # --- who a conversation row belongs to, 2026-09-14 -------------------
+    # An allowlisted number messaged three times and got nothing, with the bot
+    # logging "still with a human" on a thread no human had ever touched. The
+    # portal creates the row for a brand-new client (its webhook usually wins
+    # the race with ours) and writes bot_status "none"; the old test was
+    # `not bot_should_reply(existing)`, which is true for "none" as well, so
+    # the branch returned before get_or_create could promote the row - and
+    # every later message found the same "none" and did the same thing.
+    from app.api.webhook import _is_paused_for_agent
+    from app.services import conversation as _conv
+
+    for status, paused, why in (
+        (_conv.HUMAN_ACTIVE, True, "an agent is mid-conversation"),
+        (_conv.BOT_NONE, False, "the portal made the row and nobody claimed it"),
+        (_conv.BOT_ACTIVE, False, "already ours"),
+        (None, False, "a row with no status is not a human on the thread"),
+        ("", False, "nor is an empty one"),
+    ):
+        results.append((f"bot_status {status!r}: paused={paused} ({why})",
+                        _is_paused_for_agent({"bot_status": status}) is paused))
+
+    # ...and the two questions are deliberately different now. If these ever
+    # agree again on "none", the defect is back.
+    results.append((
+        "'none' may not be replied to yet, but is NOT a human-held thread",
+        _conv.bot_should_reply({"bot_status": _conv.BOT_NONE}) is False
+        and _is_paused_for_agent({"bot_status": _conv.BOT_NONE}) is False))
+
+    # ...and the WIRING, not just the predicate. Injecting `if False:` at the
+    # call site left every check above green - the predicate was perfect and
+    # nobody was asking it, which is the exact state the cost guard was in on
+    # 2026-09-10. This runs handle_inbound and reads whether the row was
+    # CLAIMED (get_or_create with engage=True) or left alone.
+    for status, should_claim in ((_conv.BOT_NONE, True),
+                                 (_conv.HUMAN_ACTIVE, False),
+                                 (_conv.BOT_ACTIVE, True)):
+        row = {"id": 4432, "customer_number": "917999600865",
+               "bot_status": status, "langgraph_thread_id": "t-1"}
+        claimed: list[bool] = []
+
+        async def _get_or_create(phone, name="", *, engage=True, _c=claimed):
+            _c.append(engage)
+            return {**row, "bot_status": _conv.BOT_ACTIVE}, False
+
+        msg = parse_webhook(payload(**{"from": "917999600865@s.whatsapp.net",
+                                       "chat_id": "917999600865@s.whatsapp.net",
+                                       "id": f"claim-{status}"}))[0]
+        with patch.object(_wh.conversation_service, "get_by_phone",
+                          new=AsyncMock(return_value=row)),                patch.object(_wh, "may_engage",
+                          new=AsyncMock(return_value=(True, "no recent agent activity"))),                patch.object(_wh, "maybe_return_to_bot", new=AsyncMock(return_value=row)),                patch.object(_wh.conversation_service, "get_or_create", new=_get_or_create),                patch.object(_wh.message_service, "store_incoming", new=AsyncMock()),                patch.object(_wh, "_schedule_read_receipt", new=lambda *a, **k: None),                patch.object(_wh, "identify_contact", new=AsyncMock(return_value=row)),                patch.object(_wh.debouncer, "add", new=AsyncMock()),                patch.object(_wh, "emergency_override", new=AsyncMock(return_value=False)),                patch.object(_wh, "acknowledge_direct_address", new=AsyncMock()):
+            await _wh.handle_inbound(msg)
+        results.append((f"bot_status {status!r}: the row is "
+                        f"{'claimed' if should_claim else 'left to the human'}",
+                        bool(claimed) is should_claim))
+
     # --- the chat-list fallback, 2026-09-14 ------------------------------
     # GET /chats/<lid> is not reliable. Measured on the live channel, same
     # minute: /chats/95786411008174@lid returned {"type":"unknown"} with no

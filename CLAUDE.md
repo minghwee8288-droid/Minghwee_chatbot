@@ -274,6 +274,7 @@ because the lead is opened early and the ticket is created much later.
 | A value that restates the REQUEST does not answer a preference field | `info_collector._PREFERENCE_FIELDS` / `_states_a_preference` | `replacement_preferences` was filled with "replace her", so it was never asked and the ticket read "Wants in the replacement: replace her". Same shape as the 2026-09-07 care-type defect, one field along. |
 | Handing the choice back to us is not a preference | `info_collector._NO_PREFERENCE` | Anchored hard at `^`, so "whatever you want" matched and "you do whatever you want" did not. A short filler lead-in is now allowed; "want" is deliberately not in it. |
 | A LID is resolved to its phone number before ANY lookup keyed on the number | `webhook._resolve_lid` + `whapi.resolve_lid` | `GET /chats/<lid>` carries `phone`; `/contacts/<lid>` does not. Done in the webhook because parsing is sync and this is an HTTP call. Unresolvable ⇒ stand down, never a guess at whose number it is. |
+| A row nobody has claimed is the bot's to take; only a PAUSE silences it | `webhook._is_paused_for_agent` | The test was `not bot_should_reply(existing)`, which is also true for `bot_status='none'` — and `none` is what the PORTAL writes when it creates the row for a brand-new client, which it usually does first. So the branch returned before `get_or_create` could promote it, and the bot was silent on that number **forever**. The two gates disagreed: `may_engage` had already said engage. |
 | `GET /chats/<lid>` is not the last word on a LID | `whapi._sweep_chats` | The same chat, the same minute: `/chats/95786411008174@lid` → `{"type":"unknown"}` with no phone, `/chats/917354708111@s.whatsapp.net` → that chat **with** its number. We cannot use the second form — the phone is what we are looking for — so a miss sweeps the chat LIST, which carries the resolvable record. One sweep learned **2,544** mappings, so it is rate-limited and serves every LID on the channel at once. |
 | An unresolvable LID is not handled at all, not merely not answered | `webhook._resolve_lid` returns False + `handle_payload` skips | It used to log "standing down" and then carry on holding the pseudo-number. Inbound the allowlist hid that; **outbound has no allowlist**, so `handle_outbound` called `get_or_create` and minted a conversation keyed on a LID — 145 rows on the live database by 2026-09-14, one of them a second thread for a client who already had one. |
 | Cooking is a duty she is asked whether she will take on, not a thing assumed of her | `SERVICE_FIELDS["candidate_new_hiring"]` + the `work_scope` gate | A helper who had just said she does childcare and eldercare was asked what cooking she can do, and objected. The detail question survives for the pairing with the employer's `cooking`, gated the way `pet_detail` is off `pets`. Gated on `work_scope` and NOT on the duties answer: `Gate` matches substrings, so "no i dont want to cook" contains "cook" and opened it. |
@@ -867,6 +868,40 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-14** — **A brand-new allowlisted number could never be answered, and the
+  log said a human was on a thread no human had ever touched.** `+917999600865` was
+  added, the gate came up with it, and three messages in two minutes got nothing but
+  `Conversation 4432 still with a human — bot quiet until the agent has been idle 10
+  min`. Read from the row rather than inferred: conversation 4432 is that number,
+  `bot_status='none'`, and `last_agent_message_at()` returns **None** — nobody had ever
+  been on it.
+  (A) **`bot_should_reply()` answers a different question than the call site was
+  asking.** It is true only for `bot_active`, so `not bot_should_reply(existing)` is
+  true for **`none`** as well — and `none` is exactly what a row looks like when the
+  PORTAL created it, which it does for a brand-new client because its webhook usually
+  wins the race with ours. The branch returned before `get_or_create(engage=True)`
+  could promote the row, so the status stayed `none`, so the next message took the same
+  branch. **Permanently silent, and self-reinforcing.**
+  (B) **The two gates disagreed, which is the actual bug.** `may_engage()` had already
+  decided this conversation was the bot's — the allowlist passed and no agent had
+  replied inside the grace window, so it returned *"no recent agent activity"*. Then a
+  second, stricter test overrode it. A row nobody has claimed is one to take; a row an
+  agent is on is `human_active`, and that is what this stands down for. Now a named
+  predicate, `_is_paused_for_agent`, because the expression it replaced was both wrong
+  and unreadable at the call site.
+  (C) **Why it looked fine on every earlier tester.** `reset_conversation.py` leaves a
+  thread at `bot_active`, so every number that had ever been reset skipped this branch
+  entirely. The bug needs a number that is new *and* has never been reset — which is
+  precisely what a fresh tester is, and what every real client will be at go-live.
+  (D) **An injection came back GREEN and it was the wiring, again.** Five checks proved
+  the predicate answers correctly for `human_active` / `none` / `bot_active` / missing —
+  and `if False:` at the call site left all five green, because a perfect predicate
+  nobody asks is the state `quotes_hiring_package_cost` was in on 2026-09-10. There is
+  now a check that RUNS `handle_inbound` against a stubbed conversation and reads
+  whether the row was claimed. Three faults, three red after it.
+  **Nothing to clean up:** conversation 4432 stays at `none` until the next message,
+  which now claims it. `smoke_nodes.py` is **65 states**.
 
 - **2026-09-14** — **An allowlisted tester went unanswered all morning, and the
   allowlist was not why.** `+917354708111` was added to `BOT_ALLOWED_NUMBERS`, the

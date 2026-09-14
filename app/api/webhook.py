@@ -432,6 +432,25 @@ def _parse_timestamp(value: Any) -> datetime | None:
         return None
 
 
+def _is_paused_for_agent(conversation: dict[str, Any]) -> bool:
+    """Is a human mid-conversation on this thread right now?
+
+    A named predicate rather than an expression because the thing it replaced
+    was subtly wrong and unreadable at the call site: `not bot_should_reply()`,
+    which is ALSO true for bot_status "none". See the call site for what that
+    cost. The two are deliberately different questions now:
+
+        bot_should_reply()      may the bot send on this row AS IT STANDS
+        _is_paused_for_agent()  is a human on it, so leave it alone
+
+    "none" answers False to both - the bot may not send yet, and nobody is on
+    the thread, so it is a row to claim (get_or_create promotes it).
+    """
+    return (
+        conversation.get("bot_status") or conversation_service.BOT_NONE
+    ) == conversation_service.HUMAN_ACTIVE
+
+
 async def maybe_return_to_bot(conversation: dict[str, Any]) -> dict[str, Any]:
     """Hand a conversation back to the bot once the pause that silenced it is over.
 
@@ -558,7 +577,25 @@ async def handle_inbound(message: IncomingMessage) -> None:
 
     if existing is not None:
         existing = await maybe_return_to_bot(existing)
-        if not conversation_service.bot_should_reply(existing):
+        # Only a PAUSE silences the bot here, and the distinction cost a live
+        # tester a morning (2026-09-14). The test used to be
+        # `not bot_should_reply(existing)`, which is true for bot_status
+        # "none" as well - and "none" is what the PORTAL writes when it
+        # creates the row, which it does for a brand-new client because its
+        # webhook usually wins the race with ours. So the row sat at "none",
+        # this branch returned before get_or_create() could promote it to
+        # bot_active, and the bot stood down on that number FOREVER: every
+        # later message found the same "none" and took the same branch.
+        # +917999600865 messaged three times in two minutes and got nothing.
+        #
+        # The two gates disagreed, which is the bug. may_engage() has already
+        # decided this conversation is the bot's - allowlist passed, and no
+        # agent has replied inside the grace window - so a row nobody has
+        # claimed is one to take. A row an agent IS on is human_active, and
+        # that is what this stands down for. It is also why the earlier
+        # testers looked fine: reset_conversation.py leaves a thread at
+        # bot_active, so every number that had ever been reset skipped this.
+        if _is_paused_for_agent(existing):
             # Still inside the pause — the agent is mid-conversation. Touch
             # nothing (the portal owns the thread and is storing the message
             # from its own webhook), but never stay silent on a report of harm.
