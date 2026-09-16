@@ -304,6 +304,14 @@ because the lead is opened early and the ticket is created much later.
 | Nothing administrative follows the last question about her | `SERVICE_FIELDS["candidate_new_hiring"]` | `candidate_notes`, `update_channel` and `email` removed 2026-09-11 — she is messaging us ON WhatsApp, so the channel is not a question. The salary answer goes straight into the closing briefing. Asserted as what the flow must NOT contain. |
 | The full step-by-step is the CLOSING message, never a preview of it | `templates.CANDIDATE_PROCESS_COMES_LAST_NOTE` | Asked "the further process" at the last question, she got a compressed out-of-order version with the next question tacked on, then the real briefing a turn later — told twice, first telling wrong. A DOCUMENTS question is excluded: that one is answerable at any point (2026-09-10). |
 | A service the KB has never been labelled with searches under the label it HAS | `rag_retriever._RETRIEVAL_ALIASES` | `transfer_employer` is not a `service_type` any row uses, so the filter narrowed it to `general` forever. Retrieval only — the ticket, the lead, the field list and the **blocked-topic key** all still see `transfer_employer`, which is what keeps a new transfer off a parked hiring topic. |
+| The prompt never names a branch we do not have | `IDENTITY` + `selfcheck_flows.py` | *"Ming Hwee operates three branches — Jurong (HQ), Tampines, and Woodlands"* was hardcoded, and `AGENCY_INFO_INSTRUCTION` licenses the model to state the identity block plainly. The `branches` table holds ONE row, `CHINA TOWN`; the Client Service Agreement names one registered address. So the bot volunteered two branches that do not exist and was then asked for one's address. It now says we have one office and **names no other** — denying them by name puts the name in the context, which is §8's non-Latin-script rule applied to a place. |
+| Where we are is answered, never handed over | the six `general` office rows + `_GENERAL_INFO` + `AGENCY_INFO_INSTRUCTION` | A client asking where to come is asking the one thing answerable on the spot, and they act on it by getting on a train. All three paths carry it: an ordinary turn, an `agency_info` turn, and a topic parked with an agent. |
+| The address is in the RECORDS, never in the prompt | `selfcheck_flows.py` | `ungrounded_figures` grounds on the retrieved records and on what the client said — **never on the identity block** — so a postal code stated from the prompt is binned and the client gets the holding line. Asserted both ways: no digit of it in either instruction, every part of it in the rows. |
+| An agency question is searched for what it asks, not for its own label | `rag_retriever._search_query` | `agency_info` names the SHAPE of a question, so tagging it `(agency info)` is the 2026-09-07 `process_question` defect — it put the office rows outside the top 5 and served clause 6 of the service agreement at 0.425. Searched **bare**, and deliberately not via `_SUBJECTLESS_INTENTS`: that set makes the in-flight service the subject, and "where is your office" during a passport renewal is not about the passport renewal. |
+| A care type is never INFERRED from a message that named none | `info_collector._mentions_care` (message, additive) + `_states_a_care_type` (value, subtractive) + `smoke_nodes.py` | The two tests answer different questions and one shape cannot serve both. Subtractive on the message meant "contains a non-filler word", which was true of all eighteen messages in the live transcript — `10`, `HDB`, `600`, `google` — so `requirement` was filled with "general housework" nobody said, never asked, and `children_detail`/`elderly_detail` closed with it. Fails towards asking: a missed volunteered care type costs one question, an invented one costs a wrong match. |
+| ...and the RUN of it is checked, not just the predicate | `smoke_nodes.py` (`_stub_extraction` / `_expect_not_collected`) | The predicate was correct the whole time; the call site was not. Asserting the predicate left every check green with the broken call restored — the 2026-09-10 "imported and never called" hole. |
+| No flow anywhere takes the client's own name off their WhatsApp profile | `ticket.NAME_FROM_RECORD_ONLY` + `selfcheck_flows.py` | `new_hiring` was the last one out, and joined 2026-09-16: *"why chatbot is not asking the user name like before"*. The set is now every flow that collects a name, so this is a derived rule rather than a list — a new flow with a `full_name` field and no entry fails by name. |
+| The salary bands say SGD on both sides of the desk | `budget.options` → `_matched_options("budget")` | The currency is on the BANDS, not just the question, because `_field_guidance` reads the options into what is actually asked — live that produced "such as below $500, $500-600" with no currency named. The digits are untouched: they are the grounding `ungrounded_figures` reads (2026-09-09 D). |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -398,6 +406,14 @@ there creates a duplicate conversation — that bug happened, and
 **`leads` / `leads_candidate`** — `branch_id` is NOT NULL with no default, so
 `resolve_branch_id()` must succeed or no lead is created. `leads_candidate` has no
 `interest_type`, `requirement`, `budget` or `summary` column.
+
+**`branches` holds exactly ONE row: `CHINA TOWN` (code `CT`).** Confirmed live
+2026-09-16. That is the whole agency — 101 Upper Cross Street, #03-54, People's Park
+Centre, Singapore 058357, which is also the Registered Business Address on the Client
+Service Agreement. The system prompt claimed three branches (Jurong, Tampines,
+Woodlands) until that date and they exist in no table and no knowledge-base row; the
+bot volunteered them to a client and was then asked for an address it could not have.
+`resolve_branch_id()` picking "the tenant's HQ" therefore has exactly one candidate.
 
 **Ticket and lead numbers** are read-max-and-increment, retried on duplicate key by
 `db.insert_numbered`. Ticket numbers order by `ticket_number`; lead numbers order by
@@ -699,11 +715,70 @@ Ordered by what will hurt first.
     hunch: it is broad, it would also suppress genuine corrections, and nobody
     has reported the shape twice.
 
+20. **A bracketed placeholder reached a client, and no guard catches one.**
+    Live 2026-09-16: *"Our Tampines branch is at [address not available in my
+    records]. A live agent will confirm the exact office location shortly."*
+    Measured against every guard that runs on that path —
+    `strip_meta_commentary` leaves it (its `_META_MARKERS` do not match, and
+    cutting it would produce *"Our Tampines branch is at ."*, which is worse),
+    `leaks_internal_reasoning`, `is_degenerate` and `looks_like_document` all
+    return False. The **cause** is fixed — the branch did not exist, and both
+    the identity block and `AGENCY_INFO_INSTRUCTION` now forbid a placeholder
+    by name — so this is the residue, not the defect.
+    It is recorded rather than guarded because a guard here is a one-line
+    temptation with a real cost: the honest fallbacks this bot sends are
+    *"I'll confirm ... and come back to you"*, and a pattern loose enough to
+    catch *"[address not available in my records]"* is loose enough to catch a
+    legitimate bracketed aside — `(MDW)` is one, and `strip_meta_commentary`
+    was deliberately written to leave those alone. **What makes it worth
+    writing down is that this is the second arrival, from the opposite
+    direction:** §9.17 is an unfilled `[INSERT — Ming Hwee to complete before
+    launch]` sitting in a live candidate-facing KB row, which the model would
+    quote verbatim if it ever topped a search. One placeholder written BY the
+    model and one sitting IN the records. A third, by either route, is the
+    point at which a shared `looks_like_a_placeholder` guard stops being a
+    hunch — and both halves would use it, which is the §9.8 argument for one
+    definition rather than two.
+
+21. **A two-part question is closed by an answer to half of it.**
+    `children_detail` asks *"How many children, and how old are they?"* and is
+    filled by *"2 kids"* — so the count reaches the consultant and the **ages
+    never do**, on the field that exists to carry them. Seen 2026-09-16 while
+    verifying the care-type fix: *"childcare for my 2 kids"* fills
+    `requirement` **and** `children_detail` in one turn, and the age question
+    is then never asked.
+    It is the same shape as the care-type defect above, one field along, and
+    deliberately not fixed with it. Three reasons. The value is **grounded** —
+    the client really did say "2 kids", so this is an incomplete answer rather
+    than an invented one, which is a different and milder failure. Nobody has
+    reported it. And the machinery that would fix it is the collection gating
+    `_unfinished()` runs, which this file already says twice is not to be
+    changed in a hurry: `_undecidable_gate_keys` stranded `requirement` for
+    three asks on 2026-09-08 by assuming a field's gates covered its whole
+    answer space, and §9.12 is still open for the same reason.
+    The shape of the fix, when somebody wants it: `_unfinished()` already
+    re-asks a field whose value asserts something without saying what
+    (`_ASSERTS_WITHOUT_DETAIL`), and it runs only on fields that were ASKED.
+    The missing case is a field that was never asked and was filled from half
+    an answer. `_field_guidance` already knows which questions name more than
+    one thing — it tells the model "if it names three things, a question that
+    gets one of them is not this question" — so the test exists in prose and
+    would need deriving in code rather than inventing.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
 at a time.
 
+- **Which MRT station the office brief meant.** Their words were *"Find Ming Hwee
+  Agency at Exit D MRT Station"* — an exit with no station. The rows say **Chinatown
+  MRT, Exit D**, which is the station People's Park Centre sits on and matches the
+  `branches` row's own name (`CHINA TOWN`), but it is the one detail in the 2026-09-16
+  load that was inferred rather than given. A client acts on it by getting on a train,
+  so it is worth one line of confirmation. **And the other half: are Jurong, Tampines
+  and Woodlands genuinely gone, or never existed?** The prompt claimed all three; the
+  database, the Client Service Agreement and their own brief all say one office. The
+  bot now says one. If there are others, their addresses are one row each.
 - **Which consultants receive new leads**, and how the 6 `wp_chat_users` rows map to
   profiles (§9.1). 18 of the 20 `sales` profiles are `@growwstacks.com` development
   accounts. **And: Shirley is in the portal's *sales* department but her platform
@@ -868,6 +943,201 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-16** — **New hiring, tested as an employer: the flow never asked what kind
+  of help they needed, and invented an answer instead.** Four things reported, and the
+  one nobody named is the one that reached the ticket.
+  (A) **`requirement` was filled with a care type the client never said, so it was never
+  asked.** The opening message was *"hey i want to hire a helper"*; the extractor
+  returned `requirement = "general housework"`. A filled field is never put to anyone, so
+  the collection opened on *"how many people live in your household?"*, and
+  `children_detail` and `elderly_detail` — both gated on it — closed with it. Seventeen
+  questions later the client wrote *"one thing to flag i didnt mention what type of
+  service i need then how you move forward"*, was told *"You're looking for general
+  housework, including Western cooking and car washing"*, and replied *"how you will
+  pretend it is general housework"*. Reproduced before touching anything: with
+  `requirement` empty the first question is *"What would you mainly need help with…"*;
+  with it pre-filled the first question is the household one, which is exactly what they
+  got.
+  (B) **The guard for this has existed since 2026-09-07 and was the wrong shape.** It
+  tested the client's MESSAGE *subtractively* — "does this contain a word that is not
+  hiring filler" — which is true of almost any sentence. Measured against that
+  transcript it returned True for **all eighteen** of the client's messages, `10`, `HDB`,
+  `600` and `google` included: a bare digit is not filler, so it survives the subtraction
+  and reads as a stated care type. It only ever blocked a message made **entirely** of
+  filler, which is one sentence.
+  (C) **And that one sentence was defeated by one word.** *"i want to hire a helper"*
+  subtracts to `""` and is correctly blocked — the exact wording of the 2026-09-07
+  incident. *"hey i want to hire a helper"* subtracts to `"hey"`, which is not in the
+  filler, so it passed. Same one-word gap as *"what is THE cost"* (2026-09-08), *"what is
+  the FURTHER process"* and the plural *"fees"* (2026-09-10). Greetings are filler now,
+  but that alone would have left `10` and `600` through.
+  (D) **The message test is ADDITIVE now, and the value test is still subtractive** —
+  they are answering different questions and one shape cannot serve both. Subtractive is
+  right for the VALUE ("does this name work rather than restate the enquiry"), and a
+  whitelist there would drop *post-natal* the first time anyone said it. For the MESSAGE
+  the question is "did they mention care or housework at all", and the costs are
+  lopsided: **missing a volunteered care type costs one question we were going to ask
+  anyway; accepting an invented one costs a helper matched against a requirement nobody
+  gave.** So it fails towards asking. 17 messages from the transcript blocked, 11
+  volunteered phrasings still taken.
+  (E) **`new_hiring` now asks for the client's name, reversing the note that said it
+  should not.** Their words: *"why chatbot is not asking the user name like before it is
+  again picking name automatically"*. It was the **last** employer flow reading the
+  WhatsApp push name — the others were fixed one at a time on 2026-09-08, -09 and -10 —
+  and the old note argued it should stay out because it has no existing helper to ask
+  about, so it never produces *"Hi <push name> … may I know your HELPER's name?"*. True,
+  and beside the point: the name on a Service Agreement and a Work Permit application is
+  not a label someone set on their own profile. With it in, the set is now **every flow
+  that collects a name at all**, so the check stops being a list and becomes the rule.
+  The hard-coded tripwire beside it went red on this change, which is what it is for.
+  (F) **SGD on both sides of the desk.** *"also not asking salary range in SGD"*. The
+  2026-09-11 change put it on the helper's side only and argued the asymmetry was the
+  point — *"an employer reading '$600-700' is in Singapore and cannot read it as anything
+  else"*. The agency disagreed on seeing the employer flow. The **bands** carry the
+  currency rather than the question alone, because `_field_guidance` reads the options
+  into the spoken question: live, that produced *"such as below $500, $500-600, or
+  $600-700?"* with no currency anywhere. `expected_salary` takes these same options
+  through `_matched_options("budget")`, so her side moved with it and the pairing still
+  offers the same words. **The digits are untouched**, because they are what
+  `ungrounded_figures` grounds the reply on (2026-09-09 D, where every budget turn was
+  being binned).
+  (G) **Verified live against the real model, the same opening the client ran.**
+  *"hey i want to hire a helper"* → *"Hi, I'm Claire, Ming Hwee's AI assistant. I'll ask
+  a few details so we can find a suitable helper for your household. May I know your
+  name?"* → *"Vaidik Dubey"* → *"Thanks, Vaidik. What would you mainly need help
+  with—childcare, eldercare, general housework and cooking, or a combination of these?"*
+  — the agency's own two-part rule, and the question that was missing, in the first two
+  turns. *"childcare for my 2 kids"* fills it and moves on. The salary turn now reads
+  *"below SGD 500, around SGD 500–600"*.
+  (H) **Ten faults injected, ten red — after four came back green and every one was the
+  check's fault, not the code's.** Two were the same hole this file has recorded before:
+  the new assertions called the PREDICATE, so putting the broken call site back left
+  everything green — *"imported and never called"*, which is the state
+  `quotes_hiring_package_cost` was in for two days (2026-09-10). A value the extractor
+  invented is something only the NODE can drop, so `smoke_nodes.py` now runs
+  `info_collector` with a stubbed extraction and asserts what reaches `collected_info`.
+  The third green was a probe that leant on the wrong half of the vocabulary. The fourth
+  was worse: **removing `requirement` outright CRASHES at import** — `transfer_employer`
+  reuses that field through `_hiring_field`, so the module raises `StopIteration`, no
+  FAIL line is printed and the harness reads silence as success. Gated shut instead, it
+  goes red naming the assertion. **A crash tells you less than a red**, and that is now
+  twice (2026-09-10 was the other).
+  **Found while fixing this, NOT changed, and recorded as §9.21:** `children_detail` asks
+  *"How many children, and how old are they?"* and is filled by *"2 kids"*, so the ages
+  never reach the consultant. Same shape one field along, but nobody has reported it, it
+  is grounded in something the client actually said, and this file is explicit that a
+  rushed change to collection gating can strand a live collection.
+  **Open, and theirs:** `new_hiring` has no `BRIEFING_AFTER` entry, so it closes on the
+  handover line and the client had to ask *"what is the further process"* to get the
+  eight steps — which it then answered correctly. Passport renewal and the candidate
+  registration both brief at the end because the agency asked for it on those flows. If
+  they want the same on the biggest flow it is one entry plus a query.
+  `selfcheck_flows.py` is **393 assertions**; `smoke_nodes.py` is **68 states**.
+
+- **2026-09-16** — **The office address was in the records the whole time, and the bot
+  was asking the client about a branch it had invented itself.** The agency sent the
+  Chinatown outlet address, the opening hours and the MRT exit and asked for them to be
+  loaded. Three of the five things they asked for were content; the other two were not,
+  and the transcript is only readable once they are separated.
+  (A) **"Jurong (HQ), Tampines and Woodlands" existed in the system prompt and NOWHERE
+  else.** The IDENTITY block said *"Ming Hwee operates three branches"* and
+  `AGENCY_INFO_INSTRUCTION` told the model that is *"our own information and you may
+  state it plainly"* — so it did, unprompted, and the client reasonably asked for the
+  **Tampines** address. Checked against three independent sources rather than reasoned
+  about: the platform's own `branches` table holds **one** row, `CHINA TOWN` (code `CT`);
+  the Client Service Agreement names one **Registered Business Address**; and the
+  agency's own brief names one outlet. Jurong, Tampines and Woodlands appear in no table
+  and in no knowledge-base row. **Every location failure in that transcript starts here** —
+  the bot was answering a question about a place that does not exist, and *"Our Tampines
+  branch is at [address not available in my records]"* is what that looks like from the
+  inside.
+  (B) **And the address was ALREADY retrievable, which is what a content-only fix would
+  have missed.** Measured through the real path before anything was loaded:
+  *"what is your office address"* **0.466**, *"where is your office"* **0.450**,
+  *"can i have the office location"* **0.523** — all above the floor, all returning the
+  Client Service Agreement's `EMPLOYMENT AGENCY'S DETAILS` chunk, which carries the
+  address in full. The bot held it and correctly would not use a Chinatown address to
+  answer a question about Tampines.
+  (C) **The hours, the MRT and the directions were genuinely missing, and they failed the
+  dangerous way rather than the honest one.** *"is it near an mrt station"* scored
+  **0.503** and *"what are your opening hours"* **0.423**, both above the soft floor, both
+  topped by **clause 6 of the Client Service Agreement** — so `_answerable()` read True,
+  the widening retry never fired, and a legal clause was the top record for two questions
+  it does not address. That is the 2026-09-08 replacement defect exactly (clause 3.1 was
+  top for seven questions, five of them above the floor). Six rows now, filed `general` so
+  every service reaches them: address, hours, weekends and public holidays, nearest MRT,
+  how to get here, and visiting. After: **17 of 17 probes return an office row first, at
+  0.403–0.755**, against a before of 0.000–0.523 mostly on a legal clause.
+  (D) **`agency_info` was tagging the query with itself** — the 2026-09-07
+  `process_question` defect, one intent along, and it was never added to that fix. Tagged
+  `(agency info)`, *"how can i get there"* and *"where are you located"* put the office
+  rows **outside the top 5 entirely** and handed the model five rows answering neither
+  question. It is now searched **bare**, in its own branch rather than in
+  `_SUBJECTLESS_INTENTS`: that set makes the in-flight service the subject, and *"where is
+  your office"* during a passport renewal is not about the passport renewal. Verified: the
+  office question is still answered from inside a live passport-renewal collection.
+  (E) **The parked path was the one the client was actually on, and `_GENERAL_INFO` knew
+  none of it.** All twelve phrasings returned False, so a hiring topic parked with an
+  agent turned every address question into the holding line — which is screenshots 2 and
+  3. **Fifth gap of this shape in this one pattern**: *"what is THE cost"* (2026-09-08),
+  *"what is the FURTHER process"*, the plural *"fees"*, and the two documents phrasings
+  (all 2026-09-10). Written wide this time — where/address/location, hours and opening
+  times, the weekend and public holidays, MRT and nearest exit, getting there and
+  directions, and visiting. **20 negative controls stay quiet**, including *"where is my
+  helper now"* and *"where is she from"*, which is why the where-branch requires an office
+  word beside it.
+  (F) **The bracketed placeholder is caught by nothing, and it is not a guard's job.**
+  `strip_meta_commentary` cuts a bracket only when it reads as commentary, and this one
+  does not — cutting it would leave *"Our Tampines branch is at ."*, which is worse.
+  Addressed at the cause, like the 2026-09-10 apology: both instructions now forbid a
+  placeholder outright and say that where we are is answered rather than passed on. That
+  it reached a client at all is the **second** arrival of a placeholder in front of one
+  (§9.17 is the other, from a KB row), and it is recorded as §9.20 rather than guarded
+  against on a hunch.
+  (G) **The address lives in the RECORDS and deliberately not in the prompt.**
+  `ungrounded_figures` grounds a reply on the retrieved records and on what the client
+  said — never on the identity block — so a postal code stated from the prompt is binned
+  and the client gets the holding line instead. Asserted both ways: no digit of the
+  address is in either instruction, and every part of it is in the rows.
+  (H) **Fourteen faults injected, thirteen red, and the one that stayed green did so twice
+  for reasons that were the injection's fault both times.** First, *"Exit D is dropped"*
+  removed the phrase from one row of the three that carry it, so the assertion was right
+  to pass; re-cut across all three it goes red. Then *"the closing days are dropped"*
+  replaced `public holidays` in the file and the check still passed — one of the four
+  occurrences is **split across two source lines** (`"...public "` / `"holidays."`), so the
+  file-level edit never changed the runtime string. That is the 2026-09-11 skipped
+  injection in a new place. Injected at the runtime level it goes red. **A green injection
+  is a result about the injection, not about the code** — fourth time that has held.
+  (I) **One assertion went red on my own wording, and it was right.** The first version of
+  the prompt fix read *"There is no Jurong, Tampines or Woodlands branch"* — naming them
+  in order to deny them. §8 already settled that argument for language: the prompt carries
+  no non-Latin script at all, because the strongest foreign-language signal in the context
+  was **our own prompt**, and the rules describe the wrong output rather than printing an
+  example of it. A model that wrote *"Our Tampines branch"* was echoing the prompt in the
+  first place. It now says we have one office and names no other.
+  (J) **Verified live against the real model**, the three screenshotted turns and thirteen
+  more. *"can i have the office location ? for tampines"* → *"Our only office is at 101
+  Upper Cross Street, #03-54, People's Park Centre, Singapore 058357, near Chinatown MRT
+  Exit D."*; *"i would like to visit the outlets"* → the address, the hours and the
+  closures; *"are you open on sunday"* → *"We're closed on Sundays and public holidays, and
+  open on Saturday from 10:30am to 5:00pm."* **No handover on any of them, no placeholder,
+  and no second branch named anywhere.** All six weak phrasings answer on the **parked**
+  path too, and *"any update on my case?"* still gets the holding line, which is the
+  control that matters. Four `agency_info` controls (services, who we are, introduce
+  yourself, nationalities) are unchanged and none of them mentions the opening hours.
+  **Measured and NOT changed:** *"what services do you offer"* now returns the
+  opening-hours row at **0.380**. It is below the floor, the services list is in the
+  identity block, and the live reply names all seven correctly — and it replaced clause 6
+  of the service agreement at **0.435**, which was above it. A benign row below the floor
+  in place of a legal clause above it is the trade going the right way, and it is recorded
+  rather than tuned.
+  **Needs Ming Hwee, not code (§9):** the brief said *"Find Ming Hwee Agency at Exit D MRT
+  Station"* without naming the station. The rows say **Chinatown MRT, Exit D**, which is
+  the station People's Park Centre sits on and matches the branch record's own name — but
+  it is the one detail here that was inferred rather than given, and a client acts on it
+  by getting on a train.
+  `selfcheck_flows.py` is **385 assertions**; `smoke_nodes.py` is 65 states.
 
 - **2026-09-14** — **A brand-new allowlisted number could never be answered, and the
   log said a human was on a thread no human had ever touched.** `+917999600865` was

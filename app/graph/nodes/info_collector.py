@@ -676,6 +676,10 @@ _VALUE_IS_QUESTION = re.compile(
 # mother" is not, and neither is "cooking and cleaning".
 _CARE_TYPE_FILLER = re.compile(
     r"\b(i|we|my|our|me|us|a|an|the|to|for|of|in|is|am|are|and|"
+    # A greeting is filler wherever it appears. "hey i want to hire a
+    # helper" subtracted to "hey" and passed, 2026-09-16.
+    r"hey|hi|hii+|hello|helo|halo|yo|good\s+(?:morning|afternoon|evening|day)|"
+    r"please|thanks|thank\s+you|ok|okay|sir|mam|maam|"
     r"want(?:ed|ing|s)?|need(?:ed|ing|s)?|look(?:ing)?|hire|hiring|get(?:ting)?|"
     r"find(?:ing)?|new|another|one|first|time|please|kindly|"
     r"helper|helpers|maid|maids|domestic|worker|mdw|fdw|house\s*help|"
@@ -883,6 +887,73 @@ def _states_a_care_type(text: str) -> bool:
     """
     remainder = _CARE_TYPE_FILLER.sub(" ", text or "")
     return bool(re.sub(r"[^a-z0-9]+", "", remainder.lower()))
+
+
+# Whether the client's message mentions care or housework AT ALL.
+#
+# ADDITIVE, and deliberately the opposite shape to _states_a_care_type above,
+# which is subtractive. The two are asking different questions and the test that
+# was here asked the wrong one.
+#
+# `_states_a_care_type` is right for the VALUE: "does this value name work
+# rather than restate the enquiry" is a question about content, and a
+# subtractive test cannot go stale as the agency's vocabulary grows.
+#
+# Applied to the client's MESSAGE it answers "did they write any word that is
+# not hiring filler", which is true of almost every sentence anyone sends.
+# Measured 2026-09-16 against a real transcript, it returned True for **every
+# one of the client's eighteen messages**, including "10", "HDB", "600" and
+# "google" - a bare digit is not filler, so it survives the subtraction and
+# reads as a stated care type.
+#
+# The live cost, ticket-visible: the opening message was "hey i want to hire a
+# helper" and `requirement` came back "general housework" - never said. The
+# field therefore looked answered and was NEVER ASKED, so the collection opened
+# on "how many people live in your household?", `children_detail` and
+# `elderly_detail` closed with it, and seventeen questions later the client
+# wrote "one thing to flag i didnt mention what type of service i need then how
+# you move forward". Told "You're looking for general housework", they replied
+# "how you will pretend it is general housework". That is the 2026-09-07 defect
+# this guard was written for, reaching a client again.
+#
+# And it survived because of ONE WORD. "i want to hire a helper" subtracts to
+# "" and is correctly blocked - the exact sentence of the 2026-09-07 incident.
+# "hey i want to hire a helper" subtracts to "hey", which is not filler, so it
+# passes. Same one-word gap as "what is THE cost" (2026-09-08), "what is the
+# FURTHER process" and the plural "fees" (2026-09-10).
+#
+# A whitelist is the right shape HERE and not on the value, because the two
+# failures cost different amounts. Missing a care type the client volunteered
+# costs one question - the field stays open and we ask it, which we were going
+# to do anyway. Accepting one nobody gave costs a helper matched against an
+# invented requirement and a ticket that says so. CLAUDE.md's own words:
+# "Matching a helper against a requirement nobody gave is worse than having no
+# requirement at all." So this fails towards asking.
+_CARE_MENTION = re.compile(
+    # Who the help is for.
+    r"child|kid|baby|babies|newborn|new\s*born|infant|toddler|son|daughter|twin"
+    r"|elder|senior|grandmother|grandfather|grandma|grandpa|granny|grandparent"
+    r"|\bmum\b|\bmom\b|mother|\bdad\b|father|parent|in-?law|husband|wife"
+    # Their condition, which is how most people say it.
+    r"|bed\s*ridden|bedridden|stroke|dementia|alzheimer|wheel\s*chair"
+    r"|disabled|disabilit|special\s+needs|patient|nursing|post-?natal"
+    r"|confinement|pregnan|recovery|medical\s+condition|mobility"
+    # The work itself.
+    r"|care|caring|caregiv|look(?:ing)?\s+after|take\s+care|attend\s+to"
+    r"|house\s*work|house\s*hold|chore|cleaning|\bclean\b|cook|laundry"
+    r"|iron(?:ing)?|marketing|groceries|errand",
+    re.IGNORECASE,
+)
+
+
+def _mentions_care(text: str) -> bool:
+    """Whether the client's own words name care or housework at all.
+
+    The gate on INFERRING a care type from a message that was answering some
+    other question. Once the field has actually been asked, this is not
+    consulted: their answer is their answer, whatever words it uses.
+    """
+    return bool(_CARE_MENTION.search(text or ""))
 
 
 # Why we are asking, for the questions where a client would reasonably wonder.
@@ -1227,7 +1298,7 @@ async def _extract(
         if (
             key in _CARE_TYPE_FIELDS
             and not asked.get(key)
-            and not _states_a_care_type(state.get("incoming_text") or "")
+            and not _mentions_care(state.get("incoming_text") or "")
         ):
             logger.info(
                 "Conversation %s: ignoring '%s' for '%s' - the client's message "

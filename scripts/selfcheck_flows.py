@@ -29,6 +29,9 @@ ico = importlib.import_module("app.graph.nodes.info_collector")
 S = ico._SMALL_TICKET_SERVICES
 P = ico._COLLECTION_PURPOSE
 from app.graph.prompts.system import RULES
+from app.graph.prompts.system import IDENTITY as _IDENTITY
+from app.graph.prompts.templates import AGENCY_INFO_INSTRUCTION as _AGENCY_INFO
+_rr = importlib.import_module("app.graph.nodes.rag_retriever")
 D = chr(36)
 
 # The agency's seven services, in their words. Used by the bracket check below,
@@ -254,6 +257,11 @@ _CASE_B = {"case_id": "2", "case_number": "CS-2026-0002", "case_type": "Home lea
 import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location("lsn", str(Path(__file__).resolve().parent / "load_service_notes.py"))
 lsn = _ilu.module_from_spec(_spec); _spec.loader.exec_module(lsn)
+# Every word of the office rows, so a fact can be asserted present without
+# naming which of the six rows carries it.
+_OFFICE_TEXT = " ".join(
+    f'{r["question"]} {r["answer"]}' for r in lsn.ROWS
+    if r["section_heading"].startswith("Office - "))
 lang_f = next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "languages")
 money_on_top = {"intent": "fee_enquiry", "service_type": "passport_renewal",
                 "collected_service": "passport_renewal", "blocked_topics": {}}
@@ -827,10 +835,15 @@ rows = [
  ("a client on our file is greeted, not asked",
   ico._known_fields({"customer_name": "Vaidik", "record_name": "Vaidik Dubey"},
                     "passport_renewal").get("full_name"), "Vaidik Dubey"),
- # Scoped deliberately: the opposite behaviour was itself a fix (2026-09-01).
- ("every other flow still uses the push name",
+ # Was "every other flow still uses the push name", asserting Vaidik.
+ # new_hiring was the last flow that did, and on 2026-09-16 the agency
+ # asked for it to stop, so the control is now the same both ways.
+ ("new hiring asks a new number for it, rather than reading the profile",
   ico._known_fields({"customer_name": "Vaidik"},
-                    "new_hiring").get("full_name"), "Vaidik"),
+                    "new_hiring").get("full_name"), None),
+ ("...and greets a client whose name is on our file",
+  ico._known_fields({"customer_name": "Vaidik", "record_name": "Vaidik Dubey"},
+                    "new_hiring").get("full_name"), "Vaidik Dubey"),
  # --- the same, for the other two flows that never asked, 2026-09-09 ---
  # Agency, testing a work permit renewal: "the chatbot is asking directly
  # name of helper, not saying that before, may I know your name". It was not
@@ -1401,11 +1414,20 @@ rows = [
   sorted(svc for svc in _lead.EMPLOYER_LEAD_SERVICES
          if any(f.key == "helper_name" for f in t.SERVICE_FIELDS.get(svc, []))
          and svc not in t.NAME_FROM_RECORD_ONLY), []),
- # new_hiring is the one employer flow still reading it off WhatsApp, and that
- # is deliberate: no existing helper to ask about, so it never produces the
- # shape above, and the push name there is the 2026-09-01 fix.
- ("new_hiring is deliberately not in the set",
-  "new_hiring" in t.NAME_FROM_RECORD_ONLY, False),
+ # REVERSED 2026-09-16. new_hiring was the last employer flow reading the
+ # name off WhatsApp, and the agency asked for it to stop: "why chatbot
+ # is not asking the user name like before it is again picking name
+ # automatically". The old assertion asserted the opposite and is kept
+ # inverted rather than deleted, because it was right for its day.
+ ("new_hiring asks for the name too, as of 2026-09-16",
+  "new_hiring" in t.NAME_FROM_RECORD_ONLY, True),
+ # ...and with it the set is now every flow that collects a name at all,
+ # so this stops being a list and becomes the rule. A flow added
+ # tomorrow with a full_name field and no entry here fails by name.
+ ("no flow anywhere takes the client's own name off their WhatsApp profile",
+  sorted(svc for svc, fl in t.SERVICE_FIELDS.items()
+         if any(f.key == "full_name" for f in fl)
+         and svc not in t.NAME_FROM_RECORD_ONLY), []),
 
  # --- the candidate half of the matching form, 2026-09-10 -------------
  # Tested as a job seeker: "bot didnt ask the name at first like all services
@@ -2066,7 +2088,8 @@ rows = [
  ("and the WhatsApp push name is not evidence on these flows",
   sorted(t.NAME_FROM_RECORD_ONLY),
   ["candidate_new_hiring", "direct_hiring", "home_leave", "insurance",
-   "passport_renewal", "renewal", "replacement", "transfer_employer"]),
+   "new_hiring", "passport_renewal", "renewal", "replacement",
+   "transfer_employer"]),
  ("a name we hold is greeted with, not just filed",
   "CARRIES the name" in ico.RECORD_NAME_NOTE, True),
  ("and it is still never re-asked",
@@ -2151,6 +2174,160 @@ rows = [
   ("case_number" in t._DETAIL_LABELS,
    [s for s, fl in t.SERVICE_FIELDS.items() if any(f.key == "case_id" for f in fl)]),
   (True, [])),
+
+ # --- where we are, when we are open, how to get here (2026-09-16) ------
+ # A client asked for the office address three times and was handed to a
+ # live agent three times, and only ONE of the three failures was a missing
+ # row. The bot had volunteered "Jurong (HQ), Tampines and Woodlands" out of
+ # the IDENTITY block, so the client asked for the TAMPINES address - and
+ # there is no Tampines. Checked against three independent sources: the
+ # platform's `branches` table holds one row, "CHINA TOWN"; the Client
+ # Service Agreement names one Registered Business Address; and the agency's
+ # own brief names one outlet. The prompt was the only place the other two
+ # ever existed, which is why this is asserted on the prompt and not on a row.
+ ("the prompt never names a branch we do not have",
+  sorted({b for b in ("Jurong", "Tampines", "Woodlands")
+          if b in _IDENTITY or b in _AGENCY_INFO}), []),
+ ("...and says outright that there is one office",
+  "ONE office" in _IDENTITY and "Chinatown" in _IDENTITY, True),
+ # The address, hours and MRT must live in the RECORDS, not in the prompt:
+ # ungrounded_figures grounds a reply on the retrieved records and on what
+ # the client said, never on the identity block, so a postal code stated
+ # from the prompt is binned and the client gets the holding line instead.
+ ("the address is never stated from the prompt, where it would be ungrounded",
+  [b for b in ("058357", "Upper Cross", "9:30", "Exit D")
+   if b in _IDENTITY or b in _AGENCY_INFO], []),
+ ("...and every part of it IS in the records",
+  [f for f in ("101 Upper Cross Street", "#03-54", "People's Park Centre",
+               "058357", "Chinatown MRT", "Exit D", "9:30am", "6:30pm",
+               "10:30am", "5:00pm", "Sundays", "public holidays")
+   if f not in _OFFICE_TEXT], []),
+ ("the office rows are filed where every service can reach them",
+  {r["service_type"] for r in lsn.ROWS
+   if r["section_heading"].startswith("Office - ")}, {"general"}),
+ ("...and are shown to helpers as well as employers",
+  {r.get("contact_type", "all") for r in lsn.ROWS
+   if r["section_heading"].startswith("Office - ")}, {"all"}),
+ # The parked path is where this was reported: the client already had a
+ # hiring topic with an agent. Fifth gap of this shape in _GENERAL_INFO -
+ # "what is THE cost", "the FURTHER process", the plural "fees" and the two
+ # documents phrasings - so it is asserted over the phrasings the agency
+ # listed rather than the one that was screenshotted.
+ ("a parked topic still says where we are and when we are open",
+  [m for m in ("can i have the office location ? for tampines",
+               "Can you please provide the address of the Tampines branch?",
+               "i would like to visit the outlets",
+               "what is your office address", "where is your office",
+               "where are you located", "what are your opening hours",
+               "are you open on sunday", "what time do you open",
+               "when can i visit", "which mrt station is nearby",
+               "what is the nearest mrt", "is it near an mrt station",
+               "how can i get there", "how do i come to your office",
+               "can you give me directions")
+   if not _asks_general(m)], []),
+ # ...and the chase it must NOT swallow. A parked topic silences chasing,
+ # not curiosity, and "where is my helper" is neither.
+ ("...without answering a chase or an ordinary answer",
+  [m for m in ("any update on my case?", "what is the status of my application now?",
+               "where is my helper now", "where is she from", "please update me",
+               "when will the agent call me", "ok", "Myanmar", "3-4")
+   if _asks_general(m)], []),
+ # agency_info named the SHAPE of the question and was tagging the query
+ # with itself - the 2026-09-07 process_question defect, one intent along.
+ # Measured 2026-09-16: tagged "(agency info)", "how can i get there" and
+ # "where are you located" put the office rows OUTSIDE the top 5 and handed
+ # the model clause 6 of the service agreement at 0.425, above the floor.
+ ("an agency question is searched for what it asks, not for its own label",
+  [m for m in ("where are you located", "how can i get there",
+               "what are your opening hours")
+   if _rr._search_query({"incoming_text": m, "intent": "agency_info",
+                         "service_type": "passport_renewal",
+                         "collected_info": {}, "asked_field_counts": {}}) != m], []),
+ # ...and the reason it is its own branch rather than another entry in
+ # _SUBJECTLESS_INTENTS: that set makes the in-flight service the subject,
+ # and "where is your office" during a passport renewal is not about the
+ # passport renewal.
+ ("...and is not tagged with the service in flight either",
+  "agency_info" in _rr._SUBJECTLESS_INTENTS, False),
+ # The placeholder is what actually reached the client: "Our Tampines branch
+ # is at [address not available in my records]." No guard catches that -
+ # strip_meta_commentary cuts a bracket only when it reads as commentary,
+ # and cutting this one leaves "Our Tampines branch is at ." - so the
+ # instruction is the control and it is asserted.
+ ("the model is told not to send a placeholder where a detail should be",
+  "placeholder" in _IDENTITY and "placeholder" in _AGENCY_INFO, True),
+ ("...and that where we are is answered, never handed over",
+  "never hand this to a live agent" in _flat(_AGENCY_INFO), True),
+
+ # --- what kind of help, and whose name (2026-09-16) -------------------
+ # Live new-hiring test. The opening message was "hey i want to hire a
+ # helper", `requirement` came back "general housework" - never said - so the
+ # field looked answered, was NEVER ASKED, and closed `children_detail` and
+ # `elderly_detail` with it. Seventeen questions later: "one thing to flag i
+ # didnt mention what type of service i need then how you move forward".
+ #
+ # The guard for this has existed since 2026-09-07 and was subtractive on the
+ # MESSAGE - "does this contain a word that is not hiring filler" - which is
+ # true of almost anything. Measured against that transcript it passed all
+ # EIGHTEEN client messages, "10" and "google" among them. It is additive now.
+ ("a message that names no care type cannot fill one",
+  [m for m in ("hey i want to hire a helper", "i want to hire a helper",
+               "10", "HDB", "3 and 3", "600", "google", "western food",
+               "car washing", "weekly off", "ASAP", "myanmad",
+               "english and tamil", "no i dont have any pets",
+               "on whatsapp onlyn", "yes she have there own room",
+               "she should be 35 year old and atleast 5 years experiences")
+   if ico._mentions_care(m)], []),
+ # ...and the half that must still work: a care type the client volunteers is
+ # taken, so they are not asked for something they have just said. A miss here
+ # costs one question; a false positive costs a helper matched against a
+ # requirement nobody gave, which is why this test fails towards asking.
+ ("a care type the client DOES name is still taken",
+  [m for m in ("i need someone for my mum who is bedridden",
+               "looking for childcare for my 2 year old",
+               "i need a helper to take care of my elderly father",
+               "someone to do housework and cooking",
+               "need help with cleaning and laundry",
+               "she will look after my grandmother",
+               "help for my disabled son", "post natal confinement help",
+               # depends on the WORK half of the vocabulary alone, so
+               # removing it cannot stay green on the people half
+               "someone to look after the house while we are at work",
+               "i just need help with the daily chores",
+               "my baby is due next month")
+   if not ico._mentions_care(m)], []),
+ # The greeting that defeated the value test. "i want to hire a helper"
+ # subtracts to "" and is blocked; "hey i want to hire a helper" subtracted to
+ # "hey" and passed. Same one-word gap as "what is THE cost" (2026-09-08).
+ ("a greeting in front of the enquiry does not make it a care type",
+  [m for m in ("hey i want to hire a helper", "hi i want to hire a maid",
+               "hello i need a helper", "good morning i want to hire a helper",
+               "ok i need a maid")
+   if ico._states_a_care_type(m)], []),
+ # The question the client never got. With nothing known, what kind of help
+ # they need comes SECOND - after their name and before the household - and
+ # this is the ordering that was silently skipped.
+ ("what kind of help they need is asked, and asked early",
+  [f.key for f in t.applicable_fields("new_hiring", {})
+   if f.key in ("full_name", "requirement", "household")],
+  ["full_name", "requirement", "household"]),
+ # SGD on BOTH halves of the pairing, 2026-09-16. The bands carry it rather
+ # than the question alone, because _field_guidance reads the options into the
+ # spoken question - live, that produced "such as below $500, $500-600, or
+ # $600-700?" with no currency named anywhere.
+ ("the salary bands say SGD on both sides of the desk",
+  [f"{svc}.{key}" for svc, key in (("new_hiring", "budget"),
+                                   ("candidate_new_hiring", "expected_salary"))
+   if not all("SGD" in o for o in
+              next(f for f in t.SERVICE_FIELDS[svc] if f.key == key).options
+              if o != "not sure yet")], []),
+ # ...and the DIGITS are untouched, because they are what ungrounded_figures
+ # grounds the reply on - the 2026-09-09 defect where every budget turn was
+ # binned and the client got the bare question.
+ ("...and the figures behind them are unchanged",
+  [o for o in next(f for f in t.SERVICE_FIELDS["new_hiring"]
+                   if f.key == "budget").options
+   if not any(n in o for n in ("500", "600", "700", "800"))], ["not sure yet"]),
 ]
 bad = 0
 for label, got, want in rows:

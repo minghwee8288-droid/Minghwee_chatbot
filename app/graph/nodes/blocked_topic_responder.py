@@ -329,7 +329,49 @@ _GENERAL_INFO = re.compile(
     r"|\bwhat\s+(?:fees?|costs?|charges?)\b"
     r"|\b(?:do|will|would|must)\s+i\s+(?:have\s+to\s+|need\s+to\s+)?pay\b"
     r"|\bpay\s+(?:you|ming\s+hwee|the\s+agency)\s+(?:any|some)?\s*"
-    r"(?:fees?|money|amount|thing)\b",
+    r"(?:fees?|money|amount|thing)\b"
+    # Where we are, when we are open, and how to get here. Live, 2026-09-16: a
+    # client with a hiring topic parked asked for the office address three times
+    # - "can i have the office location ?", "Can you please provide the address
+    # of the Tampines branch?", "i would like to visit the outlets" - and every
+    # one of them returned False here, so every one got the holding line. The
+    # address was in the records the whole time (the Client Service Agreement
+    # chunk, 0.466 on "what is your office address"), and the hours, the MRT and
+    # the directions were loaded the same day.
+    #
+    # A parked topic silences chasing, not curiosity, and "where do I come to
+    # see you" is the least case-specific question there is: it costs the agent
+    # nothing and it is the one a client acts on by getting on a train. Fifth
+    # gap of this shape in this pattern - "what is THE cost" (2026-09-08), "what
+    # is the FURTHER process" (2026-09-10), the plural "fees" (2026-09-10) and
+    # the documents phrasings (2026-09-10) - so it is written wide on purpose.
+    r"|\bwhere\s+(?:is|are|was|'?s)\b[^.?!]{0,40}"
+    r"\b(?:office|branch|outlet|located|location|address|agency)\b"
+    r"|\b(?:office|branch|outlet|agency|shop)\s+(?:address|location)\b"
+    r"|\b(?:address|location)\s+(?:of|for)\s+(?:the|your|you|ming)\b"
+    r"|\bwhat(?:'?s|\s+is)\s+(?:the\s+|your\s+)?"
+    r"(?:office\s+|branch\s+|outlet\s+|full\s+|exact\s+)?(?:address|postal\s+code)\b"
+    # Hours. "are you open" covers "are you open on Sunday" and "are you open
+    # now"; the day list catches the weekend question asked without "open".
+    r"|\b(?:opening|operating|business|office|working)\s+hours?\b"
+    r"|\bwhat\s+time\s+(?:do|does|are|is)\s+(?:you|your|the)\b"
+    r"|\b(?:are|r)\s+(?:you|u)\s+(?:open|closed)\b"
+    r"|\b(?:open|closed)\s+on\s+(?:sunday|saturday|weekends?|public\s+holidays?)\b"
+    r"|\bwhen\s+(?:can|could|may)\s+i\s+(?:visit|come|drop)\b"
+    # The MRT, and getting here. "mrt" is unambiguous in Singapore - it is
+    # never anything but the train - so it needs no qualifier.
+    r"|\bmrt\b|\bnearest\s+(?:station|exit)\b"
+    r"|\bhow\s+(?:do|can|could|would|should)\s+(?:i|we)\s+"
+    r"(?:get|come|reach|go|travel)\s+(?:there|here|to)\b"
+    r"|\bhow\s+to\s+(?:get|come|reach)\s+(?:there|here|to)\b"
+    r"|\b(?:give|send)\s+(?:me|us)\s+(?:the\s+)?directions?\b"
+    r"|\bdirections?\s+to\s+(?:your|the)\b"
+    # Visiting. "i would like to visit the outlets" scored 0.000 before the
+    # office rows were loaded and matched nothing here either.
+    r"|\b(?:can|may|could)\s+i\s+(?:come|visit|drop\s+by|walk\s+in)\b"
+    r"|\b(?:like|want|wish|hoping)\s+to\s+(?:visit|come)\b"
+    r"|\bvisit\s+(?:your|the|you)\b[^.?!]{0,24}\b(?:office|outlet|branch|place)\b"
+    ,
     re.IGNORECASE,
 )
 

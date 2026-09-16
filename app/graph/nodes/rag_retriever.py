@@ -9,7 +9,11 @@ from typing import Any
 from app.config import settings
 from app.graph.guards import FEE_STATED_SERVICES, last_bot_line
 from app.graph.nodes.info_collector import briefs_on_this_turn
-from app.graph.state import ConversationState, effective_contact_type
+from app.graph.state import (
+    AGENCY_INFO_INTENT,
+    ConversationState,
+    effective_contact_type,
+)
 from app.services import contact as contact_service
 from app.services import rag
 from app.services import ticket as ticket_service
@@ -184,6 +188,23 @@ def _search_query(state: ConversationState) -> str:
     # question, and biasing it towards whatever is in flight would go looking
     # for an answer nobody asked for.
     if intent in {"greeting", "smalltalk"}:
+        return message
+
+    # An agency_info question is searched as it stands too, and for the opposite
+    # reason: it HAS a subject, and the subject is never what is in flight.
+    # "Where is your office" during a passport renewal is still about the
+    # office, so neither tag available here is right - "(passport renewal)" is
+    # the wrong subject and "(agency info)" is the question tagged with itself,
+    # which is the 2026-09-07 defect that made "what is the process" score
+    # 0.394 and get handed to a human. Measured 2026-09-16, before this: "how
+    # can i get there" and "where are you located" tagged "(agency info)" put
+    # the office rows OUTSIDE the top 5 entirely, and handed the model five rows
+    # answering neither question, topped by clause 6 of the service agreement at
+    # 0.425 - above the soft floor, so nothing widened. Searched bare the same
+    # two return their own rows. That is also why agency_info is exempt from the
+    # weak-retrieval guard: the identity block carries who we are, and the
+    # records carry the address and the hours.
+    if intent == AGENCY_INFO_INTENT:
         return message
 
     topic = intent

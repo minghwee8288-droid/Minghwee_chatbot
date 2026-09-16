@@ -298,6 +298,38 @@ CASES = [
       "collected_info": {"full_name": "Vaidik",
                          "transfer_direction": "looking for a transfer helper"},
       "history_text": ""}),
+    # --- what kind of help they need, 2026-09-16 ---------------------------
+    # Live: the opening message was "hey i want to hire a helper" and the
+    # extractor returned requirement="general housework". Nobody said it. The
+    # field looked answered so it was never asked, the collection opened on
+    # "how many people live in your household?", and the client noticed
+    # seventeen questions later. RUN rather than unit-tested, because the
+    # predicate was correct the whole time and the call site was not.
+    ("info_collector", "an invented care type is dropped, not filed",
+     {"intent": "new_hiring", "service_type": "new_hiring",
+      "incoming_text": "hey i want to hire a helper", "history_text": "",
+      "collected_info": {}, "asked_field_counts": {},
+      "_stub_extraction": {"requirement": "general housework"},
+      "_expect_not_collected": ["requirement"]}),
+    # The turn that separates the additive test from the subtractive one it
+    # replaced. A bare "10" answering the household question is not hiring
+    # filler, so the old test read it as a stated care type - which is how
+    # every one of the eighteen messages in the live transcript passed.
+    ("info_collector", "a bare number answering something else names no care type",
+     {"intent": "new_hiring", "service_type": "new_hiring",
+      "incoming_text": "10", "history_text": "bot: how many people live in your household?",
+      "collected_info": {"full_name": "Vaidik"}, "asked_field_counts": {"household": 1},
+      "_stub_extraction": {"requirement": "general housework", "household": "10"},
+      "_expect_not_collected": ["requirement"]}),
+    # ...and the half that must still work, or the client is asked for
+    # something they have just told us.
+    ("info_collector", "a care type the client DID name is kept",
+     {"intent": "new_hiring", "service_type": "new_hiring",
+      "incoming_text": "i need childcare for my two kids", "history_text": "",
+      "collected_info": {}, "asked_field_counts": {},
+      "_stub_extraction": {"requirement": "childcare"},
+      "_expect_collected": {"requirement": "childcare"}}),
+
     # --- response_generator ------------------------------------------------
     # The stepped-answer path: both halves of the trigger, then each half on
     # its own, then neither. A process question with NO records must stay on
@@ -407,12 +439,22 @@ CASES = [
 ]
 
 
+# What the EXTRACTOR returned on this turn. Set per state by the loop below.
+#
+# Added 2026-09-16. The guard that drops an invented care type was tested
+# only by calling the predicate, so restoring the broken call site left every
+# check green - the same "imported and never called" hole that let the
+# hiring-cost guard sit disabled for two days (2026-09-10). A value the
+# extractor made up is a thing only the NODE can drop, so the node has to run.
+_EXTRACTION: dict = {}
+
+
 async def _run_info_collector(state, stub=None):
     with patch("app.graph.nodes.info_collector.complete",
                new=AsyncMock(return_value=stub or "When does her passport expire?"),
                create=True), \
          patch("app.graph.nodes.info_collector.complete_json",
-               new=AsyncMock(return_value={}), create=True), \
+               new=AsyncMock(return_value=dict(_EXTRACTION)), create=True), \
          patch("app.graph.nodes.info_collector._open_lead_early",
                new=AsyncMock(return_value={})):
         from app.graph.nodes.info_collector import info_collector
@@ -706,6 +748,14 @@ async def main() -> int:
         # it does NOT hand her to a human was, on its first attempt, a string
         # search of the source that matched the import line instead.
         expect_state = state.pop("_expect_state", None)
+        # What the extractor handed back, and what must survive the filters.
+        # `_expect_not_collected` is the important half: a field the client
+        # never spoke to must not be filed as though they had, because a
+        # filled field is never asked and the ticket then states it as fact.
+        global _EXTRACTION
+        _EXTRACTION = state.pop("_stub_extraction", None) or {}
+        not_collected = state.pop("_expect_not_collected", None)
+        collected = state.pop("_expect_collected", None)
         full = f"{node}  {label}"
         with patch("app.graph.llm.complete",
                    new=AsyncMock(return_value=stub or STEPPED_REPLY)), \
@@ -724,6 +774,20 @@ async def main() -> int:
                     ok = not wrong
                     detail = f"state {expect_state} -> " + ("as expected" if ok
                                                             else f"got {wrong}")
+                if ok and not_collected:
+                    got = out.get("collected_info") or {}
+                    leaked = [k for k in not_collected if k in got]
+                    ok = not leaked
+                    detail = (f"{not_collected} not filed -> "
+                              + ("as expected" if ok
+                                 else f"LEAKED {[(k, got[k]) for k in leaked]}"))
+                if ok and collected:
+                    got = out.get("collected_info") or {}
+                    wrong = {k: got.get(k) for k, v in collected.items()
+                             if got.get(k) != v}
+                    ok = not wrong
+                    detail = f"{collected} filed -> " + ("as expected" if ok
+                                                        else f"got {wrong}")
                 print(f"  {'PASS' if ok else 'FAIL'}  {full:44} -> {detail}")
                 failures += not ok
             except Exception as exc:  # noqa: BLE001 - reporting is the whole job

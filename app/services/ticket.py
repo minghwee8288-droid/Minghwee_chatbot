@@ -691,19 +691,42 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
                 "none of these",
             ),
         ),
+        # SGD, spelled out, on BOTH sides as of 2026-09-16.
+        #
+        # The 2026-09-11 change put "in SGD" on the helper's
+        # `expected_salary` only, and argued the asymmetry was the point:
+        # "an employer reading '$600-700' is in Singapore and cannot read
+        # it as anything else". The agency disagreed on seeing the employer
+        # flow - "also not asking salary range in SGD" - and they are the
+        # ones who answer the phone when a client has budgeted in the wrong
+        # currency.
+        #
+        # The bands carry the currency rather than the question alone,
+        # because `_field_guidance` reads the OPTIONS into the spoken
+        # question: live on 2026-09-16 that produced "such as below $500,
+        # $500-600, or $600-700?" with no currency named anywhere. And
+        # because `expected_salary` takes these same options through
+        # `_matched_options("budget")`, changing them here changes her side
+        # too, so the two halves of the pairing still offer the same words -
+        # which is the whole reason that helper exists.
+        #
+        # The DIGITS are untouched on purpose. They are what
+        # `ungrounded_figures` grounds the reply on (2026-09-09 D, where
+        # every budget turn was being binned), so 500/600/700/800 must stay
+        # exactly as they are.
         Field(
             "budget",
             "monthly salary budget",
-            "Do you have a monthly salary budget in mind?",
+            "Do you have a monthly salary budget in mind, in SGD?",
             max_asks=1,
             optional=True,
             group="their preferences",
             options=(
-                "below $500",
-                "$500-600",
-                "$600-700",
-                "$700-800",
-                "above $800",
+                "below SGD 500",
+                "SGD 500-600",
+                "SGD 600-700",
+                "SGD 700-800",
+                "above SGD 800",
                 "not sure yet",
             ),
         ),
@@ -1832,6 +1855,24 @@ def fee_is_known_for(service_type: str | None, nationality_code: str | None) -> 
 # form, which is the same reason the other three are here.
 NAME_FROM_RECORD_ONLY = frozenset(
     {
+        # new_hiring joined on 2026-09-16, and it is a REVERSAL of the note
+        # that used to sit here. That note argued the flow should keep the
+        # push name because it has no existing helper to ask about, so it
+        # never produces "Hi <push name> ... may I know your HELPER's name?"
+        # - the shape that drew the complaint four times. True, and beside
+        # the point the agency was making. Testing new hiring on
+        # 2026-09-16 they asked: "why chatbot is not asking the user name
+        # like before it is again picking name automatically". The flow
+        # opened "Hi Vaidik, I'm Claire ... how many people live in your
+        # household?" - greeting a client by a label they set on their own
+        # WhatsApp profile and never establishing the name that goes on the
+        # Service Agreement, the Employer Particulars form and the Work
+        # Permit application. Every other employer flow had been fixed one
+        # at a time (2026-09-08, -09, -10) and this was the last one out.
+        # It is now the whole set: every flow that collects the client's
+        # name asks for it or reads it from our records, and none assumes
+        # the profile. Asserted as that rule rather than as this list.
+        "new_hiring",
         "passport_renewal",
         "renewal",
         "home_leave",

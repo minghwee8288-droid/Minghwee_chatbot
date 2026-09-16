@@ -2050,6 +2050,149 @@ ROWS += [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Where the office is, when it is open, and how to get there.
+#
+# The agency asked for this on 2026-09-16 after a client asked three times and
+# was handed to a live agent each time. The transcript is worth keeping, because
+# only one of the three failures was a missing row:
+#
+#   "can i have the office location ? for tampines"
+#     -> "Our Tampines branch is at [address not available in my records]."
+#   "Can you please provide the address of the Tampines branch?"
+#   "i would like to visit the outlets"
+#     -> "Our branches are in Jurong (HQ), Tampines and Woodlands, but I'll
+#         confirm the exact outlet addresses with the team."
+#
+# THE CLIENT WAS ASKING ABOUT A BRANCH THAT DOES NOT EXIST, and the bot put it
+# there. "Ming Hwee operates three branches - Jurong (HQ), Tampines, and
+# Woodlands" was hardcoded in the IDENTITY block of the system prompt, and
+# AGENCY_INFO_INSTRUCTION tells the model that is "our own information and you
+# may state it plainly". So it did, unprompted, in the message before the one
+# quoted above - and then could not produce an address for a place we do not
+# have, which is what the placeholder is. Checked against three independent
+# sources rather than reasoned about: the platform's own `branches` table holds
+# ONE row, "CHINA TOWN" (code CT); the Client Service Agreement names one
+# Registered Business Address; and the agency's own brief names one outlet.
+# Jurong, Tampines and Woodlands appear in no table and no knowledge-base row -
+# only in that prompt line, which is corrected in the same commit.
+#
+# The address itself was ALREADY retrievable and that is the part a content-only
+# fix would have missed. Measured through the real path before this load, as
+# agency_info: "what is your office address" 0.466, "where is your office"
+# 0.450, "can i have the office location" 0.523 - all ABOVE the floor, all
+# returning the Client Service Agreement's "EMPLOYMENT AGENCY'S DETAILS" chunk,
+# which contains the address in full. The bot had it and did not use it, because
+# it had been asked for TAMPINES and correctly would not answer a question about
+# one office with the address of another.
+#
+# What was genuinely missing is the hours, the MRT and the directions - and they
+# failed the dangerous way rather than the honest one. "is it near an mrt
+# station" scored 0.503 and "what are your opening hours" 0.423, both above the
+# floor, both topped by "6. Special Provisions" of the service agreement: a
+# legal clause, confidently retrieved, answering neither question. That is the
+# 2026-09-08 replacement defect exactly (clause 3.1 was top for seven questions,
+# five of them above the floor, so the widening retry never fired).
+#
+# Filed as `general` so every service can reach them: the match function passes
+# service_type in (filter, 'general'), and the client who asks where to come is
+# usually mid-enquiry about something else - in the transcript above, a hiring
+# topic was already parked with an agent.
+ROWS += [
+    {
+        "service_type": "general",
+        "contact_type": "all",
+        "nationality": "all",
+        "section_heading": "Office - address",
+        "question": (
+            "Where are you located? Where are you? Where is your office, "
+            "what is your address, and where is your outlet?"
+        ),
+        "answer": (
+            "Our office is at 101 Upper Cross Street, #03-54, People's Park "
+            "Centre, Singapore 058357 - our Chinatown outlet, on the third "
+            "floor."
+        ),
+    },
+    {
+        "service_type": "general",
+        "contact_type": "all",
+        "nationality": "all",
+        "section_heading": "Office - opening hours",
+        "question": "What are your opening hours and what time do you open and close?",
+        "answer": (
+            "We are open Monday to Friday from 9:30am to 6:30pm, and on "
+            "Saturday from 10:30am to 5:00pm. We are closed on Sundays and on "
+            "public holidays. You are welcome to come during those hours."
+        ),
+    },
+    # Asked separately because it is asked separately, and because a weekend
+    # question is the one a client acts on by turning up to a locked door.
+    {
+        "service_type": "general",
+        "contact_type": "all",
+        "nationality": "all",
+        "section_heading": "Office - weekends and public holidays",
+        "question": "Are you open on Sunday, at the weekend, or on a public holiday?",
+        "answer": (
+            "We are closed on Sundays and on public holidays. We are open on "
+            "Saturday from 10:30am to 5:00pm, and Monday to Friday from 9:30am "
+            "to 6:30pm."
+        ),
+    },
+    # The MRT and the directions are two rows rather than one because they were
+    # measured as two. With a single combined row, "how can i get there" scored
+    # 0.425 and "can you give me directions" 0.353 - the first on a legal clause
+    # of the service agreement, the second under the floor - while "which mrt
+    # station is nearby" was answered correctly at 0.522. The question text is
+    # the anchor, and neither phrasing has a word in common with "Which MRT
+    # station is nearest".
+    {
+        "service_type": "general",
+        "contact_type": "all",
+        "nationality": "all",
+        "section_heading": "Office - nearest MRT",
+        "question": "Which MRT station is nearest, and is your office near an MRT station?",
+        "answer": (
+            "Yes, we are right by Chinatown MRT station. Come out at Exit D and "
+            "you will find us in People's Park Centre, 101 Upper Cross Street, "
+            "#03-54, Singapore 058357."
+        ),
+    },
+    {
+        "service_type": "general",
+        "contact_type": "all",
+        "nationality": "all",
+        "section_heading": "Office - how to get here",
+        "question": (
+            "How can I get there? How do I reach your office, and can you "
+            "give me directions?"
+        ),
+        "answer": (
+            "Take the MRT to Chinatown station and come out at Exit D. We are "
+            "in People's Park Centre, right there - 101 Upper Cross Street, "
+            "#03-54, Singapore 058357, on the third floor."
+        ),
+    },
+    {
+        "service_type": "general",
+        "contact_type": "all",
+        "nationality": "all",
+        "section_heading": "Office - visiting us",
+        "question": (
+            "I would like to visit the outlet. Can I come to your office in "
+            "person, and when can I visit?"
+        ),
+        "answer": (
+            "Yes, you are welcome to come and see us at 101 Upper Cross Street, "
+            "#03-54, People's Park Centre, Singapore 058357, by Chinatown MRT "
+            "Exit D. We are open Monday to Friday from 9:30am to 6:30pm and "
+            "Saturday from 10:30am to 5:00pm, and closed on Sundays and public "
+            "holidays."
+        ),
+    },
+]
+
 UPDATES: list[dict[str, Any]] = [
     {
         "where": {"question": "How long does a direct hire take?",
