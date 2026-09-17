@@ -377,6 +377,35 @@ CASES = [
       "history_text": "client: hi\nbot: Hi, I'm Claire, Ming Hwee's AI assistant.",
       "_forbid_prompt": "introduce yourself in one short sentence"}),
 
+    # --- "i said both then why you didnt ask for email", 2026-09-17 ---------
+    # Direct hire, the agency's own test. The client answered "both" to the
+    # channel question, the flow completed and handed over without ever asking
+    # for an address. `excludes` is checked FIRST and held the names of the
+    # OTHER channel, so naming WhatsApp beside email closed the gate.
+    # Asserted by RUNNING the collector and reading the prompt it built: a gate
+    # that returns "open" to nobody is the hole this file exists to close.
+    ("info_collector", "answering BOTH is asked for an email address",
+     {"intent": "direct_hiring", "service_type": "direct_hiring",
+      "incoming_text": "both", "history_text": "bot: email or here on WhatsApp?",
+      "collected_info": {"full_name": "VD", "helper_name": "Hululu",
+                         "helper_contact": "+6599988553", "helper_nationality": "Myanmar",
+                         "helper_location": "in Myanmar", "employment_status": "first overseas job",
+                         "helper_availability": "1 month", "update_channel": "both"},
+      "asked_field_counts": {"update_channel": 1},
+      "_expect_prompt": "what email should I send them to"}),
+    # ...and the half that must not move. Picking WhatsApp alone is an answer,
+    # and asking for an address anyway is the 2026-09-04 defect this gate was
+    # built for - we chose the channel, then asked for what that channel needs.
+    ("info_collector", "...and choosing WhatsApp alone still is not",
+     {"intent": "direct_hiring", "service_type": "direct_hiring",
+      "incoming_text": "whatsapp", "history_text": "bot: email or here on WhatsApp?",
+      "collected_info": {"full_name": "VD", "helper_name": "Hululu",
+                         "helper_contact": "+6599988553", "helper_nationality": "Myanmar",
+                         "helper_location": "in Myanmar", "employment_status": "first overseas job",
+                         "helper_availability": "1 month", "update_channel": "whatsapp"},
+      "asked_field_counts": {"update_channel": 1},
+      "_forbid_prompt": "what email should I send them to"}),
+
     # --- response_generator ------------------------------------------------
     # The stepped-answer path: both halves of the trigger, then each half on
     # its own, then neither. A process question with NO records must stay on

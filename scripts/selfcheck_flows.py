@@ -387,6 +387,60 @@ rows = [
  ("chose email -> asked for an email",
   any(f.key == "email" for f in t.applicable_fields("new_hiring", {"update_channel": "email"})),
   True),
+ # --- ...and "both" is a third answer, not a way of saying no, 2026-09-17 ---
+ # Agency test on direct hire: the client answered "both", was never asked for
+ # an address, and said so. `excludes` is checked first and held the names of
+ # the OTHER channel, so naming WhatsApp alongside email closed the gate - even
+ # when the answer said "email" outright. Asserted through applicable_fields on
+ # every flow that asks the question, not on the gate alone: a correct predicate
+ # nobody calls is the hole this file has recorded three times.
+ ("every way of saying BOTH gets asked for an address, on every flow that asks",
+  sorted({f"{svc}:{ans}"
+          for svc, fl in t.SERVICE_FIELDS.items()
+          if any(f.key == "update_channel" for f in fl)
+          for ans in ("both", "Both", "both please", "both email and whatsapp",
+                      "email and whatsapp", "whatsapp and email",
+                      "email as well as whatsapp", "send to both my email and here",
+                      "either", "any", "both is fine")
+          if not any(f.key == "email"
+                     for f in t.applicable_fields(svc, {"update_channel": ans}))}),
+  []),
+ # The half that must NOT move: picking WhatsApp alone is still taken as an
+ # answer and no address is asked for. That is the 2026-09-04 defect this gate
+ # was built for - the bot chose the channel, then asked for the one detail
+ # that channel needs.
+ ("choosing WhatsApp alone is still never asked for an address",
+  sorted({f"{svc}:{ans}"
+          for svc, fl in t.SERVICE_FIELDS.items()
+          if any(f.key == "update_channel" for f in fl)
+          for ans in ("whatsapp", "here on whatsapp", "this number", "here is fine",
+                      "phone", "whatsapp only", "just whatsapp", "neither",
+                      "whatsapp is enough")
+          if any(f.key == "email"
+                 for f in t.applicable_fields(svc, {"update_channel": ans}))}),
+  []),
+ # A refusal that names email is a refusal. This is what `excludes` is FOR -
+ # the same shape as "no, I don't have pets" containing "have".
+ ("a refusal of email closes the gate even though it says the word",
+  sorted({a for a in ("no email", "not email", "i dont have an email",
+                      "do not have email", "only whatsapp not email", "no e-mail address")
+          if t._WANTS_EMAIL.state({"update_channel": a}) != "closed"}), []),
+ # Still undecided while unanswered, so the extractor keeps listening for an
+ # address volunteered before we get there.
+ ("an unanswered channel question leaves the gate undecided",
+  t._WANTS_EMAIL.state({}), "undecided"),
+ # The cause, as a tripwire: the moment the other channel's NAME goes back into
+ # excludes, "both email and whatsapp" closes again.
+ ("the email gate never excludes on the name of the other channel",
+  sorted(x for x in t._WANTS_EMAIL.excludes
+         if any(w in x for w in ("whatsapp", "whats app", "here", "number",
+                                 "phone", "text", "chat"))), []),
+ # The question offers it, so a client does not have to volunteer a word the
+ # question never showed them. Three named literally, which is what puts
+ # _field_guidance on its "name them all" branch.
+ ("the channel question names all three answers",
+  sum(1 for o in t._UPDATE_CHANNEL.options
+      if o.lower() in t._UPDATE_CHANNEL.question.lower()) >= 3, True),
  ("no field mentions swimming",
   [f.key for fl in t.SERVICE_FIELDS.values() for f in fl
    if "swim" in (f.label + f.question).lower()], []),

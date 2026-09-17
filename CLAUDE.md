@@ -319,6 +319,8 @@ because the lead is opened early and the ticket is created much later.
 | The household question asks who lives there, not just how many | `SERVICE_FIELDS[...]["household"]` | Six people is two adults and four children, or four adults and two elderly parents — different jobs. `children_detail` and `elderly_detail` are both GATED on `requirement`, so an elderly parent in a childcare-only household was never asked about at all. |
 | More work than one helper can carry is said once, before moving on | `info_collector._heavy_workload` + `state.flagged_once` + `smoke_nodes.py` | BOTH halves required — more than one kind of work AND a large household, by headcount or home size. A big family with one clear job is an ordinary placement, and telling that client their job is too big talks them out of a hire, so it fails towards silence. Advice, never a refusal, and no figure: a number gets the reply binned and they lose the advice with it. Recorded only when the reply was not the bare fallback (2026-09-08 `briefing_lost`). |
 | A guard may not flatten the reply it is cleaning | `guards.strip_handover_talk` | It re-joined on `" "`, so a seven-step process answer came back as "1. Consultation … 2. 3. Interview …" — the same defect `clamp_reply` had until 2026-09-08, on the same replies. Line structure survives, and a step stripped to a bare "2." is dropped whole. |
+| Naming the other channel is not a refusal of this one | `ticket._WANTS_EMAIL` | `excludes` is checked FIRST and held the names of the ALTERNATIVE — so every way of saying "both" closed the email gate, including the ones saying "email" outright. "both email and whatsapp" was closed. Those excludes were never needed: an answer naming only WhatsApp matches nothing, and a gate with no match is closed already. `excludes` now holds what it is for — a negation that contains the match word ("no email"), the same shape as "no, I don't have pets" containing "have". |
+| ...and the question offers "both", so nobody has to volunteer it | `_UPDATE_CHANNEL` | An either/or question hides the third real answer. Three options named literally, which is what puts `_field_guidance` on its "name them all" branch. |
 | A numbered step may state how long OUR OWN service takes | `guards._CONTACT_PROMISE` | "you receive 3 to 5 matched profiles within 48 hours" — the agency's own published turnaround, in the records and passed by `ungrounded_figures` — was deleted as an invented callback time. Inside a step the TIME half fires only when the step also promises somebody will contact them, so "a live agent will call you within 2 hours" still goes. Prose is untouched. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -773,6 +775,24 @@ Ordered by what will hurt first.
     gets one of them is not this question" — so the test exists in prose and
     would need deriving in code rather than inventing.
 
+22. **A client who answers the channel question with their bare email address
+    closes the gate that would have asked for it.** `_mentions` anchors on a
+    leading word boundary — `(?<![a-z])` — so `mail` does not match inside
+    `gmail`, and `vd@gmail.com` contains none of `email`, `e-mail`, `mail`,
+    `both`, `either` or `any`. The gate closes and `email` is never asked.
+    Found on 2026-09-17 while fixing the "both" family above, and left alone on
+    purpose. The damage is usually nil: the extractor files a bare address into
+    `email` on its own, so the value reaches the ticket even though the question
+    was skipped — this is a missed QUESTION, not a lost address, which is a
+    milder failure than the one just fixed. Nobody has reported it. And the fix
+    is not a one-liner: `@` cannot simply go into `matches`, because that
+    lookbehind rejects it whenever a letter precedes it (`vd@` fails, `vd1@`
+    passes), so it would work on some addresses and not others — which is worse
+    than not working at all. The honest shape is to recognise an address as an
+    answer to the EMAIL field rather than to the channel field, and that is
+    collection gating, which §9.12 and §9.21 both say is not to be changed in a
+    hurry.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
@@ -960,6 +980,61 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-17** — **"i said both then why you didnt ask for email" — every way of
+  saying both closed the gate, including the ones that said the word.** The agency
+  tested direct hire, answered the channel question with *"both"*, was handed over
+  without ever being asked for an address, and said so in the chat.
+  (A) **`excludes` is checked FIRST, and it held the names of the OTHER channel.**
+  `_WANTS_EMAIL` excluded `whatsapp`, `whats app`, `here`, `this number`, `phone`,
+  `text` and `chat` — so an answer that named WhatsApp alongside email was read as a
+  refusal of email. Measured across the family before touching anything: **"both",
+  "both email and whatsapp", "email and whatsapp", "whatsapp and email", "email as
+  well as whatsapp" and "send to both my email and here" were ALL closed.** Only
+  *"email too"* survived, and only because it happens to contain no exclude word. So
+  this was never about the single word "both": a client could say **email** outright
+  and still never be asked for one.
+  (B) **Those excludes were never needed, which is why the fix is a deletion.** An
+  answer naming only WhatsApp matches nothing in this gate, and a gate with no match
+  is **closed already** — verified on nine WhatsApp-only phrasings, all still closed
+  with the excludes gone. What `excludes` is FOR is a negation that contains the match
+  word — *"no email"* — the same shape as *"no, I don't have pets"* containing "have",
+  which is the case the class docstring is written about. That is what it holds now,
+  and *"only whatsapp not email"* is still correctly closed.
+  (C) **`both`, `either` and `any` are answers to a two-way question that include the
+  email half**, so they are matches. The leading word boundary in `_mentions` does the
+  delicate part unaided: **"neither" does not match "either"**, because a letter
+  precedes it.
+  (D) **The question now offers it.** *"Would you prefer updates by email, or here on
+  WhatsApp?"* is an either/or that hides the third real answer, so a client who wanted
+  both had to volunteer a word the question never showed them — the same shape as
+  landed property being in the options and never in the question, earlier the same
+  day. Three options named literally, which puts `_field_guidance` on its "name them
+  all" branch. Live: *"would you prefer updates by email, here on WhatsApp, both, or
+  another way?"*
+  (E) **One gate, three flows.** `update_channel`/`email` appear in `new_hiring`,
+  `direct_hiring` and `transfer_employer` and share one `Gate` object, so the fix
+  lands on all three at once — and the assertion sweeps **every flow that asks the
+  question** rather than the one that was reported, which is the correction §9 has
+  now forced on this file four times.
+  (F) **Asserted through `applicable_fields` and by RUNNING the collector**, not on
+  the gate alone. A gate that returns "open" to nobody is the "imported and never
+  called" hole (2026-09-10, -16, -17); the smoke state reads the system prompt the
+  model was handed and checks the email question is in it.
+  Five faults injected, five red — the old excludes restored, the both/either/any
+  matches dropped, the real negations dropped, the question back to either/or, and
+  `both` dropped from the option list. The matches injection goes red in **both**
+  suites, the predicate and the run.
+  (G) **Verified live against the real model**, five turns: *"both"* → *"Got it — what
+  email address should we use for the updates?"*; *"both email and whatsapp"* → the
+  same; and the control, **WhatsApp alone**, still completes and is never asked for an
+  address, which is the 2026-09-04 defect this gate was built for.
+  **Measured and NOT changed, because it needs the gating work this file twice says
+  not to rush:** a client who answers the channel question with their bare address
+  (*"vd@gmail.com"*) closes the gate — `_mentions` anchors on a leading word boundary,
+  so `mail` does not match inside `gmail`. The extractor usually files it correctly
+  anyway, and nobody has reported it. Recorded as §9.22.
+  `selfcheck_flows.py` is **415 assertions**; `smoke_nodes.py` is **76 states**.
 
 - **2026-09-17** — **The agency's team tested new hiring end to end. Five findings, four
   of them ours, and a sixth nobody reported that the verification run found.**

@@ -278,21 +278,56 @@ CANDIDATE_SERVICES = {CANDIDATE_HIRING, "transfer"}
 # down?" and the client answered "please update through this phone number
 # whatsapp" — we had chosen the channel for them, then asked for the one detail
 # that channel needs. Their suggested wording is the field below.
+# Naming the OTHER channel is not a refusal of this one. The excludes here used
+# to be ("whatsapp", "whats app", "here", "this number", "phone", "text",
+# "chat") — the names of the alternative — and `excludes` is checked FIRST, so
+# every way of saying "both" closed the gate, including the ones that say the
+# word email outright. Agency test, 2026-09-17, direct hire: the client answered
+# "both", was never asked for an address, and wrote "i said both then why you
+# didnt ask for email". Measured across the family: "both", "both email and
+# whatsapp", "email and whatsapp", "whatsapp and email", "email as well as
+# whatsapp" and "send to both my email and here" were ALL closed. Only "email
+# too" survived, and only because it happens to contain no exclude word.
+#
+# Those excludes were never needed: an answer naming only WhatsApp matches
+# nothing here, and a gate with no match is closed already. What `excludes` is
+# FOR is a negation that contains the match word — "no email", the same shape as
+# "no, I don't have pets" containing "have" — so that is what it holds now.
 _WANTS_EMAIL = Gate(
     "update_channel",
-    ("email", "e-mail", "mail"),
-    excludes=("whatsapp", "whats app", "here", "this number", "phone", "text", "chat"),
+    # "both"/"either"/"any" are answers to a two-way question that include the
+    # email half. The leading word boundary in _mentions does the delicate work
+    # unaided: "neither" does NOT match "either", because a letter precedes it.
+    ("email", "e-mail", "mail", "both", "either", "any"),
+    excludes=(
+        "no email",
+        "no e-mail",
+        "no mail",
+        "not email",
+        "not e-mail",
+        "without email",
+        "dont have",
+        "don't have",
+        "do not have",
+        "dont use",
+        "don't use",
+    ),
 )
 
 # Which channel first, then the address only if they picked email.
+#
+# The question names "both" because it is a real answer and the old either/or
+# wording hid it — a client who wants both had to volunteer a word the question
+# had not offered. Three options named literally, so _field_guidance takes its
+# "name them all" branch rather than dropping two in as examples.
 _UPDATE_CHANNEL = Field(
     "update_channel",
     "how they would like to be kept updated",
-    "Would you prefer updates by email, or here on WhatsApp?",
+    "Would you prefer updates by email, here on WhatsApp, or both?",
     max_asks=1,
     optional=True,
     group="staying in touch",
-    options=("email", "WhatsApp"),
+    options=("email", "WhatsApp", "both"),
 )
 
 _EMAIL = Field(
