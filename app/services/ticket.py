@@ -480,10 +480,19 @@ _WAS_REFERRED = Gate(
 # Whether THIS helper came from us. Shared by `replacement` and, since
 # 2026-09-17, by `renewal`.
 #
-# Deliberately a question and not a database read. prior_hires says whether we
-# have ever placed ANYONE with them, which does not say whether we placed THIS
-# helper - `placements.candidate_id` is null on most rows, so there is nothing
-# to match her against.
+# ANSWERED FROM THE RECORDS, never asked - see `info_collector._known_fields`,
+# which fills this on every turn so the question below is dead text kept as the
+# fallback. It was a live question for part of one day.
+#
+# The note that stood here said it had to be a question, because prior_hires
+# says whether we have ever placed ANYONE with them and not whether we placed
+# THIS helper (`placements.candidate_id` is null on most rows, so there is
+# nothing to match her against). That is still true of a POSITIVE count and it
+# is why the fill's third branch reports what we hold rather than claiming her.
+# It was never true of a zero: an employer we have never placed anyone with
+# cannot be employing a helper we placed. The agency said so on 2026-09-17
+# having watched it asked - "if the user is new it means the work permit is not
+# from Ming Hwee, then why this question come" - and they are right.
 #
 # And it is NOT the question this file bans. "Have you hired with us before?"
 # is answered by `prior_hires` and is never put to anyone (2026-09-04); this
@@ -2483,7 +2492,7 @@ _DETAIL_LABELS = {
     "insurance_need": "Insurance needed for",
     "policy_expiry": "Current policy ends",
     "helper_tenure": "Current helper's time with them",
-    "helper_from_us": "Current helper placed by us",
+    "helper_from_us": "Where the current helper came from",
     "current_helper_exit": "Current helper going",
     "replacement_preferences": "Wants in the replacement",
     "referral_source": "Heard about us via",

@@ -227,6 +227,39 @@ _ROOT = Path(__file__).resolve().parents[1]
 # a red - 2026-09-16, where removing `requirement` outright took the whole
 # harness down and the run read as success.
 _dh = {f.key: f for f in t.SERVICE_FIELDS["direct_hiring"]}
+# The five record shapes a client can arrive in, for the 2026-09-17 fill of
+# `helper_from_us`. Built here rather than inside the assertion list so the
+# same five are read by every check below - a check that tries one shape is
+# how "written for the case that was reported" keeps happening.
+_RECORD_SHAPES = {
+    "a number we have never matched": {},
+    "an employer on file with no placement": {"record_name": "Tolo"},
+    "one placement, and it names her": {
+        "prior_hires": 1,
+        "placed_helper": {"helper_name": "Liza Fernandez", "nationality": "PH"}},
+    "four placements, none matchable": {"prior_hires": 4},
+    "a placement row naming nobody": {"prior_hires": 1},
+}
+_SHAPE_BASE = {
+    "record_name": "", "customer_name": "", "matched_lead": None,
+    "lead_kind": "", "prior_hires": 0, "placed_helper": None,
+}
+
+
+def _from_us(shape: dict, service: str = "renewal") -> str:
+    """What `helper_from_us` is filled with, for one record shape."""
+    return ico._known_fields({**_SHAPE_BASE, **shape}, service).get(
+        "helper_from_us", ""
+    )
+
+
+# Every flow that asks where the helper came from, derived rather than listed,
+# so a flow added tomorrow is covered or fails by name.
+_ASKS_FROM_US = sorted(
+    svc for svc, fields in t.SERVICE_FIELDS.items()
+    if any(f.key == "helper_from_us" for f in fields)
+)
+
 _rn = {f.key: f for f in t.SERVICE_FIELDS["renewal"]}
 _rp = {f.key: f for f in t.SERVICE_FIELDS["replacement"]}
 _dh_keys = [f.key for f in t.SERVICE_FIELDS["direct_hiring"]]
@@ -1378,6 +1411,50 @@ rows = [
   any("hired with us" in (f.question or "").lower()
       or "hired a helper before" in (f.question or "").lower()
       for f in t.SERVICE_FIELDS["renewal"]), False),
+ # --- 2026-09-17: ...and then read from the records instead of asked ---
+ # The agency watched it go out live and said it should never be asked at all:
+ # "if the user exists then this question didn't come, and if the user is new
+ # then also this message should not, because if the user is new it means the
+ # work permit is not from Ming Hwee."
+ #
+ # A zero placement count is not an absence of evidence, it IS the answer - we
+ # cannot have placed this helper with an employer we have never placed anyone
+ # with. Same reading `first_time_hire` has taken since 2026-09-04, and the
+ # same accepted cost: somebody who hired through us on a different number
+ # reads as "no placement on record", which is a statement about our RECORDS
+ # rather than about them.
+ ("a client with no placement is never asked where the helper came from",
+  [k for k, v in _RECORD_SHAPES.items()
+   if not v.get("prior_hires") and "hired elsewhere" not in _from_us(v)], []),
+ # ...and one whose single placement names her is not asked either.
+ ("...nor one whose placement we can actually name",
+  _from_us(_RECORD_SHAPES["one placement, and it names her"]),
+  "from Ming Hwee - placed by us"),
+ # The middle case, and the half of the old note that is still true:
+ # `get_placed_helper` returns nothing unless there is exactly ONE live
+ # placement naming a candidate, and live only 2 of 6 rows did. So this one
+ # reports what our records hold and claims nothing - putting a guess about
+ # which of four helpers she is onto a ticket is the failure `get_placed_helper`
+ # was made cautious to avoid.
+ ("...and one we cannot match says so rather than claiming her",
+  [k for k, v in _RECORD_SHAPES.items()
+   if v.get("prior_hires", 0) > 0 and not v.get("placed_helper")
+   and "not matched on file" not in _from_us(v)], []),
+ # The one that matters most, and it is derived over the flows rather than
+ # written about `renewal`: the question can never come due on ANY record
+ # shape, on any flow that defines it. A branch that returns "" here puts the
+ # question back in front of a client.
+ ("no record shape leaves the question to be asked, on any flow that has it",
+  [f"{svc}: {k}" for svc in _ASKS_FROM_US for k, v in _RECORD_SHAPES.items()
+   if not _from_us(v, svc)], []),
+ ("...and both flows that ask it are still covered",
+  _ASKS_FROM_US, ["renewal", "replacement"]),
+ # These values are grounding for `ungrounded_figures` (they reach the prompt
+ # as collected_info), so a count in one of them is a number the model may
+ # quote back at the client - the 2026-09-09 (D) shape. `first_time_hire` says
+ # "2 placements on record" and gets away with it; this one carries no digit.
+ ("...and no branch of it carries a figure",
+  [k for k, v in _RECORD_SHAPES.items() if re.search(r"\d", _from_us(v))], []),
  # ...and adding the field alone would have changed NOTHING: _with_push_name
  # fills full_name from the WhatsApp profile, so the question is skipped
  # before it is ever asked. That is the exact 2026-09-08 defect on passport

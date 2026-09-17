@@ -333,7 +333,10 @@ because the lead is opened early and the ticket is created much later.
 | Every long intake explains itself at one end or the other | `_OVERVIEW_AT_START` + `selfcheck_flows.py` | `new_hiring` (25 questions) and `direct_hiring` explained themselves at neither end. Derived over the employer services, so a flow added tomorrow makes that choice deliberately; `replacement` and `transfer_employer` are the two that still do not, recorded as a decision. |
 | ...and a 25-question hire is not called "a short, well-defined job we handle end to end" | the per-service opening clause | True of a permit renewal, false of a first-time hire. `_SMALL_TICKET_SERVICES` and `_OVERVIEW_AT_START` are kept apart for that one sentence. |
 | A record saying the timing DEPENDS on something is not a lead time | the overview note | New hiring's own row says *"There is no single answer, because it turns on your requirements and on which helper you choose"*, and the model paraphrased it back as *"the exact timeline will be confirmed once we know more"* - a sentence that costs the client a line and tells them what they already assumed. It also may not remark on what our records contain. |
-| A work permit renewal establishes whose helper she is | `renewal` + `ticket._HELPER_FROM_US` | The service is not limited to helpers we placed. The SAME `Field` object `replacement` asks, not a second copy that can be reworded in one place (§9.8). It is not the banned question: "have you hired with us before" is answered from `placements` and never asked; this asks where one helper came from, which no record answers. |
+| A work permit renewal establishes whose helper she is — and it is READ, never asked | `renewal`/`replacement` + `info_collector._known_fields` | The service is not limited to helpers we placed, so the ticket has to say which it is. This row used to end *"which no record answers"*, and that was only ever true of a POSITIVE count: **a zero is the answer**, because we cannot have placed this helper with an employer we have never placed anyone with. Agency, 2026-09-17, having watched it asked live: *"if the user is new it means the work permit is not from Ming Hwee, then why this question come"*. The same reading `first_time_hire` has taken since 2026-09-04, with the same accepted cost in the same words — *"no placement on record"* is a statement about our RECORDS, not about the client. The `Field` is still the SAME object `replacement` asks (§9.8); its question is now dead text kept as the fallback. |
+| ...and the one case we genuinely cannot answer reports what we hold instead of guessing | the third branch of the fill | `get_placed_helper` returns nothing unless there is exactly ONE live placement naming a candidate, and live only 2 of 6 rows did — so an employer with four placements is real. Claiming her puts a guess on a ticket, which is the failure that function was made cautious to avoid; asking is the question the agency has just had removed. The consultant has her name on the same ticket and the placement list one click away. |
+| ...and the client's own words beat the fill | `extracted = {**known, **extracted}` | The record fill goes in UNDER the extraction, so *"no she is hired from somewhere else"* corrects us and is what reaches the ticket. Reversed, a client correcting our records is filed with our guess — worse than the question ever was. Asserted by RUNNING the collector, because the merge order is one character wide. |
+| ...and no branch of it carries a figure | the three values | They reach the prompt as `collected_info`, which is grounding for `ungrounded_figures` — so a count in here is a number the model may quote back at the client (2026-09-09 D). `first_time_hire` says *"2 placements on record"* and gets away with it; this one does not try. |
 | Direct hire does not say "paperwork" | `_COLLECTION_PURPOSE` + the direct-hire documents row | Agency instruction, and scoped to direct hire only - the other services keep the word, because rewriting rows nobody objected to is how a correction turns into a rewrite. |
 
 | Religion is asked IN PLACE OF the pork/beef question, on both sides | `helper_religion` / `religion` + `_MATCHED_PAIRS` | The agency's decision, taken after the trade was put to them: *"in place of this ... ask the religion question because that is priority."* The pork/beef pair was the only place a placement's dietary constraint was captured on both sides of the desk, and it is gone from the QUESTIONS **and** from the `cooking` OPTIONS - `_field_guidance` reads options into the spoken question, so leaving "no pork" in the list would have half-asked the question that was just removed. `halal kitchen` and `vegetarian` stay: those describe the client's own kitchen. |
@@ -1045,6 +1048,75 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-17** — **"is Polo's current Work Permit from Ming Hwee, or was she hired
+  elsewhere?" — asked of a client we have never placed anyone with.** The agency
+  tested the work permit renewal built earlier the same day and objected to the
+  question that build added: *"chatbot should check the backend - if the user exists
+  then this question didn't come, and if the user is new then also this message should
+  not, because if the user is new it means the work permit is not from Ming Hwee, then
+  why this question come."*
+  (A) **They are right in both directions, and the second half is the one that settles
+  it.** `prior_hires` counts every non-archived `placements` row on this number, and the
+  transcript's client had none — no employer record at all, which is why the flow had
+  just asked them their own name. **A zero is not an absence of evidence, it is the
+  answer**: we cannot have placed this helper with an employer we have never placed
+  anyone with. That is exactly the reading `first_time_hire` has taken since 2026-09-04
+  (*"not being in the database IS the answer"*), and it carries the same accepted cost
+  in the same words — a client who hired through us on a different number reads as *"no
+  placement on record"*, which is a statement about our records rather than about them,
+  so a consultant can tell the two apart.
+  (B) **This REVERSES the note written on the field this morning**, and that note is
+  corrected rather than deleted (§0.3). It argued the question had to be asked because a
+  positive count says whether we placed ANYONE with them, not whether we placed THIS
+  helper — `placements.candidate_id` is null on most rows, so there is nothing to match
+  her against. That half is still true, and it is why the third branch exists. It was
+  never an argument for asking a brand-new client, **which is most of the people this
+  service is for** — the agency's own reason for wanting the distinction was that work
+  permit renewal *"is not limited to existing agency clients"*.
+  (C) **Three branches, and the third is the honest one.** No placement → *"hired
+  elsewhere - no placement on record"*. A single live placement that names her →
+  *"from Ming Hwee - placed by us"*, which is exactly as safe as the `helper_name` fill
+  already riding on that same row. Placements on file but none we can pin to a helper →
+  *"placed with us before - this helper not matched on file"*. Claiming her there would
+  put a guess on a ticket, which is the failure `get_placed_helper` was deliberately
+  made cautious to avoid (2 of 6 live rows name a candidate, and one employer holds four
+  placements); asking is the question just removed. The consultant has her name on the
+  same ticket and the placement list one click away.
+  (D) **No branch carries a digit, and that is not tidiness.** These values reach the
+  prompt as `collected_info`, which is grounding for `ungrounded_figures` — a count in
+  here is a number the model may then quote at the client, the 2026-09-09 (D) shape.
+  `first_time_hire` says *"2 placements on record"* and has got away with it; this one
+  does not try.
+  (E) **The client can still correct us**, because the fill goes in UNDER the
+  extraction. *"No she is hired from somewhere else"* wins over a record that says
+  otherwise. Reversed, a client correcting our own records would be filed with our guess
+  — worse than the question ever was — and the merge that decides it is one character
+  wide, so it is asserted by RUNNING the collector rather than by reading the line.
+  (F) **The question is now unreachable on every record shape, on every flow that
+  defines it** — asserted as that, derived over `SERVICE_FIELDS` rather than written
+  about `renewal`, so `replacement` is covered by the same check and a flow added
+  tomorrow either is or fails by name. Five record shapes, two flows, ten combinations,
+  none of which leaves it to be asked.
+  (G) **Seven faults injected, seven red** — the fill removed; the zero branch dead; an
+  unmatchable placement claimed as ours from either side; a count leaked into the value;
+  the fill placed over the client's own words; and the field dropped from `renewal`.
+  **Two of the new smoke states were GREEN on the second of those and the check was
+  wrong, not the code.** They asserted only that the question was absent from the prompt
+  — and with the zero branch dead the field is still FILLED, by the wrong branch, so the
+  question is still never asked. **A state that proves a question is gone proves nothing
+  about what reached the ticket in its place.** All three branches now assert the value
+  that reaches `collected_info`, and each goes red on its own.
+  (H) **Verified live against the real model.** The transcript's own turn, three runs:
+  *"Got it — when does Polo's Work Permit expire?"*, no Ming Hwee question in any of
+  them. The control, an employer whose one placement we can name: *"Hi Ratna Choukade,
+  I'm Claire, Ming Hwee's AI assistant. We have Liza Fernandez's details on record—when
+  does her Work Permit expire?"* — **the whole renewal in one question**, her name, her
+  file and where she came from all read rather than asked.
+  The ticket label moved with the values, from *"Current helper placed by us"* to
+  *"Where the current helper came from"*: the old one read *"Current helper placed by
+  us: hired elsewhere"*, which contradicts itself on the line a consultant reads.
+  `selfcheck_flows.py` is **500 assertions**; `smoke_nodes.py` is **107 states**.
 
 - **2026-09-17** — **The passport expires in 5 days; the renewal takes 6 to 8 weeks;
   the bot printed both and said nothing.** From the agency's second passport-renewal

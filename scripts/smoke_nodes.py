@@ -459,6 +459,66 @@ CASES = [
       "_forbid_prompt": "what email should I send them to"}),
 
 
+    # --- 2026-09-17: where the helper came from is read, not asked ---------
+    # The screenshot's own turn. A number we hold no record for was asked "is
+    # Polo's current Work Permit from Ming Hwee, or was she hired elsewhere?"
+    # - of a client we have never placed anyone with, so the answer was already
+    # on file. RUN rather than unit-tested: the fill can be perfect and still
+    # never reach `allowed_keys`, which is the "imported and never called" hole
+    # this file exists to close.
+    ("info_collector", "a new client is not asked where the helper came from",
+     {"service_type": "renewal", "intent": "renewal",
+      "incoming_text": "My helper name is polo",
+      "collected_info": {"full_name": "tolo", "helper_name": "Polo"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1},
+      "prior_hires": 0, "placed_helper": None,
+      "history_text": "bot: may I know your helper's name?",
+      "_forbid_prompt": "did you hire her elsewhere",
+      "_expect_prompt": "When does her work permit expire?",
+      "_expect_collected": {
+          "helper_from_us": "hired elsewhere - no placement on record"}}),
+    # ...and neither is a client whose one placement we can name. Her name is
+    # already off the records here, so this turn is the whole renewal in one
+    # question.
+    ("info_collector", "...nor is a client we have placed a helper with",
+     {"service_type": "renewal", "intent": "renewal",
+      "incoming_text": "i want to renew my helpers work permit",
+      "collected_info": {}, "asked_field_counts": {},
+      "record_name": "Ratna Choukade", "prior_hires": 1,
+      "placed_helper": {"helper_name": "Liza Fernandez", "nationality": "PH"},
+      "history_text": "",
+      "_forbid_prompt": "did you hire her elsewhere",
+      "_expect_collected": {"helper_from_us": "from Ming Hwee - placed by us"}}),
+    # The third branch, and the one with a guess available to it: placements on
+    # file and no way to say which helper. It must report what we hold, because
+    # claiming her is a guess on a ticket and asking is the question the agency
+    # has just had removed.
+    ("info_collector", "...and one we cannot match is not claimed as ours",
+     {"service_type": "renewal", "intent": "renewal",
+      "incoming_text": "My helper name is polo",
+      "collected_info": {"full_name": "tolo", "helper_name": "Polo"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1},
+      "prior_hires": 4, "placed_helper": None,
+      "history_text": "bot: may I know your helper's name?",
+      "_forbid_prompt": "did you hire her elsewhere",
+      "_expect_collected": {
+          "helper_from_us":
+              "placed with us before - this helper not matched on file"}}),
+    # And the half that keeps the fill honest: a client who tells us anyway
+    # overrides it. `known` goes in UNDER the extraction, so their own words
+    # win - without that a client correcting our records would be filed with
+    # the guess, which is worse than the question ever was.
+    ("info_collector", "...but the client's own words beat the record fill",
+     {"service_type": "renewal", "intent": "renewal",
+      "incoming_text": "no she is hired from somewhere else",
+      "collected_info": {"full_name": "tolo", "helper_name": "Polo"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1},
+      "prior_hires": 1,
+      "placed_helper": {"helper_name": "Polo", "nationality": "PH"},
+      "history_text": "bot: may I know your helper's name?",
+      "_stub_extraction": {"helper_from_us": "hired elsewhere"},
+      "_expect_collected": {"helper_from_us": "hired elsewhere"}}),
+
     # --- 2026-09-17: the expiry the briefing said nothing about -----------
     ("info_collector", "a passport expiring in days is flagged in the briefing",
      {"service_type": "passport_renewal", "intent": "passport_renewal",

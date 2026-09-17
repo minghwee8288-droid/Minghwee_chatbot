@@ -654,6 +654,47 @@ def _known_fields(
                 text = _NATIONALITY_NAMES.get(text, text)
             known.setdefault(field_key, text[:300])
 
+    # Where THIS helper came from, answered from the records rather than put to
+    # anyone. The agency, 2026-09-17, on seeing it asked live: "chatbot should
+    # check the backend - if the user exists then this question didn't come,
+    # and if the user is new then also this message should not, because if the
+    # user is new it means the work permit is not from Ming Hwee."
+    #
+    # The second half is the one that settles it, and it is not a preference.
+    # `prior_hires` counts every non-archived placement on this number, so a
+    # zero is not an absence of evidence - it IS the answer. We cannot have
+    # placed this helper with an employer we have never placed anyone with.
+    # That is the reading `first_time_hire` has taken since 2026-09-04 ("not
+    # being in the database is the answer") and it carries the same accepted
+    # cost in the same words: a client who hired through us on a different
+    # number reads as "no placement on record", which is a statement about our
+    # records rather than about them, so a consultant can tell the two apart.
+    #
+    # This REVERSES the note on `ticket._HELPER_FROM_US`, which argued the
+    # question had to be asked because a positive count does not identify WHICH
+    # helper. That half is still true - it is why the third branch says what we
+    # hold instead of claiming her - but it was never an argument for asking a
+    # brand-new client, which is most of the people this service is for.
+    #
+    # No branch carries a digit, deliberately: these values are grounding for
+    # `ungrounded_figures`, and a count in here is a number the model may then
+    # quote back (2026-09-09 D).
+    if not prior_hires:
+        known["helper_from_us"] = "hired elsewhere - no placement on record"
+    elif isinstance(placed, dict) and placed.get("helper_name"):
+        known["helper_from_us"] = "from Ming Hwee - placed by us"
+    else:
+        # Placements on file, but not one we can pin to a helper -
+        # `get_placed_helper` returns nothing unless there is exactly ONE live
+        # placement naming a candidate, and live only 2 of 6 rows did. Saying
+        # what our records hold beats both alternatives: claiming she is ours
+        # puts a guess on a ticket, and asking is the question the agency has
+        # just had removed. The consultant has her name on the same ticket and
+        # the placement list one click away.
+        known["helper_from_us"] = (
+            "placed with us before - this helper not matched on file"
+        )
+
     lead = state.get("matched_lead")
     if not isinstance(lead, dict):
         return _with_push_name(state, known, service_type)
