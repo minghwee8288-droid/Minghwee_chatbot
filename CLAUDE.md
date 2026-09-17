@@ -313,6 +313,14 @@ because the lead is opened early and the ticket is created much later.
 | No flow anywhere takes the client's own name off their WhatsApp profile | `ticket.NAME_FROM_RECORD_ONLY` + `selfcheck_flows.py` | `new_hiring` was the last one out, and joined 2026-09-16: *"why chatbot is not asking the user name like before"*. The set is now every flow that collects a name, so this is a derived rule rather than a list — a new flow with a `full_name` field and no entry fails by name. |
 | The salary bands say SGD on both sides of the desk | `budget.options` → `_matched_options("budget")` | The currency is on the BANDS, not just the question, because `_field_guidance` reads the options into what is actually asked — live that produced "such as below $500, $500-600" with no currency named. The digits are untouched: they are the grounding `ungrounded_figures` reads (2026-09-09 D). |
 
+| Claire introduces herself whichever instruction wins the turn | `templates.FIRST_CONTACT_INTRO_NOTE` + `response_generator` + `smoke_nodes.py` | A first message that is a PROCESS question swaps the whole instruction for `PROCESS_INSTRUCTION`, which says nothing about introducing yourself — so the client never learned what they were talking to. Appended AFTER the template is chosen, because the instruction that loses rule 1 is always the specialised one (2026-09-04 was the collector, 2026-09-17 the process path). |
+| The reason for a run of questions is never bolted onto the first one | `info_collector` `purpose_note` | "May I know your name so we can recommend a helper suited to your household?" — a name does not help match a helper, and the client came straight back with "why will knowing my name help you". The note said "give the reason before you ask"; "X so that Y" reads as before-you-ask and is still wrong. A reason that does not survive being questioned is worse than no reason. |
+| A question that names its own options names ALL of them | `home_type` (and `languages`, `nationality`) | "Option of asking landed property is missing" — it was in the options and never in the question, so `_field_guidance` picked two as examples and a client in a landed house was never shown their own. The room counts went so the list could be read out without brackets (2026-09-10), and `home_type` left `_DIGITS_ON_PURPOSE` with them. |
+| The household question asks who lives there, not just how many | `SERVICE_FIELDS[...]["household"]` | Six people is two adults and four children, or four adults and two elderly parents — different jobs. `children_detail` and `elderly_detail` are both GATED on `requirement`, so an elderly parent in a childcare-only household was never asked about at all. |
+| More work than one helper can carry is said once, before moving on | `info_collector._heavy_workload` + `state.flagged_once` + `smoke_nodes.py` | BOTH halves required — more than one kind of work AND a large household, by headcount or home size. A big family with one clear job is an ordinary placement, and telling that client their job is too big talks them out of a hire, so it fails towards silence. Advice, never a refusal, and no figure: a number gets the reply binned and they lose the advice with it. Recorded only when the reply was not the bare fallback (2026-09-08 `briefing_lost`). |
+| A guard may not flatten the reply it is cleaning | `guards.strip_handover_talk` | It re-joined on `" "`, so a seven-step process answer came back as "1. Consultation … 2. 3. Interview …" — the same defect `clamp_reply` had until 2026-09-08, on the same replies. Line structure survives, and a step stripped to a bare "2." is dropped whole. |
+| A numbered step may state how long OUR OWN service takes | `guards._CONTACT_PROMISE` | "you receive 3 to 5 matched profiles within 48 hours" — the agency's own published turnaround, in the records and passed by `ungrounded_figures` — was deleted as an invented callback time. Inside a step the TIME half fires only when the step also promises somebody will contact them, so "a live agent will call you within 2 hours" still goes. Prose is untouched. |
+
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
 own last line contained a question mark.
@@ -770,6 +778,15 @@ a figure only the agency can give, and the bot quotes or does the right thing th
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
 at a time.
 
+- **The WhatsApp Business away message.** Their own team asked, 2026-09-17: *"Why is
+  there an immediate message that says reply next day when it is during working
+  hours??"* - *"Thank You for your message. Our team will reply to you next following
+  working day."* arriving at 1:42pm on a weekday, before Claire's own reply. **That
+  string is in no file in this repo**: it is the away message configured on the
+  WhatsApp Business handset, and nothing here can change it. `message.is_auto_reply`
+  exists to RECOGNISE it so it is not mistaken for an agent taking the conversation
+  over, which is our entire involvement. Turning it off, or setting its hours to match
+  the office's, is two taps in WhatsApp Business and theirs to do.
 - **Which MRT station the office brief meant.** Their words were *"Find Ming Hwee
   Agency at Exit D MRT Station"* — an exit with no station. The rows say **Chinatown
   MRT, Exit D**, which is the station People's Park Centre sits on and matches the
@@ -943,6 +960,112 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-17** — **The agency's team tested new hiring end to end. Five findings, four
+  of them ours, and a sixth nobody reported that the verification run found.**
+  (A) **"Why is there an immediate message that says reply next day when it is during
+  working hours?" — that message is not ours.** *"Thank You for your message. Our team
+  will reply to you next following working day."* arrives at 1:42pm on a Wednesday,
+  before Claire's own reply. Checked rather than assumed: that string appears **nowhere**
+  in `app/` or `scripts/`. It is the agency's **WhatsApp Business away message**, set on
+  the handset, and this repo cannot reach it — `message.is_auto_reply` exists to
+  RECOGNISE such messages so an away message is not mistaken for an agent taking over,
+  which is the only involvement we have. It is in §9's waiting-on-Ming-Hwee list because
+  turning it off is two taps in WhatsApp Business and no amount of code will do it.
+  (B) **"it does not introduce it as a chatbot but gives this reply."** The first message
+  was *"hi i would like to hire a helper ... what is the process to go about it?"* — a
+  PROCESS question, so `response_generator` swapped its whole instruction for
+  `PROCESS_INSTRUCTION`, which says to answer as an ordered list and says nothing at all
+  about introducing yourself. The clamp was not the blocker (a process turn already gets
+  ten sentences); the instruction was. Exactly the 2026-09-04 collector defect, and fixed
+  the same way — `FIRST_CONTACT_INTRO_NOTE` is appended to **whichever** instruction won
+  the turn, because the one that loses rule 1 is always the specialised one.
+  (C) **"Why will knowing my name help you in recommending a helper that suits my
+  household?"** — the client's own words, and they were right. The bot had said *"May I
+  know your name so we can recommend a helper suited to your household?"* The purpose
+  note supplies the reason for the RUN of questions, and the first question in the run is
+  the client's NAME, so the model welded the two into one sentence and produced a claim
+  that is not true. The note already said to give the reason "before you ask"; *"X so
+  that Y"* reads as before-you-ask and is still the wrong shape. It now says outright
+  that the reason belongs to the questions as a whole, quotes the sentence that caused
+  this, and says why it does not survive being questioned.
+  (D) **"Option of asking landed property is missing."** It was in the OPTIONS the whole
+  time and never in the QUESTION, so `_field_guidance`'s "drop two or three in as
+  examples" branch picked HDB and condo and the client — who lives in a landed house —
+  was never shown the one that described their home. Same fix `languages` got on
+  2026-09-07 and `nationality` on 2026-09-11: the question names them, so the "name them
+  all" branch takes over. **The room counts had to go for that to be possible**: with
+  "HDB 1-3 room" in the list, spelling the options out reads brackets at the client,
+  which is the 2026-09-10 complaint. They were redundant anyway — `home_size` has asked
+  bedrooms and bathrooms outright since 2026-09-07, which is a better answer than a
+  bracket. **`home_type` is out of `_DIGITS_ON_PURPOSE`: one fewer exemption**, and that
+  assertion now reads "the two that carry digits".
+  (E) **"Ask how many people living in household but doesn't ask the people staying and
+  ages."** The count on its own cannot be matched against anything: six people is two
+  adults and four children, or four adults and two elderly parents, and those are
+  different jobs. `children_detail` and `elderly_detail` do ask the ages — but **both are
+  gated on `requirement`**, so a household with an elderly parent and a childcare-only
+  requirement is never asked about them at all. The question now asks who lives there,
+  which closes that and is also what sizes the job for (F).
+  (F) **"bot should highlight that one helper cannot manage all the duties assigned ...
+  consider limited scope to focus rather than move on."** Six people, landed property,
+  twelve bedrooms and ten toilets, two children aged 3 and 7, five dogs and two rabbits,
+  childcare AND cleaning — and the bot collected every word of it and moved on without
+  comment. `_heavy_workload` is deliberately conservative and **both halves must hold**:
+  the scope must cover more than one kind of work AND the household must be large, by
+  headcount or by the size of the home so a twelve-bedroom house counts even with four
+  people in it. A big family with one clear job is an ordinary placement, and telling
+  that client their job is too big talks them out of a hire we could have made — so this
+  fails towards silence. Eight shapes asserted, three firing and five not, including
+  "general housework and cooking", which is ONE kind of work however it reads.
+  The note is advice and not a refusal: it says one helper is unlikely to cover it all
+  well, asks whether they would rather focus her scope or look at more than one helper,
+  and **quotes no figure of any kind** — a number there gets the whole reply binned by
+  `ungrounded_figures` and they lose the advice with it. Said once, via a new
+  `flagged_once` state field with `briefed_services`' shape and reasons, and recorded
+  **only when the reply was not the bare fallback**, because a note a guard threw away
+  must be tried again rather than filed as delivered (the 2026-09-08 `briefing_lost`
+  defect).
+  (G) **And the verification run found a guard breaking the reply it was protecting.**
+  Running (B) live, the seven-step process answer came back as
+  *"1. Consultation ... 2. 3. Interview ..."* — every line break gone and step 2 deleted.
+  Two faults in `strip_handover_talk`, neither reported by anyone:
+  it re-joined on `" "`, which is the same defect `clamp_reply` had until 2026-09-08 and
+  it lands on the same replies; and it read *"you receive 3 to 5 matched profiles within
+  48 hours"* as a promised callback time. That is the agency's own published turnaround,
+  grounded in the records and passed by `ungrounded_figures`. This guard exists for
+  *"Grace will call you back at 3pm"*, not for how long our own service takes. Line
+  structure now survives, and inside a numbered step the TIME half only fires when the
+  step also promises somebody will contact them — so *"a live agent will call you within
+  2 hours"* still goes, and goes whole rather than leaving a bare "2." behind. Prose is
+  unchanged, which is the case the guard was built for.
+  (H) **Fifteen faults injected, fifteen red.** Both halves of `_heavy_workload`
+  separately; the note not appended to the instruction; the note fired on every turn;
+  `flagged_once` wiped by `_TURN_RESET`; the introduction never appended and appended
+  always; the home question un-named and its brackets restored; the household question
+  back to a bare count; the purpose rule removed; and four on the guard. One of the two
+  workload injections **crashes** rather than failing (removing the scope test breaks the
+  indentation), which tells you less than a red — its companion covers the same half
+  through the assertion.
+  **The instruction-level fixes are checked by RUNNING the node, not by reading the
+  predicate.** `smoke_nodes.py` now captures the system prompt the model was actually
+  handed (`_expect_prompt` / `_forbid_prompt`), because the workload note sets its own
+  state flag whether or not anything appends it to the prompt — so without that, an
+  instruction nobody sends stays green. That is the "imported and never called" hole for
+  the third time (2026-09-10, 2026-09-16, now).
+  (I) **Verified live against the real model**, all six turns. The process answer opens
+  *"Hi Thomas, I'm Claire, Ming Hwee's AI assistant."* and then seven steps, one per
+  line, turnaround intact. The name question is *"I'll ask a few details so we can
+  understand your household needs and find a suitable helper. May I know your name?"* —
+  the reason its own sentence, the question its own. The home question offers *"HDB flat,
+  condo, private apartment, landed property, or something else"*. The household question
+  asks *"how many people live in your household, and who are they, such as adults,
+  elderly parents, and children?"*. And the one they asked for: *"That is a large
+  household, and one helper may find it difficult to manage childcare and cleaning well.
+  Would you prefer to focus her duties on what matters most, or consider more than one
+  helper?"* — no figure, no refusal. The control, a three-person condo wanting childcare,
+  is not lectured and simply gets its next question.
+  `selfcheck_flows.py` is **408 assertions**; `smoke_nodes.py` is **73 states**.
 
 - **2026-09-16** — **New hiring, tested as an employer: the flow never asked what kind
   of help they needed, and invented an answer instead.** Four things reported, and the

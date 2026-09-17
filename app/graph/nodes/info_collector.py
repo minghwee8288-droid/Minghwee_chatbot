@@ -982,6 +982,64 @@ _WHY_WE_ASK: dict[str, str] = {
                         "helper up front rather than discovered later",
 }
 
+
+# --- Is this more than one helper can do? ------------------------------------
+#
+# See the 2026-09-17 change log. Both halves must hold, and the thresholds are
+# deliberately high: the cost of firing wrongly is telling a client their job
+# is too big when it is not, which talks them out of a placement.
+_CARE_KINDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("childcare", ("childcare", "child care", "children", "kids", "baby",
+                   "infant", "toddler", "newborn")),
+    ("eldercare", ("eldercare", "elder care", "elderly", "grandmother",
+                   "grandfather", "senior", "bedridden", "dementia")),
+    ("housework", ("housework", "house work", "cleaning", "clean", "cooking",
+                   "cook", "chores", "laundry", "ironing")),
+)
+
+# An answer that covers the lot without naming the parts.
+_WHOLE_SCOPE = re.compile(
+    r"\ball of the above\b|\ball of these\b|\beverything\b|\bcombination\b"
+    r"|\bboth\b|\beverything else\b",
+    re.IGNORECASE,
+)
+
+_FIRST_COUNT = re.compile(r"\d+")
+
+# A household of five, or a home with five bedrooms. Below this it is an
+# ordinary placement whatever the scope.
+_LARGE_HOUSEHOLD = 5
+
+
+def _scope_breadth(requirement: Any) -> int:
+    """How many different kinds of work they have asked for."""
+    text = str(requirement or "").lower()
+    if _WHOLE_SCOPE.search(text):
+        return len(_CARE_KINDS)
+    return sum(1 for _, words in _CARE_KINDS if any(w in text for w in words))
+
+
+def _leading_count(value: Any) -> int:
+    """The first number in an answer - "6", "12 bedrooms and 10 toilets"."""
+    found = _FIRST_COUNT.search(str(value or ""))
+    return int(found.group(0)) if found else 0
+
+
+def _heavy_workload(collected: dict[str, Any]) -> bool:
+    """Whether what they have described is more than one helper can carry.
+
+    Both halves required. The scope must cover more than one kind of work AND
+    the household must be large - by headcount or by the size of the home, so a
+    twelve-bedroom house counts even when only four people live in it.
+    """
+    if _scope_breadth(collected.get("requirement")) < 2:
+        return False
+    return (
+        _leading_count(collected.get("household")) >= _LARGE_HOUSEHOLD
+        or _leading_count(collected.get("home_size")) >= _LARGE_HOUSEHOLD
+    )
+
+
 # BUDGET IS DELIBERATELY ABSENT from _WHY_WE_ASK, and Thomas named it. Measured four times on
 # 2026-09-09, twice with no retrieval and twice through the real path with the
 # salary rows in context: told to explain WHY it wants a budget, the model
@@ -1817,6 +1875,43 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             f"{purpose}. Put it in your own words, not those ones, and say it ONCE "
             "— here, at the top. Never explain yourself again in this conversation, "
             "and never turn it into a preamble you attach to every question."
+            "\n\nTHE REASON BELONGS TO THE QUESTIONS AS A WHOLE, NOT TO THE ONE "
+            "YOU ARE ABOUT TO ASK. Say it as its own clause about what you are "
+            "going to ask for, then ask the first question as its own sentence. "
+            "Never bolt it onto that question as the reason for THAT question. "
+            "Live, 2026-09-17: \"May I know your name so we can recommend a "
+            "helper suited to your household?\" - a name does not help anyone "
+            "match a helper, and the client came straight back with \"why will "
+            "knowing my name help you in recommending a helper that suits my "
+            "household?\". A reason that does not survive being questioned is "
+            "worse than no reason at all."
+        )
+
+    # More work than one helper can carry: say so once, then carry on.
+    workload_note = ""
+    if "workload" not in (state.get("flagged_once") or []) and _heavy_workload(
+        collected
+    ):
+        logger.info(
+            "Conversation %s: scope + household size is more than one helper - raising it once",
+            state.get("conversation_id"),
+        )
+        workload_note = (
+            f"{chr(10)}{chr(10)}THEY HAVE DESCRIBED MORE WORK THAN ONE HELPER CAN REALISTICALLY "
+            "CARRY WELL - a large household together with more than one kind of "
+            "work. Say so, plainly and kindly, in a clause or two BEFORE your "
+            "next question, and then ask it.\n"
+            "- Say the honest thing: one helper covering all of it well is "
+            "unlikely, and it is better said now than after she has started.\n"
+            "- Ask which way they would rather go: focus her scope on what "
+            "matters most to them, or look at more than one helper.\n"
+            "- Do NOT refuse them, do not stop collecting, and do not tell them "
+            "we cannot help. This is advice, not a rejection.\n"
+            "- Quote NO figure of any kind - no salary, no fee, no number of "
+            "hours, nothing about what a second helper would cost. A figure "
+            "here gets the whole reply thrown away and they lose the advice "
+            "with it.\n"
+            "- Say it once. Do not raise it again later in this conversation."
         )
 
     # They stated a requirement rather than answering; say so before asking the
@@ -2000,6 +2095,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             + purpose_note
             + returning_note
             + record_name_note
+            + workload_note
             + requirement_note
             + follow_up_notes.get(next_field.key, "")
             + answer_first
@@ -2052,6 +2148,16 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "info_complete": False,
             "reply": reply,
             "needs_handover": bool(state.get("needs_handover")),
+            # Said once - _merge_unique accumulates, _TURN_RESET leaves it
+            # alone. Recorded ONLY when the reply is not the bare fallback,
+            # for the reason briefing_lost exists (2026-09-08): a note a
+            # guard threw away must be tried again, not filed as delivered.
+            "flagged_once": (
+                ["workload"]
+                if workload_note
+                and (reply or "").strip() != (next_field.question or "").strip()
+                else []
+            ),
         }
 
     # A service that asks nothing at all (direct hiring, a supplier offering a

@@ -389,6 +389,22 @@ Answer as a short ordered list, grounded ONLY in our records above:
 If our records above do not actually set out the process for what they asked, do not improvise one. Say you will confirm the details and come back to them, and start that reply with the exact token {handover_token} on its own first line."""
 
 
+
+# Rule 1's introduction, repeated in the instruction that wins on this turn.
+#
+# Appended to WHICHEVER instruction this turn selected, because the one that
+# loses it is always the specialised one - PROCESS_INSTRUCTION on 2026-09-17,
+# and COLLECTOR_INSTRUCTION on 2026-09-04. A first message is the only turn it
+# applies to, and the reply already has the sentences for it.
+FIRST_CONTACT_INTRO_NOTE = """
+
+This is the FIRST thing this client has ever heard from us. Before anything \
+else in your reply, introduce yourself in one short sentence - your name and \
+that you are Ming Hwee's AI assistant - and then answer them. That \
+introduction is required on this turn and on no other; it is how they learn \
+what they are talking to, and a client who finds out later feels misled. Do \
+not let a list, a process answer or a question push it off the front."""
+
 CONTACT_DISCOVERY_INSTRUCTION = """This number is not in our records and it is not \
 yet clear who you are speaking to — an employer looking to hire, a helper looking \
 for work, or an agency offering us candidates.

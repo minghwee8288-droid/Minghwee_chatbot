@@ -502,23 +502,23 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             # one - a household of seven was shown "5-6" as the top choice
             # (2026-09-08, fixed then by naming all four, which is what they
             # have now asked to remove). A plain question takes any number.
-            "How many people live in your household?",
+            "How many people live in your household, and who are they - "
+            "for example adults, elderly parents, and children?",
             max_asks=2,
             group="their household",
         ),
         Field(
             "home_type",
             "type of home",
-            "What type of home are you in?",
+            "What type of home are you in - an HDB flat, a condo, a private "
+            "apartment, or landed property?",
             max_asks=2,
             group="their household",
             options=(
-                "HDB 1-3 room",
-                "HDB 4-5 room",
-                "HDB Executive",
+                "HDB",
                 "condo",
                 "private apartment",
-                "landed",
+                "landed property",
             ),
         ),
         # "Understand house type, bedrooms and bathrooms" — the agency's own

@@ -19,6 +19,7 @@ import re
 import app.services.ticket as t
 import app.services.lead as _lead
 from app.graph.guards import quotes_hiring_package_cost as q
+import app.graph.guards as _guards
 from app.graph.guards import (
     COST_WITHHELD_SERVICES as _WITHHELD,
     asks_for_documents as _docs_q,
@@ -121,11 +122,18 @@ SEVEN_SERVICES = ("new_hiring", "direct_hiring", "transfer_employer", "renewal",
 #   budget          - the bands are salary bands, and they are also the
 #                     grounding `ungrounded_figures` reads (2026-09-09 D), so
 #                     removing them silently reintroduces that defect
-#   home_type       - "HDB 4-5 room" is what the flat is called, not a bracket
+#   home_type       - REMOVED 2026-09-17. It carried "HDB 1-3 room" / "HDB 4-5
+#                     room", and those blocked the fix the agency asked for:
+#                     "option of asking landed property is missing" needs the
+#                     question to name its options, and naming them with the
+#                     room counts in would read brackets at the client - the
+#                     very thing they objected to on 2026-09-10. The counts
+#                     were redundant anyway: home_size has asked bedrooms and
+#                     bathrooms outright since 2026-09-07. One fewer exemption.
 #   start_timeline  - a timeframe is not a count
 #   expected_salary - the candidate half of `budget`, and it carries the SAME
 #                     bands for the same two reasons (2026-09-10)
-_DIGITS_ON_PURPOSE = {"budget", "home_type", "start_timeline", "expected_salary"}
+_DIGITS_ON_PURPOSE = {"budget", "start_timeline", "expected_salary"}
 _BRACKET = re.compile(r"\d+\s*(?:-|to|\u2013)\s*\d+|\bat least \d+|"
                       r"\b\d+\s*(?:and\s+)?(?:above|or more)")
 
@@ -259,6 +267,70 @@ _spec = _ilu.spec_from_file_location("lsn", str(Path(__file__).resolve().parent 
 lsn = _ilu.module_from_spec(_spec); _spec.loader.exec_module(lsn)
 # Every word of the office rows, so a fact can be asserted present without
 # naming which of the six rows carries it.
+
+def _home_type():
+    return next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "home_type")
+
+
+def _workload_note() -> str:
+    """The one-helper warning, as the model is handed it."""
+    src = (Path(__file__).resolve().parents[1]
+           / "app/graph/nodes/info_collector.py").read_text(encoding="utf-8")
+    start = src.find("workload_note = (")
+    return _flat(src[start:src.find("# They stated a requirement", start)])
+
+
+def _hh():
+    return next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "household")
+
+
+def _purpose_note() -> str:
+    """The opening-turn reason, as the model is handed it."""
+    src = (Path(__file__).resolve().parents[1]
+           / "app/graph/nodes/info_collector.py").read_text(encoding="utf-8")
+    start = src.find("purpose_note = (")
+    return _flat(src[start:src.find("# They stated a requirement", start)])
+
+
+# The live transcript, plus the five shapes that must NOT fire.
+_WORKLOAD_CASES = [
+    ({"requirement": "I will need a combination of the childcare and cleaning",
+      "household": "6", "home_size": "12 bedrooms and 10 toilets"}, True,
+     "the live transcript"),
+    ({"requirement": "childcare", "household": "6"}, False,
+     "one kind of work, big household"),
+    ({"requirement": "childcare and cleaning", "household": "3",
+      "home_size": "2 bedrooms"}, False, "two kinds, small household"),
+    ({"requirement": "childcare and cleaning", "household": "3",
+      "home_size": "8 bedrooms 6 bathrooms"}, True, "two kinds, big HOME"),
+    ({"requirement": "all of the above", "household": "5"}, True, "all of the above"),
+    ({"requirement": "general housework and cooking", "household": "7"}, False,
+     "housework and cooking is ONE kind of work"),
+    ({"requirement": "eldercare", "household": "2"}, False, "an ordinary placement"),
+    ({}, False, "nothing collected yet"),
+]
+
+_STATE_SRC = (Path(__file__).resolve().parents[1]
+              / "app/graph/state.py").read_text(encoding="utf-8")
+graph_mod = importlib.import_module("app.graph.graph")
+import app.graph.prompts.templates as tmpl
+
+
+# A process answer with one step stating our own published turnaround, and one
+# that promises somebody will ring them. The guard must treat those differently.
+_STEPS_OK = (
+    "Here is the process from here:\n"
+    "1. Consultation - you share what your household needs.\n"
+    "2. Shortlist - you receive 3 to 5 matched profiles within 48 hours.\n"
+    "3. Interview - by video or in person."
+)
+_STEPS_PROMISE = (
+    "Here is what happens:\n"
+    "1. We shortlist helpers for you.\n"
+    "2. A live agent will call you within 2 hours.\n"
+    "3. She arrives."
+)
+
 _OFFICE_TEXT = " ".join(
     f'{r["question"]} {r["answer"]}' for r in lsn.ROWS
     if r["section_heading"].startswith("Office - "))
@@ -574,10 +646,10 @@ rows = [
  ("no field on any service reads a bracket out",
   sorted({f.key for fs in t.SERVICE_FIELDS.values() for f in fs
           if f.key not in _DIGITS_ON_PURPOSE and _reads_a_bracket(f)}), []),
- ("and the three that carry digits still do so deliberately",
+ ("and the two that carry digits still do so deliberately",
   sorted({f.key for svc in SEVEN_SERVICES for f in t.SERVICE_FIELDS.get(svc, [])
           if f.key in _DIGITS_ON_PURPOSE}),
-  ["budget", "home_type", "start_timeline"]),
+  ["budget", "start_timeline"]),
  # "Bot doesn't ask for my name or addresses me if it knows."
  ("transfer_employer asks the client's name",
   t.SERVICE_FIELDS["transfer_employer"][0].key, "full_name"),
@@ -2328,6 +2400,85 @@ rows = [
   [o for o in next(f for f in t.SERVICE_FIELDS["new_hiring"]
                    if f.key == "budget").options
    if not any(n in o for n in ("500", "600", "700", "800"))], ["not sure yet"]),
+
+ # --- the agency's team test, 2026-09-17 --------------------------------
+ # "Option of asking landed property is missing." It was in the OPTIONS and
+ # never in the question, so _field_guidance picked two as examples and the
+ # client was never shown the one that described their home. Naming them all
+ # is what `languages` got on 2026-09-07 and `nationality` on 2026-09-11.
+ ("the home question offers landed property, and offers it by name",
+  ("landed property" in _flat(_home_type().question)
+   and "landed property" in _home_type().options), True),
+ # ...and it can only name them all because the room counts went. With "HDB
+ # 1-3 room" in the list, spelling the options out reads a bracket at the
+ # client, which is the 2026-09-10 complaint.
+ ("...which is possible because the home question carries no bracket",
+  _reads_a_bracket(_home_type()), False),
+ ("...and naming them is what the guidance now tells the model to do",
+  "name them all" in _flat(ico._field_guidance("new_hiring", {}, _home_type())), True),
+ # "Ask how many people living in household but doesn't ask the people
+ # staying and ages." The count alone cannot be matched: six people is two
+ # adults and four children, or four adults and two elderly parents.
+ ("the household question asks who lives there, not just how many",
+  all(w in _flat(_hh().question).lower()
+      for w in ("how many", "who are they", "elderly", "children")), True),
+ # "Why will knowing my name help you in recommending a helper that suits my
+ # household?" - the reason for the RUN of questions welded onto the NAME
+ # question, producing a claim that is not true.
+ ("the collection reason is never bolted onto the question as its reason",
+  ("BELONGS TO THE QUESTIONS AS A WHOLE" in _purpose_note()
+   and "May I know your name so we can recommend" in _purpose_note()), True),
+ # "bot should highlight that one helper cannot manage all the duties
+ # assigned ... consider limited scope to focus rather than move on."
+ # BOTH halves required, and the thresholds are high on purpose: firing
+ # wrongly tells a client their job is too big when it is not.
+ ("more work than one helper can carry is recognised",
+  [label for c, want, label in _WORKLOAD_CASES if ico._heavy_workload(c) != want], []),
+ # It is advice, not a refusal, and it must not reach for a figure - a
+ # number here gets the whole reply binned and they lose the advice with it.
+ ("...and the note refuses nobody and quotes nothing",
+  all(s in _workload_note() for s in
+      ("not a rejection", "Quote NO figure", "Say it once")), True),
+ # Said once, like briefed_services - and for the same reason it must not be
+ # recorded when a guard threw the reply away (2026-09-08 briefing_lost).
+ ("the once-only notes survive the turn reset",
+  "flagged_once" in _STATE_SRC and "flagged_once" not in graph_mod._TURN_RESET, True),
+ # "it does not introduce it as a chatbot but gives this reply" - a first
+ # message that was a PROCESS question, so PROCESS_INSTRUCTION replaced the
+ # whole instruction and said nothing about introducing yourself.
+ ("Claire introduces herself whichever instruction wins the turn",
+  ("AI assistant" in tmpl.FIRST_CONTACT_INTRO_NOTE
+   and "FIRST" in tmpl.FIRST_CONTACT_INTRO_NOTE), True),
+
+ # --- a guard that was breaking the reply it was protecting, 2026-09-17 ---
+ # Found while verifying the first-contact introduction, on the agency's own
+ # process question. strip_handover_talk re-joined on " ", so a seven-step
+ # answer came back as "1. Consultation ... 2. 3. Interview ..." with every
+ # line break gone - the same defect clamp_reply had until 2026-09-08, on the
+ # same replies.
+ ("stripping a handover promise does not flatten a list",
+  _guards.strip_handover_talk(_STEPS_OK).count(chr(10)), 3),
+ # ...and the step it deleted was the agency's own published turnaround,
+ # grounded in the records and passed by ungrounded_figures. This guard is for
+ # "Grace will call you back at 3pm", not for how long our own service takes.
+ ("a step may state how long OUR OWN service takes",
+  "48 hours" in _guards.strip_handover_talk(_STEPS_OK), True),
+ ("...and the list comes back untouched",
+  _guards.strip_handover_talk(_STEPS_OK), _STEPS_OK),
+ # A step that really does promise somebody will ring them still goes, and it
+ # goes whole - a bare "2." left behind reads worse than the missing step.
+ ("a step promising a callback still goes, and leaves no orphan marker",
+  ("call you" not in _guards.strip_handover_talk(_STEPS_PROMISE)
+   and "\n2.\n" not in _guards.strip_handover_talk(_STEPS_PROMISE)
+   and "3. She arrives." in _guards.strip_handover_talk(_STEPS_PROMISE)), True),
+ # Prose is unchanged: this is the case the guard was built for.
+ ("a named colleague and a time in prose are still stripped",
+  _guards.strip_handover_talk("I have passed this on. Grace will call you back at 3pm."),
+  "I have passed this on."),
+ ("...and an announced handover is still left alone",
+  _guards.strip_handover_talk(
+      "I have passed this to our team and a live agent will connect with you shortly."),
+  "I have passed this to our team and a live agent will connect with you shortly."),
 ]
 bad = 0
 for label, got, want in rows:

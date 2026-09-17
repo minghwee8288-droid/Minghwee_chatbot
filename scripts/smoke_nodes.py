@@ -330,6 +330,53 @@ CASES = [
       "_stub_extraction": {"requirement": "childcare"},
       "_expect_collected": {"requirement": "childcare"}}),
 
+    # --- the agency's team test, 2026-09-17 ---------------------------------
+    # "bot should highlight that one helper cannot manage all the duties
+    # assigned." Six people, twelve bedrooms, childcare AND cleaning - the bot
+    # collected all of it and moved on without a word. RUN, not unit-tested:
+    # the predicate was only ever half the fix, and a note nobody appends to
+    # the instruction is the hole this file exists to close.
+    ("info_collector", "more work than one helper can carry is flagged once",
+     {"intent": "new_hiring", "service_type": "new_hiring",
+      "incoming_text": "12 bedrooms and 10 toilets", "history_text": "bot: how many bedrooms?",
+      "collected_info": {"full_name": "Thomas", "requirement": "a combination of childcare and cleaning",
+                         "household": "6", "home_size": "12 bedrooms and 10 toilets"},
+      "asked_field_counts": {"household": 1, "home_size": 1},
+      "_expect_state": {"flagged_once": ["workload"]},
+      "_expect_prompt": "MORE WORK THAN ONE HELPER"}),
+    # ...and never twice. Telling a client their job is too big a second time
+    # reads as an argument rather than as advice.
+    ("info_collector", "...and never raised a second time",
+     {"intent": "new_hiring", "service_type": "new_hiring",
+      "incoming_text": "12 bedrooms and 10 toilets", "history_text": "bot: how many bedrooms?",
+      "collected_info": {"full_name": "Thomas", "requirement": "a combination of childcare and cleaning",
+                         "household": "6", "home_size": "12 bedrooms and 10 toilets"},
+      "asked_field_counts": {"household": 1, "home_size": 1},
+      "flagged_once": ["workload"],
+      "_expect_state": {"flagged_once": []}}),
+    # An ordinary placement is left alone - a big family with one clear job is
+    # not a problem, and saying it is talks them out of a hire we could make.
+    ("info_collector", "an ordinary placement is not lectured",
+     {"intent": "new_hiring", "service_type": "new_hiring",
+      "incoming_text": "6", "history_text": "bot: how many people live with you?",
+      "collected_info": {"full_name": "Thomas", "requirement": "childcare", "household": "6"},
+      "asked_field_counts": {"household": 1},
+      "_expect_state": {"flagged_once": []}}),
+    # "it does not introduce it as a chatbot but gives this reply" - a FIRST
+    # message that was a process question, so PROCESS_INSTRUCTION replaced the
+    # instruction wholesale and said nothing about introducing yourself.
+    ("response_generator", "Claire introduces herself on a first process question",
+     {"intent": "process_question", "service_type": "new_hiring",
+      "incoming_text": "hi i would like to hire a helper. what is the process to go about it?",
+      "history_text": "",
+      "_expect_prompt": "introduce yourself in one short sentence"}),
+    # ...and on no other turn, or she says it every time.
+    ("response_generator", "...and only on the first message",
+     {"intent": "process_question", "service_type": "new_hiring",
+      "incoming_text": "what is the process to go about it?",
+      "history_text": "client: hi\nbot: Hi, I'm Claire, Ming Hwee's AI assistant.",
+      "_forbid_prompt": "introduce yourself in one short sentence"}),
+
     # --- response_generator ------------------------------------------------
     # The stepped-answer path: both halves of the trigger, then each half on
     # its own, then neither. A process question with NO records must stay on
@@ -448,11 +495,22 @@ CASES = [
 # extractor made up is a thing only the NODE can drop, so the node has to run.
 _EXTRACTION: dict = {}
 
+# What the model was actually handed on the last run. A fix that lives in the
+# INSTRUCTION cannot be proved by reading the reply: the note that raises the
+# one-helper warning sets its own state flag whether or not anything appends
+# it to the prompt, so without this an instruction nobody sends stays green -
+# the 'imported and never called' hole, 2026-09-10 and again 2026-09-16.
+_LAST_SYSTEM_PROMPT = ""
+
 
 async def _run_info_collector(state, stub=None):
+    async def _capture(system_prompt, *a, **kw):
+        global _LAST_SYSTEM_PROMPT
+        _LAST_SYSTEM_PROMPT = system_prompt or ""
+        return stub or "When does her passport expire?"
+
     with patch("app.graph.nodes.info_collector.complete",
-               new=AsyncMock(return_value=stub or "When does her passport expire?"),
-               create=True), \
+               new=_capture, create=True), \
          patch("app.graph.nodes.info_collector.complete_json",
                new=AsyncMock(return_value=dict(_EXTRACTION)), create=True), \
          patch("app.graph.nodes.info_collector._open_lead_early",
@@ -464,8 +522,13 @@ async def _run_info_collector(state, stub=None):
 async def _run_response_generator(state, stub=None):
     # Returns a stepped reply so the widened clamp and the list-marker masking
     # are exercised end to end, not just in a unit assertion.
+    async def _capture(system_prompt, *a, **kw):
+        global _LAST_SYSTEM_PROMPT
+        _LAST_SYSTEM_PROMPT = system_prompt or ""
+        return stub or STEPPED_REPLY
+
     with patch("app.graph.nodes.response_generator.complete",
-               new=AsyncMock(return_value=stub or STEPPED_REPLY), create=True):
+               new=_capture, create=True):
         from app.graph.nodes.response_generator import response_generator
         return await response_generator(state)
 
@@ -748,6 +811,10 @@ async def main() -> int:
         # it does NOT hand her to a human was, on its first attempt, a string
         # search of the source that matched the import line instead.
         expect_state = state.pop("_expect_state", None)
+        # A substring that must appear in the system prompt the model was
+        # handed - for a fix that lives in the INSTRUCTION, not the reply.
+        expect_prompt = state.pop("_expect_prompt", None)
+        forbid_prompt = state.pop("_forbid_prompt", None)
         # What the extractor handed back, and what must survive the filters.
         # `_expect_not_collected` is the important half: a field the client
         # never spoke to must not be filed as though they had, because a
@@ -774,6 +841,14 @@ async def main() -> int:
                     ok = not wrong
                     detail = f"state {expect_state} -> " + ("as expected" if ok
                                                             else f"got {wrong}")
+                if ok and expect_prompt:
+                    ok = expect_prompt.lower() in _LAST_SYSTEM_PROMPT.lower()
+                    detail = f"prompt carries {expect_prompt!r} -> " + (
+                        "as expected" if ok else "MISSING")
+                if ok and forbid_prompt:
+                    ok = forbid_prompt.lower() not in _LAST_SYSTEM_PROMPT.lower()
+                    detail = f"prompt omits {forbid_prompt!r} -> " + (
+                        "as expected" if ok else "PRESENT")
                 if ok and not_collected:
                     got = out.get("collected_info") or {}
                     leaked = [k for k in not_collected if k in got]

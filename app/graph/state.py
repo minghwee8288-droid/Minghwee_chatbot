@@ -318,6 +318,12 @@ class ConversationState(TypedDict, total=False):
     # Services whose process, documents, cost and timing we have already laid
     # out in full. Accumulates, and is deliberately absent from _TURN_RESET.
     briefed_services: Annotated[list[str], _merge_unique]
+    # Notes that are said ONCE per conversation and then never again, by
+    # key. Same shape and the same reason as briefed_services above:
+    # accumulates, and is deliberately absent from _TURN_RESET. The first
+    # entry is 'workload' (2026-09-17) - telling a client twice that their
+    # job is too big for one helper reads as an argument, not as advice.
+    flagged_once: Annotated[list[str], _merge_unique]
     info_complete: bool
 
     # --- Output ---

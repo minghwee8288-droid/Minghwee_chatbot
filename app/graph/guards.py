@@ -779,6 +779,27 @@ def leaks_internal_reasoning(reply: str) -> bool:
     return bool(_INTERNAL_MONOLOGUE.search(reply or ""))
 
 
+# The name half on its own. A colleague we have named is never acceptable,
+# wherever it appears - unlike the time half, which has a legitimate use.
+_HANDOVER_NAME = re.compile(
+    r"\b(transfer|connect|refer|forward|pass|put)\s+(you|this)\s+"
+    r"(to|with|through\s+to)\s+(?!Ming\b)(?-i:[A-Z][a-z]+)",
+    re.IGNORECASE,
+)
+
+# All that is left of a step whose only sentence was stripped: "2." on its own.
+# _LIST_MARKER cannot be reused - it requires whitespace after the dot.
+_BARE_MARKER = re.compile(r"^\s*\d+[.)]\s*$")
+
+# Somebody getting in touch with them. What makes a TIME a promise the office
+# has not made is that it is attached to one of these.
+_CONTACT_PROMISE = re.compile(
+    r"\b(call|ring|phone|contact|reach)\s+you\b"
+    r"|\bget\s+back\s+to\s+you\b|\blive\s+agent\b|\bconsultant\s+will\b",
+    re.IGNORECASE,
+)
+
+
 def strip_handover_talk(reply: str) -> str:
     """Remove sentences promising a named colleague or a specific time.
 
@@ -786,14 +807,57 @@ def strip_handover_talk(reply: str) -> str:
     asked in the same message, which a wholesale replacement would lose. A
     sentence that merely says a live agent will pick this up is left alone —
     that is what we now want it to say.
+
+    LINE STRUCTURE SURVIVES. It used to re-join on " ", which is the same
+    defect clamp_reply had until 2026-09-08 and it lands on the same replies:
+    live 2026-09-17, a first-contact process answer came back as
+    "1. Consultation ... 2. 3. Interview ..." with every line break gone,
+    because one step was dropped and the rest were glued into a paragraph.
+    A numbered list a client cannot read is not a safer reply than the one
+    this guard was protecting them from.
+
+    AND A NUMBERED STEP KEEPS ITS TIMING, unless the step is about somebody
+    contacting them. The same run lost "Shortlist — you'll receive 3 to 5
+    matched profiles within 48 hours" — the agency's own published turnaround,
+    grounded in the records and passed by ungrounded_figures, deleted as though
+    it were an invented callback time. This guard exists for "Grace will call
+    you back at 3pm", not for how long our own service takes. A step that DOES
+    promise contact ("a live agent will call you within 2 hours") still goes.
     """
     text = (reply or "").strip()
     if not text or not mentions_handover(text):
         return text
 
-    kept = [s for s in _SENTENCE_SPLIT.split(text) if s.strip() and not mentions_handover(s)]
-    cleaned = " ".join(kept).strip()
-    if not cleaned:
+    lines: list[str] = []
+    for line in text.split("\n"):
+        if not line.strip():
+            lines.append(line)  # a blank line is layout, not a sentence
+            continue
+        step = bool(_LIST_MARKER.match(line))
+        kept = []
+        for sentence in _SENTENCE_SPLIT.split(line):
+            if not sentence.strip():
+                continue
+            if step:
+                offends = bool(_HANDOVER_NAME.search(sentence)) or (
+                    mentions_handover(sentence)
+                    and bool(_CONTACT_PROMISE.search(sentence))
+                )
+            else:
+                offends = mentions_handover(sentence)
+            if not offends:
+                kept.append(sentence)
+        rebuilt = " ".join(kept).strip()
+        # A step whose content was stripped leaves a bare "2." behind,
+        # which reads worse than the missing step. Drop the line.
+        if step and _BARE_MARKER.match(rebuilt):
+            continue
+        lines.append(rebuilt)
+
+    cleaned = "\n".join(lines).strip()
+    if not cleaned.strip():
         cleaned = NEUTRAL_FOLLOW_UP
+    if cleaned == text:
+        return cleaned
     logger.warning("Removed handover announcement from reply: %r -> %r", text, cleaned)
     return cleaned

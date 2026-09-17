@@ -29,6 +29,7 @@ from app.graph.llm import complete
 from app.graph.prompts.system import IDENTITY, build_system_prompt
 from app.graph.prompts.templates import (
     AGENCY_INFO_INSTRUCTION,
+    FIRST_CONTACT_INTRO_NOTE,
     CANDIDATE_INSTRUCTION,
     CASE_INSTRUCTION,
     CONTACT_DISCOVERY_INSTRUCTION,
@@ -195,6 +196,12 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         )
 
     instruction = instruction_template.format(handover_token=HANDOVER_TOKEN)
+
+    # Rule 1, on the one turn it applies to. Appended AFTER the template is
+    # chosen, so it survives whichever specialised instruction won above -
+    # PROCESS_INSTRUCTION is the one that dropped it (2026-09-17).
+    if not (state.get("history_text") or "").strip():
+        instruction += FIRST_CONTACT_INTRO_NOTE
 
     system_prompt = build_system_prompt(
         dict(state),
