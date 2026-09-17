@@ -459,6 +459,54 @@ CASES = [
       "_forbid_prompt": "what email should I send them to"}),
 
 
+    # --- 2026-09-17: whose passport is it? --------------------------------
+    # Run, not predicated. The predicate returning True proves nothing if the
+    # branch never fires - and this branch has to do three things the predicate
+    # cannot show: answer instead of collecting, NOT hand over, and not finish
+    # the collection.
+    ("info_collector", "their own passport is answered, not collected",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "There isn't any helper here. I want to renew my passport",
+      "collected_info": {"full_name": "Rats"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1},
+      "history_text": "bot: may I know your helper's name?",
+      "_expect_prompt": "asking about THEIR OWN passport",
+      # `flagged_once` is the half that makes the NEXT turn work. Without it
+      # "why not?" is met with "May I know your helper's name?" again, and the
+      # assertion on the predicate cannot see that, because it supplies the
+      # flag itself.
+      "_expect_state": {"info_complete": False, "needs_handover": False,
+                        "flagged_once": ["own_passport"]}}),
+    # The records are stripped on that turn, which is the guard half rather
+    # than the prompt half: the retrieved set holds "$450" and would ground it.
+    ("info_collector", "...and the helper's fee is not offered to the model",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "There isn't any helper here. I want to renew my passport",
+      "collected_info": {"full_name": "Rats"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1},
+      "rag_context": "A passport renewal costs approximately $450 and takes "
+                     "approximately 3 working days.",
+      "history_text": "bot: may I know your helper's name?",
+      "_forbid_prompt": "450"}),
+    # The same request on the service the words actually misroute into.
+    ("info_collector", "...on the work-permit flow it lands in too",
+     {"service_type": "renewal", "intent": "renewal",
+      "incoming_text": "Also I want to renew my passport also",
+      "collected_info": {"full_name": "Vaidik", "helper_name": "Polo"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1},
+      "history_text": "bot: Here is everything for Polo's passport renewal.",
+      "_expect_prompt": "asking about THEIR OWN passport"}),
+    # The control. A helper's passport renewal is untouched - this is the
+    # service, and breaking it to fix the edge case would be the worse trade.
+    ("info_collector", "...while a helper's passport renewal still collects",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "Indonesia",
+      "collected_info": {"full_name": "Vaidik", "helper_name": "Polo",
+                         "nationality": "Indonesia"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1, "nationality": 1},
+      "history_text": "bot: which country is Polo's passport from?",
+      "_forbid_prompt": "asking about THEIR OWN passport"}),
+
     # --- 2026-09-17: the WhatsApp profile name on a GREETING turn ---------
     # The turn the suppression could not reach: no service_type yet, and it
     # goes to response_generator rather than info_collector, so neither half of

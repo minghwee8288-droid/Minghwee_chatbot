@@ -342,6 +342,10 @@ because the lead is opened early and the ticket is created much later.
 
 | The WhatsApp profile name is never used as the client's name, on ANY turn | `system._contact_block` | It was suppressed inside `info_collector`, gated on `service_type in NAME_FROM_RECORD_ONLY` — and a GREETING turn has no service and never reaches that node. Live 2026-09-17: *"Hi Vaidik, I'm Claire"* to a number we hold no name for, then *"May I know your name?"* two messages later. Moved to the one place the name ENTERS the prompt, so every node gets the same answer instead of each having to remember. The label is not printed as a fallback and not mentioned in order to forbid it — §8's rule for the branches that did not exist. |
 
+| Passport renewal is a HELPER's service, and a client asking about their own is told so | `info_collector._asks_about_own_passport` + `OWN_PASSPORT_NOTE` | All 21 `passport_renewal` rows and all four questions are about her — but none of that was a TEST, so when a client said *"There isn't any helper here"* the model simply reworded the questions and produced a closing briefing quoting **$450**, **3 working days** and asking for *"a copy of your NRIC"* AND *"a copy of your Work Permit"*. Answered, never handed over — the same reasoning as the unplaceable-nationality refusal. |
+| ...and the records are STRIPPED from that turn, not just forbidden | the branch passes `rag_context=""` to `_write` | `ungrounded_figures` grounds on the retrieved set, which on that turn really does hold $450 — so the prompt rule alone would have been the only thing standing between a client and a price for a service we do not sell them. With the records blanked, any figure the model produces is ungrounded and takes the whole reply with it. `FEE_BY_NATIONALITY`'s lesson pointed at a person instead of a country. |
+| ...and "my passport" is only read as theirs once we know the helper's name | `_MY_PASSPORT` + the `helper_name` test | A bare *"I want to renew my passport"* is genuinely ambiguous — plenty of employers say it meaning their maid's — so on the first message it is left alone and the flow's own first question surfaces it. Once we hold her name, *"Also I want to renew my passport also"* cannot mean hers. |
+
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
 own last line contained a question mark.
@@ -1039,6 +1043,78 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-17** — **Passport renewal quoted a client $450 to renew their own passport,
+  and asked them for a Work Permit they do not hold.** Tested on two numbers; the second
+  transcript is the serious one.
+  (A) **What the client saw.** *"I want to renew my passport"* → *"May I know your
+  helper's name?"* → *"There isn't any helper here. I want to renew my passport"* →
+  *"Got it — which country is your passport from?"* → and four questions later a full
+  closing briefing: *"Here is everything for your Indonesian passport renewal: It takes
+  approximately 3 working days. The cost is approximately $450. Here is what we will
+  need from you: 1. Copy of your NRIC 2. Copy of your Work Permit 3. Copy of your
+  passport."* That list contradicts itself on its face — somebody holding an NRIC does
+  not hold a Work Permit — because it is the HELPER's document list with the pronouns
+  swapped, priced at her embassy's fee, for a service Ming Hwee does not offer to that
+  person at all.
+  (B) **Nothing in the flow knew whose passport it was.** All 21 `passport_renewal`
+  knowledge-base rows are about a helper and all four questions are written about her.
+  None of that is a **test**, so when the client said there was no helper the model did
+  the reasonable thing and reworded the questions. The service has no concept of an
+  owner, and had none since it was written.
+  (C) **The first transcript is the same gap from the other side.** After a helper's
+  renewal had completed: *"Also I want to renew my passport also"*. Measured — that
+  classifies as **`renewal`**, the WORK PERMIT service, because the word carrying the
+  intent is "renew" — so the client was asked *"may I know whether Polo's current Work
+  Permit was issued through Ming Hwee or hired elsewhere?"*, which is `helper_from_us`,
+  added to that flow earlier the same day. The new field did not cause the misroute; it
+  made it conspicuous. Both services are in the fix for that reason.
+  (D) **Detected positively, which is what keeps it safe.** Two ways in: an EXPLICIT
+  denial (*"there isn't any helper"*, *"not my helper"*, *"my own passport"*), which
+  wins even when the sentence also contains the word "helper" because that is how a
+  denial is written; and a CONTEXTUAL one — *"my passport"* with no helper named, but
+  only once `helper_name` is already collected, because then we know her name and it
+  cannot be hers. A bare *"I want to renew my passport"* on the first message is
+  deliberately **not** caught: employers say that meaning their maid's, and the flow's
+  own first question is what surfaces it — which is exactly how the second transcript
+  reached the explicit denial. Measured on 15 phrasings, 6 caught and 9 left alone.
+  (E) **Answered, not handed over**, for the reason the 2026-09-11 nationality refusal
+  is not: *"we only renew helpers' passports"* is an answer we hold, and a consultant
+  repeating it is the 2026-09-08 shape of waste. And it is a CONVERSATION — the branch
+  remembers itself in `flagged_once`, so *"why not?"* lands there too instead of being
+  met with *"May I know your helper's name?"*, while naming a helper releases it and the
+  collection carries straight on. A correction needs no special case, same as that fix.
+  (F) **The records are stripped from that turn, and that is the guard rather than the
+  prompt rule.** `ungrounded_figures` grounds on the retrieved set, which on a
+  passport-renewal turn genuinely contains *"approximately $450"* — so it would have
+  passed the figure happily. With `rag_context` blanked the model is never offered it,
+  and any figure it produces anyway is ungrounded and takes the whole reply with it,
+  leaving the fallback. **`history_text` is deliberately NOT stripped**: the model needs
+  it to answer coherently, and on the first transcript it still carries $450 from the
+  helper's completed briefing — so the note forbids quoting a fee as well.
+  (G) **Eleven faults injected, eleven red** — the branch never firing; the explicit
+  and contextual halves separately; the follow-up memory; the release on naming a
+  helper; the flag never written; the records handed back to the model; the refusal
+  turned into a handover; the note's price ban and its do-not-redirect ban; and the
+  work-permit flow dropped from the set.
+  **Two came back GREEN and one SKIPPED, and all three were the checks.** The
+  remembering injection passed because the assertion SUPPLIES `flagged_once` itself, so
+  it proved the predicate reads the flag and not that anything writes it — "imported and
+  never called", one field along; a smoke state now asserts the returned state. The
+  redirect injection passed because the needle had been loosened to *"tell them where to
+  go"* after a case mismatch, and *"Feel free to tell them where to go"* still contains
+  it — a needle that survives the fault is not a check. And the handover injection
+  anchored on text that does not exist.
+  (H) **Verified live against the real model, six cases.** *"There isn't any helper
+  here"* → *"Ming Hwee handles passport renewal for domestic helpers only, not clients'
+  own passports. We can help with your helper's passport renewal or another Ming Hwee
+  service."* *"why not? can you still help me"* → the same position, held. *"ok then I
+  want my helper passport renewed"* → *"Got it. May I know your helper's name?"* — the
+  collection, resumed. Both misrouting phrasings answered on both services. And the
+  control, a Filipino helper's renewal mid-collection, is untouched: *"Got it — when
+  does Polo's current passport expire?"* **No fee, no timeline, no NRIC and no Work
+  Permit in any of the five refusals.**
+  `selfcheck_flows.py` is **487 assertions**; `smoke_nodes.py` is **100 states**.
 
 - **2026-09-17** — **"Hi Vaidik" to a number we hold no name for, and then "May I
   know your name?" one message later.** Reported from a live chat, on the first two

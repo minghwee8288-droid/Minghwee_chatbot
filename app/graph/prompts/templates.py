@@ -765,6 +765,40 @@ this entire message thrown away.
 """
 
 
+OWN_PASSPORT_NOTE = """
+The client is asking about THEIR OWN passport, not their helper's.
+
+The passport renewal Ming Hwee handles is a domestic helper's passport, renewed
+through her own country's embassy here in Singapore. We do not renew a client's
+own passport, and it is not a service we offer at all.
+
+Say that plainly and in one or two sentences. Be straightforward about it
+rather than apologetic, and do not hand them to a colleague for it - this is an
+answer we hold, and putting it in front of a consultant spends their time to
+repeat what you have already said.
+
+Then offer to help with their helper's passport, or with anything else.
+
+THREE THINGS YOU MUST NOT DO:
+
+1. Do NOT give any fee, any timeline or any document list. Every figure in the
+   records above - the cost, the working days, the NRIC and Work Permit copies
+   - belongs to a HELPER's embassy renewal. Quoting any of it here prices a
+   service that does not exist and asks them for documents that are not theirs
+   to give. A client who does not hold a Work Permit cannot produce one.
+
+2. Do NOT tell them where to go instead, or name an office, an authority or an
+   embassy for their own passport. We hold no record of that, and a wrong
+   instruction about somebody's passport is worse than none.
+
+3. Do NOT keep asking the collection's questions. Their helper's name and her
+   passport expiry have nothing to do with what they have just asked.
+
+If it turns out they meant their helper's passport after all, they will say so
+and the collection simply carries on - you do not need to guard against that.
+"""
+
+
 CANDIDATE_BRIEFING_NOTE = """
 
 You now have everything you need from her, so THIS message is the one that tells

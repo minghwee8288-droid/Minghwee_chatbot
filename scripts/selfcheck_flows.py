@@ -676,6 +676,86 @@ rows = [
  # working. Derived from the flow, not from the field's name.
  ("the route guard is keyed on a field direct_hiring collects",
   "helper_transfer_case" in [f.key for f in t.SERVICE_FIELDS["direct_hiring"]], True),
+ # --- 2026-09-17: whose passport is it? --------------------------------
+ # Live on two numbers. The serious one: "I want to renew my passport" ->
+ # "There isn't any helper here. I want to renew my passport" -> four questions
+ # later, a full closing briefing quoting "approximately 3 working days",
+ # "approximately $450" and asking for "a copy of your NRIC" AND "a copy of
+ # your Work Permit" - a contradiction on its face, and a price for a service
+ # Ming Hwee does not offer to that person at all. Every passport_renewal row
+ # and every one of its questions is about a HELPER, but none of that was a
+ # TEST, so the model just reworded the questions.
+ ("an explicit denial of a helper is caught",
+  [m for m in ("There isn't any helper here. I want to renew my passport",
+               "I am talking about my passport renewal not my helper",
+               "I want to renew my own passport",
+               "I dont have a helper, I need my passport renewed",
+               "no helper, its for me",
+               "passport for myself please")
+   if not ico._asks_about_own_passport({"incoming_text": m, "flagged_once": []}, {})],
+  []),
+ # The other side, and the one that decides whether this is safe: a client
+ # asking about HER passport must be untouched, including the sloppy phrasings
+ # employers actually use.
+ ("a helper's passport is never mistaken for the client's",
+  [m for m in ("I want to renew my helper passport",
+               "I want to renew my helper's passport",
+               "my maid passport is expiring",
+               "renew passport for my helper",
+               "her passport expires in 3 weeks",
+               "Polo", "Indonesia", "in 3 weeks",
+               # Bare and genuinely ambiguous. Deliberately NOT caught on the
+               # first message: plenty of employers say this meaning their
+               # maid's, and the flow's own first question is what surfaces it.
+               "I want to renew my passport")
+   if ico._asks_about_own_passport({"incoming_text": m, "flagged_once": []}, {})],
+  []),
+ # ...and the same bare sentence IS caught once we already hold a helper for
+ # this conversation, because then "my passport" cannot be hers. That is the
+ # first transcript: "Also I want to renew my passport also", said after Polo's
+ # renewal had completed.
+ ("...but it is caught once we already know the helper",
+  ico._asks_about_own_passport(
+      {"incoming_text": "Also I want to renew my passport also", "flagged_once": []},
+      {"helper_name": "Polo"}), True),
+ ("...and not before we do",
+  ico._asks_about_own_passport(
+      {"incoming_text": "Also I want to renew my passport also", "flagged_once": []},
+      {}), False),
+ # Once established it stays established, so "why not?" lands in the same
+ # branch instead of being met with "May I know your helper's name?" - the
+ # 2026-09-11 rule that a refusal has to be a conversation.
+ ("a follow-up still lands in the branch",
+  ico._asks_about_own_passport(
+      {"incoming_text": "why not? can you still help me",
+       "flagged_once": ["own_passport"]}, {}), True),
+ # ...and naming a helper takes the turn straight back to collecting, so a
+ # correction costs nothing and needs no special case.
+ ("...and naming a helper releases it",
+  ico._asks_about_own_passport(
+      {"incoming_text": "ok then my helper passport",
+       "flagged_once": ["own_passport"]}, {}), False),
+ # Both services it lands in, measured rather than assumed: a bare "renew my
+ # passport" classifies as passport_renewal, and "Also I want to renew my
+ # passport also" classifies as `renewal`, because the word carrying the intent
+ # is "renew".
+ ("the branch covers both services the request lands in",
+  sorted(ico._PASSPORT_SERVICES), ["passport_renewal", "renewal"]),
+ # The note must not price it. Every figure on that turn - the fee, the working
+ # days, the NRIC and Work Permit copies - belongs to a HELPER's embassy
+ # renewal, and `ungrounded_figures` would pass them because they really are in
+ # our records. Grounded is not the same as wanted.
+ ("the note forbids the fee, the timing and the document list",
+  [w for w in ("fee", "timeline", "document list")
+   if w not in tpl.OWN_PASSPORT_NOTE.lower()], []),
+ ("...and forbids sending them somewhere we have no record of",
+  "Do NOT tell them where to go" in tpl.OWN_PASSPORT_NOTE, True),
+ # Not a handover, for the reason the nationality refusal is not one: this is
+ # an answer we hold, and a consultant repeating it is spent time.
+ ("...and does not hand it to a consultant",
+  "do not hand them to a colleague" in tpl.OWN_PASSPORT_NOTE, True),
+ ("...and carries no figure of its own",
+  bool(re.search(r"\d{3}", tpl.OWN_PASSPORT_NOTE)), False),
  # --- 2026-09-17: the WhatsApp profile name, everywhere ----------------
  # Live, on the first two messages of a conversation:
  #   client: Hello

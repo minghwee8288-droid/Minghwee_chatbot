@@ -34,6 +34,7 @@ from app.graph.llm import complete, complete_json
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
     CANDIDATE_PROCESS_COMES_LAST_NOTE,
+    OWN_PASSPORT_NOTE,
     UNPLACEABLE_NATIONALITY_NOTE,
     CANDIDATE_BRIEFING_NOTE,
     HOME_LEAVE_TICKET_NOTE,
@@ -323,6 +324,79 @@ _LOCATION_DEPENDENT = re.compile(
     r"time\s?frame|duration|how\s+does\s+it\s+work|what\s+happens)\b",
     re.IGNORECASE,
 )
+
+
+# A client asking about THEIR OWN passport, inside a service that only ever
+# renews a HELPER's.
+#
+# Live 2026-09-17, on two different numbers. On the first, after a helper's
+# passport renewal had completed: "Also I want to renew my passport also" ->
+# the word "renew" classified it as WORK PERMIT renewal, so the client was
+# asked "was Polo's current Work Permit issued through Ming Hwee or hired
+# elsewhere?" On the second, and this is the serious one: "I want to renew my
+# passport" -> "There isn't any helper here. I want to renew my passport" ->
+# and four questions later the bot produced a full closing briefing quoting
+# "approximately 3 working days", "approximately $450", and asking for "a copy
+# of your NRIC" AND "a copy of your Work Permit" - a contradiction on its face,
+# because somebody holding an NRIC does not hold a Work Permit. It is the
+# HELPER's document list with the pronouns swapped, priced at her embassy's
+# fee, for a service Ming Hwee does not offer to that person at all.
+#
+# Nothing in the flow knew whose passport it was. All 21 `passport_renewal`
+# knowledge-base rows are about a helper and all four questions are written
+# about her - but none of that is a TEST, so the model simply reworded the
+# questions when it was told there was no helper.
+_HELPER_WORD = re.compile(
+    r"\b(helpers?|maids?|domestic\s+worker|fdw)\b", re.IGNORECASE
+)
+
+# (1) EXPLICIT - they have denied a helper, or said "my own" outright. This
+#     wins even when the sentence also contains the word "helper", because
+#     "not my helper" is how the denial is actually written.
+_OWN_PASSPORT_EXPLICIT = re.compile(
+    r"\b(?:no|not|isn'?t|aren'?t)\s+(?:any\s+)?(?:helpers?|maids?)\b"
+    r"|\b(?:do\s?n'?t|do\s+not|does\s?n'?t)\s+have\s+(?:any\s+|a\s+)?(?:helpers?|maids?)\b"
+    r"|\bnot\s+(?:my\s+|the\s+)?(?:helpers?|maids?)\b"
+    r"|\bmy\s+own\s+passport\b"
+    r"|\bpassport\s+for\s+myself\b"
+    r"|\bmy\s+personal\s+passport\b",
+    re.IGNORECASE,
+)
+
+# (2) CONTEXTUAL - "my passport" with no helper named. Only trusted once we
+#     already hold a helper for this conversation: at that point we know her
+#     name, so "my passport" cannot be hers. On the FIRST message it stays
+#     ambiguous ON PURPOSE - plenty of employers say "renew my passport"
+#     meaning their maid's - and the flow's own first question ("May I know
+#     your helper's name?") is what surfaces it, which is exactly how the
+#     second transcript reached the explicit denial above.
+_MY_PASSPORT = re.compile(r"\bmy\s+(?:own\s+)?passport\b", re.IGNORECASE)
+
+# The two services "renew my passport" actually lands in. Measured rather than
+# assumed: a bare "I want to renew my passport" classifies as
+# `passport_renewal`, while "Also I want to renew my passport also" classifies
+# as `renewal`, because the word carrying the intent is "renew".
+_PASSPORT_SERVICES = frozenset({"passport_renewal", "renewal"})
+
+
+def _asks_about_own_passport(state: ConversationState, collected: dict) -> bool:
+    """Whether this turn is about the CLIENT's passport rather than a helper's."""
+    text = state.get("incoming_text") or ""
+    if not text.strip():
+        return False
+    if _OWN_PASSPORT_EXPLICIT.search(text):
+        return True
+    # Once established it STAYS established until they mention a helper again,
+    # which is what lets "why not?" land here rather than being met with the
+    # next collection question. The unplaceable-nationality branch gets this
+    # free because its evidence is a stored FIELD; ours is a message, so it is
+    # remembered explicitly - and a correction still costs nothing, because
+    # naming a helper takes the turn straight back to the collection.
+    if "own_passport" in (state.get("flagged_once") or []):
+        return not _HELPER_WORD.search(text)
+    if _MY_PASSPORT.search(text) and not _HELPER_WORD.search(text):
+        return bool(str(collected.get("helper_name") or "").strip())
+    return False
 
 
 def _known_transfer_case(state: ConversationState) -> str | None:
@@ -2203,6 +2277,59 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # Deliberately NOT a handover: "we do not recruit from your country" is an
     # answer we hold, and putting it in front of a consultant spends their time
     # to say the thing the bot has already said.
+    # Their OWN passport, inside a service that only ever renews a helper's.
+    # Answered here rather than collected, for the same reasons the branch
+    # below it exists: it is an answer we hold, and a consultant's time spent
+    # repeating it is the 2026-09-08 shape of waste.
+    #
+    # THE RECORDS ARE STRIPPED FROM THIS TURN, and that is the half that is a
+    # guard rather than a prompt rule. The retrieved set on a passport-renewal
+    # turn contains "approximately $450" and "approximately 3 working days", so
+    # `ungrounded_figures` would pass either of them happily - they really are
+    # in our records, they are simply the HELPER's embassy fee. With
+    # `rag_context` blanked the model is not offered them, and any figure it
+    # produces anyway is ungrounded and takes the whole reply with it, leaving
+    # the fallback. Grounded is not the same as wanted, which is the
+    # FEE_BY_NATIONALITY lesson pointed at a person instead of a country.
+    #
+    # `history_text` is NOT stripped - the model needs it to answer coherently,
+    # and on a conversation where a helper's briefing has already gone out it
+    # still carries $450. The note forbids quoting a fee for that reason as
+    # well as this one.
+    if service_type in _PASSPORT_SERVICES and _asks_about_own_passport(
+        state, collected
+    ):
+        logger.info(
+            "Conversation %s: client is asking about their OWN passport, not a "
+            "helper's — answering rather than collecting",
+            state.get("conversation_id"),
+        )
+        return {
+            **lead_fields,
+            "collected_info": carry,
+            "service_type": service_type,
+            "collected_service": service_type,
+            "asked_field_counts": counts,
+            "missing_field_keys": [],
+            "info_complete": False,
+            # Remembered, so "why not?" on the next turn lands here too rather
+            # than being met with "May I know your helper's name?".
+            "flagged_once": ["own_passport"],
+            "reply": await _write(
+                {**dict(state), "rag_context": "", "rag_matches": []},
+                system_prompt_state,
+                OWN_PASSPORT_NOTE,
+                fallback=(
+                    "The passport renewal we handle is for a domestic helper, "
+                    "renewed through her own country's embassy here in "
+                    "Singapore - we are not able to renew your own passport. "
+                    "Is there anything else I can help you with?"
+                ),
+                max_sentences=3,
+            ),
+            "needs_handover": False,
+        }
+
     if service_type in ticket_service.CANDIDATE_SERVICES and (
         ticket_service.nationality_state(collected.get("nationality")) == "unsupported"
     ):
