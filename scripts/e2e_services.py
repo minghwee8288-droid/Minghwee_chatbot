@@ -77,6 +77,7 @@ ANSWERS = {
     "pet_detail": "one small dog, she just needs to feed him",
     "languages": "English and Mandarin at home",
     "preferred_nationality": "Filipino",
+    "helper_religion": "Catholic would be good, but no strong preference",
     "helper_profile": "around 30 to 40, at least 2 years experience",
     "hire_source": "someone who has worked in Singapore before",
     "cooking": "yes she needs to cook, no pork",
@@ -108,6 +109,7 @@ ANSWERS = {
     "contact_number": "+65 9123 4567",
     "transfer_direction": "I am looking to take on a transfer helper",
     "nationality": "Filipino",
+    "religion": "I am Catholic",
     "leave_dates": "she wants to go in December for three weeks",
     "passport_expiry": "in 4 months",
     "insurance_need": "for my helper",
@@ -225,6 +227,53 @@ async def run_service(service: str, opener: str, show: bool) -> dict:
     }
 
 
+def _carries_an_overview(message: str) -> bool:
+    """Whether the overview turn actually said something about the service.
+
+    Content, not length. The turn is two sentences by design - a statement
+    about the job, then the question - so what this looks for is a DECLARATIVE
+    sentence that is not merely a greeting or an acknowledgement.
+
+    It replaced `len(" ".join(every[:2])) > 200` on 2026-09-17, which reported
+    "did NOT appear" for "Good Evening, Vaidik. We handle the Work Permit
+    renewal submission and related paperwork. May I know your helper's name?"
+    - 193 characters against a threshold of 200. That is the 2026-09-09 (C)
+    defect in this same file: a length threshold standing in for a content
+    check, failing correct code and sending somebody looking for a bug that is
+    not there.
+    """
+    # Only sentences that actually TERMINATE in a full stop count. Splitting
+    # on "?" and reading what is left hands you the question itself with its
+    # mark removed, which reads as a declarative sentence and made the first
+    # version of this return True for "Good Evening, Vaidik. May I know your
+    # helper's name?" - a turn with no overview in it at all.
+    for sentence in re.findall(r"[^.!?]+[.!]", message):
+        stripped = sentence.strip().rstrip(".!").strip()
+        if not stripped:
+            continue
+        # A greeting or an acknowledgement is not an overview. Both are short
+        # and both are the opener the style guide asks for, so they are named
+        # rather than filtered by length.
+        if re.match(
+            r"^(hi|hello|good (morning|afternoon|evening)|thanks?|thank you|"
+            r"got it|noted|sure|okay|ok|perfect|understood)\b[^.]{0,30}$",
+            stripped,
+            re.I,
+        ):
+            continue
+        # Nor is Claire introducing herself. This only ever runs on the SECOND
+        # message, where the introduction has already happened, so it cannot
+        # bite in practice - but a helper that is wrong on its own terms is
+        # how a check stops being believed.
+        if "claire" in stripped.lower() or "ai assistant" in stripped.lower():
+            continue
+        # Anything else surviving in front of the question is a statement
+        # about the service, which is what the overview IS.
+        if len(stripped.split()) >= 4:
+            return True
+    return False
+
+
 def grade(result: dict) -> list[tuple[str, bool, str]]:
     """Every rule the agency has actually asked for, with its source named."""
     service = result["service"]
@@ -303,7 +352,7 @@ def grade(result: dict) -> list[tuple[str, bool, str]]:
         overview_turn = ico.briefs_on_this_turn("renewal", {"f": 1})
         add("the overview turn happens at all (_SMALL_TICKET_SERVICES)",
             overview_turn)
-        said_it = len(" ".join(every[:2])) > 200
+        said_it = _carries_an_overview(every[1] if len(every) > 1 else "")
         print(f"    note  the overview sentence "
               f"{'appeared' if said_it else 'did NOT appear'} this run "
               f"(model-dependent, roughly 2 runs in 4)")
