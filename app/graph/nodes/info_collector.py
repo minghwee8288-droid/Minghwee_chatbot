@@ -34,6 +34,7 @@ from app.graph.llm import complete, complete_json
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
     CANDIDATE_PROCESS_COMES_LAST_NOTE,
+    EXPIRING_SOON_NOTE,
     OWN_PASSPORT_NOTE,
     UNPLACEABLE_NATIONALITY_NOTE,
     CANDIDATE_BRIEFING_NOTE,
@@ -324,6 +325,60 @@ _LOCATION_DEPENDENT = re.compile(
     r"time\s?frame|duration|how\s+does\s+it\s+work|what\s+happens)\b",
     re.IGNORECASE,
 )
+
+
+# How soon the passport they told us about runs out, in days, when the answer
+# is clear enough to act on.
+#
+# Live 2026-09-17: a client said Bella's passport expires "in 5 days" and the
+# closing briefing replied "It takes approximately 6 to 8 weeks" - the two
+# numbers one line apart, and not a word connecting them. Reproduced 2 runs out
+# of 2 before this was written. The expiry has been collected since the flow was
+# built and put on the ticket; nothing ever read it.
+#
+# Deliberately coarse, and it FAILS TOWARDS SILENCE, which is the
+# `_heavy_workload` shape: anything this cannot read plainly returns None and
+# the briefing goes out exactly as it does today. "Next March", "when the
+# contract ends" and "not sure" are all None on purpose - guessing at a date and
+# then calling somebody's passport urgent on the strength of it is worse than
+# the omission this fixes.
+_EXPIRY_PATTERN = re.compile(
+    r"\b(\d{1,3})\s*(day|week|month|year)s?\b", re.IGNORECASE
+)
+_EXPIRY_WORDS = {
+    "today": 0, "tomorrow": 1, "this week": 7, "next week": 14,
+    "this month": 30, "next month": 45,
+}
+_UNIT_DAYS = {"day": 1, "week": 7, "month": 30, "year": 365}
+
+# 60 days covers the slowest route we hold - a Filipino renewal is quoted at 6
+# to 8 weeks, which is 42 to 56 days - so anything beyond this finishes
+# comfortably whatever her nationality, and the note stays out of the way. A
+# per-nationality table was considered and rejected: it would be a second copy
+# of lead times that live in the knowledge base, which is how two numbers drift
+# apart (section 9.8).
+_EXPIRY_SOON_DAYS = 60
+
+
+def _expiry_in_days(value: str) -> int | None:
+    """Roughly how long until it expires, or None if we cannot tell."""
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    match = _EXPIRY_PATTERN.search(text)
+    if match:
+        amount, unit = int(match.group(1)), match.group(2)
+        return amount * _UNIT_DAYS[unit]
+    for phrase, days in _EXPIRY_WORDS.items():
+        if phrase in text:
+            return days
+    return None
+
+
+def _expires_before_we_finish(collected: dict) -> bool:
+    """Whether the briefing has to say that this one is tight."""
+    days = _expiry_in_days(collected.get("passport_expiry", ""))
+    return days is not None and days <= _EXPIRY_SOON_DAYS
 
 
 # A client asking about THEIR OWN passport, inside a service that only ever
@@ -2126,6 +2181,15 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         # what the client DOES, which is the end of the message either way.
         if service_type == "home_leave":
             briefing_note += HOME_LEAVE_TICKET_NOTE
+
+        # ...and if her passport runs out before the renewal could finish, the
+        # briefing has to say so rather than print the two numbers one line
+        # apart and leave the client to notice. Live 2026-09-17: "in 5 days"
+        # answered with "It takes approximately 6 to 8 weeks", twice out of two.
+        #
+        # Appended LAST, so it lands after the timing line it is about.
+        if service_type == "passport_renewal" and _expires_before_we_finish(collected):
+            briefing_note += EXPIRING_SOON_NOTE
 
     # The very first thing this client has ever heard from us. Rule 1 and the
     # stage line in build_system_prompt both call for the introduction, but on a

@@ -346,6 +346,8 @@ because the lead is opened early and the ticket is created much later.
 | ...and the records are STRIPPED from that turn, not just forbidden | the branch passes `rag_context=""` to `_write` | `ungrounded_figures` grounds on the retrieved set, which on that turn really does hold $450 — so the prompt rule alone would have been the only thing standing between a client and a price for a service we do not sell them. With the records blanked, any figure the model produces is ungrounded and takes the whole reply with it. `FEE_BY_NATIONALITY`'s lesson pointed at a person instead of a country. |
 | ...and "my passport" is only read as theirs once we know the helper's name | `_MY_PASSPORT` + the `helper_name` test | A bare *"I want to renew my passport"* is genuinely ambiguous — plenty of employers say it meaning their maid's — so on the first message it is left alone and the flow's own first question surfaces it. Once we hold her name, *"Also I want to renew my passport also"* cannot mean hers. |
 
+| A passport that runs out before the renewal could finish is said out loud | `info_collector._expires_before_we_finish` + `EXPIRING_SOON_NOTE` | Live: *"in 5 days"* answered with *"It takes approximately 6 to 8 weeks"*, the two figures one line apart and nothing connecting them — 2 runs out of 2. `passport_expiry` had been collected since the flow was written and put on the ticket; **nothing ever read it.** Coarse on purpose and fails towards SILENCE: "next March", "when the contract ends" and a formatted date all return None, because guessing at a date and then calling somebody's passport urgent is worse than the omission. 60 days, which covers the slowest route we hold — a per-nationality table would be a second copy of lead times that live in the knowledge base (§9.8). |
+
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
 own last line contained a question mark.
@@ -1043,6 +1045,54 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-17** — **The passport expires in 5 days; the renewal takes 6 to 8 weeks;
+  the bot printed both and said nothing.** From the agency's second passport-renewal
+  test, on the transcript where everything else worked.
+  (A) **Reproduced 2 runs out of 2 before anything was written.** The closing briefing
+  reads *"It takes approximately 6 to 8 weeks."* two lines under a client who has just
+  answered *"in 5 days"*, and joins them up nowhere. `passport_expiry` has been
+  collected since this flow was built and goes onto the ticket under "Passport
+  expires" — **nothing has ever read it.** The 2026-09-04 note that removed the urgency
+  question ("an expiring passport IS the urgency, and the expiry date says it more
+  precisely") was right about the data and never followed through to using it.
+  (B) **Deterministic about WHEN to speak, model-written about what to say.** A coarse
+  parse of the client's own words gives a rough number of days; the note then tells the
+  model to compare it against the lead time it is about to quote and say so if the
+  renewal would not finish first. The comparison is left to the model because it has
+  both figures in the message it is writing, and the alternative — a per-nationality
+  lead-time table — would be a second copy of numbers that live in the knowledge base,
+  which is how two figures drift apart (§9.8).
+  (C) **It FAILS TOWARDS SILENCE**, which is the whole safety of it and the
+  `_heavy_workload` shape. Anything it cannot read plainly returns None and the briefing
+  goes out exactly as it does today: *"next March"*, *"when the contract ends"*, *"not
+  sure"* and **"27 September 2033"** — the format `contact._passport_expiry` produces
+  off `biodata.passportExpiry` — are all silent on purpose. Guessing at a date and then
+  calling somebody's passport urgent on the strength of it is worse than the omission
+  being fixed. 19 phrasings measured: 9 flagged, 4 comfortable, 6 silent.
+  (D) **60 days**, because a Filipino renewal is quoted at 6 to 8 weeks — 42 to 56 days
+  — so anything past it finishes comfortably whatever her nationality, and the note
+  stays out of the way.
+  (E) **Three things the note forbids**, all asserted: inventing a date, a deadline or a
+  faster route; promising it can be rushed or expedited beyond saying the team will see
+  it is urgent, because we do not control an embassy's timetable; and telling them what
+  happens if the passport lapses or what MOM will do — we hold no record of that, and
+  frightening somebody with a consequence nobody has checked is worse than silence.
+  (F) **Nine faults injected, nine red** — the note never appended and appended to
+  every briefing; a short expiry not read as short; the threshold dropped to nothing and
+  widened until it fires on everything; a vague answer guessed at rather than left
+  alone; and each of the three prohibitions removed.
+  (G) **Verified live**: *"It takes approximately 6 to 8 weeks. This is tight as Bella's
+  passport expires in 5 days, so please send the documents to us as soon as possible and
+  our team will know it is urgent."* — immediately after the timing line, with no
+  invented date and no promise. The control, a passport with two years left, is silent.
+  **Measured in the same transcript and NOT changed:** the bot opened one turn *"Ellena.
+  When does Bella's current passport expire?"* — the client's name standing alone as a
+  sentence, which reads like a form calling out a row and is the shape the 2026-09-10
+  fix was written about. Re-run four times on that exact turn it did not reproduce once
+  ("Thanks, when does Bella's current passport expire?"), so it is model variation
+  rather than an instruction, and there is nothing to fix until it is seen again.
+  `selfcheck_flows.py` is **494 assertions**; `smoke_nodes.py` is **103 states**.
 
 - **2026-09-17** — **Passport renewal quoted a client $450 to renew their own passport,
   and asked them for a Work Permit they do not hold.** Tested on two numbers; the second

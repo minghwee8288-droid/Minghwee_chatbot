@@ -459,6 +459,50 @@ CASES = [
       "_forbid_prompt": "what email should I send them to"}),
 
 
+    # --- 2026-09-17: the expiry the briefing said nothing about -----------
+    ("info_collector", "a passport expiring in days is flagged in the briefing",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "in 5 days",
+      "collected_info": {"full_name": "Ellena", "helper_name": "Bella",
+                         "nationality": "Philippines", "passport_expiry": "in 5 days"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "nationality": 1, "passport_expiry": 1},
+      "briefed_services": [],
+      "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
+      "rag_context": "A Filipino helper's passport renewal takes approximately "
+                     "6 to 8 weeks and costs approximately $450.",
+      "history_text": "bot: When does Bella's current passport expire?",
+      "_expect_prompt": "HER PASSPORT EXPIRES SOON"}),
+    # The control. A passport good for two more years needs no warning, and a
+    # note that fires on every briefing is the 2026-09-17 workload defect.
+    ("info_collector", "...and one with years left is not",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "in 2 years",
+      "collected_info": {"full_name": "Ellena", "helper_name": "Bella",
+                         "nationality": "Philippines", "passport_expiry": "in 2 years"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "nationality": 1, "passport_expiry": 1},
+      "briefed_services": [],
+      "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
+      "rag_context": "A Filipino helper's passport renewal takes approximately "
+                     "6 to 8 weeks and costs approximately $450.",
+      "history_text": "bot: When does Bella's current passport expire?",
+      "_forbid_prompt": "HER PASSPORT EXPIRES SOON"}),
+    # ...and an answer we cannot read plainly stays silent rather than guessing.
+    ("info_collector", "...nor one we cannot read plainly",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "when her contract ends",
+      "collected_info": {"full_name": "Ellena", "helper_name": "Bella",
+                         "nationality": "Philippines", "passport_expiry": "when her contract ends"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "nationality": 1, "passport_expiry": 1},
+      "briefed_services": [],
+      "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
+      "rag_context": "A Filipino helper's passport renewal takes approximately "
+                     "6 to 8 weeks and costs approximately $450.",
+      "history_text": "bot: When does Bella's current passport expire?",
+      "_forbid_prompt": "HER PASSPORT EXPIRES SOON"}),
+
     # --- 2026-09-17: whose passport is it? --------------------------------
     # Run, not predicated. The predicate returning True proves nothing if the
     # branch never fires - and this branch has to do three things the predicate

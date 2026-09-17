@@ -765,6 +765,37 @@ this entire message thrown away.
 """
 
 
+EXPIRING_SOON_NOTE = """
+
+HER PASSPORT EXPIRES SOON, AND THEY HAVE ALREADY TOLD YOU WHEN.
+
+Compare what they said against the lead time you are about to quote from the
+records. If the renewal would not finish before the passport expires, say so
+plainly, in one sentence, immediately after the timing line - do not leave them
+to work it out from two numbers in the same message.
+
+Say what actually helps: that it is tight, that the documents should come to us
+as soon as possible, and that our team will know it is urgent when they pick
+this up.
+
+What you must NOT do:
+
+- Do NOT invent a new date, a faster route, a deadline or a number of days. You
+  have the two figures they and the records gave you and nothing else. A figure
+  that is not one of those gets this whole message thrown away and they lose
+  the briefing with it.
+- Do NOT promise that it will be done in time, that it can be rushed, expedited
+  or prioritised beyond saying our team will see that it is urgent. We do not
+  control an embassy's timetable.
+- Do NOT tell them what happens if the passport lapses, what MOM will do, or
+  anything about her permit. We hold no record of that here, and frightening
+  somebody with a consequence we have not checked is worse than saying nothing.
+
+If the renewal comfortably finishes first, say nothing about it at all - the
+timing line has already told them.
+"""
+
+
 OWN_PASSPORT_NOTE = """
 The client is asking about THEIR OWN passport, not their helper's.
 

@@ -676,6 +676,42 @@ rows = [
  # working. Derived from the flow, not from the field's name.
  ("the route guard is keyed on a field direct_hiring collects",
   "helper_transfer_case" in [f.key for f in t.SERVICE_FIELDS["direct_hiring"]], True),
+ # --- 2026-09-17: a passport that runs out before we could renew it ----
+ # Live: "in 5 days" answered with "It takes approximately 6 to 8 weeks", the
+ # two numbers one line apart and nothing connecting them. Reproduced 2 runs of
+ # 2. The expiry has been collected since the flow was built and put on the
+ # ticket; nothing ever read it.
+ ("a clearly short expiry is read as short",
+  [m for m in ("in 5 days", "5 days", "in 2 weeks", "in 4 weeks", "next month",
+               "in 2 months", "tomorrow", "this week", "in 1 month")
+   if not ico._expires_before_we_finish({"passport_expiry": m})], []),
+ # 60 days covers the slowest route we hold - a Filipino renewal is 6 to 8
+ # weeks, which is 42 to 56 days - so anything past it finishes comfortably
+ # whatever her nationality.
+ ("...and a comfortable one is not",
+  [m for m in ("in 6 months", "in 2 years", "in 1 year", "in 90 days")
+   if ico._expires_before_we_finish({"passport_expiry": m})], []),
+ # FAILS TOWARDS SILENCE, which is the whole safety of it: anything this cannot
+ # read plainly leaves the briefing exactly as it is today. Guessing at a date
+ # and then calling somebody's passport urgent on the strength of it is worse
+ # than the omission being fixed. "27 September 2033" is in that set on
+ # purpose - it is the format `contact._passport_expiry` produces off
+ # `biodata.passportExpiry`, and a 2033 date is not urgent anyway.
+ ("an answer it cannot read plainly says nothing at all",
+  [m for m in ("next March", "when the contract ends", "not sure", "",
+               "soon", "27 September 2033")
+   if ico._expires_before_we_finish({"passport_expiry": m})], []),
+ # The note may restate the two figures it was given and invent no third.
+ ("the note forbids inventing a date or a deadline",
+  "Do NOT invent a new date" in tpl.EXPIRING_SOON_NOTE, True),
+ ("...and forbids promising it can be rushed",
+  "rushed" in tpl.EXPIRING_SOON_NOTE, True),
+ # We hold no record of what MOM does when a passport lapses, and frightening
+ # somebody with a consequence nobody has checked is worse than silence.
+ ("...and forbids threatening them with a consequence we have not checked",
+  "what MOM will do" in tpl.EXPIRING_SOON_NOTE, True),
+ ("...and carries no figure of its own",
+  bool(re.search(r"\d{2,}", tpl.EXPIRING_SOON_NOTE)), False),
  # --- 2026-09-17: whose passport is it? --------------------------------
  # Live on two numbers. The serious one: "I want to renew my passport" ->
  # "There isn't any helper here. I want to renew my passport" -> four questions
