@@ -459,6 +459,89 @@ CASES = [
       "_forbid_prompt": "what email should I send them to"}),
 
 
+    # --- 2026-09-17: religion, in place of the pork/beef question ---------
+    # The agency's decision, taken after the trade was put to them: "in place
+    # of this 'are you able to handle pork or beef' and this 'would she need to
+    # handle pork or beef?' ask the religion question because that is priority."
+    ("info_collector", "the employer is asked her religion, all options named",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "Filipino",
+      "collected_info": {"full_name": "Thomas", "requirement": "childcare",
+                         "children_detail": "two, aged 3 and 7",
+                         "household": "4 adults and 2 children",
+                         "home_type": "condo", "helper_room": "own room",
+                         "first_time_hire": "yes", "home_size": "3 bed 2 bath",
+                         "pets": "no pets", "languages": "English",
+                         "preferred_nationality": "Filipino"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1,
+                             "home_type": 1, "helper_room": 1, "pets": 1,
+                             "languages": 1, "preferred_nationality": 1},
+      "history_text": "bot: Do you have a preferred nationality?",
+      "_expect_prompt": "Buddhist"}),
+    # ...and it says WHY. Religion is the most personal thing either side is
+    # asked for, and a question like that arriving bare is the complaint that
+    # created _WHY_WE_ASK in the first place.
+    ("info_collector", "...and it explains why it is asking",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "Filipino",
+      "collected_info": {"full_name": "Thomas", "requirement": "childcare",
+                         "children_detail": "two, aged 3 and 7",
+                         "household": "4 adults and 2 children",
+                         "home_type": "condo", "helper_room": "own room",
+                         "first_time_hire": "yes", "home_size": "3 bed 2 bath",
+                         "pets": "no pets", "languages": "English",
+                         "preferred_nationality": "Filipino"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1,
+                             "home_type": 1, "helper_room": 1, "pets": 1,
+                             "languages": 1, "preferred_nationality": 1},
+      "history_text": "bot: Do you have a preferred nationality?",
+      "_expect_prompt": "say WHY you are asking before you ask it"}),
+    # Her side of the pairing, asked of her about her.
+    ("info_collector", "the helper is asked her own religion",
+     {"service_type": "candidate_new_hiring", "intent": "candidate_registration",
+      "contact_type": "candidate",
+      "incoming_text": "28",
+      "collected_info": {"full_name": "Siti", "nationality": "Indonesia",
+                         "age": "28"},
+      "asked_field_counts": {"full_name": 1, "nationality": 1, "age": 1},
+      "history_text": "bot: May I know your age?",
+      "_expect_prompt": "May I know your religion"}),
+    # ...and her reason is addressed to HER. _WHY_WE_ASK is keyed on the field
+    # key with no idea which flow is asking, which is why the two sides have
+    # different keys and different wording.
+    ("info_collector", "...and her reason is written to her, not about her",
+     {"service_type": "candidate_new_hiring", "intent": "candidate_registration",
+      "contact_type": "candidate",
+      "incoming_text": "28",
+      "collected_info": {"full_name": "Siti", "nationality": "Indonesia",
+                         "age": "28"},
+      "asked_field_counts": {"full_name": 1, "nationality": 1, "age": 1},
+      "history_text": "bot: May I know your age?",
+      "_forbid_prompt": "your household's practices"}),
+    # The half that was REPLACED, not added to. Both the question and the
+    # options had to lose it: `_field_guidance` reads options into the spoken
+    # question, so "no pork" left in the list would have gone on asking it.
+    ("info_collector", "the cooking question no longer asks about pork or beef",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "no preference on age",
+      "collected_info": {"full_name": "Thomas", "requirement": "childcare",
+                         "children_detail": "two, aged 3 and 7",
+                         "household": "4 adults and 2 children",
+                         "home_type": "condo", "home_size": "3 bed 2 bath",
+                         "helper_room": "own room", "pets": "no pets",
+                         "languages": "English",
+                         "preferred_nationality": "Filipino",
+                         "helper_religion": "Catholic",
+                         "helper_profile": "no preference",
+                         "hire_source": "worked abroad"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1,
+                             "home_type": 1, "helper_room": 1, "pets": 1,
+                             "languages": 1, "preferred_nationality": 1,
+                             "helper_religion": 1, "helper_profile": 1,
+                             "hire_source": 1},
+      "history_text": "bot: any preference on her age or experience?",
+      "_forbid_prompt": "pork"}),
+
     # --- 2026-09-17: the salary floor ------------------------------------
     # Circled in the agency's screenshot. This client has said FILIPINO, and a
     # Filipino helper cannot be placed below S$650 - so "such as SGD 500-600 or
@@ -478,7 +561,8 @@ CASES = [
                          "home_type": "condo",
                          "home_size": "3 bedrooms and 2 bathrooms",
                          "helper_room": "own room", "pets": "no pets",
-                         "languages": "English", "preferred_nationality": "Filipino",
+                         "languages": "English",
+                         "helper_religion": "no preference", "preferred_nationality": "Filipino",
                          "helper_profile": "32 to 36, Middle East experience",
                          "hire_source": "worked abroad",
                          "cooking": "any cuisine, willing to learn",
@@ -486,6 +570,7 @@ CASES = [
       "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1,
                              "home_type": 1, "helper_room": 1, "pets": 1,
                              "languages": 1, "preferred_nationality": 1,
+                             "helper_religion": 1,
                              "helper_profile": 1, "special_duties": 1},
       "history_text": "bot: would she need to handle gardening?",
       "_expect_prompt": "SGD 650-700",
@@ -503,7 +588,8 @@ CASES = [
                          "home_type": "condo",
                          "home_size": "3 bedrooms and 2 bathrooms",
                          "helper_room": "own room", "pets": "no pets",
-                         "languages": "English", "preferred_nationality": "no preference",
+                         "languages": "English",
+                         "helper_religion": "no preference", "preferred_nationality": "no preference",
                          "helper_profile": "32 to 36, Middle East experience",
                          "hire_source": "worked abroad",
                          "cooking": "any cuisine, willing to learn",
@@ -511,6 +597,7 @@ CASES = [
       "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1,
                              "home_type": 1, "helper_room": 1, "pets": 1,
                              "languages": 1, "preferred_nationality": 1,
+                             "helper_religion": 1,
                              "helper_profile": 1, "special_duties": 1},
       "history_text": "bot: would she need to handle gardening?",
       "_expect_prompt": "below SGD 500"}),
@@ -537,6 +624,7 @@ CASES = [
                          "home_size": "3 bedrooms and 2 bathrooms",
                          "helper_room": "own room", "pets": "no pets",
                          "languages": "English",
+                         "helper_religion": "no preference",
                          "preferred_nationality": "Filipino",
                          "helper_profile": "32 to 36, Middle East experience",
                          "hire_source": "worked abroad",
@@ -545,6 +633,7 @@ CASES = [
       "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1,
                              "home_type": 1, "helper_room": 1, "pets": 1,
                              "languages": 1, "preferred_nationality": 1,
+                             "helper_religion": 1,
                              "helper_profile": 1, "special_duties": 1},
       "history_text": "bot: would she need to handle gardening?",
       "_stub_reply": "Do you have a monthly salary budget in mind, such as "

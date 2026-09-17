@@ -148,6 +148,13 @@ _BRACKET = re.compile(r"\d+\s*(?:-|to|\u2013)\s*\d+|\bat least \d+|"
 _MATCHED_PAIRS = {
     "requirement": "work_scope",
     "preferred_nationality": "nationality",
+    # 2026-09-17, at the agency's instruction and IN PLACE OF the pork/beef
+    # question on both sides. The second pairing whose halves cannot share one
+    # option list, for the same reason as the one above it: the employer's list
+    # ends in "no preference", which is an answer to his question and not a
+    # thing she can be. Derived from `_RELIGIONS` rather than retyped, so the
+    # two still cannot drift.
+    "helper_religion": "religion",
     "helper_profile": "age",
     "languages": "languages_spoken",
     # `cooking_ability` is still the counterpart - an employer IS asked whether
@@ -383,7 +390,9 @@ rows = [
  ("small-ticket services", sorted(S), ["insurance", "passport_renewal", "renewal"]),
  ("blocks the hiring total", q(f"The total first-year cost is S{D}14,000-17,500."), True),
  ("still quotes salary", q(f"Salaries range from {D}600 to {D}800."), False),
- ("new_hiring field count", len(t.SERVICE_FIELDS["new_hiring"]), 25),
+ # 26 since 2026-09-17: `helper_religion`, asked at the agency's instruction
+ # and in place of the pork/beef half of `cooking`.
+ ("new_hiring field count", len(t.SERVICE_FIELDS["new_hiring"]), 26),
  ("passport_renewal asks case id", any(f.key == "case_id" for f in t.SERVICE_FIELDS["passport_renewal"]), False),
  ("renewal asks case id", any(f.key == "case_id" for f in t.SERVICE_FIELDS["renewal"]), False),
  ("NO flow asks for a case id",
@@ -1023,8 +1032,12 @@ rows = [
  # if she briefly explains why she's asking." He named four; he was equally
  # clear that the plain ones stay plain: "Keep the simpler ones (number of
  # children, home type) short and direct as they are now."
+ # `helper_religion` and `religion` joined on 2026-09-17. Religion is the
+ # most personal thing either side is asked for, so it explains itself for
+ # exactly the reason the other three do.
  ("the intrusive questions say why they are asked",
-  sorted(ico._WHY_WE_ASK), ["additional_notes", "pets", "rest_day"]),
+  sorted(ico._WHY_WE_ASK),
+  ["additional_notes", "helper_religion", "pets", "religion", "rest_day"]),
  ("the plain ones are left plain",
   [k for k in ("home_type", "household", "languages", "home_size")
    if k in ico._WHY_WE_ASK], []),
@@ -1831,10 +1844,88 @@ rows = [
  # employer's options are all present, not that the two lists are identical.
  ("and both halves of a pairing offer the same options",
   sorted(emp for emp, cand in _MATCHED_PAIRS.items()
-         if emp != "preferred_nationality" and _options_of("new_hiring", emp)
+         if emp not in ("preferred_nationality", "helper_religion")
+         and _options_of("new_hiring", emp)
          and not set(_options_of("new_hiring", emp))
                  <= set(_options_of("candidate_new_hiring", cand))),
   []),
+ # `helper_religion` is the SECOND pairing whose halves cannot share one list,
+ # and it is held to a tighter rule than a bare exception rather than simply
+ # skipped: her list must be his list with "no preference" removed, and nothing
+ # else. So a religion added to one side and not the other still fails here,
+ # which is the whole job of this table.
+ ("...and the religion pair differs by exactly 'no preference'",
+  set(_options_of("new_hiring", "helper_religion")) - {"no preference"},
+  set(_options_of("candidate_new_hiring", "religion"))),
+ # A question only one answer can fit is not offered "or more than one".
+ # Live 2026-09-17: "may I know your religion, such as Muslim, Christian,
+ # Catholic, Hindu, Buddhist, another faith, OR MORE THAN ONE". That clause is
+ # `_field_guidance` doing as it is told, and it is right for `languages` and
+ # `requirement` and wrong for a person's own faith.
+ ("her religion is the one field a single answer has to fit",
+  sorted(f.key for svc in t.SERVICE_FIELDS for f in t.SERVICE_FIELDS[svc]
+         if not f.multiple_answers), ["religion"]),
+ # Checked through the guidance the model is HANDED, not on the flag, and both
+ # halves separately: the "more than one" invitation goes, the "something not
+ # on the list" invitation stays. Dropping both would be
+ # `options_are_exhaustive`, which is still only ever her country - a helper
+ # whose faith is not one of the five still has to be able to say so.
+ ("...so hers does not invite more than one",
+  "may give more than one" in _guidance_for("candidate_new_hiring", "religion"),
+  False),
+ ("...but still lets her give one that is not listed",
+  "not on the list" in _guidance_for("candidate_new_hiring", "religion"), True),
+ # His DOES take more than one - "Muslim or Christian is fine" is a real
+ # preference - and so do the option sets this clause was written for.
+ ("the employer's preference still takes more than one",
+  "may give more than one" in _guidance_for("new_hiring", "helper_religion"), True),
+ ("...and so does languages, which is why the clause exists",
+  "may give more than one" in _guidance_for("new_hiring", "languages"), True),
+ ("...with 'no preference' on his side only, since nobody can BE it",
+  ("no preference" in _options_of("new_hiring", "helper_religion"),
+   "no preference" in _options_of("candidate_new_hiring", "religion")),
+  (True, False)),
+ # Both halves name their options IN the written question, so `_field_guidance`
+ # takes its "name them all" branch. With six options and none of them named, a
+ # Hindu household shown "Muslim or Christian" as examples reads that as the
+ # whole of what we place - the 2026-09-07 languages defect.
+ ("the religion question names every option it offers",
+  [o for o in _options_of("new_hiring", "helper_religion")
+   if o.lower() not in _question_of("new_hiring", "helper_religion").lower()], []),
+ ("...and so does hers",
+  [o for o in _options_of("candidate_new_hiring", "religion")
+   if o.lower() not in _question_of("candidate_new_hiring", "religion").lower()], []),
+ # It replaced the pork/beef question rather than joining it, which is what the
+ # agency asked for once the trade was put to them. Asserted on BOTH sides and
+ # on the OPTIONS as well as the question: `no pork` and `no beef` were in the
+ # employer's option list, and `_field_guidance` reads options into the spoken
+ # question, so leaving them would have half-asked the question that was
+ # removed.
+ ("neither cooking question asks about pork or beef any more",
+  [svc for svc, key in (("new_hiring", "cooking"),
+                        ("transfer_employer", "cooking"),
+                        ("candidate_new_hiring", "cooking_ability"))
+   if "pork" in _question_of(svc, key).lower()
+   or "beef" in _question_of(svc, key).lower()], []),
+ ("...nor offers it as an option",
+  sorted({o for svc, key in (("new_hiring", "cooking"),
+                             ("candidate_new_hiring", "cooking_ability"))
+          for o in _options_of(svc, key)
+          if "pork" in o.lower() or "beef" in o.lower()}), []),
+ # `halal kitchen` and `vegetarian` deliberately STAY. Those describe the
+ # client's own kitchen, which is a cooking requirement; they are not a
+ # question about anybody's faith.
+ ("...while the kitchen requirements stay, because they are about the kitchen",
+  [o for o in ("halal kitchen", "vegetarian")
+   if o not in _options_of("new_hiring", "cooking")], []),
+ # And the employer's religion question is asked on both flows that choose a
+ # helper. A direct hire is deliberately out: the employer has already chosen
+ # her, so a preference is not a question anyone can act on.
+ ("the religion preference is asked wherever a helper is still being chosen",
+  [svc for svc in ("new_hiring", "transfer_employer")
+   if "helper_religion" not in {f.key for f in t.SERVICE_FIELDS[svc]}], []),
+ ("...and not where the helper is already chosen",
+  "helper_religion" in {f.key for f in t.SERVICE_FIELDS["direct_hiring"]}, False),
  # ...and cooking is on that list by name, which is the agency's own wording:
  # "Would you be willing to do other duties such as cooking, high-rise window
  # cleaning, car washing, gardening, grocery shopping, or hand-washing
@@ -2272,9 +2363,25 @@ rows = [
  # that matters to them is agreed with THE HELPER up front"). Said to the
  # helper herself that is a sentence about somebody else, which is why
  # candidate_notes is its own key and not `additional_notes`.
+ # Restated 2026-09-17. The hazard is a SHARED key: `_WHY_WE_ASK` is keyed on
+ # the field key with no idea which flow is asking, so a reason written for an
+ # employer is read out to the helper when both flows use that key. A key only
+ # the candidate flow has cannot inherit anything - there is no employer
+ # question wearing it - so `religion` is fine while `additional_notes` would
+ # not be. Derived from the employer flows rather than from a list, which is
+ # also what makes it survive a new flow.
  ("no candidate field inherits a reason written for an employer",
   sorted({f.key for f in t.SERVICE_FIELDS["candidate_new_hiring"]}
-         & set(ico._WHY_WE_ASK)), []),
+         & set(ico._WHY_WE_ASK)
+         & {f.key for svc in _lead.EMPLOYER_LEAD_SERVICES
+            if svc in t.SERVICE_FIELDS
+            for f in t.SERVICE_FIELDS[svc]}), []),
+ # ...and her reason is written TO her. The employer's says "your household";
+ # hers says "you". A reason that talks about the client in the third person to
+ # the client is the defect this pair of rules exists to stop.
+ ("her reason is addressed to her, not about her",
+  ("your household" in ico._WHY_WE_ASK.get("helper_religion", ""),
+   "your household" in ico._WHY_WE_ASK.get("religion", "")), (True, False)),
  # Until 2026-09-11 this ended on update_channel + email, "the order every
  # other flow uses". It no longer asks either: she is messaging us ON WhatsApp,
  # so the channel is not a question, and the agency asked for the collection to

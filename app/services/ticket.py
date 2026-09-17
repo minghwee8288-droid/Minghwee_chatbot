@@ -109,6 +109,21 @@ class Field:
     # here and precisely wrong for this one. Agency: "bot should not ask for or
     # another country thing in country question".
     options_are_exhaustive: bool = False
+    # Whether more than one of those options can be true at once.
+    #
+    # True almost everywhere - `languages` takes four, `requirement` takes
+    # childcare AND cooking - and `_field_guidance` says so, which is right.
+    # For a person's OWN faith it is not: live 2026-09-17 the helper was asked
+    # "may I know your religion, such as Muslim, Christian, Catholic, Hindu,
+    # Buddhist, another faith, or more than one".
+    #
+    # Deliberately NOT `options_are_exhaustive`. That one suppresses the whole
+    # invitation, and a helper whose faith is not one of the five still has to
+    # be able to give it - the 2026-09-11 note on that flag is explicit that it
+    # marks a closed answer space, and this is an open one that happens to take
+    # a single answer. The EMPLOYER's half keeps multiple: "Muslim or Christian
+    # is fine" is a real preference, and his list also ends in "no preference".
+    multiple_answers: bool = True
     # Only asked once an earlier answer opens it. See Gate.
     gate: Gate | None = None
 
@@ -492,6 +507,31 @@ _HELPER_FROM_US = Field(
 )
 
 
+# The religions the office actually places against, written once.
+#
+# The employer's list is this plus "no preference"; the helper's list is this
+# exactly. They are DERIVED from one tuple rather than typed twice, for the
+# reason `_matched_options` exists (section 9.8) - the two halves of a matched
+# pair offering different words is a match a consultant then has to make by
+# eye. This pair cannot literally share a list, because "no preference" is not
+# a thing anybody can BE; it is the same shape as `preferred_nationality`, and
+# it is the second pairing of that shape rather than a new kind of exception.
+#
+# Taken from what is on file rather than from general knowledge: the live
+# `candidates.religion` values are Roman Catholic, Christian (other) and Hindu,
+# and Muslim and Buddhist are the two the three source countries supply that
+# those six rows happen not to. Not exhaustive - `options_are_exhaustive` is
+# still only ever set on her country - so a helper whose faith is not listed
+# still answers with it.
+_RELIGIONS: tuple[str, ...] = (
+    "Muslim",
+    "Christian",
+    "Catholic",
+    "Hindu",
+    "Buddhist",
+)
+
+
 SERVICE_FIELDS: dict[str, list[Field]] = {
     # §2 — employer lead flow.
     #
@@ -679,6 +719,26 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             group="their preferences",
             options=("Filipino", "Indonesian", "Myanmar", "no preference"),
         ),
+        # Asked at the agency's instruction, 2026-09-17, and asked in place of
+        # the pork/beef question rather than beside it - their words, after the
+        # trade was put to them explicitly.
+        #
+        # Named in full in the written question so `_field_guidance` takes its
+        # "name them all" branch. With six options and none of them in the
+        # question it would pick two or three as examples, and a Hindu
+        # household shown "Muslim or Christian" reads that as the whole of what
+        # we place - the 2026-09-07 languages defect, which is the reason that
+        # branch exists.
+        Field(
+            "helper_religion",
+            "any preference on her religion",
+            "Is there a religion you would prefer for her - Muslim, Christian, "
+            "Catholic, Hindu, Buddhist, or no preference?",
+            max_asks=1,
+            optional=True,
+            group="their preferences",
+            options=_RELIGIONS + ("no preference",),
+        ),
         # candidates.age and candidates.experience_years are both columns the
         # office filters on; neither had an employer-side counterpart, so a
         # consultant had to ring back for them before shortlisting anyone. One
@@ -725,11 +785,23 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
                 "no preference",
             ),
         ),
+        # The pork/beef half went on 2026-09-17, replaced by `helper_religion`
+        # below. The agency was shown that the pair of pork/beef questions was
+        # the only place a placement's dietary constraint was captured on BOTH
+        # sides of the desk, and answered: "in place of this ... ask the
+        # religion question because that is priority."
+        #
+        # `no pork` and `no beef` left the OPTIONS with the clause, because
+        # leaving them would half-ask the question that was just removed -
+        # `_field_guidance` drops two or three options in as examples, so the
+        # bot would have gone on saying "such as no pork or no beef" with the
+        # question itself no longer asking it. `halal kitchen` and `vegetarian`
+        # stay: those describe the client's own kitchen, which is a cooking
+        # requirement and not a question about anybody's faith.
         Field(
             "cooking",
-            "cooking requirements, including whether she would need to handle pork or beef",
-            "Any particular cooking you would want her to handle, and would she need "
-            "to handle pork or beef?",
+            "cooking requirements",
+            "Any particular cooking you would want her to handle?",
             max_asks=1,
             optional=True,
             group="their preferences",
@@ -740,8 +812,6 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
                 "Western",
                 "halal kitchen",
                 "vegetarian",
-                "no pork",
-                "no beef",
                 "no specific requirement",
             ),
         ),
@@ -923,6 +993,30 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         # a consultant holding "someone in her thirties" on one side has
         # nothing to match on the other.
         Field("age", "age", "May I know your age?", max_asks=2, group="who she is"),
+        # Her half of the pairing the agency asked for on 2026-09-17. Asked of
+        # her, about her - the employer states a preference, she states a fact -
+        # which is what makes the two matchable at all.
+        #
+        # "no preference" is deliberately NOT in her list: it is an answer to
+        # the employer's question and not a thing anybody can be. The list is
+        # otherwise the employer's, derived from the same tuple rather than
+        # retyped.
+        #
+        # Her key is `religion` and his is `helper_religion`, which is the
+        # 2026-09-10 rule: a candidate key never reuses a portable employer
+        # key, or an employer's stated preference is carried into a helper's
+        # file as her own faith.
+        Field(
+            "religion",
+            "her religion",
+            "May I know your religion - Muslim, Christian, Catholic, Hindu, "
+            "Buddhist, or another faith?",
+            max_asks=1,
+            optional=True,
+            group="who she is",
+            options=_RELIGIONS,
+            multiple_answers=False,
+        ),
         # The categories here are deliberately WORD FOR WORD the ones the
         # employer's `requirement` field offers. A consultant matching this
         # helper to a family reads both sides of the same pairing, so if one
@@ -1673,6 +1767,7 @@ SERVICE_FIELDS[TRANSFER_EMPLOYER] += [
     _hiring_field("languages", gate=_TAKING_ON_TRANSFER),
     # --- their preferences ---
     _hiring_field("preferred_nationality", gate=_TAKING_ON_TRANSFER),
+    _hiring_field("helper_religion", gate=_TAKING_ON_TRANSFER),
     _hiring_field("helper_profile", gate=_TAKING_ON_TRANSFER),
     _hiring_field("cooking", gate=_TAKING_ON_TRANSFER),
     _hiring_field("special_duties", gate=_TAKING_ON_TRANSFER),
@@ -1805,8 +1900,7 @@ SERVICE_FIELDS[CANDIDATE_HIRING] += [
     Field(
         "cooking_ability",
         "the cooking she can do",
-        "What kind of cooking are you able to do, and are you able to handle "
-        "pork or beef?",
+        "What kind of cooking are you able to do?",
         max_asks=1,
         optional=True,
         group="what else she can do",
@@ -2382,6 +2476,8 @@ _DETAIL_LABELS = {
     "hire_source": "Experience wanted",
     "home_size": "Bedrooms / bathrooms",
     "cooking": "Cooking",
+    "helper_religion": "Religion preferred",
+    "religion": "Her religion",
     "rest_day": "Rest day",
     "additional_notes": "Also mentioned",
     "insurance_need": "Insurance needed for",

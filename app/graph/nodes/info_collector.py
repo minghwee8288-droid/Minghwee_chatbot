@@ -1011,6 +1011,17 @@ def _mentions_care(text: str) -> bool:
 # Keyed on the field key, so the ones shared with transfer_employer through
 # _hiring_field get it in both flows without a second copy (§9.8).
 _WHY_WE_ASK: dict[str, str] = {
+    # Added 2026-09-17 with the field. Religion is the most personal thing
+    # either side is asked for, and a question like that arriving bare is the
+    # 2026-09-09 complaint that created this table. Both entries are the SAME
+    # reason said to two different listeners, and both survive being asked
+    # "why?" - which is the test the 2026-09-17 purpose-note defect set.
+    "helper_religion": "so her faith and your household's practices fit "
+                       "together from day one, rather than becoming something "
+                       "either of you has to work around later",
+    "religion": "so we place you with a household whose practices you are "
+                "comfortable with, and so anything you do not eat or handle is "
+                "agreed before you accept the job",
     "pets": "so we only put forward helpers who are genuinely comfortable "
             "around animals - it is one of the things every helper is asked "
             "about, and a mismatch here goes wrong quickly",
@@ -1376,10 +1387,20 @@ def _field_guidance(
                     "do not recruit from, that is dealt with on the next turn "
                     "- it is not for this question to invite it."
                 )
-            else:
+            elif field.multiple_answers:
                 parts.append(
                     " Make clear they may give more than one, or something not "
                     "on the list."
+                )
+            else:
+                # Open answer space, single answer. Only one of these can be
+                # true of one person, so inviting "more than one" reads as a
+                # question nobody can answer - but something outside the list
+                # still has to be sayable.
+                parts.append(
+                    " Only one of these can be true at once, so do NOT invite "
+                    "more than one - but make clear they may give something "
+                    "that is not on the list."
                 )
         else:
             parts.append(

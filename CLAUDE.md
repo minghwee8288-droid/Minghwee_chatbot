@@ -336,6 +336,10 @@ because the lead is opened early and the ticket is created much later.
 | A work permit renewal establishes whose helper she is | `renewal` + `ticket._HELPER_FROM_US` | The service is not limited to helpers we placed. The SAME `Field` object `replacement` asks, not a second copy that can be reworded in one place (§9.8). It is not the banned question: "have you hired with us before" is answered from `placements` and never asked; this asks where one helper came from, which no record answers. |
 | Direct hire does not say "paperwork" | `_COLLECTION_PURPOSE` + the direct-hire documents row | Agency instruction, and scoped to direct hire only - the other services keep the word, because rewriting rows nobody objected to is how a correction turns into a rewrite. |
 
+| Religion is asked IN PLACE OF the pork/beef question, on both sides | `helper_religion` / `religion` + `_MATCHED_PAIRS` | The agency's decision, taken after the trade was put to them: *"in place of this ... ask the religion question because that is priority."* The pork/beef pair was the only place a placement's dietary constraint was captured on both sides of the desk, and it is gone from the QUESTIONS **and** from the `cooking` OPTIONS - `_field_guidance` reads options into the spoken question, so leaving "no pork" in the list would have half-asked the question that was just removed. `halal kitchen` and `vegetarian` stay: those describe the client's own kitchen. |
+| ...and the employer's list is the helper's list plus "no preference" | `ticket._RELIGIONS` | One tuple, two lists, derived rather than typed twice (§9.8). The second pairing whose halves cannot literally share one, after `preferred_nationality` - "no preference" is an answer to his question and not a thing she can BE. Asserted as that exact difference rather than skipped as an exception, so a religion added to one side and not the other still fails. |
+| A question only one answer can fit is not offered "or more than one" | `Field.multiple_answers` | Live 2026-09-17: *"may I know your religion, such as Muslim, Christian, Catholic, Hindu, Buddhist, another faith, **or more than one**"*. That clause is `_field_guidance` doing as it is told, and it is right for `languages` and `requirement`. Deliberately **not** `options_are_exhaustive`, which is still only ever her country: a helper whose faith is not one of the five still has to be able to give it. The employer's half keeps multiple - "Muslim or Christian is fine" is a real preference. |
+
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
 own last line contained a question mark.
@@ -823,16 +827,19 @@ at a time.
   to them — and `quotes_hiring_package_cost` enforces it. Both cannot hold. Salary,
   the levy and the $5,000 bond already go out; it is the package total that does not.
   One sentence from them settles it.
-- **Should a helper's religion be collected?** Their point 3, asked of us, so here is
-  what the records say rather than an opinion. **We already hold it**: `candidates.religion`
-  is populated on all six live rows (four Roman Catholic, one Christian, one Hindu),
-  taken on the registration form. **No flow asks it**, on either side of the desk. And
-  the thing religion actually decides in a placement is already asked of both, as a
-  matched pair: *"would she need to handle pork or beef?"* to the employer and *"are
-  you able to handle pork or beef?"* to the helper. So asking religion would duplicate
-  a record we hold and put a more sensitive question in place of the one that decides
-  the match. If they want it anyway it is one field — but it needs an employer-side
-  counterpart or a consultant cannot match on it (`_MATCHED_PAIRS`).
+- ~~**Should a helper's religion be collected?**~~ **ANSWERED 2026-09-17, and
+  built** — see the change log. What was put to them: we already hold
+  `candidates.religion` on every live row, no flow asked it, and the thing it decides
+  in a placement was already asked of both sides as a matched pair (*"would she need to
+  handle pork or beef?"* / *"are you able to handle pork or beef?"*). Their decision was
+  to ask religion **in place of** that pair, on both sides, because it is the higher
+  priority for them. Done. **What is still open is the half that leaves behind:** an
+  employer's pork/beef requirement is now captured nowhere, and religion does not
+  predict handling reliably. The helper's own side survives on the registration form
+  (`biodata.commitments.handle_pork` / `handle_beef`) and `halal kitchen` is still a
+  cooking option, so a consultant is not blind — but if they want the employer's
+  dietary requirement back as a question, it is one field beside the religion one
+  rather than inside the cooking question it used to share.
 - **The Indonesian and Myanmar salary floors.** The Philippines now has one (S$650
   fresh, from S$670 experienced) and it is enforced in the budget question. The KB's
   own figures for the other two are the ones that were already there and nobody has
@@ -1030,6 +1037,89 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-17** — **Religion replaces the pork/beef question, by instruction, after
+  the trade was put to the agency and they took it.** Their answer to the §9 note
+  below: *"but i want this thing so in this case do one thing in place of this 'are you
+  able to handle pork or beef' and this 'would she need to handle pork or beef?' ask the
+  religion question because that is priority."*
+  (A) **The concern was raised once, answered, and is not raised again.** What was put
+  to them: we already hold `candidates.religion` on every live row, the employer flow
+  asks nobody's religion, and the thing religion decides in a placement - pork and beef
+  - was already asked of BOTH sides as a matched pair. They have decided the religion
+  question is worth more than the dietary one. It is their business and their form; the
+  change is made in full.
+  (B) **It is a REPLACEMENT, and the options had to go with the question.** Stripping
+  *"and would she need to handle pork or beef?"* from the wording alone would have left
+  `no pork` and `no beef` sitting in `cooking`'s option list - and `_field_guidance`
+  drops two or three options into the spoken question as examples, so the bot would have
+  gone on saying *"such as no pork or no beef"* with the question no longer asking it.
+  Both are out of both lists. `halal kitchen` and `vegetarian` STAY: those describe the
+  client's own kitchen, which is a cooking requirement and not a question about anyone's
+  faith.
+  (C) **Both halves of the pairing, or a consultant matches them by eye.** The employer
+  states a preference and the helper states a fact, which is what `_MATCHED_PAIRS` is
+  for. `_RELIGIONS` is one tuple; his list is that plus `no preference`, hers is that
+  exactly, and the assertion is that they differ **by exactly that one entry** rather
+  than an exception saying "these two are allowed to disagree". Her key is `religion`
+  and his is `helper_religion`, which is the 2026-09-10 rule - a shared key would carry
+  an employer's stated preference into a helper's file as her own faith.
+  (D) **Asked on the two flows where a helper is still being chosen** - `new_hiring` and
+  `transfer_employer` - and deliberately NOT on `direct_hiring`, where the employer has
+  already picked her and a preference is not something anyone can act on. Their own
+  instruction asked for it in the relevant workflow *"rather than being asked
+  universally"*.
+  (E) **Both sides say why, and the two reasons are the same reason told to two
+  different people.** `_WHY_WE_ASK` is keyed on the field key with no idea which flow is
+  asking, which is exactly why the two keys are different: his says *"your household's
+  practices"*, hers says *"a household whose practices you are comfortable with"*. A
+  reason that talks about the client in the third person TO the client is the defect
+  that pair of rules exists to stop, and it is asserted in both directions.
+  (F) **The rule about a candidate inheriting an employer's reason was restated, not
+  suppressed.** It asserted that no candidate key appears in `_WHY_WE_ASK` at all — but
+  the hazard is a SHARED key, because a reason written for an employer is only ever read
+  out to a helper when both flows use that key. `religion` exists on no employer flow,
+  so it cannot inherit anything. Derived from the employer services now, which also
+  makes it survive a new flow.
+  (G) **And verifying it live found a reading defect in a rule five years of option
+  lists had not exposed.** *"may I know your religion, such as Muslim, Christian,
+  Catholic, Hindu, Buddhist, another faith, **or more than one**"*. `_field_guidance`
+  appends *"they may give more than one, or something not on the list"* to every
+  non-exhaustive option set — correct for `languages`, which takes four, and for
+  `requirement`, which takes childcare and cooking at once; nonsense for a person's own
+  faith. New `Field.multiple_answers`, false on exactly one field and asserted as such.
+  **Deliberately not `options_are_exhaustive`**: that flag suppresses the whole
+  invitation, and a helper whose faith is not one of the five still has to be able to
+  say so. The employer's half keeps multiple, because *"Muslim or Christian is fine"* is
+  a real preference.
+  (H) **Eleven faults injected, eleven red** — the question removed from either side;
+  the pork/beef clause restored to each; `no pork` restored to the options; either
+  question stripped of its own option names; `no preference` offered to her as a faith;
+  her reason replaced with his; the transfer flow losing it; a direct hire gaining it;
+  and the reason removed entirely. Three initially CRASHED rather than failing by name
+  and two of those were the checks, now fixed to use `.get()`. **The third still
+  crashes and is left that way on purpose**: deleting `helper_religion` from
+  `new_hiring` breaks `transfer_employer` at import, because `_hiring_field` reuses the
+  employer's own `Field` — the same coupling recorded for `requirement` on 2026-09-16,
+  and a property worth having rather than a hole.
+  (I) **Verified live against the real model.** Employer: *"to help her faith fit
+  comfortably with your household's practices from day one, would you prefer Muslim,
+  Christian, Catholic, Hindu, Buddhist, no preference, more than one option, or another
+  religion?"* Helper: *"to help match you with a household whose practices you're
+  comfortable with ... may I know if you're Muslim, Christian, Catholic, Hindu,
+  Buddhist, or another faith?"* — every option named on both, no "more than one" on
+  hers, and the reason in the client's own sentence. Asked *"why does her religion
+  matter to you?"* it answers straight. The cooking question that follows is now *"any
+  particular cooking you'd want her to handle, such as Chinese, Malay, Western or a
+  halal kitchen?"* — no pork, no beef.
+  **The accepted cost, recorded rather than buried:** the EMPLOYER's pork/beef
+  requirement is now captured nowhere. The helper's own side survives on the office
+  form — `candidates.biodata.commitments.handle_pork` / `handle_beef` are two of the
+  nineteen commitments every helper answers — so a consultant can still read hers, and
+  `halal kitchen` remains a cooking option an employer may choose. But religion does not
+  predict handling reliably in either direction, and the direct question is gone by
+  instruction.
+  `selfcheck_flows.py` is **471 assertions**; `smoke_nodes.py` is **92 states**.
 
 - **2026-09-17** — **Ten things from the agency's review, and the one they circled
   was a salary band no Filipino placement could be made at.** Their list ran from
