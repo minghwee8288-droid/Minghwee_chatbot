@@ -360,13 +360,25 @@ def _case_id() -> Field:
 
 
 # Direct hire: the notice-period / clearance question only makes sense for a
-# helper who is still working for somebody. The agency's process note scopes it
-# to an overseas-employed helper, but a helper employed IN Singapore needs a
-# release just the same, so this keys off employment rather than location.
+# helper who is still working for somebody.
+#
+# It keyed on `employment_status` until 2026-09-17, when that field and
+# `helper_location` were collapsed into the one question that actually changes
+# the processing route (see `helper_transfer_case` below). A helper who IS in
+# Singapore on a work permit under another employer is precisely the one with a
+# release to get, so the single question answers this gate too and the pairing
+# is tighter than it was: the old gate could open on a helper employed
+# overseas, for whom "clearance from her current employer" means something
+# quite different.
+#
 # `excludes` is checked first, which is what keeps "free to take a new job" and
-# "between jobs" from matching on the word they contain.
+# "between jobs" from matching on the word they contain - and, on a yes/no
+# question, what keeps "no, she is not working for anyone" from opening on
+# "working". A bare "no" matches nothing here and is closed already, which is
+# the 2026-09-17 lesson about excludes: they are for a negation that CONTAINS
+# the match word, never for naming the alternative.
 _STILL_EMPLOYED = Gate(
-    "employment_status",
+    "helper_transfer_case",
     ("employ", "working", "works", "still with", "yes", "has a job"),
     excludes=(
         "not working",
@@ -447,6 +459,36 @@ _WAS_REFERRED = Gate(
     "referral_source",
     ("referral", "referred", "refer", "friend", "family", "relative", "staff",
      "colleague", "word of mouth", "recommend"),
+)
+
+
+# Whether THIS helper came from us. Shared by `replacement` and, since
+# 2026-09-17, by `renewal`.
+#
+# Deliberately a question and not a database read. prior_hires says whether we
+# have ever placed ANYONE with them, which does not say whether we placed THIS
+# helper - `placements.candidate_id` is null on most rows, so there is nothing
+# to match her against.
+#
+# And it is NOT the question this file bans. "Have you hired with us before?"
+# is answered by `prior_hires` and is never put to anyone (2026-09-04); this
+# asks where one particular helper came from, which our records genuinely
+# cannot answer.
+#
+# The agency asked for it on `renewal` on 2026-09-17: "For services such as
+# Work Permit Renewal, the service is not limited to existing agency clients.
+# The bot should therefore identify whether the enquiry is for an existing
+# client/helper, or a new client/helper, in which case the bot should collect
+# the required information and determine whether a new case/file needs to be
+# opened." One question answers that, and it is a question we already ask
+# elsewhere in exactly those words - so it is shared rather than retyped, for
+# the reason `_hiring_field` exists (see section 9.8).
+_HELPER_FROM_US = Field(
+    "helper_from_us",
+    "whether the current helper came from us",
+    "Is your current helper from Ming Hwee, or did you hire her elsewhere?",
+    max_asks=2,
+    options=("from Ming Hwee", "hired elsewhere"),
 )
 
 
@@ -969,13 +1011,6 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             group="the helper",
         ),
         Field(
-            "helper_contact",
-            "the helper's contact number",
-            "What is the best number to reach her on?",
-            max_asks=2,
-            group="the helper",
-        ),
-        Field(
             "helper_nationality",
             "the helper's nationality",
             "Which country is she from?",
@@ -990,36 +1025,36 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
                 "other",
             ),
         ),
+        # ONE question where there were two, 2026-09-17. `helper_location`
+        # asked where she is ("here in Singapore, back in her home country, or
+        # working in another country?") and `employment_status` asked whether
+        # she is working - and the agency's objection is that between them they
+        # ask four things when only one of them changes what we do:
+        #
+        #     "That is the only scenario that requires a different regulated
+        #      process, i.e. a transfer case governed by MOM requirements.
+        #      Whether the helper is in her home country, unemployed, working
+        #      in another country, or otherwise outside Singapore, does not
+        #      change the standard placement workflow."
+        #
+        # So the routing is a yes/no and nothing else is asked. YES is a
+        # transfer case; NO is a standard new placement, and we do not go on to
+        # ask which country she is sitting in, because the answer cannot change
+        # anything we then do.
+        #
+        # It is deliberately NOT given `options`. The old question carried
+        # three, and `_field_guidance`'s non-exhaustive branch appends "make
+        # clear they may give something not on the list" - which is what put
+        # "or somewhere else" in front of a client on 2026-09-17, the same
+        # shape as the "or another country?" defect on 2026-09-11. A yes/no
+        # question has nothing to enumerate and nothing to invite. It opens
+        # with an auxiliary, so `_yes_no_question` recognises it and a bare
+        # "yes" or "no" closes it rather than being re-asked by `_BARE_YES_NO`.
         Field(
-            "helper_location",
-            "where the helper is now",
-            "Where is she at the moment - here in Singapore, back in her home "
-            "country, or working in another country?",
-            max_asks=2,
-            group="the helper",
-            options=(
-                "in Singapore",
-                "in her home country",
-                "working in another country",
-            ),
-        ),
-        Field(
-            "employment_status",
-            "her current employment status",
-            "Is she working for someone at the moment, or is she free to take "
-            "on a new job?",
-            max_asks=2,
-            group="the helper",
-            options=(
-                "currently employed",
-                "between jobs",
-                "never worked overseas before",
-            ),
-        ),
-        Field(
-            "helper_availability",
-            "when she can start",
-            "When would she be available to start?",
+            "helper_transfer_case",
+            "whether she is on a work permit here under another employer",
+            "Is she currently in Singapore, working under a Work Permit with "
+            "another employer?",
             max_asks=2,
             group="the helper",
         ),
@@ -1032,6 +1067,37 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             optional=True,
             group="the helper",
             gate=_STILL_EMPLOYED,
+        ),
+        Field(
+            "helper_availability",
+            "when she can start",
+            "When would she be available to start?",
+            max_asks=2,
+            group="the helper",
+        ),
+        # Moved from question THREE to here, 2026-09-17, and made optional.
+        #
+        # The agency: "The bot should not request personal contact details at
+        # the beginning of the conversation. Contact information should only be
+        # requested after the user has received the relevant process, timeline
+        # and applicable cost information and has shown intent to proceed."
+        #
+        # Their own transcript is the evidence. Asked third - before the client
+        # had been told a single thing about how a direct hire works or what it
+        # costs - "What is the best number to reach her on?" was answered "I'm
+        # not comfortable to provide this information now." Asked here it comes
+        # after the overview, after her nationality and after we know whether
+        # this is a transfer case, which is the point at which somebody has
+        # decided to go ahead. Optional so a client who still declines is not
+        # blocked: a number we can ask for later is worth less than a
+        # collection that completes.
+        Field(
+            "helper_contact",
+            "the helper's contact number",
+            "What is the best number to reach her on?",
+            max_asks=2,
+            optional=True,
+            group="the helper",
         ),
         _UPDATE_CHANNEL,
         _EMAIL,
@@ -1070,17 +1136,7 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             "How long has your current helper been with you?",
             max_asks=2,
         ),
-        # Deliberately a question and not a database read. prior_hires says
-        # whether we have ever placed ANYONE with them, which does not say
-        # whether we placed THIS helper — `placements.candidate_id` is null on
-        # most rows, so there is nothing to match her against.
-        Field(
-            "helper_from_us",
-            "whether the current helper came from us",
-            "Is your current helper from Ming Hwee, or did you hire her elsewhere?",
-            max_asks=2,
-            options=("from Ming Hwee", "hired elsewhere"),
-        ),
+        _HELPER_FROM_US,
         Field("reason", "reason for the replacement", "What is the reason for the replacement?"),
         Field(
             "current_helper_exit",
@@ -1257,6 +1313,7 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             group="who they are",
         ),
         Field("helper_name", "helper's name", "May I know your helper's name?", max_asks=2),
+        _HELPER_FROM_US,
         Field(
             "permit_expiry",
             "work permit expiry",
@@ -2366,8 +2423,7 @@ _DETAIL_LABELS = {
     # question ("the helper's full name") and reads oddly as a heading.
     "helper_contact": "Helper's number",
     "helper_nationality": "Helper's nationality",
-    "helper_location": "Helper is",
-    "employment_status": "Her employment status",
+    "helper_transfer_case": "In Singapore on a permit with another employer",
     "helper_availability": "She can start",
     "notice_clearance": "Notice / clearance",
     "reason": "Reason",

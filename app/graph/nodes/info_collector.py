@@ -188,7 +188,12 @@ COLLECTOR_INTRO_NOTE = (
 _COLLECTION_PURPOSE = {
     "new_hiring": "so we can match a helper who actually suits their household",
     "candidate_new_hiring": "so we can put her in front of the right employers",
-    "direct_hiring": "so we can check the paperwork is in order before it goes to MOM",
+    # "For Direct Hire, the bot should avoid using the word paperwork"
+    # - the agency, 2026-09-17. It is our word for our own filing, and to a
+    # client who has already chosen their helper it makes a placement sound
+    # like an administrative obstacle. What they are actually buying is the
+    # submission being right first time, so the reason says that instead.
+    "direct_hiring": "so her application goes to MOM complete and correct the first time",
     "replacement": "so the right person picks this up and we find a suitable replacement",
     "transfer_employer": "so we can shortlist transfer helpers who actually fit",
     # The helper's own transfer. Six questions about her permit, her employer's
@@ -199,6 +204,29 @@ _COLLECTION_PURPOSE = {
 
 
 _SMALL_TICKET_SERVICES = frozenset({"renewal", "passport_renewal", "insurance"})
+
+# Every service that explains itself BEFORE the questions rather than after.
+#
+# The agency, 2026-09-17: "Once the service or intent has been identified, the
+# bot should proactively explain the relevant process and expected
+# timeline/lead time, without waiting for the user to ask", and the flow they
+# want is "Intent -> Process & Timeline -> Cost/Fee -> continue the service
+# workflow -> live agent handoff."
+#
+# The small-ticket services have done this since 2026-09-04. The two hiring
+# flows are the ones that never did, and they are the longest: `new_hiring` is
+# 25 questions, `direct_hiring` 9, and a client was being walked into both
+# having been told nothing about what they were buying. It is the same
+# complaint as the 2026-09-04 one that created this note, arriving against the
+# flows it was never applied to.
+#
+# NOT the same thing as _SMALL_TICKET_SERVICES, and the two are kept apart on
+# purpose: "a short, well-defined job we handle end to end" is true of an
+# insurance renewal and false of a first-time hire, and the note says so
+# differently for each.
+#
+# A service that briefs at the END is excluded below, so nothing briefs twice.
+_OVERVIEW_AT_START = _SMALL_TICKET_SERVICES | frozenset({"new_hiring", "direct_hiring"})
 
 
 # A passport-renewal question whose ANSWER changes with the helper's
@@ -297,14 +325,23 @@ _LOCATION_DEPENDENT = re.compile(
 )
 
 
-def _known_helper_location(state: ConversationState) -> str | None:
+def _known_transfer_case(state: ConversationState) -> str | None:
     """Which of the two direct-hire routes applies, if we have been told yet.
 
-    Read straight off the collected field rather than guessed from the message:
-    `direct_hiring` asks "Where is she at the moment", so the answer is either
-    on the record or it is not.
+    Read straight off the collected field rather than guessed from the message,
+    so the answer is either on the record or it is not.
+
+    Keyed on `helper_transfer_case` since 2026-09-17. It read `helper_location`
+    until then, and that field was three-way ("in Singapore / in her home
+    country / working in another country") where the route is two-way - a
+    helper is either on a work permit here, which skips the embassy and the
+    flight, or she is not. The agency collapsed the question for that reason,
+    and the guard is keyed on the same answer it always wanted: not where she
+    is, but whether this is a transfer case.
     """
-    value = str((state.get("collected_info") or {}).get("helper_location") or "").strip()
+    value = str(
+        (state.get("collected_info") or {}).get("helper_transfer_case") or ""
+    ).strip()
     return value or None
 
 
@@ -1085,7 +1122,7 @@ def briefs_on_this_turn(service_type: str | None, asked: dict | None) -> bool:
     silently does nothing looks exactly like a feature working quietly, because
     what the client gets is a perfectly reasonable question either way.
     """
-    if service_type not in _SMALL_TICKET_SERVICES:
+    if service_type not in _OVERVIEW_AT_START:
         return False
 
     # A service that briefs at the END does not also brief at the start.
@@ -1147,6 +1184,99 @@ RETURNING_NOTE = (
 )
 
 
+# The minimum basic salary we can place a helper of this nationality at.
+#
+# The Philippines only, because the Philippines is the only one the agency has
+# given us (2026-09-17): "Fresh Filipino helper: minimum basic salary of SGD
+# 650/month. Filipino helper with prior experience: basic salary starts from
+# SGD 670/month." The knowledge base's own figures for Indonesia and Myanmar
+# are the ones that were already there and nobody has confirmed them, so they
+# are NOT floors here - this is `FEE_BY_NATIONALITY`'s rule again, one column
+# along: what we hold for one nationality is not automatically another's.
+#
+# 650 and not 670. The floor is what a placement cannot go below, and a fresh
+# helper is the cheaper of the two cases; 670 is where an experienced helper
+# STARTS, and the agency was explicit that it is not a fixed figure ("with the
+# final salary depending on the helper's years of experience and profile"). A
+# band anchored on 670 would read as a price for something that is negotiated.
+_SALARY_FLOOR_BY_NATIONALITY: dict[str, int] = {"PH": 650}
+
+_BAND_DIGITS = re.compile(r"(\d{3,4})")
+
+
+def _band_bounds(option: str) -> tuple[int | None, int | None]:
+    """The low and high end of a salary band option, in dollars.
+
+    "SGD 500-600" -> (500, 600). "below SGD 500" -> (None, 500). "above SGD
+    800" -> (800, None). "not sure yet" -> (None, None), which is not a band at
+    all and is therefore never filtered out.
+    """
+    found = [int(d) for d in _BAND_DIGITS.findall(option)]
+    if not found:
+        return (None, None)
+    low = option.lower()
+    if len(found) == 1:
+        if "below" in low or "under" in low or "less" in low:
+            return (None, found[0])
+        if "above" in low or "over" in low or "more" in low:
+            return (found[0], None)
+        return (found[0], found[0])
+    return (min(found), max(found))
+
+
+def _effective_options(
+    field: ticket_service.Field, collected: dict[str, Any]
+) -> tuple[str, ...]:
+    """The options this question should actually offer, given what we know.
+
+    ONE definition, because the options are read in two places that must agree:
+    `_field_guidance` puts them into the question the model is told to ask, and
+    `grounded_options` tells `ungrounded_figures` which figures the reply is
+    allowed to contain. If those two disagree the bot is instructed to say a
+    number and then punished for saying it, which is exactly the defect
+    `grounded_options` was added for on 2026-09-09 (D).
+
+    Only `budget` is filtered, and only by the salary floor.
+
+    Live 2026-09-17, circled in the agency's own screenshot: a client who had
+    said they wanted a FILIPINO helper was asked "Do you have a monthly salary
+    budget in mind, such as SGD 500-600 or SGD 600-700?" Both of those sit at
+    or below the S$650 a Filipino helper cannot be placed below, so the
+    question invited a budget no placement could be made at - and the client
+    would have found that out from a consultant later, having already been
+    asked to think in the wrong numbers.
+
+    A band wholly below the floor is dropped. A band that STRADDLES it is
+    rewritten to start at the floor rather than dropped, because dropping it
+    would leave the cheapest option a long way above the minimum and overstate
+    what the client has to spend. "not sure yet" carries no figure and always
+    survives.
+    """
+    options = field.options or ()
+    if field.key != "budget" or not options:
+        return options
+
+    code = lead_service.nationality_code(
+        str(collected.get("nationality") or "")
+    ) or lead_service.nationality_code(str(collected.get("preferred_nationality") or ""))
+    floor = _SALARY_FLOOR_BY_NATIONALITY.get(code or "")
+    if not floor:
+        return options
+
+    kept: list[str] = []
+    for option in options:
+        low, high = _band_bounds(option)
+        if low is None and high is None:
+            kept.append(option)          # "not sure yet"
+        elif high is not None and high <= floor:
+            continue                     # wholly below the floor
+        elif low is not None and low < floor < (high or floor + 1):
+            kept.append(f"SGD {floor}-{high}" if high else option)
+        else:
+            kept.append(option)
+    return tuple(kept)
+
+
 def _field_guidance(
     service_type: str, collected: dict[str, Any], field: ticket_service.Field
 ) -> str:
@@ -1206,7 +1336,8 @@ def _field_guidance(
             "exact opposite of what this note is for."
         )
 
-    if field.options:
+    options = _effective_options(field, collected)
+    if options:
         # A field whose own written question already spells the options out is
         # asking for all of them ON PURPOSE, and the "drop two or three in"
         # rule below silently undoes that. Live, 2026-09-07: `languages` was
@@ -1218,12 +1349,12 @@ def _field_guidance(
         # Tamil-speaking household shown three Chinese and Malay options can
         # only conclude we do not place Tamil speakers.
         listed = sum(
-            1 for opt in field.options if opt.lower() in (field.question or "").lower()
+            1 for opt in options if opt.lower() in (field.question or "").lower()
         )
         if listed >= 3:
             parts.append(
                 "\n\nThe answers the office works with here are: "
-                + ", ".join(field.options)
+                + ", ".join(options)
                 + ". The written question above names them deliberately, so name them "
                 "all - the client cannot choose an option they were never shown. Keep "
                 "it one flowing sentence rather than a numbered menu."
@@ -1253,7 +1384,7 @@ def _field_guidance(
         else:
             parts.append(
                 "\n\nThe answers the office works with here are: "
-                + ", ".join(field.options)
+                + ", ".join(options)
                 + ". Use them to shape the question - dropping two or three in as "
                 "examples is how a person asks it. Never read the whole set out, never "
                 "number them, and never present them as a menu to choose from. "
@@ -1712,14 +1843,40 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # concrete.
     small_ticket_note = ""
     if briefs_on_this_turn(service_type, asked):
+        # "a short, well-defined job we handle end to end" is true of a
+        # permit renewal and plainly false of a 25-question first-time hire,
+        # so the opening clause is per service. The rest of the note - ground
+        # it strictly, and say nothing rather than "it depends" - is the same
+        # for both and is the half that keeps this safe.
+        opening = (
+            "This is a short, well-defined job we handle end to end, not "
+            "something to hand straight to a colleague."
+            if service_type in _SMALL_TICKET_SERVICES
+            else "There are a number of questions coming, so the client should "
+            "know how this works and roughly how long it takes BEFORE they "
+            "answer them rather than after."
+        )
         small_ticket_note = (
-            f"{chr(10)}{chr(10)}This is a short, well-defined job we handle end to end, not "
-            "something to hand straight to a colleague. THIS MESSAGE IS THE ONE "
+            f"{chr(10)}{chr(10)}{opening} THIS MESSAGE IS THE ONE "
             "EXCEPTION to \"ask for that one detail and nothing else\" above: open "
-            "with a single sentence saying what the job involves or how long it "
-            "takes, and THEN ask your question. Two sentences, and the first one is "
+            "with a single sentence saying what the job involves and, where the "
+            "records state one, how long it takes, and THEN ask your question. Two "
+            "sentences, and the first one is "
             "not optional — a client four questions into a form has been told "
             "nothing about what they are buying."
+            f"{chr(10)}{chr(10)}The LEAD TIME is the half they cannot guess and the "
+            "half the agency asked to be given without being asked for: if the "
+            "records above state how long this takes, say so in that sentence. If "
+            "they do not, say what the job involves and stop - do not estimate one."
+            f"{chr(10)}{chr(10)}A record saying the timing DEPENDS on something is "
+            "not a lead time. If the records say there is no single answer, or that "
+            "it turns on which helper they choose, or that a consultant will confirm "
+            "it later, then you have no lead time to give: leave it out entirely and "
+            "do not tell them it depends. Saying \"the exact timeline will be "
+            "confirmed once we know more\" costs them a sentence and tells them "
+            "nothing they did not already assume. Never remark on what our "
+            "records do or do not contain either - \"there is no fixed lead "
+            "time stated\" describes our filing to a client who cannot see it."
             f"{chr(10)}{chr(10)}Ground that sentence strictly: ONLY what the records "
             "above actually state. If the records say "
             "nothing about it, just ask your question and add nothing. Never "
@@ -1734,6 +1891,23 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "nationality, and is then asked for the nationality, has been given "
             "nothing and made to read a sentence for it."
         )
+        if service_type in COST_WITHHELD_SERVICES:
+            # The agency's 2026-09-17 flow puts Cost/Fee immediately after
+            # Process & Timeline. On these two services their 2026-09-04
+            # instruction forbids it outright - a new hire's price never
+            # reaches anyone before a salesperson has spoken to them - and
+            # `quotes_hiring_package_cost` enforces that whatever the prompt
+            # says. Saying so here means the overview does not spend its one
+            # sentence on a figure that is about to be swapped for the
+            # deferral line. The two instructions genuinely conflict and that
+            # is the agency's to resolve, not this note's.
+            small_ticket_note += (
+                f"{chr(10)}{chr(10)}Do NOT put a total, a package price or a "
+                "service fee in that sentence for this service, however "
+                "clearly the records state one. Spend it on what happens and "
+                "how long it takes. If they ask what it costs, that is "
+                "answered separately and not here."
+            )
 
     # Passport renewal branches on nationality and the branches are not
     # cosmetic: a Myanmar helper holds no embassy contract, so three forms a
@@ -1769,7 +1943,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     location_note = ""
     if (
         service_type == "direct_hiring"
-        and not _known_helper_location(state)
+        and not _known_transfer_case(state)
         and _LOCATION_DEPENDENT.search(state.get("incoming_text") or "")
     ):
         location_note = (
@@ -1779,8 +1953,8 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "- and you have not been told which applies here. Do not pick one. "
             "Do not quote a timeline, an embassy step or a travel arrangement "
             "that belongs to only one of them. Give only what is true for both, "
-            "say plainly that it depends on where she is at the moment, and ask. "
-            "Once you know, you can be specific."
+            "say plainly that it depends on whether she is already here on a "
+            "work permit, and ask. Once you know, you can be specific."
         )
 
     # The turn that stops and explains the whole service. Fires once, on the
@@ -2134,7 +2308,10 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
                 or nationality_note or location_note or record_name_note)
             else 2,
             withhold_cost=service_type in COST_WITHHELD_SERVICES,
-            grounded_options=next_field.options or (),
+            # The SAME filtered tuple the question was built from. If these
+            # two ever disagree the model is told to offer a figure and then
+            # binned by ungrounded_figures for offering it (2026-09-09 D).
+            grounded_options=_effective_options(next_field, collected),
         )
         counts[next_field.key] = 1
         logger.info(

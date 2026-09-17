@@ -326,6 +326,16 @@ because the lead is opened early and the ticket is created much later.
 | ...and the question offers "both", so nobody has to volunteer it | `_UPDATE_CHANNEL` | An either/or question hides the third real answer. Three options named literally, which is what puts `_field_guidance` on its "name them all" branch. |
 | A numbered step may state how long OUR OWN service takes | `guards._CONTACT_PROMISE` | "you receive 3 to 5 matched profiles within 48 hours" — the agency's own published turnaround, in the records and passed by `ungrounded_figures` — was deleted as an invented callback time. Inside a step the TIME half fires only when the step also promises somebody will contact them, so "a live agent will call you within 2 hours" still goes. Prose is untouched. |
 
+| Only the one direct-hire answer that changes the route is asked for | `helper_transfer_case` + `selfcheck_flows.py` | `helper_location` asked where she is and `employment_status` whether she is working - four answers between them and only one that changes anything: on a Work Permit here under another employer is a transfer case, everything else is a standard placement. One yes/no, and no `options`, so `_field_guidance` has nothing to invite "or somewhere else" with. |
+| Personal contact details are not asked before the client has been told anything | `direct_hiring` field order + `selfcheck_flows.py` | The helper's number was question THREE and was answered *"I'm not comfortable to provide this information now"*. Now after her nationality and the route question, and optional, so a client who still declines is not blocked. Asserted as a POSITION against the other fields, not as an index. |
+| A salary band below the floor for that nationality is never offered | `info_collector._SALARY_FLOOR_BY_NATIONALITY` + `_effective_options` | A Filipino helper cannot be placed below S$650, and the question offered *"such as SGD 500-600 or SGD 600-700?"* - a budget no placement could be made at. The Philippines only: `FEE_BY_NATIONALITY`'s rule applied to a salary. A band that straddles the floor is rewritten to start at it rather than dropped, so the cheapest option is not overstated. |
+| ...and the band the question offers is the band the guard grounds on | `grounded_options=_effective_options(...)` | One function, two readers. If they disagree the model is told to offer S$650 and then binned by `ungrounded_figures` for offering it, and the client gets the bare fallback question - the 2026-09-09 (D) defect, which is invisible because a guard falling back to a correct question looks like nothing going wrong. The only check that catches it reads the REPLY. |
+| Every long intake explains itself at one end or the other | `_OVERVIEW_AT_START` + `selfcheck_flows.py` | `new_hiring` (25 questions) and `direct_hiring` explained themselves at neither end. Derived over the employer services, so a flow added tomorrow makes that choice deliberately; `replacement` and `transfer_employer` are the two that still do not, recorded as a decision. |
+| ...and a 25-question hire is not called "a short, well-defined job we handle end to end" | the per-service opening clause | True of a permit renewal, false of a first-time hire. `_SMALL_TICKET_SERVICES` and `_OVERVIEW_AT_START` are kept apart for that one sentence. |
+| A record saying the timing DEPENDS on something is not a lead time | the overview note | New hiring's own row says *"There is no single answer, because it turns on your requirements and on which helper you choose"*, and the model paraphrased it back as *"the exact timeline will be confirmed once we know more"* - a sentence that costs the client a line and tells them what they already assumed. It also may not remark on what our records contain. |
+| A work permit renewal establishes whose helper she is | `renewal` + `ticket._HELPER_FROM_US` | The service is not limited to helpers we placed. The SAME `Field` object `replacement` asks, not a second copy that can be reworded in one place (§9.8). It is not the banned question: "have you hired with us before" is answered from `placements` and never asked; this asks where one helper came from, which no record answers. |
+| Direct hire does not say "paperwork" | `_COLLECTION_PURPOSE` + the direct-hire documents row | Agency instruction, and scoped to direct hire only - the other services keep the word, because rewriting rows nobody objected to is how a correction turns into a rewrite. |
+
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
 own last line contained a question mark.
@@ -801,6 +811,37 @@ a figure only the agency can give, and the bot quotes or does the right thing th
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
 at a time.
 
+- **The final pricing and fee structure, per service** — their own point 4, and the
+  thing that blocks the Cost/Fee step of the flow they asked for in point 5. The bot
+  already quotes a fee wherever the agency has given one (`FEE_STATED_SERVICES`:
+  renewal, passport renewal, home leave) and defers everywhere else. Nothing here
+  needs changing when the figures arrive; they are rows.
+- **And the half of that which is a decision, not a figure: may a new hire's cost be
+  quoted at all?** Their 2026-09-17 flow puts Cost/Fee immediately after Process &
+  Timeline. Their 2026-09-04 instruction says the opposite for exactly these two
+  services — a new hire's price never reaches anyone before a salesperson has spoken
+  to them — and `quotes_hiring_package_cost` enforces it. Both cannot hold. Salary,
+  the levy and the $5,000 bond already go out; it is the package total that does not.
+  One sentence from them settles it.
+- **Should a helper's religion be collected?** Their point 3, asked of us, so here is
+  what the records say rather than an opinion. **We already hold it**: `candidates.religion`
+  is populated on all six live rows (four Roman Catholic, one Christian, one Hindu),
+  taken on the registration form. **No flow asks it**, on either side of the desk. And
+  the thing religion actually decides in a placement is already asked of both, as a
+  matched pair: *"would she need to handle pork or beef?"* to the employer and *"are
+  you able to handle pork or beef?"* to the helper. So asking religion would duplicate
+  a record we hold and put a more sensitive question in place of the one that decides
+  the match. If they want it anyway it is one field — but it needs an employer-side
+  counterpart or a consultant cannot match on it (`_MATCHED_PAIRS`).
+- **The Indonesian and Myanmar salary floors.** The Philippines now has one (S$650
+  fresh, from S$670 experienced) and it is enforced in the budget question. The KB's
+  own figures for the other two are the ones that were already there and nobody has
+  confirmed them, so they are not treated as floors. If Indonesia and Myanmar have
+  minimums too, they are one line each and the same machinery applies.
+- **Whether `replacement` and `transfer_employer` should explain themselves too.**
+  After 2026-09-17 they are the only two employer intakes that brief at neither end —
+  eight questions and up to twenty-five respectively. Asserted as a decision rather
+  than left as an omission, so it is one entry each the day they say so.
 - **The WhatsApp Business away message.** Their own team asked, 2026-09-17: *"Why is
   there an immediate message that says reply next day when it is during working
   hours??"* - *"Thank You for your message. Our team will reply to you next following
@@ -989,6 +1030,138 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-17** — **Ten things from the agency's review, and the one they circled
+  was a salary band no Filipino placement could be made at.** Their list ran from
+  "explain the process proactively" to the tone of one question; four of the ten are
+  theirs to answer rather than ours to build, and those are in §9 rather than here.
+  (A) **The question they objected to hardest asked four things and only one of them
+  mattered.** *"Where is Lwin lwin Nwe currently — in Singapore, in Myanmar, working
+  in another country, or somewhere else?"* Their reading is exactly right: *"That is
+  the only scenario that requires a different regulated process, i.e. a transfer case
+  governed by MOM requirements. Whether the helper is in her home country, unemployed,
+  working in another country, or otherwise outside Singapore, does not change the
+  standard placement workflow."* `helper_location` and `employment_status` are now one
+  yes/no — *"Is she currently in Singapore, working under a Work Permit with another
+  employer?"* — and nothing else is asked, because no other answer can change what we
+  then do.
+  (B) **"or somewhere else" was the options list, not the model.** The old field
+  carried three, and `_field_guidance`'s non-exhaustive branch appends *"make clear
+  they may give something not on the list"* — the same mechanism that produced *"or
+  another country?"* on 2026-09-11. A yes/no has nothing to enumerate and nothing to
+  invite. It opens with an auxiliary so `_yes_no_question` recognises it and a bare
+  "no" closes it rather than being re-asked by `_BARE_YES_NO` (2026-09-08).
+  (C) **`_STILL_EMPLOYED` and the route guard both moved onto it, and both got
+  tighter.** The notice-period question now keys on the helper who actually has a
+  release to get; the old gate could open on a helper employed overseas, for whom
+  "clearance from her current employer" means something else. `_known_helper_location`
+  became `_known_transfer_case`: it was a three-way field answering a two-way
+  question. Verified on 12 phrasings — "yes she works for another employer now" opens,
+  "no she is not working for anyone" and "she is between jobs" close, "" stays
+  undecided.
+  (D) **The helper's number was question THREE, and their own transcript shows what
+  that costs.** *"I'm not comfortable to provide this information now."* The agency:
+  *"Contact information should only be requested after the user has received the
+  relevant process, timeline and applicable cost information and has shown intent to
+  proceed."* Moved to last and made optional. **`full_name` deliberately stays at
+  question one** — that is the client's own name, it goes on a Service Agreement, and
+  five separate complaints since 2026-09-08 have been about it NOT being asked.
+  (E) **The circled screenshot: *"such as SGD 500-600 or SGD 600-700?"* asked of a
+  client who had said Filipino.** Both bands sit at or below the S$650 a Filipino
+  helper cannot be placed below, so the question invited a budget no placement could
+  be made at — and the client would have learned that from a consultant later, having
+  already been asked to think in the wrong numbers. `_effective_options` drops a band
+  wholly below the floor and rewrites the one that straddles it to start AT the floor,
+  so a Filipino client is offered *"SGD 650-700 or SGD 700-800"* and everyone else is
+  untouched. `FEE_BY_NATIONALITY`'s rule, one column along.
+  (F) **The floor has to be GROUNDED as well as offered, and nothing else catches
+  that.** `_field_guidance` builds the question and `grounded_options` tells
+  `ungrounded_figures` which figures the reply may contain; they now read ONE function.
+  Reverting only the grounding line leaves every question-level check green while the
+  model is told to say S$650 and then binned for saying it — the 2026-09-09 (D) defect,
+  where every budget turn was being discarded and nobody noticed because the fallback
+  is a correct question. The one check that catches it reads the REPLY.
+  (G) **The figures contradicted what was already loaded, in BOTH directions, in five
+  rows.** The agency gave S$650 fresh and from S$670 experienced. Three live rows said
+  a Filipino helper *"starts at S$570-650"* — below the floor — and that an experienced
+  one is *"S$700-850+"*, above where she starts from. Corrected rather than stacked
+  (the 2026-09-08 rule). **Two needles for one fact**, because the sentence is written
+  two different ways: measured first, and a single needle would have corrected two rows
+  of three and left the third contradicting the pair.
+  **Then the sweep found two more nobody had asked about, and they were the worst
+  placed** — *"(salary: S$570-850/month, timeline: 4-8 weeks)"* inside a
+  nationality comparison filed under **new_hiring**, which is exactly where a hiring
+  client reads it. Found by sweeping the database for the old figure AFTER the first
+  three were corrected, not by the targeted search that found those three: that search
+  keyed on the words "salary" and "minimum", and these two rows say neither.
+  **Indonesia and Myanmar are untouched in the same sentence** — the agency gave
+  figures for one country, and inferring the other two from it is the mistake §9
+  records for Myanmar twice already. Retrieval after: the new row is top for 4 of 5
+  employer probes at 0.686–0.778 (before: 0.586–0.652, on a row that said there is no
+  minimum wage), rank 2 on the fifth, and **no sub-650 salary figure survives anywhere
+  in the knowledge base** — the 19 that remain are flight costs, home-leave and
+  passport fees.
+  (H) **Process and timeline now come before the questions, not after.** The agency's
+  flow is *"Intent → Process & Timeline → Cost/Fee → continue the workflow → live agent
+  handoff"*. The opening overview has existed since 2026-09-04 and covered the three
+  small-ticket services; `new_hiring` and `direct_hiring` — the two longest flows in
+  the codebase — explained themselves at **neither** end. Both are in it now, with
+  their own opening clause: *"a short, well-defined job we handle end to end"* is true
+  of an insurance renewal and false of a 25-question first-time hire.
+  (I) **And the timeline half is honestly not available on new hiring, which is a
+  finding for them rather than a defect.** Their own row says *"There is no single
+  answer, because it turns on your requirements and on which helper you choose"*, so
+  the model correctly gives the process and no lead time. Asking for it anyway
+  produced *"the exact timeline will be confirmed once we know more"* — the "it
+  depends" shape the note has forbidden since 2026-09-04, costing a sentence to say
+  what the client already assumed. The note now says outright that a record saying the
+  timing depends on something is not a lead time, and that our filing is never
+  described to a client. Measured across four runs each: the overview reaches the
+  client in **3 runs of 4**, against the 2-in-4 this note has managed since it was
+  written.
+  (J) **The Cost/Fee step of their own flow is blocked by their own earlier
+  instruction, and that is theirs to resolve.** `new_hiring` and `direct_hiring` are in
+  `COST_WITHHELD_SERVICES` because on 2026-09-04 they said a new hire's price must
+  never reach anyone before a salesperson has spoken to them, and
+  `quotes_hiring_package_cost` enforces it whatever a prompt says. The overview is told
+  not to spend its one sentence on a figure that is about to be swapped for the
+  deferral line. Their point 4 already says the pricing is still to come, so both
+  halves are in §9.
+  (K) **Small ones.** "paperwork" is out of the direct-hire purpose note and out of the
+  one direct-hire row that used it — scoped to direct hire, because rewriting rows
+  nobody objected to is how a correction becomes a rewrite. And `renewal` asks whether
+  the helper came from us, which is the agency's existing/new distinction; it is the
+  SAME `Field` object `replacement` already asks, not a copy (§9.8), and it is not the
+  banned "have you hired with us before".
+  (L) **Sixteen faults injected, sixteen red — after two came back GREEN and two
+  CRASHED, and all four were the checks, not the code.** One injection was a no-op: my
+  patch script went through a bash heredoc, which doubled the backslashes, so the
+  anchor never matched and the run reported GREEN rather than SKIPPED — the hazard
+  already recorded in this session's own memory, hit anyway. The needle check counted
+  the CORRECTED text, so blanking a needle outright left it green: the rule still
+  installed S$650, at a string that no longer existed. It counts through `old` now,
+  which is the half that has to match something. And two assertions used
+  `next(...)`/`list.index(...)`, so a renamed field raised StopIteration or ValueError
+  and took the harness down printing no FAIL line — **a crash tells you less than a
+  red**, for the third time (2026-09-10, 2026-09-16, now). Both use safe lookups and
+  fail by name.
+  One more thing this round could not do and should not have faked: the assertion for
+  the corrected needles cannot spell the old string out, because `selfcheck_flows.py`
+  sweeps the repo for any replaced string and would catch itself — which is exactly
+  what it did on the first run, the same way the phone-number sweep caught itself on
+  2026-09-11.
+  (M) **Verified live against the real model.** Direct hire: *"Got it — is she
+  currently in Singapore and working under a Work Permit with another employer?"*, and
+  no country list anywhere. Budget for a Filipino client: *"such as SGD 650 to 700 or
+  SGD 700 to 800?"*; the control with no nationality stated still gets *"below $500,
+  $500-600"*. Asked outright: *"A fresh Filipino helper's minimum basic salary is
+  approximately S$650 per month, while an experienced helper starts from about S$670;
+  I'll confirm the exact amount for her profile"* — the experienced figure presented as
+  a starting point and not a price, which is what the agency asked for. Renewal: *"is
+  Lwin Lwin Nwe from Ming Hwee, or was she hired through another agency?"* Direct hire
+  overview: *"For direct hire, we process the MOM application, documents, insurance and
+  bond."*
+  `selfcheck_flows.py` is **456 assertions**; `smoke_nodes.py` is **87 states**.
 
 - **2026-09-17** — **Home leave closes by telling them to book the air ticket, which
   is the one thing they can do while they wait.** The agency: *"After collecting the

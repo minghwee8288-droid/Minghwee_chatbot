@@ -248,11 +248,9 @@ CASES = [
       "incoming_text": "in 2 months",
       "collected_info": {"full_name": "Vaidik", "helper_name": "Holabhola",
                          "nationality": "Myanmar", "passport_expiry": "2 months",
-                         "helper_location": "in Singapore",
                          "permit_expiry": "2 months"},
       "asked_field_counts": {"full_name": 1, "helper_name": 1, "nationality": 1,
-                             "passport_expiry": 1, "helper_location": 1,
-                             "permit_expiry": 1},
+                             "passport_expiry": 1, "permit_expiry": 1},
       "briefed_services": [],
       "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
       "rag_context": "A consultant will confirm the cost for her embassy.",
@@ -260,19 +258,20 @@ CASES = [
     ("info_collector", "direct hire",
      {"service_type": "direct_hiring", "intent": "direct_hiring",
       "incoming_text": "I already found a helper, can you process her",
-      "collected_info": {"employment_status": "currently employed"}}),
-    ("info_collector", "direct hire, location unknown",
+      "collected_info": {"helper_transfer_case": "yes, with another employer"}}),
+    ("info_collector", "direct hire, route unknown",
      {"service_type": "direct_hiring", "intent": "direct_hiring",
       "incoming_text": "how long does it take",
       "collected_info": {"helper_name": "Ruru"},
       "asked_field_counts": {"helper_name": 1},
       "history_text": "bot: May I know the full name of the helper?"}),
-    ("info_collector", "direct hire, location known",
+    ("info_collector", "direct hire, route known",
      {"service_type": "direct_hiring", "intent": "direct_hiring",
       "incoming_text": "how long does it take",
-      "collected_info": {"helper_name": "Ruru", "helper_location": "already in Singapore"},
+      "collected_info": {"helper_name": "Ruru",
+                         "helper_transfer_case": "yes, she is on a permit here"},
       "asked_field_counts": {"helper_name": 1},
-      "history_text": "bot: Where is she at the moment?"}),
+      "history_text": "bot: Is she in Singapore on a Work Permit with another employer?"}),
     ("info_collector", "transfer, direction opens no branch",
      {"service_type": "transfer_employer", "intent": "transfer",
       "incoming_text": "Hi I'm looking for a transfer helper",
@@ -442,7 +441,7 @@ CASES = [
       "incoming_text": "both", "history_text": "bot: email or here on WhatsApp?",
       "collected_info": {"full_name": "VD", "helper_name": "Hululu",
                          "helper_contact": "+6599988553", "helper_nationality": "Myanmar",
-                         "helper_location": "in Myanmar", "employment_status": "first overseas job",
+                         "helper_transfer_case": "no, she is in Myanmar",
                          "helper_availability": "1 month", "update_channel": "both"},
       "asked_field_counts": {"update_channel": 1},
       "_expect_prompt": "what email should I send them to"}),
@@ -454,10 +453,174 @@ CASES = [
       "incoming_text": "whatsapp", "history_text": "bot: email or here on WhatsApp?",
       "collected_info": {"full_name": "VD", "helper_name": "Hululu",
                          "helper_contact": "+6599988553", "helper_nationality": "Myanmar",
-                         "helper_location": "in Myanmar", "employment_status": "first overseas job",
+                         "helper_transfer_case": "no, she is in Myanmar",
                          "helper_availability": "1 month", "update_channel": "whatsapp"},
       "asked_field_counts": {"update_channel": 1},
       "_forbid_prompt": "what email should I send them to"}),
+
+
+    # --- 2026-09-17: the salary floor ------------------------------------
+    # Circled in the agency's screenshot. This client has said FILIPINO, and a
+    # Filipino helper cannot be placed below S$650 - so "such as SGD 500-600 or
+    # SGD 600-700?" invited a budget no placement could be made at.
+    #
+    # Run rather than predicated, because `_effective_options` returning the
+    # right tuple proves nothing if the call site still passes the raw options
+    # - which is the "imported and never called" hole this file has recorded
+    # four times. This reads the prompt the model was actually handed.
+    ("info_collector", "the budget question respects the Filipino floor",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "no gardening",
+      "collected_info": {"full_name": "Thomas", "first_time_hire": "yes",
+                         "requirement": "childcare",
+                         "children_detail": "two, aged 3 and 7",
+                         "household": "4 adults and 2 children",
+                         "home_type": "condo",
+                         "home_size": "3 bedrooms and 2 bathrooms",
+                         "helper_room": "own room", "pets": "no pets",
+                         "languages": "English", "preferred_nationality": "Filipino",
+                         "helper_profile": "32 to 36, Middle East experience",
+                         "hire_source": "worked abroad",
+                         "cooking": "any cuisine, willing to learn",
+                         "special_duties": "no gardening"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1,
+                             "home_type": 1, "helper_room": 1, "pets": 1,
+                             "languages": 1, "preferred_nationality": 1,
+                             "helper_profile": 1, "special_duties": 1},
+      "history_text": "bot: would she need to handle gardening?",
+      "_expect_prompt": "SGD 650-700",
+      "_forbid_prompt": "SGD 500-600"}),
+    # The control. With no nationality stated there is no floor to apply, and
+    # narrowing the bands anyway would tell a client their cheapest option is
+    # S$650 when it is not.
+    ("info_collector", "...and with no nationality stated, every band stands",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "no gardening",
+      "collected_info": {"full_name": "Thomas", "first_time_hire": "yes",
+                         "requirement": "childcare",
+                         "children_detail": "two, aged 3 and 7",
+                         "household": "4 adults and 2 children",
+                         "home_type": "condo",
+                         "home_size": "3 bedrooms and 2 bathrooms",
+                         "helper_room": "own room", "pets": "no pets",
+                         "languages": "English", "preferred_nationality": "no preference",
+                         "helper_profile": "32 to 36, Middle East experience",
+                         "hire_source": "worked abroad",
+                         "cooking": "any cuisine, willing to learn",
+                         "special_duties": "no gardening"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1,
+                             "home_type": 1, "helper_room": 1, "pets": 1,
+                             "languages": 1, "preferred_nationality": 1,
+                             "helper_profile": 1, "special_duties": 1},
+      "history_text": "bot: would she need to handle gardening?",
+      "_expect_prompt": "below SGD 500"}),
+
+    # ...and the half NOTHING else reaches. Every other check here reads the
+    # QUESTION - the prompt built from `_effective_options`. If the call site
+    # goes back to passing the raw options as grounding, the question still
+    # says "SGD 650-700" and every one of those checks stays green, while
+    # `ungrounded_figures` sees 650 in a reply and is not holding it as a
+    # grounded figure, so it bins the whole message and the client gets the
+    # bare fallback question instead. That is the 2026-09-09 (D) defect
+    # exactly, where every budget turn was being discarded and a guard falling
+    # back to a correct question looked like nothing going wrong.
+    #
+    # There is no rag_context here on purpose: the option list is the only
+    # thing that can ground 650, which is what makes this state decisive.
+    ("info_collector", "...and the floor is GROUNDED, not merely offered",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "no gardening",
+      "collected_info": {"full_name": "Thomas", "requirement": "childcare",
+                         "children_detail": "two, aged 3 and 7",
+                         "household": "4 adults and 2 children",
+                         "home_type": "condo",
+                         "home_size": "3 bedrooms and 2 bathrooms",
+                         "helper_room": "own room", "pets": "no pets",
+                         "languages": "English",
+                         "preferred_nationality": "Filipino",
+                         "helper_profile": "32 to 36, Middle East experience",
+                         "hire_source": "worked abroad",
+                         "cooking": "any cuisine, willing to learn",
+                         "special_duties": "no gardening"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1,
+                             "home_type": 1, "helper_room": 1, "pets": 1,
+                             "languages": 1, "preferred_nationality": 1,
+                             "helper_profile": 1, "special_duties": 1},
+      "history_text": "bot: would she need to handle gardening?",
+      "_stub_reply": "Do you have a monthly salary budget in mind, such as "
+                     "SGD 650-700 or SGD 700-800?",
+      "_expect_reply": "SGD 650-700"}),
+
+    # --- 2026-09-17: the process and timeline come before the questions ---
+    # "Once the service or intent has been identified, the bot should
+    # proactively explain the relevant process and expected timeline/lead time,
+    # without waiting for the user to ask."
+    ("info_collector", "new hiring explains itself before the questions",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "Thomas",
+      "collected_info": {"full_name": "Thomas"},
+      "asked_field_counts": {"full_name": 1},
+      "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
+      "rag_context": "Hiring from overseas usually takes 4 to 6 weeks.",
+      "history_text": "bot: May I know your name?",
+      "_expect_prompt": "roughly how long it takes"}),
+    # ...and it is not told it is a short job we handle end to end, which is
+    # true of a permit renewal and false of a 25-question hire.
+    ("info_collector", "...and is not called a short, well-defined job",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "Thomas",
+      "collected_info": {"full_name": "Thomas"},
+      "asked_field_counts": {"full_name": 1},
+      "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
+      "rag_context": "Hiring from overseas usually takes 4 to 6 weeks.",
+      "history_text": "bot: May I know your name?",
+      "_forbid_prompt": "short, well-defined job"}),
+    # ...and the overview does not spend its one sentence on a price that
+    # quotes_hiring_package_cost is about to swap for the deferral line.
+    ("info_collector", "...and is told not to put a package price in it",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "Thomas",
+      "collected_info": {"full_name": "Thomas"},
+      "asked_field_counts": {"full_name": 1},
+      "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
+      "rag_context": "The total package is approximately $4,225.",
+      "history_text": "bot: May I know your name?",
+      "_expect_prompt": "Do NOT put a total, a package price"}),
+    # The control at the other end: a turn deeper into the same flow gets no
+    # overview at all. A note that fires on every turn is the 2026-09-17
+    # workload defect, and a _forbid_ on a turn that could never carry it
+    # proves nothing (the home-leave green injection, same day).
+    ("info_collector", "...but not on every turn of the same collection",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "condo",
+      "collected_info": {"full_name": "Thomas", "requirement": "childcare",
+                         "household": "4"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1},
+      "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
+      "rag_context": "Hiring from overseas usually takes 4 to 6 weeks.",
+      "history_text": "bot: how many people live in your household?",
+      "_forbid_prompt": "roughly how long it takes"}),
+
+    # --- 2026-09-17: one routing question, asked and answered -------------
+    ("info_collector", "direct hire asks the one question that changes the route",
+     {"service_type": "direct_hiring", "intent": "direct_hiring",
+      "incoming_text": "Myanmar",
+      "collected_info": {"full_name": "Thomas", "helper_name": "Lwin Lwin Nwe",
+                         "helper_nationality": "Myanmar"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "helper_nationality": 1},
+      "history_text": "bot: Which country is she from?",
+      "_expect_prompt": "working under a Work Permit with another employer"}),
+    # ...and does not ask where she is, nor for her number, on the way there.
+    ("info_collector", "...and not where she is, nor her number, before it",
+     {"service_type": "direct_hiring", "intent": "direct_hiring",
+      "incoming_text": "Myanmar",
+      "collected_info": {"full_name": "Thomas", "helper_name": "Lwin Lwin Nwe",
+                         "helper_nationality": "Myanmar"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "helper_nationality": 1},
+      "history_text": "bot: Which country is she from?",
+      "_forbid_prompt": "best number to reach her on"}),
 
     # --- response_generator ------------------------------------------------
     # The stepped-answer path: both halves of the trigger, then each half on

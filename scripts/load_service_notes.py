@@ -763,7 +763,7 @@ ROWS: list[dict[str, Any]] = [
             "together with your tenancy agreement. From the helper we need a copy of her "
             "passport, her medical report and her school certificate. If she is already "
             "in Singapore on a work permit we also need her current permit details. "
-            "Everything else is paperwork we prepare for you to sign."
+            "Everything else is prepared by us for you to sign."
         ),
     },
     {
@@ -2193,6 +2193,44 @@ ROWS += [
     },
 ]
 
+
+# The agency's Filipino salary figures, 2026-09-17: "Fresh Filipino helper:
+# minimum basic salary of SGD 650/month. Filipino helper with prior experience:
+# basic salary starts from SGD 670/month, with the final salary depending on
+# the helper's years of experience and profile."
+#
+# Filed `general` so it is reachable from inside new_hiring and direct_hiring
+# as well as from a bare salary question - a client asking what to budget is
+# usually mid-enquiry, not asking an abstract question. `employer`, because
+# this is what an employer PAYS; what a helper can expect to EARN is still the
+# open item in section 9 and this row is not an answer to it.
+#
+# The experienced figure is deliberately written as a floor that moves and not
+# as a price. The agency was explicit that it "varies based on experience", and
+# a bot that answers "S$670" to "what will an experienced Filipino helper cost"
+# has quoted a fixed number for something the consultant negotiates.
+ROWS += [
+    {
+        "service_type": "general",
+        "contact_type": "employer",
+        "nationality": "PH",
+        "section_heading": "Employer - Filipino helper salary",
+        "question": (
+            "What is the minimum salary for a Filipino helper, and how much "
+            "should I budget to pay a helper from the Philippines?"
+        ),
+        "answer": (
+            "A fresh Filipino helper - one being placed for the first time - "
+            "has a minimum basic salary of S$650 a month. A Filipino helper "
+            "who already has experience starts from S$670 a month, and where "
+            "she sits above that depends on her years of experience and her "
+            "profile, so it is agreed against the individual helper rather "
+            "than fixed in advance. For a Filipino helper, budget from S$650 "
+            "upwards rather than below it."
+        ),
+    },
+]
+
 UPDATES: list[dict[str, Any]] = [
     {
         "where": {"question": "How long does a direct hire take?",
@@ -2697,7 +2735,92 @@ UPDATES += [
 # 6534 2277)", which tells you that 6534 2277 was ALREADY the office telephone
 # line and WhatsApp has now moved onto it. Swapping the digits blindly there
 # produces "(WhatsApp: 65342277 / Tel: 6534 2277)" - true, and daft.
+UPDATES.append(
+    {
+        # "For Direct Hire, the bot should avoid using the word paperwork"
+        # - the agency, 2026-09-17. One direct-hire row used it, in its closing
+        # sentence. The other services keep the word: the instruction was
+        # scoped to direct hire, and rewriting rows nobody objected to is how a
+        # correction turns into a rewrite.
+        "where": {"question": "What documents do I need to provide for a direct hire?",
+                  "service_type": "direct_hiring"},
+        "reason": "the agency asked for the word 'paperwork' to be dropped from direct hire",
+        "set": {"answer": (
+            "From you we need a copy of your NRIC or identity document and proof of your "
+            "income - either your Income Tax Assessment or a declaration of your monthly "
+            "income. If you are a foreigner working here, that becomes your Employment "
+            "Pass or S Pass with a copy of your passport, or a letter from your company "
+            "together with your tenancy agreement. From the helper we need a copy of her "
+            "passport, her medical report and her school certificate. If she is already "
+            "in Singapore on a work permit we also need her current permit details. "
+            "Everything else is prepared by us for you to sign."
+        )},
+    }
+)
+
+
 TEXT_REPLACEMENTS: list[dict[str, str]] = [
+    # The agency gave the Filipino salary figures on 2026-09-17 and they
+    # CONTRADICT what was already loaded, in both directions: three live rows
+    # say a Filipino helper "starts at S$570-650" - below the S$650 minimum a
+    # placement cannot go under - and that an experienced one is "S$700-850+",
+    # above the S$670 the agency says she starts from. A client told S$570 has
+    # been quoted a salary no Filipino placement can be made at.
+    #
+    # Corrected rather than stacked, which is the rule this file has followed
+    # since the passport document conflict on 2026-09-08: leaving both puts a
+    # flat contradiction in front of a model that quotes either.
+    #
+    # TWO needles for ONE fact, because the same sentence is written two
+    # different ways - "S$570-650" in a general chunk and one salary_enquiry
+    # row, "S$570 to S$650" in a second, near-duplicate salary_enquiry row.
+    # Measured before writing them: a single needle would have corrected two
+    # rows of three and left the third contradicting the pair.
+    #
+    # Indonesia and Myanmar are deliberately UNTOUCHED in the same sentence.
+    # The agency gave figures for the Philippines and for nothing else, and
+    # inferring the other two from it is the mistake section 9 records for
+    # Myanmar twice already.
+    {
+        "old": "Filipino helpers start at S$570-650/month (experienced: S$700-850+)",
+        "new": "Filipino helpers have a minimum basic salary of S$650/month for a "
+               "fresh helper and start from S$670/month with previous "
+               "experience, the exact figure depending on her years of "
+               "experience and profile",
+        "reason": "the agency gave the Filipino minimum as S$650 fresh / from "
+                  "S$670 experienced on 2026-09-17; the loaded rows said "
+                  "S$570-650 and S$700-850+, which is below the floor and "
+                  "above the starting point respectively.",
+    },
+    {
+        "old": "Filipino helpers start at S$570 to S$650/month (experienced: S$700 to S$850+)",
+        "new": "Filipino helpers have a minimum basic salary of S$650/month for a "
+               "fresh helper and start from S$670/month with previous "
+               "experience, the exact figure depending on her years of "
+               "experience and profile",
+        "reason": "the same correction against the second, differently worded "
+                  "copy of the sentence. Found by measuring rather than by "
+                  "assuming one wording.",
+    },
+    # The same correction in a third place, and the one that would have hurt
+    # most. These two rows are filed `new_hiring` - where a client comparing
+    # the three nationalities actually reads them - and give the Filipino
+    # salary as "S$570-850". Found by SWEEPING the database for the old figure
+    # after the first three rows were corrected, not by the targeted search
+    # that found those three: that search keyed on the words "salary" and
+    # "minimum" and these rows say neither.
+    #
+    # Only the floor is corrected. S$850 is not contradicted by anything the
+    # agency said - they gave a starting point for an experienced helper and
+    # no ceiling - and rewriting a figure nobody has questioned is how a
+    # correction turns into a rewrite (2026-09-08).
+    {
+        "old": "(salary: S$570-850/month, timeline: 4-8 weeks)",
+        "new": "(salary: S$650-850/month, timeline: 4-8 weeks)",
+        "reason": "the Filipino minimum is S$650, not S$570 (agency, "
+                  "2026-09-17). These two rows state it inside a "
+                  "nationality comparison filed under new_hiring.",
+    },
     {
         "old": "(WhatsApp: 80119456 / Tel: 6534 2277)",
         "new": "(WhatsApp / Tel: 6534 2277)",

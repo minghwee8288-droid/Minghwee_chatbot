@@ -208,9 +208,20 @@ def _reads_a_bracket(field) -> bool:
     return bool(_BRACKET.search(text))
 take = [f.key for f in t.applicable_fields("transfer_employer", {"transfer_direction": "taking on a transfer helper"})]
 rel  = [f.key for f in t.applicable_fields("transfer_employer", {"transfer_direction": "releasing my current helper"})]
-dh_emp  = [f.key for f in t.applicable_fields("direct_hiring", {"employment_status": "currently employed"})]
-dh_free = [f.key for f in t.applicable_fields("direct_hiring", {"employment_status": "between jobs"})]
+dh_emp  = [f.key for f in t.applicable_fields("direct_hiring", {"helper_transfer_case": "yes"})]
+dh_free = [f.key for f in t.applicable_fields("direct_hiring", {"helper_transfer_case": "no"})]
 hire_src = next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "hire_source")
+_budget_field = next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "budget")
+# Looked up by dict rather than by `next(...)`, so a field that has been
+# renamed or removed turns an assertion RED naming itself instead of raising
+# StopIteration and printing no FAIL line at all. A crash tells you less than
+# a red - 2026-09-16, where removing `requirement` outright took the whole
+# harness down and the run read as success.
+_dh = {f.key: f for f in t.SERVICE_FIELDS["direct_hiring"]}
+_rn = {f.key: f for f in t.SERVICE_FIELDS["renewal"]}
+_rp = {f.key: f for f in t.SERVICE_FIELDS["replacement"]}
+_dh_keys = [f.key for f in t.SERVICE_FIELDS["direct_hiring"]]
+_dh_at = lambda k: _dh_keys.index(k) if k in _dh_keys else -1
 import app.graph.graph as g
 rr = importlib.import_module("app.graph.nodes.rag_retriever")
 from app.graph.prompts.style import STYLE_BLOCK
@@ -489,14 +500,47 @@ rows = [
  # direct_hiring was an empty list, so it raised a ticket that said only
  # "wants us to process a helper they have already chosen". These six are
  # the agency's own list; if the flow is ever emptied again this fails.
- ("direct_hiring collects the agency's six",
+ ("direct_hiring collects what the agency asked for",
   [k for k in ("helper_name", "helper_contact", "helper_nationality",
-               "helper_location", "employment_status", "helper_availability")
+               "helper_transfer_case", "helper_availability")
    if k not in dh_emp], []),
- ("employed helper -> asked about notice / clearance",
+ # 2026-09-17: `helper_location` and `employment_status` were collapsed into
+ # one yes/no, because only one of the four answers they produced between them
+ # changes what we do. Asserted as ABSENCE, not just as the presence of the
+ # new field - a flow that asks the new question AND still asks the old two
+ # has not been simplified, it has been made longer.
+ ("the two questions the agency collapsed are gone",
+  [k for k in ("helper_location", "employment_status")
+   if k in [f.key for f in t.SERVICE_FIELDS["direct_hiring"]]], []),
+ ("...and the one that replaced them is a yes/no, with no options to read out",
+  getattr(_dh.get("helper_transfer_case"), "options", "FIELD MISSING"), ()),
+ # ...and it must READ as a yes/no, or `_BARE_YES_NO` re-asks a client who
+ # correctly answered "no" (2026-09-08).
+ ("...and reads as one, so a bare yes/no closes it",
+  ico._yes_no_question(
+      getattr(_dh.get("helper_transfer_case"), "question", "")), True),
+ ("on a permit under another employer -> asked about notice / clearance",
   "notice_clearance" in dh_emp, True),
- ("helper between jobs -> NOT asked about notice",
+ ("not a transfer case -> NOT asked about notice",
   "notice_clearance" in dh_free, False),
+ # The agency, 2026-09-17: "The bot should not request personal contact
+ # details at the beginning of the conversation." Their own transcript has the
+ # helper's number asked THIRD and answered "I'm not comfortable to provide
+ # this information now". Asserted as a position rather than by naming an
+ # index, so reordering the qualifying questions cannot silently undo it.
+ # `_dh_at` rather than list.index(): a field that has been renamed away
+ # raises ValueError from index() and takes the whole harness down without
+ # printing a FAIL line, which reads as success. Returns -1 instead, so the
+ # comparison is False and the assertion names itself.
+ ("the helper's number is not asked before her nationality",
+  _dh_at("helper_contact") > _dh_at("helper_nationality") >= 0, True),
+ ("...nor before we know whether it is a transfer case",
+  _dh_at("helper_contact") > _dh_at("helper_transfer_case") >= 0, True),
+ ("...and a client who declines it is not blocked",
+  getattr(_dh.get("helper_contact"), "optional", "FIELD MISSING"), True),
+ # "For Direct Hire, the bot should avoid using the word paperwork."
+ ("the direct-hire purpose note does not say 'paperwork'",
+  "paperwork" in ico._COLLECTION_PURPOSE["direct_hiring"], False),
  # "First-timer / Ex-Singapore / Ex-abroad / Transfer" - the old two-way
  # question could not tell a first-timer from someone with two contracts
  # behind her, which is a different person at a different salary.
@@ -609,16 +653,143 @@ rows = [
   bool(ico._LOCATION_DEPENDENT.search("what is the process")), True),
  ("an ordinary answer is not",
   bool(ico._LOCATION_DEPENDENT.search("her number is 98765432")), False),
- ("location unknown -> caveat needed",
-  ico._known_helper_location({"collected_info": {}}), None),
- ("location known -> no caveat needed",
-  ico._known_helper_location(
-      {"collected_info": {"helper_location": "already in Singapore"}}),
-  "already in Singapore"),
- # direct_hiring already asks where she is, so the route is derivable and no
- # new question was added for it.
- ("direct_hiring still asks where she is",
-  any(f.key == "helper_location" for f in t.SERVICE_FIELDS["direct_hiring"]), True),
+ ("route unknown -> caveat needed",
+  ico._known_transfer_case({"collected_info": {}}), None),
+ ("route known -> no caveat needed",
+  ico._known_transfer_case(
+      {"collected_info": {"helper_transfer_case": "yes, on a permit here"}}),
+  "yes, on a permit here"),
+ # The guard is keyed on a field the flow actually collects. Keyed on anything
+ # else it can never be satisfied, and the caveat would attach to every
+ # direct-hire timing question forever - which looks exactly like the guard
+ # working. Derived from the flow, not from the field's name.
+ ("the route guard is keyed on a field direct_hiring collects",
+  "helper_transfer_case" in [f.key for f in t.SERVICE_FIELDS["direct_hiring"]], True),
+ # --- 2026-09-17: the salary floor -----------------------------------
+ # Circled in the agency's own screenshot: a client who had said they wanted a
+ # FILIPINO helper was asked "Do you have a monthly salary budget in mind, such
+ # as SGD 500-600 or SGD 600-700?" - two bands at or below the S$650 a Filipino
+ # helper cannot be placed under. The question invited a budget no placement
+ # could be made at.
+ ("nothing known -> every band is still offered",
+  ico._effective_options(_budget_field, {}), _budget_field.options),
+ ("a Filipino helper -> no band below the S$650 floor",
+  [o for o in ico._effective_options(_budget_field,
+                                     {"preferred_nationality": "Filipino"})
+   if (lambda b: b[1] is not None and b[1] <= 650)(ico._band_bounds(o))], []),
+ ("...and the band that straddles the floor starts AT it, not above it",
+  ico._effective_options(_budget_field, {"preferred_nationality": "Filipino"})[0],
+  "SGD 650-700"),
+ ("...and 'not sure yet' carries no figure, so it always survives",
+  "not sure yet" in ico._effective_options(
+      _budget_field, {"preferred_nationality": "Filipino"}), True),
+ # The helper's OWN nationality narrows it too - a direct hire states her
+ # nationality rather than a preference, and it is the same fact.
+ ("her own nationality narrows it the same way",
+  ico._effective_options(_budget_field, {"nationality": "Philippines"}),
+  ico._effective_options(_budget_field, {"preferred_nationality": "Filipino"})),
+ # We hold a floor for the Philippines and for nothing else. Indonesia and
+ # Myanmar keep every band, because the agency gave figures for one country
+ # and inferring the other two from it is the mistake section 9 records twice
+ # for Myanmar already.
+ ("a nationality we hold no floor for is untouched",
+  [n for n in ("Indonesian", "Myanmar", "no preference")
+   if ico._effective_options(_budget_field, {"preferred_nationality": n})
+   != _budget_field.options], []),
+ ("...and the floor table names exactly one country, on purpose",
+  sorted(ico._SALARY_FLOOR_BY_NATIONALITY), ["PH"]),
+ # Only `budget` is filtered. A filter that reached any field with digits in
+ # its options would quietly edit the languages list or the home types.
+ ("no other field's options are touched",
+  [f.key for svc in t.SERVICE_FIELDS for f in t.SERVICE_FIELDS[svc]
+   if f.key != "budget" and f.options
+   and ico._effective_options(f, {"preferred_nationality": "Filipino"}) != f.options],
+  []),
+ # THE important one. `_field_guidance` builds the question and
+ # `grounded_options` tells ungrounded_figures which figures the reply may
+ # contain. If those two read different lists the model is instructed to offer
+ # a figure and then binned for offering it, which is the 2026-09-09 (D)
+ # defect. Asserted on the guidance TEXT, so the two cannot drift apart
+ # without this going red.
+ ("the question a Filipino client is asked names no sub-floor figure",
+  [d for d in ("500", "600-700", "below")
+   if d in ico._field_guidance("new_hiring",
+                               {"preferred_nationality": "Filipino"},
+                               _budget_field)], []),
+ ("...and it does name the floor",
+  "650" in ico._field_guidance("new_hiring",
+                               {"preferred_nationality": "Filipino"},
+                               _budget_field), True),
+ ("...while a client with no preference still sees the full range",
+  "below SGD 500" in ico._field_guidance("new_hiring", {}, _budget_field), True),
+ # The helper's side of the pairing is NOT narrowed. Her `expected_salary`
+ # takes the employer's bands through _matched_options, which reads the static
+ # options, so a Filipino applicant is still asked across the whole range.
+ ("the helper's own salary question keeps every band",
+  t._matched_options("budget"), _budget_field.options),
+
+ # --- 2026-09-17: the Filipino salary figures --------------------------
+ # The agency gave them; three live rows contradicted them in BOTH directions,
+ # saying a Filipino helper "starts at S$570-650" (below the floor) and that an
+ # experienced one is "S$700-850+" (above where she starts from).
+ ("the corrected sentence states the agency's two figures",
+  [d for d in ("S$650", "S$670")
+   if not any(d in r["new"] for r in _REPLACEMENTS)], []),
+ ("...and no longer states the figure below the floor",
+  [r["new"] for r in _REPLACEMENTS if "S$570" in r["new"]], []),
+ # TWO needles for ONE fact, because the sentence is written two ways in the
+ # live rows. Measured: one needle corrects two rows of three and leaves the
+ # third contradicting the pair.
+ # TWO needles for ONE fact, because the live rows write the same sentence two
+ # different ways. Counted through the CORRECTED text rather than by naming
+ # the old strings: retyping a needle here is what the sweep below is for, and
+ # the first version of this block spelled one out and was caught by it - the
+ # same way the phone-number sweep caught itself on 2026-09-11.
+ # THREE needles for one fact, because the live rows write the Filipino
+ # salary three different ways - two phrasings of the embassy-minimums
+ # sentence, and a third inside a nationality comparison filed under
+ # new_hiring. Found by SWEEPING for the old figure after the first two were
+ # corrected, which is the only reason the third is here at all.
+ ("every way the old floor is written is corrected",
+  sum(1 for r in _REPLACEMENTS if "S$650" in r["new"]), 3),
+ # ...and each of those rules is actually LOOKING for the old floor. The first
+ # version of this check counted the corrected text instead, so blanking a
+ # needle outright left it green - the rule still installed S$650, at a string
+ # that no longer existed anywhere. Counted through `old`, which is the half
+ # that has to match something.
+ ("...and each of them is looking for the figure it replaces",
+  [r["new"][:45] for r in _REPLACEMENTS
+   if "S$650" in r["new"] and "S$570" not in r["old"]], []),
+ ("...and they are distinct needles, not one rule written three times",
+  len({r["old"] for r in _REPLACEMENTS if "S$650" in r["new"]}), 3),
+ ("Indonesia and Myanmar are left alone in the same sentence",
+  [n for n in ("Indonesian", "Myanmar")
+   if any(n in r["old"] for r in _REPLACEMENTS)], []),
+ ("the salary row states the floor and the experienced starting point",
+  [d for d in ("S$650", "S$670")
+   if not any(d in r["answer"] for r in lsn.ROWS
+              if r["section_heading"] == "Employer - Filipino helper salary")], []),
+ # It must not read as a price for an experienced helper. The agency was
+ # explicit that figure "varies based on experience".
+ ("...and says the experienced figure is not fixed",
+  any("rather than fixed in advance" in r["answer"] for r in lsn.ROWS
+      if r["section_heading"] == "Employer - Filipino helper salary"), True),
+
+ # --- 2026-09-17: the overview says a different thing per service ------
+ # "a short, well-defined job we handle end to end" is true of a permit
+ # renewal and false of a 25-question first-time hire.
+ ("the two hiring flows are not called a short, well-defined job",
+  ico._SMALL_TICKET_SERVICES & {"new_hiring", "direct_hiring"}, set()),
+ ("...but they are in the set that explains itself up front",
+  {"new_hiring", "direct_hiring"} <= ico._OVERVIEW_AT_START, True),
+ # The agency's flow puts Cost/Fee straight after Process & Timeline. On these
+ # two their own 2026-09-04 instruction forbids a price outright, and
+ # quotes_hiring_package_cost enforces it whatever the prompt says - so the
+ # overview is told not to spend its one sentence on a figure that is about to
+ # be swapped for the deferral line.
+ ("a cost-withheld overview is told not to quote a price",
+  [k for k in ("new_hiring", "direct_hiring") if k not in _guards.COST_WITHHELD_SERVICES],
+  []),
  # --- 2026-09-08: what direct hire shares with new hiring -----------------
  # The agency's own line: "No candidate sourcing, matching or interviews.
  # Everything else mirrors New Hiring." The shared steps are filed as
@@ -1019,9 +1190,26 @@ rows = [
   [t.SERVICE_FIELDS[s][0].key for s in
    ("renewal", "passport_renewal", "home_leave")],
   ["full_name", "full_name", "full_name"]),
- ("a work permit renewal is three questions now",
+ # Four since 2026-09-17. The agency: "For services such as Work Permit
+ # Renewal, the service is not limited to existing agency clients ... the bot
+ # should identify whether the enquiry is for an existing client/helper, or a
+ # new client/helper, in which case the bot should collect the required
+ # information and determine whether a new case/file needs to be opened."
+ ("a work permit renewal is four questions now",
   [f.key for f in t.SERVICE_FIELDS["renewal"]],
-  ["full_name", "helper_name", "permit_expiry"]),
+  ["full_name", "helper_name", "helper_from_us", "permit_expiry"]),
+ # ...and it is the SAME object `replacement` asks, not a second copy of the
+ # same question that can be reworded in one place and not the other (9.8).
+ ("...asking the question replacement already asks, not a copy of it",
+  _rn.get("helper_from_us") is not None
+  and _rn.get("helper_from_us") is _rp.get("helper_from_us"), True),
+ # And it is NOT the banned question. "Have you hired with us before?" is
+ # answered from `placements` and never put to anyone (2026-09-04); this asks
+ # where one particular helper came from, which no record answers.
+ ("...and it does not ask whether they have hired with us before",
+  any("hired with us" in (f.question or "").lower()
+      or "hired a helper before" in (f.question or "").lower()
+      for f in t.SERVICE_FIELDS["renewal"]), False),
  # ...and adding the field alone would have changed NOTHING: _with_push_name
  # fills full_name from the WhatsApp profile, so the question is skipped
  # before it is ever asked. That is the exact 2026-09-08 defect on passport
@@ -1367,12 +1555,14 @@ rows = [
  ("a row that narrows its audience says so in its heading",
   sorted({r["section_heading"] for r in lsn.ROWS
           if r.get("contact_type", "all") != "all"
-          and not r["section_heading"].startswith(("Transfer - ", "Helper - "))}),
+          and not r["section_heading"].startswith(
+              ("Transfer - ", "Helper - ", "Employer - "))}),
   []),
  ("the transfer checklist is for employers, the journey rows for helpers",
   {(r["section_heading"].split(" - ")[0], r.get("contact_type", "all"))
    for r in lsn.ROWS if r.get("contact_type", "all") != "all"},
-  {("Transfer", "employer"), ("Helper", "candidate")}),
+  {("Transfer", "employer"), ("Helper", "candidate"),
+   ("Employer", "employer")}),
  # The helper's journey is filed `general` DELIBERATELY, and that is what
  # makes a routing change unnecessary: candidate_new_hiring is not a
  # service_type any row uses, so _labelled_filter narrows her to 'general'
@@ -2213,8 +2403,34 @@ rows = [
   ico.briefs_on_this_turn("passport_renewal", {"f": 1}), False),
  ("...and that holds for every service with a closing briefing",
   [k for k in t.BRIEFING_AFTER if ico.briefs_on_this_turn(k, {"f": 1})], []),
- ("an ordinary flow never gives an overview",
-  ico.briefs_on_this_turn("new_hiring", {"f": 1}), False),
+ # Reversed 2026-09-17, on the agency's instruction: "Once the service or
+ # intent has been identified, the bot should proactively explain the relevant
+ # process and expected timeline/lead time, without waiting for the user to
+ # ask." The two hiring flows are the longest in the codebase and were the
+ # only ones that explained themselves at neither end.
+ ("the two hiring flows now give an overview",
+  [k for k in ("new_hiring", "direct_hiring")
+   if not ico.briefs_on_this_turn(k, {"f": 1})], []),
+ ("...on exactly one turn, like every other service that does",
+  [n for n in range(6) if ico.briefs_on_this_turn("new_hiring", {"f": n})], [1]),
+ ("...and never on the introduction turn",
+  ico.briefs_on_this_turn("direct_hiring", {}), False),
+ # A flow that briefs at neither end is a flow whose client is told nothing
+ # unless they think to ask. Derived over every service that collects, so a
+ # flow added tomorrow has to make that choice deliberately rather than by
+ # omission. `transfer` and the money enquiries are out: the first is the
+ # helper's own six questions, the others are a question and not an intake.
+ ("every employer intake explains itself at one end or the other",
+  sorted(k for k in t.SERVICE_FIELDS
+         if k in _lead.EMPLOYER_LEAD_SERVICES
+         and k not in ("fee_enquiry", "salary_enquiry")
+         and k not in t.BRIEFING_AFTER
+         and not ico.briefs_on_this_turn(k, {"f": 1})),
+  # The two that still explain themselves at NEITHER end, recorded as a
+  # decision rather than left as an omission. Both are the agency's to ask
+  # for: `replacement` is eight questions and `transfer_employer` up to
+  # twenty-five, so both are candidates for the same treatment.
+  ["replacement", "transfer_employer"]),
  # The old expression still appears verbatim - inside the docstring that
  # explains why it could never be true, which is an incident note and
  # stays (section 0.4). So assert the call site uses the PREDICATE
