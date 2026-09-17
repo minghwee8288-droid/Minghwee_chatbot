@@ -719,6 +719,52 @@ take her at her word, say so warmly, and the registration simply carries on.
 """
 
 
+# Bolted onto SERVICE_BRIEFING_NOTE for home leave only. Agency, 2026-09-17:
+# "the bot should advise the client to purchase the air ticket and send a copy
+# of the ticket to us. This will allow our agent, once the case is assigned, to
+# immediately prepare and submit the required embassy appointment/documentation
+# based on the confirmed travel details."
+#
+# It was already ANSWERING this correctly when asked - their own screenshot has
+# "You can buy the air ticket first, as we need the ticket itinerary for the
+# documents" - but only because the client thought to ask. The flow itself
+# never raised it, so a client who does not ask books nothing, and the agent
+# picks up a case they cannot start.
+#
+# The itinerary is a Filipino embassy document and the records say so. For an
+# Indonesian helper they do NOT list it, so this asks for the ticket as
+# CONFIRMATION OF THE DATES rather than as a document her embassy demands -
+# true either way, and it does not invent a requirement the next message would
+# contradict. That is the 2026-09-08 FEE_BY_NATIONALITY rule applied to a
+# document instead of a price: what we hold for one nationality is not
+# automatically the other's.
+HOME_LEAVE_TICKET_NOTE = """
+
+ONE MORE THING BELONGS IN THE STEPS, AND IT IS THE MOST USEFUL THING IN THIS
+MESSAGE: tell them to go ahead and book her air ticket now, and to send us a
+copy of it once they have it.
+
+Put it as one of the numbered steps they follow, early in that list - it is the
+first thing they can actually do. Say why in the same breath: the confirmed
+travel dates are what let us prepare and submit her embassy paperwork straight
+away, so booking now is what stops the whole thing waiting on a date nobody has
+fixed yet. They do NOT need to wait for us before buying it.
+
+If her nationality is FILIPINO, her ticket itinerary is also one of the
+documents her embassy set needs, so it belongs in the document list as well as
+in the steps - the records say so outright.
+
+If her nationality is INDONESIAN, ask for the ticket copy so we can work to
+confirmed dates, and do NOT call it a document her embassy requires. Our
+records list her documents and the itinerary is not among them; naming it as
+one contradicts the list you are writing three lines further up.
+
+Never name an airline, a route, a price or a deadline for booking it, and never
+say when she must fly by. None of that is ours to say, and a figure here gets
+this entire message thrown away.
+"""
+
+
 CANDIDATE_BRIEFING_NOTE = """
 
 You now have everything you need from her, so THIS message is the one that tells

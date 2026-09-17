@@ -1968,6 +1968,24 @@ NAME_FROM_RECORD_ONLY = frozenset(
 # followed by the question it depends on.
 BRIEFING_AFTER: dict[str, str] = {
     "passport_renewal": "nationality",
+    # Home leave, 2026-09-17. It had no entry, so it closed on the bare handover
+    # line — and the agency's own screenshot shows the client having to ask
+    # "how long will the documents take to process before i can buy the air
+    # ticket?" to learn something the flow should have volunteered. The answer
+    # they got was right; the question should never have been theirs to ask.
+    #
+    # Keyed on `nationality` for the reason passport renewal is: the documents,
+    # the lead time AND the price all differ by it (PH original passport plus
+    # her ticket itinerary, approximately 4 weeks; ID copies and one form we
+    # provide, approximately 2 weeks), so before the nationality the only
+    # honest briefing is "it depends" — the 2026-09-04 defect. It is question 3
+    # of 4 here, so it is always answered, and answered a turn before the
+    # collection completes, which is what the RETRIEVER needs (see the note on
+    # CANDIDATE_HIRING below).
+    #
+    # FEE_BY_NATIONALITY already covers home_leave for PH and ID, so a Myanmar
+    # helper's briefing defers the cost instead of quoting somebody else's.
+    "home_leave": "nationality",
     # The helper's own registration, 2026-09-10. Agency, testing as a job
     # seeker: "the bot did not explain the next steps/process to the
     # candidate." It did not, and she had to ask - twice, and the first one got

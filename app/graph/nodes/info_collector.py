@@ -36,6 +36,7 @@ from app.graph.prompts.templates import (
     CANDIDATE_PROCESS_COMES_LAST_NOTE,
     UNPLACEABLE_NATIONALITY_NOTE,
     CANDIDATE_BRIEFING_NOTE,
+    HOME_LEAVE_TICKET_NOTE,
     SERVICE_BRIEFING_NOTE,
     ACKNOWLEDGE_ONLY_INSTRUCTION,
     ANSWER_THEN_ASK_INSTRUCTION,
@@ -1849,6 +1850,14 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
                 "that a consultant will confirm the cost for her embassy, and "
                 "carry on with the timing and the process."
             )
+        # Home leave only: book the ticket now and send us a copy, so the agent
+        # who picks the case up can submit the embassy paperwork against
+        # confirmed dates instead of waiting for them. Agency, 2026-09-17.
+        # Appended AFTER the fee addendum deliberately — if we have no price for
+        # her nationality that sentence still comes first, and this one is about
+        # what the client DOES, which is the end of the message either way.
+        if service_type == "home_leave":
+            briefing_note += HOME_LEAVE_TICKET_NOTE
 
     # The very first thing this client has ever heard from us. Rule 1 and the
     # stage line in build_system_prompt both call for the introduction, but on a

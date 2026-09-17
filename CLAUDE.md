@@ -319,6 +319,9 @@ because the lead is opened early and the ticket is created much later.
 | The household question asks who lives there, not just how many | `SERVICE_FIELDS[...]["household"]` | Six people is two adults and four children, or four adults and two elderly parents — different jobs. `children_detail` and `elderly_detail` are both GATED on `requirement`, so an elderly parent in a childcare-only household was never asked about at all. |
 | More work than one helper can carry is said once, before moving on | `info_collector._heavy_workload` + `state.flagged_once` + `smoke_nodes.py` | BOTH halves required — more than one kind of work AND a large household, by headcount or home size. A big family with one clear job is an ordinary placement, and telling that client their job is too big talks them out of a hire, so it fails towards silence. Advice, never a refusal, and no figure: a number gets the reply binned and they lose the advice with it. Recorded only when the reply was not the bare fallback (2026-09-08 `briefing_lost`). |
 | A guard may not flatten the reply it is cleaning | `guards.strip_handover_talk` | It re-joined on `" "`, so a seven-step process answer came back as "1. Consultation … 2. 3. Interview …" — the same defect `clamp_reply` had until 2026-09-08, on the same replies. Line structure survives, and a step stripped to a bare "2." is dropped whole. |
+| Home leave closes by telling them to book the ticket | `BRIEFING_AFTER["home_leave"]` + `templates.HOME_LEAVE_TICKET_NOTE` + `smoke_nodes.py` | It had no `BRIEFING_AFTER` entry, so it closed on the bare handover line and the client had to ask *"how long will the documents take before i can buy the air ticket?"* to learn it. The answer was right; the question should not have been theirs. Confirmed dates are what let the assigned agent submit the embassy paperwork immediately. |
+| ...and the itinerary is a document for PH and only a date confirmation for ID | `HOME_LEAVE_TICKET_NOTE` | The records list the ticket itinerary among a **Filipino** helper's embassy documents and do not list it for an Indonesian one. Asking an ID employer for it as a required document contradicts the document list three lines above it in the same message. `FEE_BY_NATIONALITY`'s rule applied to a document instead of a price. |
+| A briefing is keyed on a field its own flow collects | `selfcheck_flows.py` | Keyed on anything else it can never come due, and the flow closes on the handover line with nothing — silently, because a briefing that never happens looks exactly like one working quietly. Derived over `BRIEFING_AFTER`, not a list of three. |
 | Naming the other channel is not a refusal of this one | `ticket._WANTS_EMAIL` | `excludes` is checked FIRST and held the names of the ALTERNATIVE — so every way of saying "both" closed the email gate, including the ones saying "email" outright. "both email and whatsapp" was closed. Those excludes were never needed: an answer naming only WhatsApp matches nothing, and a gate with no match is closed already. `excludes` now holds what it is for — a negation that contains the match word ("no email"), the same shape as "no, I don't have pets" containing "have". |
 | ...and the question offers "both", so nobody has to volunteer it | `_UPDATE_CHANNEL` | An either/or question hides the third real answer. Three options named literally, which is what puts `_field_guidance` on its "name them all" branch. |
 | A numbered step may state how long OUR OWN service takes | `guards._CONTACT_PROMISE` | "you receive 3 to 5 matched profiles within 48 hours" — the agency's own published turnaround, in the records and passed by `ungrounded_figures` — was deleted as an invented callback time. Inside a step the TIME half fires only when the step also promises somebody will contact them, so "a live agent will call you within 2 hours" still goes. Prose is untouched. |
@@ -826,9 +829,15 @@ at a time.
 - **The Settling-In Programme window.** Their flow says seven days; MOM's requirement for
   a first-time helper is tighter, and a missed registration is a penalty on the employer,
   so the rows say "within the window MOM allows" until this is confirmed.
-- **Myanmar passport renewal**: no fee, no timeline and no confirmation that the
-  three-form route still stands as the 2026-09-07 document described it. Nothing is
-  quoted for Myanmar because nothing was given.
+- **Myanmar passport renewal AND Myanmar home leave**: no fee, no timeline, no
+  document list, and no confirmation that the three-form passport route still
+  stands as the 2026-09-07 document described it. Nothing is quoted for Myanmar
+  because nothing was given — both closing briefings correctly defer the price to
+  a consultant. The one thing that does leak through is a Myanmar home leave being
+  told we need "a copy of her passport", which is the INDONESIAN row's item
+  arriving via the `nationality='all'` row; NRIC and work permit are grounded for
+  everyone. Recorded 2026-09-17 rather than guarded, because the honest fix is a
+  Myanmar row from them, not a rule inferred from the other two.
 - **A grounded salary band**, so the budget question can explain itself. Today the model
   supplies a range from its own knowledge and `ungrounded_figures` bins the whole reply,
   leaving the client the bare question (2026-09-09 C).
@@ -980,6 +989,82 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-17** — **Home leave closes by telling them to book the air ticket, which
+  is the one thing they can do while they wait.** The agency: *"After collecting the
+  helper's nationality and other required details, the bot should advise the client to
+  purchase the air ticket and send a copy of the ticket to us. This will allow our
+  agent, once the case is assigned, to immediately prepare and submit the required
+  embassy appointment/documentation based on the confirmed travel details."*
+  (A) **It already ANSWERED this correctly — that is what makes it a flow defect rather
+  than a knowledge one.** Their own screenshot: *"how long will the documents take to
+  process before i can buy the air ticket? or can i buy the air tickets forst"* →
+  *"For a Filipino helper, allow about 4 weeks because an embassy appointment is
+  required. You can buy the air ticket first, as we need the ticket itinerary for the
+  documents."* Right on both halves, off the records. But the client had to think to
+  ask, one message AFTER the handover — so a client who does not ask books nothing, and
+  the agent picks up a case they cannot start.
+  (B) **`home_leave` had no `BRIEFING_AFTER` entry at all**, so it closed on the bare
+  handover line: four questions, "a live agent will connect with you shortly", and
+  nothing about cost, timing, documents or next steps. Passport renewal has had a
+  closing briefing since 2026-09-08 and the candidate registration since 2026-09-10;
+  this is the third service to get one, and the machinery was already generic —
+  `briefing_due`, `BRIEFING_QUERY`, `SERVICE_BRIEFING_NOTE` and `BRIEFING_MATCH_COUNT`
+  needed no change.
+  (C) **Keyed on `nationality`, for the reason passport renewal is.** The documents,
+  the lead time AND the price all differ by it — PH original passport plus her ticket
+  itinerary, approximately 4 weeks, $400; ID copies and one form we provide,
+  approximately 2 weeks, $250 — so before the nationality the only honest briefing is
+  "it depends", which is the 2026-09-04 defect. It is question 3 of 4 here, so it is
+  always answered and answered a turn before the collection completes, which is what
+  the RETRIEVER needs.
+  (D) **Measured before building anything**, because a briefing with no records is the
+  2026-09-09 defect. Through the real retriever at `BRIEFING_MATCH_COUNT` 10, under
+  `home_leave`: PH gets its own documents row (0.568), the timing row, the process row
+  and **$400**; ID gets its own documents row (0.543), the timing row, the process row
+  and **$250** — and, correctly, **no $400 anywhere in its set**, which is the
+  nationality filter doing its job. No change to the query or the match count.
+  (E) **The ticket itinerary is a FILIPINO document and only a date confirmation for an
+  Indonesian helper.** The records list it among PH's embassy set and do not list it for
+  ID, so a general "send us the itinerary, your embassy needs it" would contradict the
+  document list three lines above it in the same message. The note therefore asks for
+  the ticket copy as **confirmation of the dates** — true either way, and the agency's
+  own reasoning — and says the itinerary is additionally a document only where the
+  records say so. That is `FEE_BY_NATIONALITY`'s rule applied to a document instead of
+  a price: what we hold for one nationality is not automatically the other's.
+  (F) **No figure, no airline, no route, no deadline, and never when she must fly by.**
+  A number here gets the entire briefing binned by `ungrounded_figures` and they lose
+  the advice with it — the same reasoning as the workload note earlier today.
+  (G) **Eight faults injected, eight red** — the briefing removed; keyed on a field the
+  flow never collects; the note never appended; the note appended on every service; the
+  "send us a copy" half dropped; the reason dropped; the PH/ID distinction collapsed;
+  and the deadline ban dropped.
+  **One came back GREEN first, and the control was the thing that was wrong.** The
+  passport-renewal control forbade the note on a turn that still had `passport_expiry`
+  outstanding — and the briefing is the CLOSING message, so that turn never builds one
+  at all. It forbade something that could not have appeared either way and stayed green
+  with the service gate removed outright. Made complete, it goes red. **A `_forbid_` on
+  a turn that has no briefing proves nothing**, which is the "green for the wrong
+  reason" shape this file has now recorded five times.
+  Three of the new assertions also failed first on **line wrapping** — `"send us a\ncopy"`
+  is not `"send us a copy"` — the 2026-09-16 (H) trap. Fixed with the existing `_flat()`
+  helper rather than by rewording the prose to fit the check, which would have been the
+  wrong way round.
+  (H) **Verified live against the real model, all three nationalities.** PH: 4 weeks,
+  $400, the itinerary IN the document list, and step 1 *"Please book Jenny Rose Ann's
+  air ticket now and send us a copy; the confirmed travel dates let us prepare and
+  submit her embassy paperwork straight away."* ID: 2 weeks, $250, the itinerary NOT in
+  the documents, and *"send us a copy so we can work to her confirmed travel dates
+  without waiting."* Myanmar: **no price quoted** — *"a consultant will confirm the cost
+  for her embassy"* — with the ticket advice still given.
+  **Measured and NOT changed:** a Myanmar home leave is given "a copy of her passport"
+  in its document list, which is the INDONESIAN row's item reaching her through the
+  `nationality='all'` row's "either way" clause. NRIC and work permit are grounded for
+  every nationality; the passport copy is not, strictly. It is one benign document
+  rather than a wrong price or a wrong deadline, nobody has reported it, and the real
+  gap is that the agency has given **no Myanmar home leave content at all** — the same
+  hole §9 already carries for Myanmar passport renewal, now recorded for both.
+  `selfcheck_flows.py` is **422 assertions**; `smoke_nodes.py` is **79 states**.
 
 - **2026-09-17** — **"i said both then why you didnt ask for email" — every way of
   saying both closed the gate, including the ones that said the word.** The agency

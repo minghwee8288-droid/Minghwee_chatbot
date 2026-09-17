@@ -377,6 +377,59 @@ CASES = [
       "history_text": "client: hi\nbot: Hi, I'm Claire, Ming Hwee's AI assistant.",
       "_forbid_prompt": "introduce yourself in one short sentence"}),
 
+    # --- home leave tells them to book the ticket, 2026-09-17 --------------
+    # Agency: advise the client to buy the air ticket and send us a copy, so the
+    # agent picking the case up can submit the embassy paperwork against
+    # confirmed dates. home_leave had no BRIEFING_AFTER entry at all, so it
+    # closed on the bare handover line and the client had to ask.
+    # RUN, not read: briefing_due is one condition and the note reaching the
+    # prompt is another, and only the node joins them.
+    ("info_collector", "home leave closes by telling them to book the ticket",
+     {"intent": "home_leave", "service_type": "home_leave",
+      "incoming_text": "12 December to 8 January",
+      "history_text": "bot: When is she planning to travel, and when would she be back?",
+      "collected_info": {"full_name": "Vincent", "helper_name": "Jenny Rose Ann",
+                         "nationality": "Filipino",
+                         "leave_dates": "12 December to 8 January"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "nationality": 1, "leave_dates": 1},
+      "briefed_services": [],
+      "_expect_prompt": "book her air ticket"}),
+    # ...and it is home leave's note, not every briefing's. A passport renewal
+    # has no flight in it at all.
+    #
+    # This control must be COMPLETE, not merely past its nationality. The
+    # briefing is the CLOSING message (2026-09-08), so a flow with a field still
+    # outstanding never builds one - and the first version of this state left
+    # `passport_expiry` unanswered, so it forbade a note that could not have
+    # appeared either way and stayed green with the service gate removed.
+    # A _forbid_ on a turn that has no briefing at all proves nothing.
+    ("info_collector", "...and a passport renewal is never told to book a flight",
+     {"intent": "passport_renewal", "service_type": "passport_renewal",
+      "incoming_text": "27 September 2033",
+      "history_text": "bot: When does her current passport expire?",
+      "collected_info": {"full_name": "Vincent", "helper_name": "Michan",
+                         "nationality": "Indonesian",
+                         "passport_expiry": "27 September 2033"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "nationality": 1, "passport_expiry": 1},
+      "briefed_services": [],
+      "_expect_prompt": "tells them what they have signed up for",
+      "_forbid_prompt": "book her air ticket"}),
+    # Said once. The briefing is recorded as given, so a later turn does not
+    # tell them to book a ticket they have already booked.
+    ("info_collector", "...and not again once the briefing has been given",
+     {"intent": "home_leave", "service_type": "home_leave",
+      "incoming_text": "ok thanks",
+      "history_text": "bot: Here is everything for Jenny Rose Ann's home leave:",
+      "collected_info": {"full_name": "Vincent", "helper_name": "Jenny Rose Ann",
+                         "nationality": "Filipino",
+                         "leave_dates": "12 December to 8 January"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "nationality": 1, "leave_dates": 1},
+      "briefed_services": ["home_leave"],
+      "_forbid_prompt": "book her air ticket"}),
+
     # --- "i said both then why you didnt ask for email", 2026-09-17 ---------
     # Direct hire, the agency's own test. The client answered "both" to the
     # channel question, the flow completed and handed over without ever asking

@@ -387,6 +387,45 @@ rows = [
  ("chose email -> asked for an email",
   any(f.key == "email" for f in t.applicable_fields("new_hiring", {"update_channel": "email"})),
   True),
+ # --- home leave tells them to book the ticket, 2026-09-17 ------------------
+ # Agency: "the bot should advise the client to purchase the air ticket and
+ # send a copy of the ticket to us", so the agent who picks the case up can
+ # submit the embassy paperwork against confirmed dates. Their screenshot shows
+ # the bot answering it correctly - but only because the client asked.
+ ("home leave closes with a briefing, keyed on her nationality",
+  t.BRIEFING_AFTER.get("home_leave"), "nationality"),
+ # A briefing keyed on a field its own flow never asks can never come due, and
+ # the flow would close on the bare handover line with nothing to show for it.
+ # Derived, so a fourth service cannot reopen it.
+ ("every briefing is keyed on a field that flow actually collects",
+  sorted({f"{svc}:{key}" for svc, key in t.BRIEFING_AFTER.items()
+          if key not in {f.key for f in t.SERVICE_FIELDS.get(svc, ())}}), []),
+ ("the ticket note tells them to book it and send a copy",
+  ("book her air ticket" in _flat(tmpl.HOME_LEAVE_TICKET_NOTE)
+   and "send us a copy" in _flat(tmpl.HOME_LEAVE_TICKET_NOTE)), True),
+ # ...and says WHY, which is the whole of the agency's reasoning: confirmed
+ # dates are what let the embassy paperwork go in immediately.
+ ("...and says why, so it does not read as an instruction out of nowhere",
+  "confirmed travel dates" in _flat(tmpl.HOME_LEAVE_TICKET_NOTE), True),
+ # The itinerary is a FILIPINO embassy document and the records say so; for an
+ # Indonesian helper they do not list it. Asking for it as a document she needs
+ # would contradict the document list in the same message. Same rule as
+ # FEE_BY_NATIONALITY, applied to a document instead of a price.
+ ("the itinerary is a document for PH and only confirmation of dates for ID",
+  ("FILIPINO" in _flat(tmpl.HOME_LEAVE_TICKET_NOTE)
+   and "INDONESIAN" in _flat(tmpl.HOME_LEAVE_TICKET_NOTE)
+   and "not among them" in _flat(tmpl.HOME_LEAVE_TICKET_NOTE)), True),
+ # No figure of any kind: ungrounded_figures bins the whole briefing and they
+ # lose the advice with it - the 2026-09-17 workload note, same reasoning.
+ ("the ticket note quotes nothing and sets no deadline",
+  (not re.search(r"\d", _flat(tmpl.HOME_LEAVE_TICKET_NOTE))
+   and "never say when she must fly by" in _flat(tmpl.HOME_LEAVE_TICKET_NOTE)), True),
+ # home_leave already has a fee for PH and ID only, so a Myanmar helper defers
+ # rather than being quoted somebody else's price.
+ ("home leave still defers the cost for a nationality we have no price for",
+  (t.fee_is_known_for("home_leave", "PH"), t.fee_is_known_for("home_leave", "MM")),
+  (True, False)),
+
  # --- ...and "both" is a third answer, not a way of saying no, 2026-09-17 ---
  # Agency test on direct hire: the client answered "both", was never asked for
  # an address, and said so. `excludes` is checked first and held the names of
