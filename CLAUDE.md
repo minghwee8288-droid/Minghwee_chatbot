@@ -340,6 +340,8 @@ because the lead is opened early and the ticket is created much later.
 | ...and the employer's list is the helper's list plus "no preference" | `ticket._RELIGIONS` | One tuple, two lists, derived rather than typed twice (§9.8). The second pairing whose halves cannot literally share one, after `preferred_nationality` - "no preference" is an answer to his question and not a thing she can BE. Asserted as that exact difference rather than skipped as an exception, so a religion added to one side and not the other still fails. |
 | A question only one answer can fit is not offered "or more than one" | `Field.multiple_answers` | Live 2026-09-17: *"may I know your religion, such as Muslim, Christian, Catholic, Hindu, Buddhist, another faith, **or more than one**"*. That clause is `_field_guidance` doing as it is told, and it is right for `languages` and `requirement`. Deliberately **not** `options_are_exhaustive`, which is still only ever her country: a helper whose faith is not one of the five still has to be able to give it. The employer's half keeps multiple - "Muslim or Christian is fine" is a real preference. |
 
+| The WhatsApp profile name is never used as the client's name, on ANY turn | `system._contact_block` | It was suppressed inside `info_collector`, gated on `service_type in NAME_FROM_RECORD_ONLY` — and a GREETING turn has no service and never reaches that node. Live 2026-09-17: *"Hi Vaidik, I'm Claire"* to a number we hold no name for, then *"May I know your name?"* two messages later. Moved to the one place the name ENTERS the prompt, so every node gets the same answer instead of each having to remember. The label is not printed as a fallback and not mentioned in order to forbid it — §8's rule for the branches that did not exist. |
+
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
 own last line contained a question mark.
@@ -1037,6 +1039,56 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-17** — **"Hi Vaidik" to a number we hold no name for, and then "May I
+  know your name?" one message later.** Reported from a live chat, on the first two
+  messages of the conversation.
+  (A) **The rule existed and could not reach the turn.** `info_collector` has dropped
+  the WhatsApp push name from the prompt since 2026-09-08, gated on
+  `service_type in NAME_FROM_RECORD_ONLY`. A client who opens with *"Hello"* satisfies
+  neither half: they have not said what they want, so there is no `service_type`, and
+  the turn goes to `response_generator`, which has no such rule. `_contact_block` then
+  printed `- WhatsApp name: Vaidik`, and prompt rule 1c says to use the client's name
+  when you know it — so the model did exactly as instructed.
+  (B) **Reproduced before touching anything**, word for word against the real model:
+  *"Hi Vaidik, I'm Claire, Ming Hwee's AI assistant. How can I help you?"* then
+  *"I'll ask a few details ... May I know your name?"*
+  (C) **Why it appeared NOW, having never been reported before.** Until 2026-09-16
+  `new_hiring` filled `full_name` from the push name, so the question was skipped and
+  the contradiction could not arise — the bot said "Hi Vaidik" and then never asked.
+  The agency's own complaint that day (*"why chatbot is not asking the user name like
+  before it is again picking name automatically"*) is what made it ask. That fix was
+  right and stays; this is its mirror image, one turn earlier, and the two together are
+  what a client actually sees.
+  (D) **Two nodes disagreeing about whether the push name is the client's name** is
+  §9.8's duplication hazard applied to a POLICY rather than a constant. It is now one
+  decision, at the single point the name enters the prompt: `_contact_block` prints the
+  name from our RECORDS or prints none, and the local copy in `info_collector` is gone
+  with its incident note moved rather than stripped (§0.3).
+  (E) **Not printed as a fallback and not named in order to forbid it.** A line saying
+  *"WhatsApp profile name: Vaidik (not their real name, do not use it)"* puts the name
+  in the context, and a model that wrote "Hi Vaidik" was reading it from the prompt in
+  the first place — which is exactly what §8 settled for the three branches that did
+  not exist. Nothing is lost: a name the client types still reaches the model as an
+  answered field.
+  (F) **The warmth half is asserted in both directions**, because it is a 2026-09-09
+  fix and the obvious over-correction here is to stop greeting anybody. A client on
+  file still gets *"Hi Ratna"* on a greeting and *"Hi Ratna Choukade, welcome back"* on
+  an intake; a client not on file gets *"Hi, I'm Claire"* and is asked.
+  (G) **Four faults injected, four red** — the label used as the name again; the label
+  named in order to forbid it; the record name stopped reaching the model; and a node
+  going back to blanking it for itself, which is the duplication the fix is about.
+  (H) **Why neither suite caught it, which is the part worth keeping.** Both were green
+  the moment the fix landed, because nothing covered the path. `smoke_nodes.py` had no
+  `response_generator` greeting state carrying a push name, and **`e2e_services.py`
+  opens every one of the seven services with the service sentence** (*"Hi, I want to
+  hire a helper"*) — never with a bare *"Hello"*. So the first turn in every end-to-end
+  walk IS a collector turn, where the old suppression worked. A harness that always
+  starts the conversation the same way cannot see a defect that only happens when it
+  starts differently. The greeting turn now has its own states, asserted on the PROMPT
+  rather than the reply — checking the reply passes on any run where the model simply
+  chose not to use the name.
+  `selfcheck_flows.py` is **476 assertions**; `smoke_nodes.py` is **96 states**.
 
 - **2026-09-17** — **Religion replaces the pork/beef question, by instruction, after
   the trade was put to the agency and they took it.** Their answer to the §9 note

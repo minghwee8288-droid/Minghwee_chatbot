@@ -1994,13 +1994,12 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # smoke_nodes.py caught this one the same way.
     client_asked = bool(_ASKS_SOMETHING.search(state.get("incoming_text") or ""))
 
-    # The prompt prints "- WhatsApp name: Vaidik" in its contact block, so
-    # suppressing the field alone would still have produced "Hi Vaidik" and
-    # then asked for the name. On these flows the model is given the name only
-    # when our records hold it.
-    hide_push_name = service_type in ticket_service.NAME_FROM_RECORD_ONLY and not str(
-        state.get("record_name") or ""
-    ).strip()
+    # The push-name suppression that used to live here moved into
+    # `system._contact_block` on 2026-09-17, because it was scoped to this node
+    # and to a known service - and a GREETING turn has neither, so a client who
+    # opened with "Hello" was greeted "Hi Vaidik" and asked for their name two
+    # messages later. The incident note is at the new site. Nothing is needed
+    # here any more: the block prints the name from our RECORDS or prints none.
 
     briefing_note = ""
     # `answer_first` is the collector's own "they asked us something" flag, and
@@ -2183,13 +2182,6 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
 
     label = service_label(service_type)
     system_prompt_state = {**dict(state), "collected_info": collected}
-    if hide_push_name:
-        # Applied where the prompt state is actually BUILT, not a hundred lines
-        # above it - the flag is set earlier and read here for the same reason
-        # client_asked is. Reading a local before it is assigned is the
-        # 2026-09-04 failure, and smoke_nodes.py failed seven states on this
-        # exact mistake before it could ship.
-        system_prompt_state["customer_name"] = ""
 
     # She is not from a country we can place her from, and nothing below this
     # point should run: no next question, no completion, no briefing.

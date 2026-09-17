@@ -303,10 +303,43 @@ def _known_cases_block(state: dict[str, Any]) -> str:
 
 def _contact_block(state: dict[str, Any]) -> str:
     contact_type = state.get("contact_type") or "unknown"
-    name = state.get("customer_name") or ""
+    # The name we HOLD, never the label they set on their own WhatsApp account.
+    #
+    # This block used to print "- WhatsApp name: Vaidik" from `customer_name`,
+    # which is written from the push name when the conversation row is created.
+    # Prompt rule 1c tells the model to use the client's name when it knows it,
+    # so the model did exactly as instructed and opened "Hi Vaidik" - to a
+    # number no record holds a name for.
+    #
+    # `info_collector` has suppressed that since 2026-09-08, but only inside
+    # itself and only when `service_type in NAME_FROM_RECORD_ONLY`. A GREETING
+    # turn satisfies neither test: the client has not said what they want yet,
+    # so there is no service, and the turn goes to `response_generator`. Live
+    # 2026-09-17, on the first two messages of a conversation:
+    #
+    #     client: Hello
+    #     Claire: Hi Vaidik, I'm Claire, Ming Hwee's AI assistant. How can I
+    #             help you?
+    #     client: I want to hire a helper
+    #     Claire: I'll ask a few details ... May I know your name?
+    #
+    # Two nodes disagreeing about whether the push name is the client's name,
+    # which is §9.8's duplication hazard applied to a policy instead of a
+    # constant. It moved here because this is the ONE place the name enters the
+    # prompt, so every node now gets the same answer without having to
+    # remember.
+    #
+    # The push name is NOT printed as a fallback and not mentioned at all when
+    # our records hold nothing. Naming it in order to forbid it is what §8
+    # settled for the branches that did not exist: denying something by name
+    # puts the name in the context, and a model that wrote "Hi Vaidik" was
+    # reading it from the prompt in the first place. A name the client types
+    # themselves still reaches the model - it lands in `collected_info` and is
+    # printed as an answered field - so nothing is lost by leaving it out here.
+    name = state.get("record_name") or ""
     lines = [f"- Contact type: {contact_type}"]
     if name:
-        lines.append(f"- WhatsApp name: {name}")
+        lines.append(f"- Their name, from our records: {name}")
     if contact_type == "employer":
         lines.append(
             "- This is an existing employer in our system. Treat them as a returning "

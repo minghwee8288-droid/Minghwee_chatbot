@@ -459,6 +459,35 @@ CASES = [
       "_forbid_prompt": "what email should I send them to"}),
 
 
+    # --- 2026-09-17: the WhatsApp profile name on a GREETING turn ---------
+    # The turn the suppression could not reach: no service_type yet, and it
+    # goes to response_generator rather than info_collector, so neither half of
+    # the old test could be true. Asserted on the PROMPT, because the defect is
+    # that the name was handed to the model at all - checking the reply would
+    # pass on any run where the model simply chose not to use it.
+    ("response_generator", "a greeting gets no name we do not hold",
+     {"intent": "greeting", "service_type": None, "incoming_text": "Hello",
+      "customer_name": "Vaidik", "record_name": "", "contact_type": "unknown",
+      "history_text": "", "_forbid_prompt": "Vaidik"}),
+    # ...and the half that must not regress: a name we DO hold still reaches
+    # the model, which is the 2026-09-09 warmth fix.
+    ("response_generator", "...but a name we do hold still does",
+     {"intent": "greeting", "service_type": None, "incoming_text": "Hello",
+      "customer_name": "Vaidik", "record_name": "Ratna Choukade",
+      "contact_type": "employer", "history_text": "",
+      "_expect_prompt": "Ratna Choukade"}),
+    ("response_generator", "...and even then the profile label is not offered",
+     {"intent": "greeting", "service_type": None, "incoming_text": "Hello",
+      "customer_name": "Vaidik", "record_name": "Ratna Choukade",
+      "contact_type": "employer", "history_text": "",
+      "_forbid_prompt": "Vaidik"}),
+    # The collector end of the same rule, which used to be the only end.
+    ("info_collector", "a hiring intake gets no name we do not hold",
+     {"intent": "new_hiring", "service_type": "new_hiring",
+      "incoming_text": "I want to hire a helper",
+      "customer_name": "Vaidik", "record_name": "", "contact_type": "unknown",
+      "history_text": "", "_forbid_prompt": "Vaidik"}),
+
     # --- 2026-09-17: religion, in place of the pork/beef question ---------
     # The agency's decision, taken after the trade was put to them: "in place
     # of this 'are you able to handle pork or beef' and this 'would she need to

@@ -219,6 +219,8 @@ dh_emp  = [f.key for f in t.applicable_fields("direct_hiring", {"helper_transfer
 dh_free = [f.key for f in t.applicable_fields("direct_hiring", {"helper_transfer_case": "no"})]
 hire_src = next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "hire_source")
 _budget_field = next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "budget")
+import app.graph.prompts.system as _sys
+_ROOT = Path(__file__).resolve().parents[1]
 # Looked up by dict rather than by `next(...)`, so a field that has been
 # renamed or removed turns an assertion RED naming itself instead of raising
 # StopIteration and printing no FAIL line at all. A crash tells you less than
@@ -674,6 +676,43 @@ rows = [
  # working. Derived from the flow, not from the field's name.
  ("the route guard is keyed on a field direct_hiring collects",
   "helper_transfer_case" in [f.key for f in t.SERVICE_FIELDS["direct_hiring"]], True),
+ # --- 2026-09-17: the WhatsApp profile name, everywhere ----------------
+ # Live, on the first two messages of a conversation:
+ #   client: Hello
+ #   Claire: Hi Vaidik, I'm Claire, Ming Hwee's AI assistant. How can I help?
+ #   client: I want to hire a helper
+ #   Claire: I'll ask a few details ... May I know your name?
+ # The suppression existed, but inside `info_collector` and gated on
+ # `service_type in NAME_FROM_RECORD_ONLY`. A greeting turn has no service and
+ # does not reach that node, so neither test could fire. Moved to the one place
+ # the name ENTERS the prompt, and asserted there.
+ ("a number we hold no name for puts no name in the prompt",
+  "Vaidik" in _sys._contact_block(
+      {"contact_type": "unknown", "customer_name": "Vaidik", "record_name": ""}),
+  False),
+ ("...and the profile label is not mentioned in order to forbid it either",
+  [w for w in ("WhatsApp name", "profile")
+   if w in _sys._contact_block(
+       {"contact_type": "unknown", "customer_name": "Vaidik", "record_name": ""})],
+  []),
+ # The other half, which is the 2026-09-09 warmth fix and must not regress: a
+ # client whose name we DO hold is greeted by it.
+ ("a name we hold IS in the prompt",
+  "Ratna Choukade" in _sys._contact_block(
+      {"contact_type": "employer", "customer_name": "Vaidik",
+       "record_name": "Ratna Choukade"}),
+  True),
+ ("...and it is the record name, never the profile label, that gets used",
+  "Vaidik" in _sys._contact_block(
+      {"contact_type": "employer", "customer_name": "Vaidik",
+       "record_name": "Ratna Choukade"}),
+  False),
+ # ONE decision, not one per node. The whole defect was two nodes disagreeing
+ # about whether the push name is the client's name (§9.8, applied to a policy
+ # rather than a constant), so no reply-writing node may carry its own copy.
+ ("no node blanks the push name for itself any more",
+  sorted(f.name for f in (_ROOT / "app" / "graph" / "nodes").glob("*.py")
+         if 'customer_name"] = ""' in f.read_text(encoding="utf-8")), []),
  # --- 2026-09-17: the salary floor -----------------------------------
  # Circled in the agency's own screenshot: a client who had said they wanted a
  # FILIPINO helper was asked "Do you have a monthly salary budget in mind, such
