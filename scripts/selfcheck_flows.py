@@ -278,6 +278,10 @@ wp = importlib.import_module("app.whapi.parser")
 wc = importlib.import_module("app.whapi.client")
 import re as _re
 import pathlib as _pathlib
+import httpx as _httpx
+from app.whapi import client as _whapi_client
+_whapi_src = _pathlib.Path(_whapi_client.__file__).read_text(encoding='utf-8')
+_msg_src = _pathlib.Path(ms.__file__).read_text(encoding='utf-8')
 import app.services.contact as _contact
 from app.graph.prompts.system import _known_cases_block as _cases_block
 
@@ -2976,13 +2980,26 @@ rows = [
  # process and expected timeline/lead time, without waiting for the user to
  # ask." The two hiring flows are the longest in the codebase and were the
  # only ones that explained themselves at neither end.
- ("the two hiring flows now give an overview",
+ # ...and HALVED again on 2026-09-18, which is the correction this tripwire
+ # exists to force. `direct_hiring` gained a CLOSING briefing that day, on the
+ # agency's instruction after testing it: "this is the process related and
+ # documents related things we should tell this at last with the process,
+ # requirements, timeline, cost/fees ... without waiting for the user to ask
+ # for". Live, the overview had arrived welded onto the second question -
+ # "Thanks, john. Direct hire involves processing the MOM application,
+ # documents, insurance and bond, and getting the helper here and settled; may
+ # I know the full name of the helper you would like to hire?" - which is
+ # process and document material in front of a client who has just given his
+ # name. So the set is now `new_hiring` alone, and the OTHER half of that is
+ # asserted two entries down: a flow that leaves the overview must have a
+ # closing briefing instead, never neither.
+ ("the flow that still explains itself up front is new_hiring",
   [k for k in ("new_hiring", "direct_hiring")
-   if not ico.briefs_on_this_turn(k, {"f": 1})], []),
+   if not ico.briefs_on_this_turn(k, {"f": 1})], ["direct_hiring"]),
  ("...on exactly one turn, like every other service that does",
   [n for n in range(6) if ico.briefs_on_this_turn("new_hiring", {"f": n})], [1]),
  ("...and never on the introduction turn",
-  ico.briefs_on_this_turn("direct_hiring", {}), False),
+  ico.briefs_on_this_turn("new_hiring", {}), False),
  # A flow that briefs at neither end is a flow whose client is told nothing
  # unless they think to ask. Derived over every service that collects, so a
  # flow added tomorrow has to make that choice deliberately rather than by
@@ -3043,6 +3060,182 @@ rows = [
   [f.key for f in t.SERVICE_FIELDS[t.TRANSFER_EMPLOYER]].index(
       t.BRIEFING_AFTER.get(t.TRANSFER_EMPLOYER, "email"))
   < len(t.SERVICE_FIELDS[t.TRANSFER_EMPLOYER]) - 1, True),
+
+ # --- direct hire briefs at the END, 2026-09-18 -----------------------
+ # Agency, testing it as an employer: "this is the process related and
+ # documents related things we should tell this at last with the process,
+ # requirements, timeline, cost/fees when all the requirements are gathered
+ # bot have to message these things in single message without waiting for the
+ # user to ask for". Both halves are asserted, because they are one change:
+ # adding the entry is what REMOVES the opening overview.
+ ("a direct hire explains itself at the end",
+  t.BRIEFING_AFTER.get("direct_hiring"), "helper_availability"),
+ # `.get()` throughout, never `[...]`: removing an entry outright used to make
+ # these raise KeyError, so the harness printed a traceback and no FAIL line
+ # (2026-09-10, 2026-09-17, 2026-09-18).
+ ("...on a field only the client can fill",
+  t.BRIEFING_AFTER.get("direct_hiring", "") in ico._PORTABLE_ACROSS_SERVICES
+  or t.BRIEFING_AFTER.get("direct_hiring", "") in ico._known_fields({}), False),
+ # It is the LAST REQUIRED field, and that is the reason it was chosen rather
+ # than an accident of ordering. Everything after it is optional, so keying
+ # the briefing on one of THOSE would lose it entirely whenever a client
+ # declined that question - and declining `helper_contact` is not
+ # hypothetical, it is what the agency's own 2026-09-17 transcript did.
+ ("...which is the last field the client must answer",
+  [f.key for f in t.SERVICE_FIELDS["direct_hiring"] if not f.optional][-1],
+  t.BRIEFING_AFTER.get("direct_hiring")),
+ ("...with questions left after it, because the retriever runs first",
+  [f.key for f in t.SERVICE_FIELDS["direct_hiring"]].index(
+      t.BRIEFING_AFTER.get("direct_hiring", "email"))
+  < len(t.SERVICE_FIELDS["direct_hiring"]) - 1, True),
+ # ...and the overview is gone from the front, which is the half they
+ # objected to by quoting it back at us.
+ ("...and it no longer explains itself at the start as well",
+  ico.briefs_on_this_turn("direct_hiring", {"f": 1}), False),
+ # The cost section defers to a consultant rather than quoting a package
+ # total - and it has to, because quotes_hiring_package_cost would otherwise
+ # swap the whole briefing for the deferral line and the client would lose
+ # the process and the documents with it.
+ ("...and its cost section is a deferral, not a package price",
+  "direct_hiring" in _guards.COST_WITHHELD_SERVICES, True),
+
+ # --- a question about WHEN is not answered by a sentence about WHERE ---
+ # Live 2026-09-18, reproduced 3 runs of 3. Asked whether she was in
+ # Singapore under another employer's Work Permit, the client answered "No
+ # she is on Myanmar right Now" - and `helper_availability` was filled with
+ # "Myanmar right now", so "When would she be available to start?" was never
+ # asked and ticket CB-2026-0009 carried a country where a start date belongs.
+ #
+ # Derived from the QUESTION rather than written as a list of keys, because a
+ # rule written over the flow that was reported is false on the other eight
+ # until somebody checks - which this file has now had to correct four times.
+ ("every field that asks when is covered, on every service",
+  sorted({f.key for fs in t.SERVICE_FIELDS.values() for f in fs
+          if ico._ASKS_WHEN.search(f.question)}),
+  ["availability", "helper_availability", "leave_dates", "passport_expiry",
+   "permit_expiry", "policy_expiry", "start_timeline", "timeline"]),
+ # The test is an ECHO of another answer, not "does this state a time": the
+ # live value genuinely contains one - "right now" - and it is attached to
+ # the country rather than to her availability.
+ ("the live value repeats an answer we already hold",
+  ico._echoes_another_answer(
+      "Myanmar right now",
+      {"helper_nationality": "Myanmar", "helper_name": "chowchow"},
+      "helper_availability"), True),
+ ("...and so does the run that phrased it differently",
+  ico._echoes_another_answer(
+      "in Myanmar right now", {"helper_nationality": "Myanmar"},
+      "helper_availability"), True),
+ # The controls. A real answer to "when" repeats nothing, and the rule must
+ # not start dropping those - it fails towards asking, so every one of these
+ # still lands.
+ ("...but a real date repeats nothing",
+  [v for v in ("next month", "as soon as possible", "right now", "2 weeks",
+               "she is free from 1 January", "immediately")
+   if ico._echoes_another_answer(
+       v, {"helper_nationality": "Myanmar", "helper_name": "chowchow"},
+       "helper_availability")], []),
+ # A two-letter answer cannot make every sentence containing those letters
+ # look like a restatement. "no idea, maybe next month" contains the
+ # transfer-case answer "no", and dropping that would be worse than the
+ # defect being fixed.
+ ("...and a yes/no answer elsewhere cannot poison a real one",
+  ico._echoes_another_answer(
+      "no idea, maybe next month",
+      {"helper_transfer_case": "no"}, "helper_availability"), False),
+ # A field never compares against ITSELF, or correcting an answer would look
+ # like a restatement of it.
+ ("...and a field is never an echo of itself",
+  ico._echoes_another_answer(
+      "Myanmar", {"helper_availability": "Myanmar"}, "helper_availability"),
+  False),
+
+ # --- the enquiry is not an answer to the enquiry's own questions -------
+ # Found by REPLAYING the direct-hire transcript, not by reading the code,
+ # and reproduced 4 runs of 4 against the real extractor: the opening message
+ # "i want to do direct hire" filled `helper_transfer_case` with the value
+ # "direct hire". A filled field is never asked, so the one question that
+ # decides the ROUTE - 2-3 weeks for a helper already here against 4-6 from
+ # overseas, and whether the notice-period question applies at all - was
+ # never put to him.
+ ("the service's own name does not answer its own question",
+  ico._restates_the_service("direct hire", "direct_hiring"), True),
+ ("...however it is spelled",
+  ico._restates_the_service("direct hiring", "direct_hiring"), True),
+ # It fires only on the service IN HAND, and these two controls are why.
+ # `current_helper_exit` offers "going home", which _named_service reads as
+ # `home_leave` - a real option on a flow the agency signed off hours before
+ # this, and dropping it would have been a silent regression.
+ ("...but an option that happens to name ANOTHER service still lands",
+  ico._restates_the_service("going home", "replacement"), False),
+ # ...and `transfer_direction`'s junk value resolves to `transfer`, not to
+ # `transfer_employer`, so the machinery built for it earlier today is
+ # untouched rather than quietly duplicated.
+ ("...and the transfer direction fix is left to its own rule",
+  ico._restates_the_service("transfer", t.TRANSFER_EMPLOYER), False),
+ ("...and a real answer is never a service name",
+  [v for v in ("no", "yes", "Myanmar", "next month", "2 dogs and 3 cats",
+               "she has one month notice")
+   if ico._restates_the_service(v, "direct_hiring")], []),
+ # The length guard, and it is load-bearing rather than tidiness: a real
+ # answer may MENTION the service without being a restatement of it, and
+ # _named_service matches anywhere in the text. "as soon as the direct hire
+ # is approved" is a genuine answer to "when would she be available to
+ # start?", and without the guard it is dropped and asked again.
+ ("...nor is an answer that merely mentions the service in passing",
+  [v for v in ("as soon as the direct hire is approved",
+               "she can start once the direct hire paperwork is done",
+               "whenever the direct hire goes through")
+   if ico._restates_the_service(v, "direct_hiring")], []),
+
+ # --- a send that may already have arrived is never sent again ----------
+ # Live 2026-09-18, conversation 3766: the same reply went out twice 1.9
+ # seconds apart - this loop's own backoff - because _post retried a request
+ # that had already been delivered. The duplicate came back under a message
+ # id we had never seen, so handle_outbound read our own sentence as a human
+ # agent, the bot stood down, and the client's next question got no reply at
+ # all. The cost of a retry here is not a duplicate message, it is the
+ # conversation.
+ ("a lost RESPONSE is not a reason to send the message again",
+  [e.__name__ for e in (_httpx.ReadTimeout, _httpx.ReadError,
+                        _httpx.RemoteProtocolError, _httpx.WriteError)
+   if issubclass(e, _whapi_client.WhapiClient._SAFE_TO_RESEND)], []),
+ # ...and a connection that was never made genuinely sent nothing, so that
+ # one still retries. Without this the rule would just be "never retry".
+ ("...but a connection that was never made did not send one",
+  issubclass(_httpx.ConnectError, _whapi_client.WhapiClient._SAFE_TO_RESEND), True),
+ # Every _post in this client is a message to a client's phone, which is what
+ # makes the rule total rather than per-caller. A third caller that is NOT a
+ # send would need this decision taken again.
+ ("...and every POST in the client is a message being sent",
+  sorted(set(_re.findall(r"self\._post\(\s*f?\"([^\"]+)", _whapi_src))),
+  ["/messages/text", "/messages/{media_type}"]),
+
+ # --- our own words are never a human agent, 2026-09-18 -----------------
+ # The second lock on the same door, and the one that holds if any other
+ # route ever produces a copy of our own reply: the failure it prevents is
+ # not a duplicate message, it is permanent silence.
+ ("a reply we just sent is recognised as ours",
+  (ms.mark_body_sent_by_bot("+917970027379", "Usually about 4 to 6 weeks."),
+   ms.echoes_our_own_send("917970027379", "Usually about 4 to 6 weeks."))[1],
+  True),
+ ("...whatever the spacing and case",
+  ms.echoes_our_own_send("917970027379", "  usually about 4 to 6 WEEKS.  "), True),
+ # The recipient is part of the key, so an identical line legitimately sent
+ # to two clients cannot mask a real agent on one of them.
+ ("...but only on the thread we sent it to",
+  ms.echoes_our_own_send("6591234567", "Usually about 4 to 6 weeks."), False),
+ ("...and a sentence we never said is still an agent",
+  ms.echoes_our_own_send("917970027379", "Hi John, Grace here."), False),
+ ("...and an empty body is never ours",
+  ms.echoes_our_own_send("917970027379", "   "), False),
+ # Recorded as OURS when it does arrive, not as an agent's: a row saying
+ # sent_by='agent' is a human on the transcript who was never there, and it
+ # is what `last_agent_message_at` would later measure an idle window
+ # against. The live row is still on the database in exactly that state.
+ ("a duplicate of ours is stored as ours",
+  [n for n in ('"is_bot": True', '"sent_by": "bot"')
+   if n not in _msg_src.split("async def store_own_echo")[1][:1600]], []),
 
  # The direction an employer means by "transfer" is read off their own words.
  # Agency, 2026-09-18: "if someone is coming and telling that i want transfer

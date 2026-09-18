@@ -56,6 +56,77 @@ def recently_sent_by_bot(message_id: str | None) -> bool:
     return stamp is not None and (time.monotonic() - stamp) <= _SENT_TTL_SECONDS
 
 
+# What we SAID, as well as which ids we were given for saying it.
+#
+# The id cache above is the primary test and it has one blind spot, which cost
+# a live conversation on 2026-09-18: a send that is delivered and whose
+# RESPONSE is lost gets no id we ever see. Whapi still echoes that copy back
+# as a from_me webhook carrying an id we have never heard of, and
+# `handle_outbound` then has no way to tell it from a human agent typing - so
+# the bot stood down on conversation 3766 and never spoke again. The retry
+# that produced it is gone (see whapi.client._post), and this is the second
+# lock on the same door: whatever the id says, a body we ourselves put on the
+# wire seconds ago is ours.
+#
+# Keyed on the recipient as well as the text, so an identical line legitimately
+# sent to two different clients cannot mask a real agent on one of them. Marked
+# BEFORE the request goes out, because the echo can arrive before our own row
+# is written - live, the duplicate was stored 1.9 seconds before the bot's own
+# copy, so a check against the database alone would have found nothing.
+#
+# In-process, like every other guard in this file, so it inherits the
+# one-worker-one-replica rule in section 3 of CLAUDE.md.
+_SENT_BODIES: "OrderedDict[tuple[str, str], float]" = OrderedDict()
+_SENT_BODY_TTL_SECONDS = 300
+_SENT_BODIES_MAX = 500
+
+
+def _body_key(phone: str | None, body: str | None) -> tuple[str, str]:
+    return (digits_only(phone or ""), " ".join((body or "").split()).lower())
+
+
+def mark_body_sent_by_bot(phone: str | None, body: str | None) -> None:
+    """Record what we are about to say, before we say it."""
+    key = _body_key(phone, body)
+    if not key[1]:
+        return
+    now = time.monotonic()
+    _SENT_BODIES[key] = now
+    while len(_SENT_BODIES) > _SENT_BODIES_MAX:
+        _SENT_BODIES.popitem(last=False)
+    for stale in [k for k, stamp in _SENT_BODIES.items() if now - stamp > _SENT_BODY_TTL_SECONDS]:
+        _SENT_BODIES.pop(stale, None)
+
+
+def echoes_our_own_send(phone: str | None, body: str | None) -> bool:
+    """Is this outbound message a copy of something we just sent ourselves?"""
+    stamp = _SENT_BODIES.get(_body_key(phone, body))
+    return stamp is not None and (time.monotonic() - stamp) <= _SENT_BODY_TTL_SECONDS
+
+
+async def store_own_echo(conversation_id: int, message: IncomingMessage) -> dict[str, Any] | None:
+    """Persist a second copy of our own reply as OURS, not as an agent's.
+
+    Recorded with ``is_bot = true`` for the reason `store_auto_reply` is: it is
+    machine-generated, and a row saying `sent_by='agent'` is a human agent on
+    the transcript who was never there. The client did see the message, so it
+    belongs in the history the next turn reads.
+    """
+    return await _insert_ignoring_duplicates(
+        {
+            "conversation_id": conversation_id,
+            "direction": "outbound",
+            "from_number": digits_only(settings.whapi_sender_phone) or None,
+            "to_number": digits_only(message.customer_number),
+            "body": _storable_body(message),
+            "whapi_message_id": message.whapi_message_id,
+            "status": "sent",
+            "sent_by": "bot",
+            "is_bot": True,
+        }
+    )
+
+
 async def exists(whapi_message_id: str) -> bool:
     row = await db.select_one(TABLE, "id", whapi_message_id=whapi_message_id)
     return row is not None
@@ -335,6 +406,10 @@ async def send_bot_reply(conversation: dict[str, Any], body: str) -> dict[str, A
     # seconds on top of the debounce window and the graph run, and the client
     # reads that as the bot being slow, not as someone typing.
     typing_time = max(1, min(len(body) // 25, 2))
+    # Before the send, not after: a copy Whapi delivers but does not confirm
+    # comes back as a from_me webhook with an id we never learn, and it can
+    # arrive before this call returns. See _SENT_BODIES.
+    mark_body_sent_by_bot(phone, body)
     try:
         response = await whapi.send_text(phone, body, typing_time=typing_time)
     except WhapiError:

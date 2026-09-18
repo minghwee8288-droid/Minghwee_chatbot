@@ -700,6 +700,31 @@ async def handle_outbound(message: IncomingMessage) -> None:
         )
         conversation = await identify_contact(conversation)
 
+    # ...and neither are our OWN words, whatever id they come back under.
+    #
+    # Live 2026-09-18, conversation 3766: a send that Whapi delivered without
+    # returning a usable response was retried, so the same reply went out
+    # twice under two different ids. Only the second id reached
+    # `mark_sent_by_bot`, so when the FIRST copy was echoed back here it was
+    # stored as `sent_by='agent'` and the bot stood down - on a thread where
+    # no human had said anything. The client's next message got no reply at
+    # all, and the conversation was still `human_active` days later.
+    #
+    # The retry that produced it is gone (whapi.client._post), so this is the
+    # second lock rather than the only one - and it is the one that holds if
+    # any other route ever produces a copy of our own reply, because the
+    # failure it prevents is not a duplicate message, it is permanent silence.
+    if message_service.echoes_our_own_send(message.customer_number, message.body):
+        message_service.mark_sent_by_bot(message.whapi_message_id)
+        await message_service.store_own_echo(conversation["id"], message)
+        logger.warning(
+            "Conversation %s: outbound message %s repeats a reply we just sent - "
+            "recording it as ours rather than standing down for an agent",
+            conversation["id"],
+            message.whapi_message_id,
+        )
+        return
+
     # The WhatsApp Business app's own greeting/away messages are not an agent.
     # Treating them as one would silence the bot on every new conversation.
     if await message_service.is_auto_reply(message.body, conversation["id"]):

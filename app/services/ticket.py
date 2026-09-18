@@ -2332,6 +2332,59 @@ BRIEFING_AFTER: dict[str, str] = {
     # `replacement` does. The deferral row written on 2026-09-08 is what it
     # says instead.
     TRANSFER_EMPLOYER: "rest_day",
+    # Direct hire, 2026-09-18. Agency, testing it as an employer: "this is the
+    # process related and documents related things we should tell this at last
+    # with the process, requirements, timeline, cost/fees when all the
+    # requirements are gathered bot have to message these things in single
+    # message without waiting for the user to ask for."
+    #
+    # Their transcript is the argument twice over. It closed on the bare
+    # handover line, and the client then asked "what is the further process",
+    # "And what are the documents required ?" and "And how much time this
+    # process takes" - three messages, all three answered correctly and in
+    # full, and not one of them a question he should have had to think of.
+    # That is the same sequence `replacement` and `transfer_employer` produced
+    # hours earlier, from the same cause.
+    #
+    # And it REMOVES the opening overview, via the BRIEFING_AFTER test in
+    # briefs_on_this_turn - which is the other half of what they asked for.
+    # Live, the overview arrived welded onto the second question: "Thanks,
+    # john. Direct hire involves processing the MOM application, documents,
+    # insurance and bond, and getting the helper here and settled; may I know
+    # the full name of the helper you would like to hire?" Their objection is
+    # that this is process and document material and belongs at the END with
+    # the timeline and the cost beside it, not in front of a client who has
+    # just given his name. The same trade passport_renewal made on 2026-09-09
+    # and `renewal` made this morning: a service that briefs at the end does
+    # not also brief at the start.
+    #
+    # Keyed on `helper_availability` - the LAST REQUIRED field - for the
+    # reason spelled out four times above: the retriever runs before the
+    # collector, so the briefing has to be due one turn before the collection
+    # completes or it is built with no records, which is the 2026-09-09
+    # defect. The three questions after it (`helper_contact`, `update_channel`
+    # and `email`) are all optional, so keying it on one of THOSE would lose
+    # the briefing entirely whenever a client declined that question - and
+    # declining `helper_contact` is not hypothetical, it is what their own
+    # 2026-09-17 transcript did ("I'm not comfortable to provide this
+    # information now"). `helper_availability` is in neither
+    # `_PORTABLE_ACROSS_SERVICES` nor `_known_fields`, so it can only be
+    # filled by the client answering it.
+    #
+    # Measured before it was added: BRIEFING_QUERY under `direct_hiring` at
+    # BRIEFING_MATCH_COUNT returns all four sections inside the top ten and
+    # every row above the floor - the process (0.653), what happens at the end
+    # (0.623), the documents from the client (0.572), the step-by-step (0.572),
+    # the documents we prepare (0.563), what happens after they choose (0.548),
+    # the cost (0.541) and both timelines (0.535 overall, 0.504 for a helper
+    # overseas). No query change and no new row.
+    #
+    # `direct_hiring` is in COST_WITHHELD_SERVICES, so the cost section defers
+    # to a consultant rather than quoting a package total - and it has to,
+    # because `quotes_hiring_package_cost` would otherwise swap the whole
+    # briefing for the deferral line and the client would lose the process and
+    # the documents with it.
+    "direct_hiring": "helper_availability",
 }
 
 

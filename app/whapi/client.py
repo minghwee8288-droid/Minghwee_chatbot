@@ -80,7 +80,51 @@ class WhapiClient:
             await self._client.aclose()
         self._client = None
 
+    # The only failures a SEND may be retried on: the ones where the request
+    # provably never reached Whapi, so nothing can have been delivered.
+    #
+    # Every _post in this client is a message going to a client's phone
+    # (/messages/text and /messages/<media>), and none of them is idempotent -
+    # Whapi has no idempotency key, so a second POST is a second WhatsApp
+    # message. A connection that was never established, or a request that
+    # never left the pool, cannot have sent one. Everything else can:
+    # ReadTimeout, ReadError and RemoteProtocolError all mean the request was
+    # written and the RESPONSE was lost, and a 5xx means their server had it.
+    _SAFE_TO_RESEND = (
+        httpx.ConnectError,
+        httpx.ConnectTimeout,
+        httpx.PoolTimeout,
+    )
+
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """POST a message, retrying ONLY where nothing can have been sent.
+
+        This used to retry three times on any httpx error or any 5xx, and that
+        is how the same message went out twice - which would be a cosmetic
+        defect if the second copy were the end of it, and it is not.
+
+        Live, 2026-09-18, conversation 3766: "Usually about 4 to 6 weeks for a
+        direct hire from overseas." was sent at 14:20:36 and again at
+        14:20:38, 1.9 seconds apart, which is this loop's own 1.5s backoff. A
+        retry gets a NEW Whapi message id, and only the id of the attempt that
+        finally returned is handed back to `send_bot_reply` - so only that one
+        is passed to `mark_sent_by_bot` and only that one is written to
+        `wp_chat_messages` as ours. When Whapi then echoed the FIRST copy back
+        as a from_me webhook, `was_sent_by_bot` had never heard of its id,
+        `handle_outbound` read it as a human agent picking the thread up, and
+        the bot stood down. The row is still on the database as `is_bot=False,
+        sent_by='agent'`, and the client's next message - "ok and what is the
+        fees for this" - got no reply at all, on a conversation that is still
+        `human_active` days later.
+
+        So a retry here does not cost a duplicate message. It costs the whole
+        conversation, silently, and the transcript blames a human agent who
+        was never there. The accepted trade is the other way round: a send
+        that fails after the request was written is reported and not repeated,
+        because a message that may have gone out already must not go out
+        twice. `handle_outbound` also no longer mistakes our own words for an
+        agent, which is the second lock on the same door.
+        """
         client = await self._get_client()
         last_error: Exception | None = None
         for attempt in range(3):
@@ -93,10 +137,19 @@ class WhapiClient:
                 return response.json()
             except WhapiClientError:
                 raise
-            except (httpx.HTTPError, WhapiError) as exc:
+            except self._SAFE_TO_RESEND as exc:
                 last_error = exc
                 if attempt < 2:
                     await asyncio.sleep(1.5 * (attempt + 1))
+            except (httpx.HTTPError, WhapiError) as exc:
+                logger.warning(
+                    "Whapi POST %s failed after the request was sent (%s: %s) - NOT "
+                    "retrying, because the message may already have been delivered",
+                    path,
+                    type(exc).__name__,
+                    exc,
+                )
+                raise WhapiError(f"Whapi request to {path} failed: {exc}") from exc
         raise WhapiError(f"Whapi request to {path} failed: {last_error}")
 
     async def _get(self, path: str) -> dict[str, Any] | None:

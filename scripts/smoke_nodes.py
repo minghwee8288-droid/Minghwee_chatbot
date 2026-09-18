@@ -323,6 +323,140 @@ CASES = [
                        "contact_type": None, "confidence": 0.9},
       "_expect_state": {"detected_contact_type": "candidate"}}),
 
+    # --- direct hire: a question about WHEN, answered with a WHERE ---------
+    # 2026-09-18, reproduced 3 runs of 3 against the real extractor before
+    # anything was touched. Asked "Is she currently in Singapore, working
+    # under a Work Permit with another employer?", the client answered "No she
+    # is on Myanmar right Now" - and the extractor returned the transfer-case
+    # answer AND `helper_availability: 'Myanmar right now'` out of the same
+    # seven words. A filled field is never put to anyone, so "When would she
+    # be available to start?" was never asked, and ticket CB-2026-0009 reached
+    # a consultant reading "helper availability: Myanmar right now".
+    #
+    # `_stub_extraction` is what the model really returned. Asserted on what
+    # reaches `collected_info` AND on the next question, because a rule that
+    # drops the value and then fails to ask for it has fixed nothing.
+    ("info_collector", "a location is not an answer to when she can start",
+     {"intent": "direct_hiring", "service_type": "direct_hiring",
+      "incoming_text": "No she is on Myanmar right Now",
+      "history_text": "Client: chowchow\nYou: Is she currently in Singapore, "
+                      "working under a Work Permit with another employer?",
+      "collected_info": {"full_name": "john", "helper_name": "chowchow",
+                         "helper_nationality": "Myanmar"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "helper_nationality": 1, "helper_transfer_case": 1},
+      "_stub_extraction": {"helper_transfer_case": "no",
+                           "helper_availability": "Myanmar right now"},
+      "_expect_collected": {"helper_transfer_case": "no"},
+      "_expect_not_collected": ["helper_availability"],
+      "_expect_prompt": "When would she be available to start?"}),
+    # ...and once the question HAS been put, their answer is their answer -
+    # even one that mentions where she is. The rule fails towards asking and
+    # this is the control that proves it stopped there: without it, a guard
+    # wide enough to drop every availability containing a place name would
+    # pass, and the client would be asked the same question forever.
+    ("info_collector", "...but once asked, an answer naming a place still lands",
+     {"intent": "direct_hiring", "service_type": "direct_hiring",
+      "incoming_text": "she is in Myanmar right now and can start next month",
+      "history_text": "You: When would she be available to start?",
+      "collected_info": {"full_name": "john", "helper_name": "chowchow",
+                         "helper_nationality": "Myanmar",
+                         "helper_transfer_case": "no"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "helper_nationality": 1, "helper_transfer_case": 1,
+                             "helper_availability": 1},
+      "_stub_extraction": {"helper_availability": "Myanmar right now, from next month"},
+      "_expect_collected": {"helper_availability": "Myanmar right now, from next month"}}),
+    # ...and a volunteered date that repeats nothing is still taken, so the
+    # rule has not simply stopped the field being filled early.
+    ("info_collector", "...and a plain volunteered date is still taken",
+     {"intent": "direct_hiring", "service_type": "direct_hiring",
+      "incoming_text": "no she is not working for anyone, she can start next month",
+      "history_text": "You: Is she currently in Singapore, working under a Work "
+                      "Permit with another employer?",
+      "collected_info": {"full_name": "john", "helper_name": "chowchow",
+                         "helper_nationality": "Myanmar"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "helper_nationality": 1, "helper_transfer_case": 1},
+      "_stub_extraction": {"helper_transfer_case": "no",
+                           "helper_availability": "next month"},
+      "_expect_collected": {"helper_availability": "next month"}}),
+
+    # ...and the neighbouring field, found by the same replay. "i want to do
+    # direct hire" filled `helper_transfer_case` with "direct hire" - 4 runs
+    # of 4 - so "Is she currently in Singapore, working under a Work Permit
+    # with another employer?" was never asked, and the route it establishes
+    # was never known. Asserted on what reaches `collected_info` AND on the
+    # question still being put, because dropping the value without asking the
+    # question would leave the flow exactly as blind.
+    ("info_collector", "the words they opened with do not answer the route question",
+     {"intent": "direct_hiring", "service_type": "direct_hiring",
+      "incoming_text": "i want to do direct hire", "history_text": "",
+      "collected_info": {"full_name": "john", "helper_name": "chowchow",
+                         "helper_nationality": "Myanmar"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "helper_nationality": 1},
+      "_stub_extraction": {"helper_transfer_case": "direct hire"},
+      "_expect_not_collected": ["helper_transfer_case"],
+      "_expect_prompt": "working under a Work Permit with another employer"}),
+    # ...and once the question HAS been put, their answer is their answer -
+    # even if they answer it with the name of the service. Dropping it there
+    # re-asks a question they have answered until `max_asks` runs out and
+    # then files nothing at all, which is worse than the defect. Same gate,
+    # same reasoning and same control as the when-field rule above.
+    ("info_collector", "...but once asked, even that answer lands",
+     {"intent": "direct_hiring", "service_type": "direct_hiring",
+      "incoming_text": "it is a direct hire", "history_text":
+          "You: Is she currently in Singapore, working under a Work Permit "
+          "with another employer?",
+      "collected_info": {"full_name": "john", "helper_name": "chowchow",
+                         "helper_nationality": "Myanmar"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "helper_nationality": 1, "helper_transfer_case": 1},
+      "_stub_extraction": {"helper_transfer_case": "direct hire"},
+      "_expect_collected": {"helper_transfer_case": "direct hire"}}),
+
+    # --- direct hire: the process arrives at the END, not on question two --
+    # "this is the process related and documents related things we should tell
+    # this at last with the process, requirements, timeline, cost/fees when
+    # all the requirements are gathered ... without waiting for the user to
+    # ask for". Live, it arrived welded onto the name question instead:
+    # "Thanks, john. Direct hire involves processing the MOM application,
+    # documents, insurance and bond, and getting the helper here and settled;
+    # may I know the full name of the helper you would like to hire?"
+    #
+    # Both halves are asserted on the PROMPT, because the stubbed model writes
+    # the same reply whichever instruction won - reading the reply could not
+    # tell "was told to brief" from "happened to say something similar".
+    ("info_collector", "a direct hire no longer opens with the process",
+     {"intent": "direct_hiring", "service_type": "direct_hiring",
+      "incoming_text": "my self john", "history_text": "You: may I know your name?",
+      "collected_info": {"full_name": "john"},
+      "asked_field_counts": {"full_name": 1},
+      "_stub_extraction": {},
+      "_forbid_prompt": "what the job involves",
+      "_expect_prompt": "full name of the helper"}),
+    # ...and the closing turn is the one that lays it all out. The briefing is
+    # keyed on `helper_availability`, so the turn that answers the LAST
+    # question finds it already filled and briefs.
+    ("info_collector", "...and the closing message is the whole briefing",
+     {"intent": "direct_hiring", "service_type": "direct_hiring",
+      "incoming_text": "John@gmail.com",
+      "history_text": "You: what email address should I use for the updates?",
+      "collected_info": {"full_name": "john", "helper_name": "chowchow",
+                         "helper_nationality": "Myanmar",
+                         "helper_transfer_case": "no",
+                         "helper_availability": "next month",
+                         "helper_contact": "+6575968464",
+                         "update_channel": "email, WhatsApp"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "helper_nationality": 1, "helper_transfer_case": 1,
+                             "helper_availability": 1, "helper_contact": 1,
+                             "update_channel": 1, "email": 1},
+      "_stub_extraction": {"email": "John@gmail.com"},
+      "_expect_prompt": "WHAT IT COSTS",
+      "_expect_state": {"briefed_services": ["direct_hiring"]}}),
+
     # --- the direction an employer means by "transfer", 2026-09-18 ---------
     # "why is bot asking that are you looking to take on transfer helper
     # already in singapore or you want to release your current helper ... if
@@ -1571,6 +1705,141 @@ async def _lid_checks() -> list[tuple[str, bool]]:
         await _resolve_lid(m)
     results.append(("an ordinary message never asks Whapi anything",
                     m.customer_number == "+917970027379" and not stub.called))
+
+    # --- our own reply, echoed back under an id we never saw, 2026-09-18 ---
+    #
+    # The worst thing in the direct-hire round, and it does not look like a bot
+    # defect from the outside. Live on conversation 3766, "Usually about 4 to 6
+    # weeks for a direct hire from overseas." went out twice, 1.9 seconds
+    # apart: whapi.client._post retried a send whose request had already been
+    # delivered, the retry got a NEW message id, and only that id reached
+    # `mark_sent_by_bot`. When Whapi echoed the FIRST copy back as a from_me
+    # webhook, `was_sent_by_bot` had never heard of its id - so handle_outbound
+    # read our own sentence as a human agent taking the thread over, stood the
+    # bot down, and the client's next message ("ok and what is the fees for
+    # this") got no reply at all. The row is still on the live database as
+    # `is_bot=False, sent_by='agent'`.
+    #
+    # RUN rather than unit-tested, because both halves of this fix are wiring:
+    # the marking happens inside send_bot_reply and the test happens inside
+    # handle_outbound, and a predicate that is never asked is the hole this
+    # file has now recorded five times. What is read here is whether the bot
+    # STOOD DOWN, which is the thing the client actually experienced.
+    from app.services import message as _msg
+
+    async def _outbound_stands_down(body: str, mark: str | None) -> bool:
+        if mark is not None:
+            _msg.mark_body_sent_by_bot("917970027379", mark)
+        msg = parse_webhook({"messages": [{
+            "id": f"echo-{abs(hash((body, mark)))}", "type": "text", "from_me": True,
+            "chat_id": "917970027379@s.whatsapp.net",
+            "from": "917970027379@s.whatsapp.net",
+            "to": "6565342277@s.whatsapp.net",
+            "text": {"body": body}}]})[0]
+        row = {"id": 3766, "customer_number": "917970027379",
+               "bot_status": "bot_active", "langgraph_thread_id": "t-1"}
+        took_over: list[bool] = []
+        with patch.object(_wh.conversation_service, "get_by_phone",
+                          new=AsyncMock(return_value=row)), \
+             patch.object(_wh.message_service, "was_sent_by_bot",
+                          new=AsyncMock(return_value=False)), \
+             patch.object(_wh.message_service, "is_auto_reply",
+                          new=AsyncMock(return_value=False)), \
+             patch.object(_wh.message_service, "store_own_echo", new=AsyncMock()), \
+             patch.object(_wh.message_service, "store_agent_reply", new=AsyncMock()), \
+             patch.object(_wh.conversation_service, "touch_outbound", new=AsyncMock()), \
+             patch.object(_wh.debouncer, "flush_now", new=AsyncMock()), \
+             patch.object(_wh, "_remember_standdown", new=lambda *a, **k: None), \
+             patch.object(_wh.handover_service, "agent_took_over",
+                          new=AsyncMock(side_effect=lambda *a, **k: took_over.append(True))):
+            await _wh.handle_outbound(msg)
+        return bool(took_over)
+
+    REPLY = "Usually about 4 to 6 weeks for a direct hire from overseas."
+    results.append((
+        "a second copy of our own reply does not stand the bot down",
+        await _outbound_stands_down(REPLY, REPLY) is False))
+    # ...and the control, which is the half that must not be traded away: a
+    # human agent picking the thread up still silences the bot. Without this,
+    # a guard wide enough to swallow every outbound message would pass.
+    results.append((
+        "...and a human agent taking over still does",
+        await _outbound_stands_down("Hi John, Grace here from Ming Hwee.", None) is True))
+    # Whitespace and case are not what makes it a different message - WhatsApp
+    # normalises neither, and a guard that misses on a trailing newline is a
+    # guard that misses on the case it exists for.
+    results.append((
+        "...and a copy differing only in spacing is still ours",
+        await _outbound_stands_down("  Usually about 4 to 6 weeks for a direct "
+                                    "hire from overseas.  ", REPLY) is False))
+    # The phone is part of the key, so the same sentence sent to a DIFFERENT
+    # client cannot excuse a real agent on this one.
+    _msg.mark_body_sent_by_bot("6591234567", "Thanks, I have passed this on.")
+    results.append((
+        "...but the same words sent to someone else do not excuse this thread",
+        await _outbound_stands_down("Thanks, I have passed this on.", None) is True))
+
+    # ...and the MARKING is wired, and wired BEFORE the request goes out.
+    # Both halves matter and neither shows up in the four checks above, which
+    # call mark_body_sent_by_bot themselves - a predicate nobody asks is the
+    # hole this file has recorded five times, and a mark written AFTER the
+    # send loses the race the guard exists for: live, the duplicate was stored
+    # 1.9 seconds BEFORE the bot's own copy. So the stub asks, at the moment
+    # the request would leave, whether we would already recognise the echo.
+    marked_before_send: list[bool] = []
+
+    async def _send_text(phone, body, typing_time=0):
+        marked_before_send.append(_msg.echoes_our_own_send(phone, body))
+        return {"message": {"id": "sent-1"}}
+
+    with patch.object(_msg.whapi, "send_text", new=_send_text), \
+         patch.object(_msg, "_insert_ignoring_duplicates", new=AsyncMock(return_value={})), \
+         patch.object(_msg.conversation_service, "touch_outbound", new=AsyncMock()):
+        await _msg.send_bot_reply(
+            {"id": 3766, "customer_number": "+6598887777"},
+            "A consultant will confirm the exact fee for your situation.")
+    results.append(("what we are about to say is recorded before we say it",
+                    marked_before_send == [True]))
+
+    # --- a send that may already have arrived is not sent again -----------
+    # The other end of the same defect. `_post` used to retry three times on
+    # any httpx error and any 5xx - and a ReadTimeout or a 502 means the
+    # request was written and the RESPONSE was lost, not that nothing was
+    # delivered. Whapi has no idempotency key, so the second POST is a second
+    # WhatsApp message.
+    import httpx as _httpx
+    from app.whapi.client import WhapiClient as _WC, WhapiError as _WE
+
+    async def _attempts(failure) -> int:
+        c = _WC()
+        tries = {"n": 0}
+
+        class _Stub:
+            is_closed = False
+
+            async def post(self, path, json=None):
+                tries["n"] += 1
+                if isinstance(failure, int):
+                    return _httpx.Response(failure, text="boom",
+                                           request=_httpx.Request("POST", "http://x"))
+                raise failure
+
+        c._client = _Stub()
+        try:
+            await c._post("/messages/text", {})
+        except (_WE, Exception):
+            pass
+        return tries["n"]
+
+    for failure, expected, why in (
+        (_httpx.ReadTimeout("t"), 1, "the response was lost, not the request"),
+        (_httpx.RemoteProtocolError("p"), 1, "they hung up after receiving it"),
+        (502, 1, "their server had it"),
+        (_httpx.ConnectError("c"), 3, "nothing was ever sent"),
+    ):
+        name = failure if isinstance(failure, int) else type(failure).__name__
+        results.append((f"a send is attempted {expected}x on {name} ({why})",
+                        await _attempts(failure) == expected))
     return results
 
 

@@ -32,6 +32,7 @@ from app.graph.guards import (
     ungrounded_figures,
 )
 from app.graph.llm import complete, complete_json
+from app.graph.nodes.intent_classifier import _named_service
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
     CANDIDATE_PROCESS_COMES_LAST_NOTE,
@@ -997,6 +998,88 @@ _NO_PREFERENCE = re.compile(
 MAX_ASKS_PER_FIELD = 3
 UNANSWERED = "not provided"
 
+def _restates_the_service(text: str, service_type: str | None) -> bool:
+    """Is this value nothing but the name of the service they asked for?
+
+    Live 2026-09-18, found by REPLAYING the direct-hire transcript rather than
+    by reading the code, and reproduced 4 runs of 4 against the real
+    extractor. The opening message "i want to do direct hire" filled
+    `helper_transfer_case` - "Is she currently in Singapore, working under a
+    Work Permit with another employer?" - with the value **"direct hire"**.
+
+    A filled field is never put to anyone, so the one question that decides
+    the ROUTE was never asked: whether she is a transfer case governed by MOM
+    requirements or a standard placement, which is the difference between 2-3
+    weeks and 4-6, decides whether the notice-period question applies at all,
+    and is the only thing that field exists for (2026-09-17).
+
+    The same shape as the care-type defect (2026-09-07, again 2026-09-16) and
+    `replacement_preferences` (2026-09-10): a value that restates the ENQUIRY,
+    filed as the answer to a question about something else.
+
+    Only where it names the service IN HAND, not any service. `current_helper_exit`
+    offers "going home", which `_named_service` reads as `home_leave` - a real
+    option on the replacement flow, and dropping it would be a regression on a
+    flow the agency signed off hours earlier. And `transfer_direction`'s junk
+    value "transfer" resolves to `transfer`, not to `transfer_employer`, so the
+    machinery built for it on 2026-09-18 is untouched.
+    """
+    stripped = re.sub(r"[^a-z ]+", " ", (text or "").lower())
+    stripped = re.sub(
+        r"^\s*(?:i\s+)?(?:want|need|would\s+like|looking|am\s+looking|for|to|do|a|the)\s+",
+        "",
+        stripped,
+    ).strip()
+    if not stripped or len(stripped.split()) > 3:
+        return False
+    return _named_service(stripped) == service_type
+
+
+# A field whose written question asks WHEN. Derived from the question rather
+# than written out as a list of keys, for the reason every other set in this
+# file has had to be re-derived at least once: a rule written over the flow
+# that was reported is false on the other seven until somebody checks. There
+# are eight of these across the services - `start_timeline`, `availability`,
+# `helper_availability`, `timeline`, `permit_expiry`, `policy_expiry`,
+# `leave_dates` and `passport_expiry` - and every one of them is exposed to
+# the same shape.
+_ASKS_WHEN = re.compile(r"\bwhen\b|\bhow\s+soon\b", re.IGNORECASE)
+
+# How much of another answer has to reappear before this counts as an echo.
+# Four characters, so "no", "yes" and "PH" cannot make every sentence
+# containing them look like a restatement - "no idea, maybe next month"
+# contains "no", and dropping that would be worse than the defect.
+_ECHO_MIN_CHARS = 4
+
+
+def _echoes_another_answer(text: str, captured: dict[str, Any], key: str) -> bool:
+    """Does this value carry an answer we already hold for a DIFFERENT field?
+
+    Live 2026-09-18, direct hire, reproduced 3 runs of 3. The client was asked
+    "Is she currently in Singapore, working under a Work Permit with another
+    employer?" and answered "No she is on Myanmar right Now". The extractor
+    returned `helper_transfer_case: 'no'` - correct - and, out of the same
+    seven words, `helper_availability: 'Myanmar right now'`. A filled field is
+    never put to anyone, so "When would she be available to start?" was never
+    asked, and ticket CB-2026-0009 reached a consultant reading "helper
+    availability: Myanmar right now" - a country where a start date belongs.
+
+    Matching on the words rather than on a substring, so `full_name` "john"
+    cannot fire inside "johnson" and a nationality cannot fire inside a longer
+    word that contains it.
+    """
+    lowered = " %s " % re.sub(r"[^a-z0-9 ]+", " ", text.lower()).strip()
+    for other_key, other_value in (captured or {}).items():
+        if other_key == key:
+            continue
+        other = re.sub(r"[^a-z0-9 ]+", " ", str(other_value or "").lower()).strip()
+        if len(other) < _ECHO_MIN_CHARS or other == UNANSWERED:
+            continue
+        if " %s " % other in lowered:
+            return True
+    return False
+
+
 # Fields that must name the work, not the enquiry.
 _CARE_TYPE_FIELDS = {"requirement", "care_type"}
 
@@ -1949,6 +2032,7 @@ async def _extract(
         return {}
 
     field_lines = "\n".join(f"- {field.key}: {field.label}" for field in fields)
+    when_keys = {field.key for field in fields if _ASKS_WHEN.search(field.question)}
     captured = state.get("collected_info") or {}
     captured_lines = (
         "\n".join(f"- {key}: {value}" for key, value in captured.items() if value) or "(nothing yet)"
@@ -1996,6 +2080,21 @@ async def _extract(
                 key,
             )
             continue
+        # ...and the same trap on any field of any flow: the words the client
+        # opened with are not an answer to a question we have not asked.
+        # "i want to do direct hire" filled `helper_transfer_case` with
+        # "direct hire" - 4 runs of 4 - so the question that decides the route
+        # was never put, and with it the timeline and the notice question.
+        # See _restates_the_service.
+        if not asked.get(key) and _restates_the_service(text, service_type):
+            logger.info(
+                "Conversation %s: ignoring '%s' for '%s' - it restates the "
+                "service they asked for rather than answering the question",
+                state.get("conversation_id"),
+                text[:40],
+                key,
+            )
+            continue
         # "I want to hire a helper" is the enquiry, not the answer to what kind
         # of care they need. Taken as one, the question is never asked and sales
         # opens a lead whose requirement reads "hire a helper".
@@ -2032,6 +2131,37 @@ async def _extract(
             logger.info(
                 "Conversation %s: ignoring '%s' for '%s' - the client's message "
                 "named no care type, so the value was inferred rather than given",
+                state.get("conversation_id"),
+                text[:40],
+                key,
+            )
+            continue
+        # A question about WHEN is not answered by a sentence about WHERE.
+        # See _echoes_another_answer for the live turn: "No she is on Myanmar
+        # right Now" filled `helper_availability` with "Myanmar right now",
+        # so the start date was never asked for and never reached the ticket.
+        #
+        # The test is an ECHO rather than "does this state a time", because
+        # the value genuinely contains one - "right now" - and it is attached
+        # to the country, not to her availability. What actually gives it away
+        # is that it repeats an answer we already hold.
+        #
+        # Only when the field was never put to them. Once asked, their answer
+        # is their answer: a client who is asked when she can start and says
+        # "she is in Myanmar right now, so as soon as the permit clears" has
+        # answered it, and `_unfinished` is what handles a vague one. Same
+        # reasoning, same shape and the same "fails towards asking" trade as
+        # the care-type rule above (2026-09-16): a volunteered date that is
+        # dropped costs one question we were going to ask anyway, and a
+        # location filed as a start date costs a consultant the field.
+        if (
+            key in when_keys
+            and not asked.get(key)
+            and _echoes_another_answer(text, captured, key)
+        ):
+            logger.info(
+                "Conversation %s: ignoring '%s' for '%s' - it repeats an answer "
+                "we already hold rather than stating a time",
                 state.get("conversation_id"),
                 text[:40],
                 key,

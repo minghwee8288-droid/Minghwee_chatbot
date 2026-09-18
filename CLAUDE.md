@@ -354,6 +354,11 @@ because the lead is opened early and the ticket is created much later.
 | ...and the records are STRIPPED from that turn, not just forbidden | the branch passes `rag_context=""` to `_write` | `ungrounded_figures` grounds on the retrieved set, which on that turn really does hold $450 — so the prompt rule alone would have been the only thing standing between a client and a price for a service we do not sell them. With the records blanked, any figure the model produces is ungrounded and takes the whole reply with it. `FEE_BY_NATIONALITY`'s lesson pointed at a person instead of a country. |
 | ...and "my passport" is only read as theirs once we know the helper's name | `_MY_PASSPORT` + the `helper_name` test | A bare *"I want to renew my passport"* is genuinely ambiguous — plenty of employers say it meaning their maid's — so on the first message it is left alone and the flow's own first question surfaces it. Once we hold her name, *"Also I want to renew my passport also"* cannot mean hers. |
 
+| A direct hire explains itself at the END, with the cost and the timeline beside the process | `ticket.BRIEFING_AFTER["direct_hiring"]` | It arrived welded onto question two instead - "Thanks, john. Direct hire involves processing the MOM application, documents, insurance and bond, and getting the helper here and settled; may I know the full name of the helper you would like to hire?" Adding the entry is also what REMOVES the opening overview, so this is one change and not two. Keyed on `helper_availability`, the last REQUIRED field: the three after it are optional, and keying on one of those loses the briefing whenever a client declines it. |
+| A question about WHEN is not answered by a sentence about WHERE | `info_collector._ASKS_WHEN` + `_echoes_another_answer` | "No she is on Myanmar right Now" filled `helper_availability` with "Myanmar right now", so the start date was never asked and the ticket carried a country. The test is an ECHO of another answer we hold, not "does this state a time" - the value genuinely contains one, and it is attached to the country. Derived over the QUESTION, so all eight when-fields across the services are covered and not just the one reported. |
+| ...and the name of the service they asked for answers none of its own questions | `info_collector._restates_the_service` | "i want to do direct hire" filled `helper_transfer_case` - the ONE question that decides the route - with the value "direct hire", 4 runs of 4. Scoped to the service IN HAND, because `current_helper_exit` offers "going home" (which reads as `home_leave`) and `transfer_direction`'s junk value reads as `transfer`, not `transfer_employer`. |
+| A send that may already have been delivered is never sent again | `whapi.client._post` (`_SAFE_TO_RESEND`) | It retried on any httpx error and any 5xx - and a ReadTimeout or a 502 means the request was WRITTEN and the response was lost. Whapi has no idempotency key, so the second POST is a second WhatsApp message, under a new id we then do not recognise as ours. The cost of the retry is not a duplicate, it is the row below. |
+| ...and our own words coming back are never a human agent | `message.echoes_our_own_send` + `handle_outbound` | The duplicate arrived as a from_me webhook whose id `was_sent_by_bot` had never heard of, so the bot stood down for an agent who was never there - permanently, on a live thread, with the client's next question unanswered and the row on the database reading `sent_by='agent'`. Marked BEFORE the request goes out, because the echo can beat our own insert by 1.9 seconds. |
 | An employer who says which kind of transfer he means is not asked which kind of transfer he means | `info_collector._settled_transfer_direction` + `_TAKES_ON_A_TRANSFER` / `_RELEASES_THEIR_OWN` | The fix §9.12 named and did not take. The extractor keeps returning the bare word "transfer", which opens neither gate, so `_undecidable_gate_keys` re-asks - correctly, and at a client who answered in his first four words. Read off his own words instead, and applied AFTER the extraction because `known` loses to it by design. The two patterns are not mirror images: a release carries a possessive ("transfer MY helper"), taking one on does not ("a transfer helper"). |
 | ...and an undecidable value never overwrites a settled one | the `previous` branch of the same function | Found by REPLAYING the transcript, not by reading the code. `collected = {**previous, **extracted}`, so the same junk word handed back on a LATER turn wipes a direction already settled and the question comes back. A real correction decides something, opens the other gate, and still wins. |
 | "i want transfer helper" is an employer asking for one, not a helper asking for herself | `intent_classifier._HELPER_SPEAKING` lookahead | It matched "i want transfer" and read the sender as the HELPER, so turn one ran the candidate flow and asked for her name; the switch to `transfer_employer` a turn later then wiped the collection. Swept as a SET in both directions - six employer phrasings and six of hers - because the cost is symmetrical. |
@@ -1109,6 +1114,122 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-18** - **Direct hire: the process arrived on question two, the start
+  date never arrived at all, and one retried send silenced the conversation for
+  good.** The agency's own test. One of the four things here is what they
+  reported; the other three were found underneath it and the last is the most
+  serious thing in this round.
+  (A) **"after asking the name question why bot is telling these thing [Direct
+  hire involves processing the MOM application, documents, insurance and bond,
+  and getting the helper here and settled] ... this is the process related and
+  documents related things we should tell this at last with the process,
+  requirements, timeline, cost/fees when all the requirements are gathered bot
+  have to message these things in single message without waiting for the user
+  to ask for."** They are right, and the fix is one table entry: adding
+  `direct_hiring` to `BRIEFING_AFTER` gives it the closing briefing AND removes
+  the opening overview, via the test `briefs_on_this_turn` has carried since
+  2026-09-09 - a service that briefs at the end does not also brief at the
+  start. The same trade `passport_renewal`, `renewal`, `replacement` and
+  `transfer_employer` have all now made.
+  (B) **Their transcript is the argument twice over.** It closed on the bare
+  handover line, and he then asked "what is the further process", "And what are
+  the documents required ?" and "And how much time this process takes" - three
+  messages, all three answered correctly and in full, and not one of them a
+  question he should have had to think of.
+  (C) **Keyed on `helper_availability`, the LAST REQUIRED field**, for the
+  reason spelled out four times in that table: the retriever runs before the
+  collector, so the briefing has to be due one turn before the collection
+  completes or it is built with no records (the 2026-09-09 defect). The three
+  questions after it are all optional, and keying on one of those loses the
+  briefing entirely whenever a client declines it - which is not hypothetical,
+  it is what their own 2026-09-17 transcript did with `helper_contact` ("I'm
+  not comfortable to provide this information now"). Measured before it was
+  added: all four sections come back inside the top ten and above the floor -
+  the process (0.653), what happens at the end (0.623), the documents from the
+  client (0.572), the step-by-step (0.572), the documents we prepare (0.563),
+  the cost (0.541) and both timelines (0.535 and 0.504). No query change, no
+  new row.
+  (D) **The ticket said the helper's availability was "Myanmar right now".**
+  Nobody reported this and it is only visible on the ticket. Asked "Is she
+  currently in Singapore, working under a Work Permit with another employer?"
+  he answered "No she is on Myanmar right Now", and the extractor returned the
+  transfer-case answer AND `helper_availability: 'Myanmar right now'` out of
+  the same seven words - reproduced 3 runs of 3. A filled field is never put to
+  anyone, so "When would she be available to start?" was never asked, and
+  CB-2026-0009 reached a consultant with a country where a start date belongs.
+  The test is an ECHO of an answer we already hold, NOT "does this state a
+  time": the value genuinely contains one - "right now" - and it is attached to
+  the country. Derived over the QUESTION rather than written as a list of keys,
+  so all eight when-fields across the nine flows are covered, and gated on the
+  field never having been asked - once asked, their answer is their answer.
+  (E) **And the REPLAY found a second one, on the field that decides
+  everything else.** "i want to do direct hire" filled `helper_transfer_case`
+  with the value **"direct hire"**, 4 runs of 4 - so the one question that
+  establishes the route was never asked. That is not a cosmetic loss: it is the
+  difference between 2-3 weeks and 4-6 in the closing briefing, and it decides
+  whether the notice-period question is asked at all. The 2026-09-07 care-type
+  defect one flow along, and `replacement_preferences` one field along. Scoped
+  to the service IN HAND, and the two controls are why: `current_helper_exit`
+  offers "going home", which reads as `home_leave`, and `transfer_direction`'s
+  junk value reads as `transfer` rather than `transfer_employer`, so this
+  morning's machinery is untouched rather than quietly duplicated.
+  (F) **The same reply went out twice, and that is not the defect - it is the
+  symptom of one that ends the conversation.** Live on conversation 3766,
+  "Usually about 4 to 6 weeks for a direct hire from overseas." was sent at
+  14:20:36 and again at 14:20:38, 1.9 seconds apart, which is `_post`'s own
+  1.5s backoff. It retried on any httpx error and any 5xx - and a ReadTimeout
+  or a 502 means the request was WRITTEN and the response was lost, not that
+  nothing was delivered. Whapi has no idempotency key, so the second POST is a
+  second WhatsApp message with a NEW id, and only the id of the attempt that
+  finally returned is handed back to `send_bot_reply`. So only that one was
+  marked as ours.
+  (G) **When Whapi echoed the FIRST copy back, we did not recognise our own
+  sentence.** `was_sent_by_bot` had never heard of its id, `handle_outbound`
+  read it as a human agent picking the thread up, and the bot stood down. Read
+  from the live rows rather than inferred: the two outbound messages are on the
+  database as `is_bot=False, sent_by='agent'` and `is_bot=True, sent_by='bot'`,
+  the conversation flipped to `human_active` at 14:21:16, and the client's next
+  message - "ok and what is the fees for this", 14:21:13 - **got no reply at
+  all**, on a thread that was still `human_active` when this was written. A
+  retry here does not cost a duplicate message. It costs the conversation, and
+  the transcript blames an agent who was never there.
+  (H) **Both locks, because the second is the one that matters.** `_post` now
+  retries only where the request provably never reached Whapi - a connection
+  never established, or one that never left the pool - and everything else is
+  reported and not repeated. And `handle_outbound` recognises our own words
+  whatever id they arrive under, keyed on the recipient as well as the text so
+  an identical line sent to two clients cannot mask a real agent on one of
+  them. The body is marked BEFORE the request goes out, because the echo can
+  beat our own insert - live, by 1.9 seconds. The duplicate is then stored as
+  OURS, not as an agent's: a row saying `sent_by='agent'` is what
+  `last_agent_message_at` would later measure an idle window against.
+  (I) **Twenty-seven faults injected, twenty-seven red - after two came back
+  GREEN and both were the checks.** Removing the `not asked.get(key)` gate from
+  the restates-the-service rule stayed green, because nothing asserted that a
+  client who IS asked and answers with the service name is believed; and
+  removing its three-word length guard stayed green, because nothing asserted
+  that an answer merely MENTIONING the service still lands - "as soon as the
+  direct hire is approved" is a real answer to "when would she be available to
+  start?". Both controls exist now and both injections go red. A green
+  injection is a result about the injection, which is the fifth time this file
+  has recorded that and the first time it has been true twice in one run.
+  (J) **Verified live against the real model, both routes.** His own
+  transcript: no overview on question two, the route question asked, the start
+  date asked and answered, and a closing message carrying "It takes
+  approximately 4 to 6 weeks", "A consultant will confirm the exact fee for
+  your situation", the two documents, the five-step process and the handover
+  line - with `helper_transfer_case: no` and `helper_availability: next month`
+  on the ticket. The control, a helper already here under another employer:
+  the notice question is asked (it was skipped entirely before, because the
+  gate had never been decided) and the briefing says **2 to 3 weeks** rather
+  than 4 to 6, which is the whole reason that field exists.
+  (K) **The live thread was put back by hand.** Conversation 3766 was still
+  `human_active` days later, so `unsilence_conversation.py` was run on it -
+  thread and checkpoint kept, nothing collected discarded. One other
+  allowlisted conversation is stood down (id=26, 6597499527) and is left alone:
+  its cause was not investigated and it may be a real agent.
+  `selfcheck_flows.py` is **584 assertions**; `smoke_nodes.py` is **140 states**.
 
 - **2026-09-18** - **An employer transfer: told he was asked which kind of transfer
   he meant, asked twice about his own children, and handed over without being told
