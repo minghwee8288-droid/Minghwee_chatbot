@@ -143,6 +143,16 @@ _NAMED_SERVICE = (
     # help, because $695 is genuinely in the records it grounds on.
     (re.compile(r"\bpassport\b", re.I), "passport_renewal"),
     (re.compile(r"\brenew", re.I), "renewal"),
+    # The service names itself without the word "renewal". Live 2026-09-18:
+    # "hello what is the fees for work permit" - the client dropped it, so
+    # nothing here matched, the money rule could not fire and fee_enquiry
+    # collected its own two hiring-shaped fields ("Which nationality are you
+    # looking at?", "what kind of care would this be for?") on a work permit
+    # question. Renewal is the only thing we do with a work permit.
+    # Placed AFTER transfer and passport, so "transfer her work permit" is
+    # still a transfer and "her passport and work permit" is still the
+    # passport.
+    (re.compile(r"\bwork\s*permit\b|\bwp\b", re.I), "renewal"),
     (re.compile(r"\breplace", re.I), "replacement"),
     (re.compile(r"\bhome\s*leave\b|\bgoing\s+home\b", re.I), "home_leave"),
     (re.compile(r"\bdirect\s*hir", re.I), "direct_hiring"),

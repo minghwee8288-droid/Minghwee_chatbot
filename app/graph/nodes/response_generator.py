@@ -47,6 +47,7 @@ from app.graph.state import (
     ConversationState,
 )
 from app.services import handover as handover_service
+from app.services.lead import EMPLOYER_LEAD_SERVICES
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,18 @@ def needs_contact_discovery(state: ConversationState, intent: str) -> bool:
         return False  # the database already told us
     if state.get("detected_contact_type"):
         return False  # this turn read it well enough to proceed
+    # The REQUEST can settle it as well as the message. A work permit renewal,
+    # a replacement, a home leave or a passport renewal is something only an
+    # employer asks for - a helper does not renew her own permit, the employer
+    # applies - so asking who we are speaking to is asking something the
+    # service already answered. Live 2026-09-18, 3 runs of 3: "hello, what is
+    # the fees for work permit renewal" was answered with the fee and then "Is
+    # this for your current helper?", two questions before `helper_name`
+    # established the same thing. `transfer` is deliberately in neither lead
+    # set - it is the one service both sides of the desk ask about - so it is
+    # not covered here and still gets the question.
+    if (state.get("service_type") or "") in EMPLOYER_LEAD_SERVICES:
+        return False
     # Nothing said yet is handled by the ordinary greeting path.
     return asks_something(state.get("incoming_text", ""))
 
