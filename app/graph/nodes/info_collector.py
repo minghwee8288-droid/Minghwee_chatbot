@@ -26,6 +26,7 @@ from app.graph.guards import (
     same_opening,
     speaks_of_us_as_a_third_party,
     strip_handover_talk,
+    strip_leading_name,
     strip_meta_commentary,
     strip_repeated_opener,
     ungrounded_figures,
@@ -882,10 +883,27 @@ _CARE_TYPE_FIELDS = {"requirement", "care_type"}
 # adding words there makes THAT test stricter and could start dropping real
 # care types. The words to strip here are the ones belonging to the request -
 # replace/change/new - plus the pronouns standing in for the helper.
-_PREFERENCE_FIELDS = {"replacement_preferences"}
+# `reason` joined on 2026-09-18, from the agency's two replacement transcripts.
+# Both opened "i want to replace my helper", and in both the extractor filed
+# `reason = "replace current helper"` off that one sentence - so the field
+# looked answered, the question "what is the reason for the replacement?" was
+# never asked in either conversation, and a consultant opened a ticket whose
+# stated reason for the replacement is that they want a replacement.
+#
+# Exactly the shape this set was made for, one field along: the value restates
+# the REQUEST. The same subtractive filler already covers it - replace, change,
+# helper and the pronouns all strip out and nothing is left - while a real
+# answer ("she is not doing the work properly", "i dont want her anymore")
+# survives untouched.
+_PREFERENCE_FIELDS = {"replacement_preferences", "reason"}
 
 _PREFERENCE_FILLER = re.compile(
+    # `current` and `existing` joined 2026-09-18: "replace current helper" was
+    # the value the extractor filed for `reason` off the opening message, and
+    # it survived this list on that one word. `\bcurrent\b` does not match
+    # "currently", so "someone currently in Singapore" is untouched.
     r"\b(replace|replaces|replaced|replacing|replacement|change|changing|changed|"
+    r"current|existing|"
     r"swap|switch|new|another|next|other|else|different|"
     r"her|him|his|she|he|them|they|it|this|that|one|someone|somebody|anyone|"
     r"i|we|my|our|me|us|you|your|a|an|the|to|for|of|in|is|am|are|and|but|just|do|"
@@ -1463,9 +1481,11 @@ RECORD_NAME_NOTE = (
     "\"Good to meet you, {name}\" - and then ask your question.\n\n"
     "NOT the bare name with a comma after it. \"{name}, how many people live in "
     "your household?\" is a form calling out a row, not a person saying hello.\n\n"
-    "If they gave a full name, their first name on its own is the friendlier "
-    "address and the one a colleague would use. Never change the SPELLING of "
-    "what they wrote, never expand it, and never invent a fuller version.\n\n"
+    "If they gave a full name, use their FIRST NAME ONLY - that is the address "
+    "a colleague would use, and reading both names back reads like a record "
+    "being checked. \"Thanks, amir khan\" went out live on 2026-09-18 where "
+    "\"Thanks, Amir\" was wanted. Never change the SPELLING of what they wrote, "
+    "never expand it, and never invent a fuller version.\n\n"
     "This is the first message since we learned their name, and it is the one "
     "place it belongs - do not go on using it in every later message. And never "
     "ask for a name we are already holding."
@@ -1833,8 +1853,12 @@ async def _extract(
         # leaves" is an answer to the TIMELINE question, and filing it here
         # completed the collection one question early and built the closing
         # briefing on the wrong records.
+        # `replacement_preferences` only, NOT the whole of _PREFERENCE_FIELDS:
+        # this half asks whether the message describes the HELPER they want,
+        # and a reason for the replacement ("she is not doing the work
+        # properly") describes no helper at all.
         if (
-            key in _PREFERENCE_FIELDS
+            key == "replacement_preferences"
             and not asked.get(key)
             and not _describes_a_helper(state.get("incoming_text") or "")
         ):
@@ -3006,4 +3030,17 @@ async def _write(
         ):
             reply = retry
 
-    return strip_repeated_opener(reply, *recent_bot_lines(state.get("history_text", "")))
+    # ...and the client's own name standing alone in front of the question. The
+    # prompt forbids it and mostly gets obeyed; this catches the rest. See
+    # guards.strip_leading_name for why a prompt rule alone was not enough.
+    #
+    # AFTER strip_repeated_opener, not before, and that ordering is the whole
+    # fix. The model writes "Got it, Amir. Could you share..."; the opener
+    # guard drops the repeated "Got it," and EXPOSES the bare name, so a name
+    # guard running first sees a reply that does not start with the name and
+    # correctly leaves it alone. Measured: 0 of 3 caught before the swap, and
+    # the guard was being called with the right name every time.
+    return strip_leading_name(
+        strip_repeated_opener(reply, *recent_bot_lines(state.get("history_text", ""))),
+        str((state.get("collected_info") or {}).get("full_name") or ""),
+    )

@@ -470,6 +470,23 @@ rows = [
  # "And when would you ideally like...", which is one ask reading as a
  # follow-on. The old field was "...to leave, and when would you ideally want
  # the new helper to start?" - two asks, one comma, one answer.
+ # The client's own name standing alone in front of the next question. Four
+ # transcripts across two services, and the prompt rule alone left it in 1 run
+ # of 3 - so it is a guard as well. Ordering matters and is asserted: the
+ # opener guard runs FIRST and exposes the bare name by removing the filler in
+ # front of it, so a name guard running before it sees nothing to do.
+ ("a bare name in front of the question is stripped",
+  gd.strip_leading_name("Amir. Are you sending Farhana home?", "amir khan"),
+  "Are you sending Farhana home?"),
+ ("...including with a comma",
+  gd.strip_leading_name("Amir, how many people live with you?", "Amir"),
+  "How many people live with you?"),
+ ("...but a greeting that CARRIES the name is left alone",
+  [r for r in ("Thanks, Amir. May I know her name?", "Hi Amir, I'm Claire.",
+               "Got it - how long has she been with you?")
+   if gd.strip_leading_name(r, "amir khan") != r], []),
+ ("...and the opener guard runs before it, or it has nothing to catch",
+  _COLLECTOR_SRC.index("strip_leading_name(\n        strip_repeated_opener(") > 0, True),
  ("...and neither of them asks for both halves at once",
   [f.key for f in t.SERVICE_FIELDS["replacement"]
    if f.key in ("current_helper_exit_date", "timeline")

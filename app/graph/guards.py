@@ -483,6 +483,44 @@ def normalize_text_local(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", " ", (text or "").lower()).strip()
 
 
+def strip_leading_name(reply: str, name: str) -> str:
+    """Drop the client's own name when it OPENS the message with nothing else.
+
+    "Amir. Are you sending Farhana home, transferring her to another employer,
+    or have you not decided yet?" - the client's name standing alone as a
+    sentence, then the next question. It reads as a form calling out a row
+    before it reads the next field, and the agency has now sent it in four
+    separate transcripts across two services (2026-09-17 passport renewal,
+    2026-09-18 replacement twice).
+
+    The prompt rule alone was not enough, which is this repo's whole argument
+    for guards: told plainly not to, the model still did it in 1 run of 3. And
+    the first version of that prompt rule made it WORSE - it quoted the bad
+    example verbatim, so the model was reading the exact sentence it was being
+    told not to write, which is section 8's rule about non-Latin script applied
+    to a name. Measured 3 runs of 3 before the example came out.
+
+    A GREETING is untouched, because that is the one message where the name
+    belongs: "Hi Amir", "Thanks, Amir" and "Good to meet you, Amir" all keep it,
+    since the name is not what the message opens with. Only the bare forms go -
+    "Amir." and "Amir," at the very start - and only the name we actually hold,
+    never a word that merely looks like one.
+    """
+    body = (reply or "").lstrip()
+    first = (name or "").strip().split()[0] if (name or "").strip() else ""
+    if not body or len(first) < 2:
+        return reply
+    match = re.match(
+        rf"{re.escape(first)}\s*[.,!]\s+(?=\S)", body, re.IGNORECASE
+    )
+    if not match:
+        return reply
+    rest = body[match.end():]
+    if not rest:
+        return reply
+    return rest[0].upper() + rest[1:]
+
+
 def strip_repeated_opener(reply: str, *previous: str) -> str:
     """Drop a filler opener already used in any of the recent messages.
 
