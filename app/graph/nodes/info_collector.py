@@ -35,6 +35,7 @@ from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
     CANDIDATE_PROCESS_COMES_LAST_NOTE,
     EXPIRING_SOON_NOTE,
+    HELPER_HOME_LEAVE_NOTE,
     OWN_PASSPORT_NOTE,
     UNPLACEABLE_NATIONALITY_NOTE,
     CANDIDATE_BRIEFING_NOTE,
@@ -452,6 +453,79 @@ def _asks_about_own_passport(state: ConversationState, collected: dict) -> bool:
     if _MY_PASSPORT.search(text) and not _HELPER_WORD.search(text):
         return bool(str(collected.get("helper_name") or "").strip())
     return False
+
+
+# A HELPER asking about her OWN home leave, inside a service written entirely
+# for the employer.
+#
+# Live 2026-09-18, the agency's own test: "hey i want to go home for personal
+# purpose" -> "May I know your name?" -> "myself kareena" -> "Thanks, kareena.
+# May I know your HELPER's name?" - put to the helper. She said "i said i want
+# to go home i am helper" and was asked her name a second time, wrote "are you
+# out of your mind i told you my name is kareena", and four questions later
+# received the employer's closing briefing: "$250", "Copy of your employer's
+# NRIC", "Copy of your Work Permit", and "Please book your air ticket now and
+# send us a copy" - a bill she does not pay, a document that is not hers, and
+# an instruction she cannot act on.
+#
+# It is the 2026-09-17 passport defect one service along, and it has the same
+# cause: all twelve `home_leave` knowledge-base rows are written to the
+# employer ("What do I need to do as the employer...") and all four questions
+# are about "her", but none of that is a TEST, so the model reworded the
+# questions for whoever was in front of it and the flow never noticed. The
+# briefing is what gives it away: "Copy of your EMPLOYER'S NRIC" beside "Copy
+# of YOUR Work Permit" is the employer's list with half the pronouns swapped.
+#
+# `home_leave` is hard-forced to contact_type='employer' in the classifier
+# (_CONTACT_BY_INTENT), which is right for almost all of it - this is the one
+# shape it gets wrong, and she says so in the first person.
+#
+# (1) EXPLICIT - she identifies herself, or says something only a helper says.
+#     This WINS over _HELPER_WORD below, because "i am helper" and "my
+#     employer" both contain the word that would otherwise rule them out.
+_SPEAKING_AS_HELPER = re.compile(
+    r"\b(?:i\s*am|i'?m|im)\s+(?:a\s+|the\s+|your\s+)?"
+    r"(?:helper|maid|domestic\s+worker|fdw|dh)\b"
+    r"|\bi\s+work\s+as\s+(?:a\s+|the\s+)?(?:helper|maid|domestic\s+worker)\b"
+    r"|\bmy\s+(?:current\s+)?(?:employer|boss|madam|ma'?am|sir)\b",
+    re.IGNORECASE,
+)
+
+# (2) CONTEXTUAL - a first-person home leave with no helper named anywhere in
+#     the sentence. An employer says "my helper wants to go home" or "I want to
+#     send her home"; only she says "I want to go home". The helper-word test
+#     is what keeps the two apart, and it is why the employer transcript from
+#     the same afternoon ("hey i my helper wants to go home") is untouched.
+#     Nothing may stand between the verb and "go home" except a filler word.
+#     "I want HER to go home" is the employer saying the same sentence about
+#     somebody else, and it carries no helper word to be caught by - so the gap
+#     is closed rather than widened, the way _NO_PREFERENCE is anchored.
+_OWN_HOME_LEAVE = re.compile(
+    r"\bi\s+(?:want|need|would\s+like|wish|plan|am\s+planning)\s+(?:to\s+)?"
+    r"(?:really\s+|just\s+|also\s+)?go(?:ing)?\s+(?:back\s+)?home\b"
+    r"|\bcan\s+i\s+go\s+(?:back\s+)?home\b"
+    r"|\bi\s+(?:want|need|would\s+like|wish)\s+(?:to\s+)?"
+    r"(?:take\s+|apply\s+for\s+|go\s+on\s+)?(?:my\s+)?home\s+leave\b"
+    r"|\bmy\s+home\s+leave\b"
+    r"|\bi\s+am\s+going\s+(?:back\s+)?home\b",
+    re.IGNORECASE,
+)
+
+
+def _home_leave_for_herself(state: ConversationState) -> bool:
+    """Whether the HELPER is the one asking about this home leave."""
+    text = state.get("incoming_text") or ""
+    if not text.strip():
+        return False
+    if _SPEAKING_AS_HELPER.search(text):
+        return True
+    # Remembered for the same reason `own_passport` is: "why not?", "who do I
+    # ask then?" and "can you help me" all land back here instead of being met
+    # with "May I know your helper's name?". Naming a helper releases it, so an
+    # employer who wandered in is back on the collection with no special case.
+    if "helper_home_leave" in (state.get("flagged_once") or []):
+        return not _HELPER_WORD.search(text)
+    return bool(_OWN_HOME_LEAVE.search(text)) and not _HELPER_WORD.search(text)
 
 
 def _known_transfer_case(state: ConversationState) -> str | None:
@@ -2429,6 +2503,45 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
                     "renewed through her own country's embassy here in "
                     "Singapore - we are not able to renew your own passport. "
                     "Is there anything else I can help you with?"
+                ),
+                max_sentences=3,
+            ),
+            "needs_handover": False,
+        }
+
+    # THE RECORDS ARE STRIPPED HERE TOO, and for the same reason. The retrieved
+    # set on a home-leave turn genuinely contains "$250", "approximately 2
+    # weeks" and "a copy of your NRIC", so `ungrounded_figures` would pass any
+    # of them - they are real, they are simply the EMPLOYER's price and the
+    # EMPLOYER's paperwork. With `rag_context` blanked the model is never
+    # offered them, and any figure it writes anyway is ungrounded and takes the
+    # whole reply with it. `history_text` is deliberately left alone: on a
+    # thread where a briefing has already gone out it still carries the figure,
+    # which is why the note forbids quoting one as well.
+    if service_type == "home_leave" and _home_leave_for_herself(state):
+        logger.info(
+            "Conversation %s: the HELPER is asking about her own home leave — "
+            "answering rather than running the employer's intake",
+            state.get("conversation_id"),
+        )
+        return {
+            **lead_fields,
+            "collected_info": carry,
+            "service_type": service_type,
+            "collected_service": service_type,
+            "asked_field_counts": counts,
+            "missing_field_keys": [],
+            "info_complete": False,
+            "flagged_once": ["helper_home_leave"],
+            "reply": await _write(
+                {**dict(state), "rag_context": "", "rag_matches": []},
+                system_prompt_state,
+                HELPER_HOME_LEAVE_NOTE,
+                fallback=(
+                    "Home leave is arranged through your employer, as we need "
+                    "their documents and signature before we can start it. "
+                    "Please let your employer know, and they can message us "
+                    "here and we will take it from there."
                 ),
                 max_sentences=3,
             ),

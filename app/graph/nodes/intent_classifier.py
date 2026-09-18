@@ -67,17 +67,57 @@ _TRANSFER_PATTERN = re.compile(
 # 'other' with a holding line (live, 2026-09-03). Phrased to catch a job-seeker
 # without catching an employer: "someone's home" (a stranger's, not "my home"),
 # "I am a maid", "need a job" — never "I need a helper".
-_JOBSEEKER_PATTERN = re.compile(
+#
+# Split in two on 2026-09-18, because the two halves are not the same claim.
+# Everything in ASKS_FOR_WORK is somebody asking for a job outright. SELF_ID is
+# a person saying who she is, and that is all it is.
+_JOBSEEKER_ASKS_FOR_WORK = re.compile(
     r"\b(?:need|want|looking\s+for|searching\s+for)\s+(?:a\s+)?(?:job|work\b)"
     r"|\blooking\s+for\s+(?:a\s+)?employer\b"
     r"|\bgive\s+me\s+(?:a\s+)?(?:job|work)\b"
     r"|\bregister\s+(?:me|myself)\b"
-    r"|\bi\s*(?:'m|\s+am)\s+(?:a\s+)?(?:maid|helper|domestic\s+worker)\b"
     r"|\bprovide\s+(?:some\s+)?work\s+(?:to|for)\s+(?:us|me)\b"
     r"|\b(?:someone|somebody)(?:'?s)?\s+home\b(?:\W+\w+){0,6}\W+\bwork\b"
     r"|\bwork\b(?:\W+\w+){0,6}\W+(?:someone|somebody)(?:'?s)?\s+home\b",
     re.IGNORECASE,
 )
+
+_JOBSEEKER_SELF_ID = re.compile(
+    r"\bi\s*(?:'m|\s+am)\s+(?:a\s+)?(?:maid|helper|domestic\s+worker)\b",
+    re.IGNORECASE,
+)
+
+_JOBSEEKER_PATTERN = re.compile(
+    _JOBSEEKER_ASKS_FOR_WORK.pattern + "|" + _JOBSEEKER_SELF_ID.pattern,
+    re.IGNORECASE,
+)
+
+
+def _is_jobseeker(message: str, intent: str) -> bool:
+    """Whether this message is somebody asking us for work.
+
+    Asking for work outright is always a job seeker, whatever the model said.
+
+    Saying "I am a helper" is NOT, once the model has already named a real
+    service — she has told us who she is and then told us what she wants, and
+    what she wants is the service. Live 2026-09-18, on the agency's home-leave
+    test: the model classified "hi i am a helper and i want to go home leave"
+    as `home_leave` CORRECTLY, 4 phrasings out of 4, and this override threw
+    that away for `candidate_registration` with no service at all - so she was
+    handed to a live agent on her first message, and the next seven turns ran
+    the EMPLOYER's home-leave intake at her, "May I know your helper's name?"
+    included. The self-identification is the one sentence a helper is most
+    likely to open with, and it was the one sentence that broke her flow.
+    Nothing is lost on the case this net was built for: measured on the same
+    day, the model returns `candidate_registration` by itself for "i am a
+    maid", "i am a helper looking for work" and "i am a maid and i need a job",
+    and the override already skips an intent it has classified that way.
+    """
+    if _JOBSEEKER_ASKS_FOR_WORK.search(message):
+        return True
+    if not _JOBSEEKER_SELF_ID.search(message):
+        return False
+    return intent not in SERVICE_INTENTS
 
 
 # Enquiries that ride along inside a bigger service request rather than
@@ -426,7 +466,7 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
     # A helper offering herself is candidate_registration, not a holding line.
     # Skipped for a known employer, whose "I need work done" is not a job request.
     elif (
-        _JOBSEEKER_PATTERN.search(message)
+        _is_jobseeker(message, intent)
         and intent not in {"dispute_assault", CANDIDATE_INTENT}
         and active_service not in SERVICE_INTENTS
         and not state.get("matched_employer_id")

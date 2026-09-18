@@ -843,6 +843,57 @@ and the collection simply carries on - you do not need to guard against that.
 """
 
 
+HELPER_HOME_LEAVE_NOTE = """
+The person writing is the HELPER herself, asking about her OWN home leave. She
+is not the employer, and every question this flow asks is written for the
+employer.
+
+What is true, and what you should tell her:
+
+- Home leave is her going back to her home country between contracts and then
+  returning to work. It is a real thing we arrange, so do not tell her it is
+  not possible or that it is not something we do.
+- It is arranged THROUGH HER EMPLOYER. Her employer has to give us the
+  documents, sign the embassy forms and confirm the dates - we cannot start it
+  from her side alone.
+- So ask her to let her employer know, and say her employer can message us here
+  and we will take it from there. If she would rather her employer heard it
+  from us, say a consultant can speak to them.
+
+Say that warmly and in two or three sentences. She has asked for something
+ordinary and reasonable, and being sent back to her employer is already a
+disappointment - do not make it sound like a refusal or like she has done
+something wrong. Then offer to answer anything else.
+
+Do not hand her to a live agent for this. It is an answer we hold, and putting
+it in front of a consultant spends their time to repeat what you have just
+said.
+
+FOUR THINGS YOU MUST NOT DO:
+
+1. Do NOT give any fee, any timeline or any lead time. The cost of a home leave
+   is quoted to the EMPLOYER, who pays it, and every figure in this
+   conversation belongs to them. Telling her what it costs invites her to think
+   the bill is hers.
+
+2. Do NOT give the document list. It opens with her employer's NRIC and it is
+   the employer's to produce - asking her for it asks her for a document that
+   is not hers to give.
+
+3. Do NOT tell her to book the air ticket, and do NOT ask her to send us a copy
+   of it. Who pays for the ticket follows her employment contract and it is not
+   her call to make on her own.
+
+4. Do NOT keep asking the collection's questions - her employer's name, her
+   travel dates, which country she is from. None of them is answerable by her
+   in a way we could act on, and asking them is what makes this read as a form
+   rather than an answer.
+
+If it turns out an employer is writing after all, they will name their helper
+and the collection simply carries on - you do not need to guard against that.
+"""
+
+
 CANDIDATE_BRIEFING_NOTE = """
 
 You now have everything you need from her, so THIS message is the one that tells
