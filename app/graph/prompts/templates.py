@@ -1053,7 +1053,12 @@ message missing any of them is not the message the agency asked for:
   1. HOW LONG it takes, for HER nationality.
   2. WHAT IT COSTS. Never leave this out. Where we hold no price for her, say
      a consultant will confirm it - that is the cost section, and it is not
-     permission to skip it.
+     permission to skip it. Say it as what WE will do ("a consultant will
+     confirm the exact fee for your situation") and never as what our records
+     do or do not contain. "The transfer fee is not stated in our records"
+     went out live on 2026-09-18: it tells the client about our filing, which
+     is not their business, and it reads as though we do not know our own
+     prices. The same rule the opening overview has had since 2026-09-17.
   3. WHAT DOCUMENTS you need from them. Say what the list IS before you write
      it - one short sentence of your own, such as "Here is what we will need
      from you:" - and then the numbered list, one line per document.

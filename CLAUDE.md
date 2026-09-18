@@ -354,6 +354,12 @@ because the lead is opened early and the ticket is created much later.
 | ...and the records are STRIPPED from that turn, not just forbidden | the branch passes `rag_context=""` to `_write` | `ungrounded_figures` grounds on the retrieved set, which on that turn really does hold $450 — so the prompt rule alone would have been the only thing standing between a client and a price for a service we do not sell them. With the records blanked, any figure the model produces is ungrounded and takes the whole reply with it. `FEE_BY_NATIONALITY`'s lesson pointed at a person instead of a country. |
 | ...and "my passport" is only read as theirs once we know the helper's name | `_MY_PASSPORT` + the `helper_name` test | A bare *"I want to renew my passport"* is genuinely ambiguous — plenty of employers say it meaning their maid's — so on the first message it is left alone and the flow's own first question surfaces it. Once we hold her name, *"Also I want to renew my passport also"* cannot mean hers. |
 
+| An employer who says which kind of transfer he means is not asked which kind of transfer he means | `info_collector._settled_transfer_direction` + `_TAKES_ON_A_TRANSFER` / `_RELEASES_THEIR_OWN` | The fix §9.12 named and did not take. The extractor keeps returning the bare word "transfer", which opens neither gate, so `_undecidable_gate_keys` re-asks - correctly, and at a client who answered in his first four words. Read off his own words instead, and applied AFTER the extraction because `known` loses to it by design. The two patterns are not mirror images: a release carries a possessive ("transfer MY helper"), taking one on does not ("a transfer helper"). |
+| ...and an undecidable value never overwrites a settled one | the `previous` branch of the same function | Found by REPLAYING the transcript, not by reading the code. `collected = {**previous, **extracted}`, so the same junk word handed back on a LATER turn wipes a direction already settled and the question comes back. A real correction decides something, opens the other gate, and still wins. |
+| "i want transfer helper" is an employer asking for one, not a helper asking for herself | `intent_classifier._HELPER_SPEAKING` lookahead | It matched "i want transfer" and read the sender as the HELPER, so turn one ran the candidate flow and asked for her name; the switch to `transfer_employer` a turn later then wiped the collection. Swept as a SET in both directions - six employer phrasings and six of hers - because the cost is symmetrical. |
+| The household question does not ask again about the children it has just been told about | `info_collector._care_details_already_told` | "i have 4 childrens" -> "how many people live in your household, and who are they, such as adults, elderly parents or children?" -> "AS I TOLD THEN WHY ASKED ME AGAIN". Derived from the fields gated on `requirement`, and it NAMES the rule it overrides - the general "ask for everything the question asks for" beat it otherwise (2026-09-07). |
+| The cooking question asks IF she will cook, not only which kind | `cooking`'s question | Reworded and deliberately NOT gated on `requirement`: a gate there makes `_gates_are_exhaustive` true for that field - measured - which switches `_undecidable_gate_keys` on and reinstates the 2026-09-08 blank-and-re-ask defect. |
+| A withheld price is said as what WE will do, never as a gap in our files | `SERVICE_BRIEFING_NOTE` item 2 | "The transfer fee is not stated in our records" went out live: it tells the client about our filing and reads as though we do not know our own prices. |
 | A passport that runs out before the renewal could finish is said out loud | `info_collector._expires_before_we_finish` + `EXPIRING_SOON_NOTE` | Live: *"in 5 days"* answered with *"It takes approximately 6 to 8 weeks"*, the two figures one line apart and nothing connecting them — 2 runs out of 2. `passport_expiry` had been collected since the flow was written and put on the ticket; **nothing ever read it.** Coarse on purpose and fails towards SILENCE: "next March", "when the contract ends" and a formatted date all return None, because guessing at a date and then calling somebody's passport urgent is worse than the omission. 60 days, which covers the slowest route we hold — a per-nationality table would be a second copy of lead times that live in the knowledge base (§9.8). |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -901,10 +907,20 @@ at a time.
   own figures for the other two are the ones that were already there and nobody has
   confirmed them, so they are not treated as floors. If Indonesia and Myanmar have
   minimums too, they are one line each and the same machinery applies.
-- **Whether `replacement` and `transfer_employer` should explain themselves too.**
-  After 2026-09-17 they are the only two employer intakes that brief at neither end —
-  eight questions and up to twenty-five respectively. Asserted as a decision rather
-  than left as an omission, so it is one entry each the day they say so.
+- ~~**Whether `replacement` and `transfer_employer` should explain themselves too.**~~
+  **ANSWERED 2026-09-18, both halves, and built.** They said so the way they say
+  everything - by testing the flow and objecting to the silence. `replacement`
+  first ("after getting all the required details the bot should reply the process,
+  required documents, timeline and the cost"), then `transfer_employer` hours later
+  ("after getting all the required details bot didnt message the process,
+  documents, timline, cost/fees"). **No employer intake briefs at neither end any
+  more**, and the self-check's list is empty rather than deleted. Recording them
+  here as decisions rather than omissions is what made each one a single entry to
+  close. What is still open is one BRANCH, not a service: an employer RELEASING
+  their helper is gated out of `rest_day`, so that half still closes on the bare
+  handover line. Its flow is four questions and both of its own fields are
+  optional, so there is no key reliably filled a turn before the end - the honest
+  fix is a second key, not a guess at one, and nobody has tested that half.
 - **The WhatsApp Business away message.** Their own team asked, 2026-09-17: *"Why is
   there an immediate message that says reply next day when it is during working
   hours??"* - *"Thank You for your message. Our team will reply to you next following
@@ -1093,6 +1109,121 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-18** - **An employer transfer: told he was asked which kind of transfer
+  he meant, asked twice about his own children, and handed over without being told
+  anything.** The agency's own test, and the first complaint is the one that
+  unpicks the other three.
+  (A) **"why is bot asking that are you looking to take on transfer helper already
+  in singapore or you want to release your current helper ... if someone is coming
+  and telling that i want transfer helper it means user intent is clear".** They
+  are right, and this is the fix **§9.12 named and did not take**: "resolving the
+  direction from the client's own opening message, which almost always says it".
+  `transfer_direction` has options and the extractor is not constrained to them, so
+  it keeps returning the bare word **"transfer"** - true, useless, recognised by
+  neither gate. `_undecidable_gate_keys` then does its job correctly and re-asks,
+  which is how a question the client had answered in his first four words came back
+  at him.
+  (B) **The two patterns are deliberately not mirror images**, and that asymmetry is
+  the whole of the accuracy: a release is always written with a possessive
+  ("transfer MY helper", "release HER"), taking one on is written with "transfer" as
+  an adjective ("a transfer helper"). So "transfer my helper" matches only the
+  release pattern and "transfer helper" only the take-on one, which is the pair of
+  sentences this has to tell apart. 19 phrasings measured, 13 decided and 6 left
+  alone - it **fails towards asking**, so a message matching both, or neither,
+  leaves the question exactly where it is.
+  (C) **Applied AFTER the extraction, not inside `_known_fields`.** The value it has
+  to beat is the extractor's own, and `known` goes in UNDER the extraction by design
+  (2026-09-17, so a client correcting our records wins). A fill placed there would
+  lose to "transfer" every time - which is §9.12, and is the defect.
+  (D) **And the half that makes the rest hold was found by REPLAYING the transcript
+  rather than by reading the code.** `collected = {**previous, **extracted}`, so the
+  extractor handing the same undecidable word back on a LATER turn silently
+  overwrites a direction already settled and the question returns. Live: turn one
+  settled it, turn two ("myself sanjay dutt") returned "transfer" once more, and the
+  disambiguating question came straight back. A value that opens no branch may not
+  replace one that does. A real correction decides something, opens the other gate,
+  and still wins.
+  (E) **Turn ONE was running the wrong questionnaire entirely, and nothing in the
+  report said so.** `_HELPER_SPEAKING` matched "i want transfer" inside **"hi i want
+  transfer helper"** - its lookahead excluded "my/our/the" and not a word for a
+  helper - so the sender was read as the HELPER, the candidate flow ran, and "may I
+  know your name?" meant HERS. He answered with his own name, the contact type
+  firmed up to employer on the next turn, and `switched` then wiped the collection.
+  Swept as a SET in both directions, six employer phrasings and six of hers, because
+  the cost is symmetrical: an employer in her questionnaire, or a helper in his.
+  (F) **"i have 4 childrens and all are under 15" -> "How many people live in your
+  household, and who are they, such as adults, elderly parents or children?" -> "AS
+  I TOLD THEN WHY ASKED ME AGAIN".** They are genuinely different questions - twelve
+  people is not four children, and the count is what sizes the job - so the question
+  stays and only what it asks FOR narrows. It is the residue of the 2026-09-17 fix
+  that added "and who are they": before that it was a bare headcount and could not
+  collide with anything. Derived from the fields gated on `requirement` rather than
+  from a list of two keys, and it **names the rule it overrides**, because the
+  general instruction above it ("ask for everything that question asks for") beat it
+  otherwise - the 2026-09-07 languages defect.
+  (G) **"i want childcare then why you are asking the cooking related question".**
+  The old wording took it as read that she would be cooking and asked only which
+  kind. Reworded rather than **gated**, and that is the decision rather than the lazy
+  option: a gate on `requirement` would make `_gates_are_exhaustive` TRUE for that
+  field - measured, childcare opens children_detail, eldercare opens elderly_detail,
+  "all of the above" opens children_detail and a cooking gate would cover "general
+  housework and cooking" - which switches `_undecidable_gate_keys` on and reinstates
+  the 2026-09-08 defect where "General house work" was blanked and re-asked three
+  times. An employer hiring for childcare may still want her to cook for the
+  children; it was the presumption that was wrong. It now opens with an auxiliary,
+  so a bare "no" closes it (2026-09-09).
+  (H) **The closing briefing, which is what they actually asked for.** Keyed on
+  `rest_day`, which is neither the last field nor the obvious one. NOT the last,
+  for the reason spelled out three times in `BRIEFING_AFTER` - the retriever runs
+  before the collector. NOT `referral_source`, the true second-to-last question,
+  because `_known_fields` fills it from the RECORDS for any returning client
+  (2026-09-08): keyed there the briefing would be due from turn one and the
+  retriever would spend a twenty-question intake searching for a briefing instead
+  of for what the client just said.
+  (I) **Measured before it was added, because a briefing with no records is the
+  2026-09-09 defect.** BRIEFING_QUERY under `transfer_employer` at
+  BRIEFING_MATCH_COUNT returns all four sections above the floor: the employer's own
+  document checklist (0.576), the timeline and process row (0.557), the steps
+  (0.549), the forms we prepare (0.547), the releasing employer's own documents
+  (0.547) and the cost (0.539). No query change and no new row. `transfer_employer`
+  is in COST_WITHHELD_SERVICES, so the cost section defers to a consultant exactly
+  as `replacement` does.
+  (J) **A withheld price is said as what WE will do, never as a gap in our files.**
+  Verifying (H) produced "The transfer fee is not stated in our records, so a
+  consultant will confirm the exact amount" - true, and it tells the client about
+  our filing and reads as though we do not know our own prices. The same rule the
+  opening overview has had since 2026-09-17, now on the closing briefing.
+  (K) **Eighteen faults injected, eighteen red - after one CRASHED and one came
+  back GREEN, and both were the check rather than the code.** Removing the briefing
+  entry made an assertion raise `KeyError`, so the harness printed a traceback and
+  no FAIL line: **a crash tells you less than a red**, for the third time
+  (2026-09-10, 2026-09-17, here), and it uses `.get()` now. The green one deleted
+  the noun-phrase half of the take-on pattern and every assertion held, because
+  every sentence being tested was also caught by the verb half - so a phrasing no
+  verb of ours appears in ("can you find me a transfer helper") was added, and it
+  goes red.
+  (L) **And the live replay was wrong three times before the code was, which is
+  worth more than the fixes.** A harness that replays a transcript has to get three
+  things right or it grades a conversation that cannot happen: `collected_info` and
+  its three siblings are **reducer** fields, merged and not overwritten (the
+  2026-09-09 lesson, learned again); the per-turn blanking is `graph._TURN_RESET`
+  and nothing else, and `intent` is NOT in it; and the transcript is rendered
+  **"Client:" / "You:"**, which is `message.format_history`'s own format. Written
+  any other way, `last_bot_line` finds nothing and `answering_our_question`,
+  `strip_repeated_opener` and `near_duplicate` are all silently switched off - which
+  showed up as the transfer drifting into `new_hiring` halfway through, a defect
+  that does not exist.
+  (M) **Verified live against the real model, three full replays of their own
+  twenty-turn transcript.** The direction question appears on **no turn of any of
+  them**; the household question reads "And who else lives in the household besides
+  the 4 children? How many people live there altogether?"; the cooking question
+  reads "Would she need to do any cooking, and if so, what kind"; and the flow
+  closes with the timeline (1 to 2 weeks from the interview), the cost deferred to a
+  consultant, the two documents, the five-step process and the handover line, with
+  `transfer_direction` on the ticket as "taking on a transfer helper" without the
+  question ever being put.
+  `selfcheck_flows.py` is **557 assertions**; `smoke_nodes.py` is **124 states**.
 
 - **2026-09-18** — **The same fee question, asked twice, answered neither time.**
   Reported as the renewal flow collecting slots and dumping to a live agent without

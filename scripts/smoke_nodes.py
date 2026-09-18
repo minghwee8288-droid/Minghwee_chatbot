@@ -297,6 +297,120 @@ CASES = [
       "collected_info": {"full_name": "Vaidik",
                          "transfer_direction": "looking for a transfer helper"},
       "history_text": ""}),
+    # --- whose flow an employer transfer lands in, 2026-09-18 --------------
+    # The first turn of the agency's own transcript. "hi i want transfer
+    # helper" matched _HELPER_SPEAKING's "i want transfer", so the contact was
+    # read as the HELPER and the first question asked for her own name.
+    #
+    # Run on the CLASSIFIER and not on the collector, and the first draft of
+    # this state had it the wrong way round: the collector never runs the
+    # classifier, so with contact_type=None it resolved to transfer_employer
+    # whatever the message said - the state passed for a reason that had
+    # nothing to do with the fix, and its own control caught that by failing.
+    ("intent_classifier", "an employer asking for a transfer helper reads as an employer",
+     {"incoming_text": "hi i want transfer helper",
+      "intent": None, "service_type": None, "history_text": "",
+      "_stub_intent": {"intent": "transfer", "service_type": "transfer",
+                       "contact_type": None, "confidence": 0.9},
+      "_expect_state": {"detected_contact_type": "employer",
+                        "service_type": "transfer"}}),
+    # ...and the control, which is the half that must not be traded away: a
+    # helper asking for herself keeps her own flow (2026-09-04).
+    ("intent_classifier", "...and a helper asking for herself still reads as the helper",
+     {"incoming_text": "i want to be transferred to a new employer",
+      "intent": None, "service_type": None, "history_text": "",
+      "_stub_intent": {"intent": "transfer", "service_type": "transfer",
+                       "contact_type": None, "confidence": 0.9},
+      "_expect_state": {"detected_contact_type": "candidate"}}),
+
+    # --- the direction an employer means by "transfer", 2026-09-18 ---------
+    # "why is bot asking that are you looking to take on transfer helper
+    # already in singapore or you want to release your current helper ... if
+    # someone is coming and telling that i want transfer helper it means user
+    # intent is clear". RUN rather than unit-tested, and deliberately: the
+    # predicate can be perfect and still never be called, which is the state
+    # `quotes_hiring_package_cost` was in for two days (2026-09-10) and the
+    # hole three separate fixes have fallen into since.
+    #
+    # `_stub_extraction` is what the extractor really returns for this
+    # sentence - the bare word "transfer" (section 9.12), which opens neither
+    # gate. So this also proves the fill beats the extraction rather than
+    # losing to it, which is what `_known_fields` would have done.
+    ("info_collector", "an employer who said which transfer they mean is not asked",
+     {"intent": "transfer", "service_type": "transfer_employer",
+      "incoming_text": "hi i want transfer helper", "history_text": "",
+      "collected_info": {"full_name": "sanjay"}, "asked_field_counts": {"full_name": 1},
+      "_stub_extraction": {"transfer_direction": "transfer"},
+      "_expect_collected": {"transfer_direction": "taking on a transfer helper"},
+      "_forbid_prompt": "release your current helper",
+      "_expect_prompt": "What would you mainly need help with"}),
+    # ...and the other direction, which is the half a take-on-only fix would
+    # have broken silently: "transfer MY helper" is a release, and the
+    # possessive is the only thing that says so.
+    ("info_collector", "...and an employer releasing their own is not asked either",
+     {"intent": "transfer", "service_type": "transfer_employer",
+      "incoming_text": "i want to transfer my helper to another employer",
+      "history_text": "",
+      "collected_info": {"full_name": "sanjay"}, "asked_field_counts": {"full_name": 1},
+      "_stub_extraction": {"transfer_direction": "transfer"},
+      "_expect_collected": {"transfer_direction": "releasing my current helper"},
+      "_forbid_prompt": "take on a transfer helper",
+      "_expect_prompt": "May I know the helper's name?"}),
+    # ...and a message that decides nothing still gets the question. The rule
+    # fails towards asking, so the control is the half that proves it has not
+    # simply started guessing.
+    ("info_collector", "...but a transfer that says neither is still asked which",
+     {"intent": "transfer", "service_type": "transfer_employer",
+      "incoming_text": "sanjay dutt", "history_text": "bot: may I know your name?",
+      "collected_info": {"full_name": "sanjay"}, "asked_field_counts": {"full_name": 1},
+      "_stub_extraction": {},
+      "_expect_prompt": "release your current helper"}),
+
+    # ...and the turn AFTER it, which is where replaying the live transcript
+    # found the hole: the extractor returns the same undecidable "transfer" on
+    # every turn, `collected` is {**previous, **extracted}, so a direction
+    # settled on turn one was overwritten on turn two and the question came
+    # back. Unit-testing the predicate cannot see this - it needs the two
+    # dictionaries the node builds.
+    ("info_collector", "...and the extractor cannot un-settle it a turn later",
+     {"intent": "transfer", "service_type": "transfer_employer",
+      "incoming_text": "myself sanjay dutt",
+      "history_text": "bot: may I know your name?",
+      "collected_info": {"transfer_direction": "taking on a transfer helper"},
+      "asked_field_counts": {"full_name": 1},
+      "_stub_extraction": {"full_name": "sanjay dutt",
+                           "transfer_direction": "transfer"},
+      "_expect_collected": {"transfer_direction": "taking on a transfer helper"},
+      "_forbid_prompt": "release your current helper"}),
+
+    # --- the household question, 2026-09-18 --------------------------------
+    # "i have 12 peoples in my family 8 are adults and 4 are childrens AS I
+    # TOLD THEN WHY ASKED ME AGAIN" - the children's half had been answered one
+    # question earlier. RUN, because the note lives in the guidance the model
+    # is handed and a predicate cannot tell you whether it got there.
+    ("info_collector", "the household question does not ask again about the children",
+     {"intent": "transfer", "service_type": "transfer_employer",
+      "incoming_text": "i have 4 childrens and all are under 15",
+      "history_text": "bot: how many children, and how old are they?",
+      "collected_info": {"full_name": "sanjay",
+                         "transfer_direction": "taking on a transfer helper",
+                         "requirement": "childcare",
+                         "children_detail": "4 children, all under 15"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "children_detail": 1},
+      "_stub_extraction": {},
+      "_expect_prompt": "ALREADY told you this much"}),
+    # ...and the control: with nothing on file it is the whole question again.
+    ("info_collector", "...and asks it in full when it has been told nothing",
+     {"intent": "transfer", "service_type": "transfer_employer",
+      "incoming_text": "general housework",
+      "history_text": "bot: what would you mainly need help with?",
+      "collected_info": {"full_name": "sanjay",
+                         "transfer_direction": "taking on a transfer helper",
+                         "requirement": "general housework and cooking"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1},
+      "_stub_extraction": {},
+      "_forbid_prompt": "ALREADY told you this much"}),
+
     # --- what kind of help they need, 2026-09-16 ---------------------------
     # Live: the opening message was "hey i want to hire a helper" and the
     # extractor returned requirement="general housework". Nobody said it. The

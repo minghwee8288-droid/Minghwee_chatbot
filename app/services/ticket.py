@@ -810,7 +810,31 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         Field(
             "cooking",
             "cooking requirements",
-            "Any particular cooking you would want her to handle?",
+            # "i want childcare then why you are asking the cooking related
+            # question" - the agency, 2026-09-18, mid-transfer, having
+            # answered `requirement` with childcare alone. The old wording
+            # ("any particular cooking you would want her to handle") takes
+            # it as read that she will be cooking and asks only which kind,
+            # so a household that has just said childcare is being asked to
+            # choose between cuisines it never asked for.
+            #
+            # Reworded rather than GATED on `requirement`, and that is the
+            # whole of the decision. A gate here would make
+            # `_gates_are_exhaustive` true for `requirement` - measured:
+            # childcare opens children_detail, eldercare opens
+            # elderly_detail, "all of the above" opens children_detail, and
+            # a cooking gate would cover "general housework and cooking" -
+            # which switches `_undecidable_gate_keys` ON for that field and
+            # reinstates the 2026-09-08 defect where "General house work"
+            # was blanked and re-asked three times. An employer hiring for
+            # childcare may still want her to cook for the children, so the
+            # question is worth asking; it is the presumption that was
+            # wrong.
+            #
+            # It opens with an auxiliary, so `_yes_no_question` recognises
+            # it and a bare "no" closes it instead of being re-asked
+            # (2026-09-09).
+            "Would she need to do any cooking, and if so, any particular kind?",
             max_asks=1,
             optional=True,
             group="their preferences",
@@ -2259,6 +2283,55 @@ BRIEFING_AFTER: dict[str, str] = {
     # is no additional agency service fee, while government and third-party
     # costs are separate".
     "replacement": "timeline",
+    # An employer transfer, 2026-09-18. Agency, testing the take-on half:
+    # "after getting all the required details bot didnt message the process,
+    # documents, timeline, cost/fees". It did not - it closed on the bare
+    # handover line, and the client then had to ask "ok what is the further
+    # process and documents required", "and documnets required" and "what are
+    # the documents requires": three messages chasing one thing, and the
+    # documents half was never answered at all.
+    #
+    # This closes the SECOND half of the section 9 entry that asked whether
+    # `replacement` and `transfer_employer` should explain themselves. Both
+    # have now been answered by the agency, in both cases by testing the flow
+    # and objecting to the silence. No employer intake briefs at neither end
+    # any more.
+    #
+    # Keyed on `rest_day`, which is neither the last field nor the obvious
+    # one, and both halves of that are deliberate:
+    #
+    #   * NOT the last field, for the reason spelled out three times above -
+    #     the retriever runs before the collector, so the briefing has to be
+    #     due one turn before the collection completes or it is built with no
+    #     records, which is the 2026-09-09 defect.
+    #   * NOT `referral_source`, which is the true second-to-last question,
+    #     because it is filled from the RECORDS for a returning client
+    #     (2026-09-08, "a client we have placed a helper for did not find us
+    #     on Google"). Keyed there, the briefing would be due from turn one
+    #     for exactly those clients and the retriever would spend the whole
+    #     twenty-question intake searching for the briefing instead of for
+    #     what they just said. `rest_day` is in neither
+    #     `_PORTABLE_ACROSS_SERVICES` nor `_known_fields`, so it can only be
+    #     filled by the client answering it.
+    #
+    # It leaves three optional questions after it, so the cost recorded for
+    # CANDIDATE_HIRING applies here too and for the same reason it is
+    # accepted: those turns are "no", "from social media" and an email
+    # address, which match nothing in the knowledge base either way.
+    #
+    # The accepted gap, recorded rather than hidden: an employer RELEASING
+    # their helper never reaches `rest_day` - it is gated on
+    # _TAKING_ON_TRANSFER - so that half still closes on the handover line.
+    # Their flow is four questions and both of its own fields are optional,
+    # so there is no key that is reliably filled a turn before the end; the
+    # honest fix is a second key here, not a guess at one, and nobody has
+    # tested that half.
+    #
+    # `transfer_employer` is in COST_WITHHELD_SERVICES, so the cost section
+    # defers to a consultant instead of quoting a package price, exactly as
+    # `replacement` does. The deferral row written on 2026-09-08 is what it
+    # says instead.
+    TRANSFER_EMPLOYER: "rest_day",
 }
 
 

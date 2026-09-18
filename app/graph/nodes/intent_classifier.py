@@ -329,10 +329,28 @@ _CONTACT_FALLBACK_BY_INTENT = {
 # of care SHE is looking for. The tell is who the sentence is about — "my
 # employer" and "transfer me" can only come from her, while "transfer my
 # helper" is the employer and is excluded by the lookahead.
+#
+# ...and so is "i want transfer HELPER", which that lookahead did not cover
+# and which is how an employer opens this conversation. Live, 2026-09-18: "hi
+# i want transfer helper" was read as the helper speaking, so the first turn
+# ran the CANDIDATE flow and asked "may I know your name?" meaning HERS. The
+# employer answered with his own name, the next turn firmed the contact type
+# up to employer, and `switched` then wiped the collection - which is why a
+# man who had said what he wanted in his first four words was asked, on his
+# second message, whether he wanted to take a helper on or release his own.
+#
+# The tell is the same one this pattern already relies on: who the sentence is
+# ABOUT. "transfer me", "my employer", "transfer to a new employer" can only
+# come from her; "transfer" followed by a word for a helper is somebody asking
+# for one. Kept as a lookahead on this pattern rather than shared with
+# `info_collector._TAKES_ON_A_TRANSFER`: the two answer different questions -
+# who is speaking, and which direction they mean - and a helper who says "i
+# want transfer to a new employer" must still match here.
 _HELPER_SPEAKING = re.compile(
     r"\btransfer\s+me\b"
     r"|\bi\s+(?:want|need|would\s+like|am\s+looking)\s+(?:to\s+)?(?:be\s+)?"
-    r"transfer(?:red)?\b(?!\s+(?:my|our|the)\b)"
+    r"transfer(?:red)?\b"
+    r"(?!\s+(?:my|our|the|helper|maid|worker|domestic|mdw)\b)"
     r"|\bmy\s+(?:current\s+)?(?:employer|boss)\b"
     r"|\b(?:find|get)\s+me\s+(?:a\s+)?(?:new\s+)?employer\b"
     r"|\blooking\s+for\s+(?:a\s+)?new\s+employer\b",

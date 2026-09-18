@@ -421,6 +421,30 @@ rows = [
   ic._detected_contact_type("transfer", None, "please transfer me to a new employer"), "candidate"),
  ("employer transfer -> employer",
   ic._detected_contact_type("transfer", None, "I want to transfer my helper"), "employer"),
+ # ...and the phrasing an employer actually opens with, which the lookahead
+ # did not cover until 2026-09-18. "hi i want transfer helper" matched "i
+ # want transfer" and was read as the helper speaking, so the first turn ran
+ # the CANDIDATE flow and asked for HER name - and the switch to
+ # transfer_employer a turn later wiped what had been collected. Swept as a
+ # SET, both ways, because the cost of getting this wrong is symmetrical: an
+ # employer in her questionnaire, or a helper in his.
+ ("...and every way an employer asks for one reads as an employer",
+  [m for m in ("hi i want transfer helper", "i want transfer maid",
+               "i need transfer helper urgently", "i want a transfer helper",
+               "i am looking for a transfer helper",
+               "transfer my maid to another employer")
+   if ic._detected_contact_type("transfer", None, m) != "employer"], []),
+ ("...and every way SHE asks still reads as the helper",
+  [m for m in ("transfer me to another employer", "i want to be transferred",
+               "i want transfer to a new employer", "please find me a new employer",
+               "my employer is not paying me i want transfer",
+               "i am looking for a new employer")
+   if ic._detected_contact_type("transfer", None, m) != "candidate"], []),
+ # The whole point of the two rows above is which QUESTIONNAIRE they land in.
+ ("...and that is what decides whose flow they get",
+  [t.resolve_service("transfer", ic._detected_contact_type("transfer", None, m))
+   for m in ("hi i want transfer helper", "i want to be transferred")],
+  ["transfer_employer", "transfer"]),
  ("insurance is a service", "insurance" in t.SERVICE_FIELDS, True),
  ("small-ticket services", sorted(S), ["insurance", "passport_renewal", "renewal"]),
  ("blocks the hiring total", q(f"The total first-year cost is S{D}14,000-17,500."), True),
@@ -2970,18 +2994,188 @@ rows = [
          and k not in ("fee_enquiry", "salary_enquiry")
          and k not in t.BRIEFING_AFTER
          and not ico.briefs_on_this_turn(k, {"f": 1})),
-  # `replacement` LEFT this list on 2026-09-18, on the agency's instruction
-  # after testing it: "after getting all the required details the bot should
-  # reply the process, required documents, timeline and the cost". Their
-  # transcript is why - it closed on the bare handover line and the client
-  # asked for the process, the documents and the cost in three separate
-  # messages, all three answered correctly and none of them a question he
-  # should have had to think of.
+  # EMPTY since 2026-09-18, and it took two instructions on the same day to
+  # get there. `replacement` left first ("after getting all the required
+  # details the bot should reply the process, required documents, timeline and
+  # the cost"), and `transfer_employer` left hours later on the same
+  # complaint about its own transcript: "after getting all the required
+  # details bot didnt message the process, documents, timline, cost/fees".
   #
-  # `transfer_employer` is the one that still explains itself at NEITHER end,
-  # recorded as a decision rather than left as an omission. It is up to
-  # twenty-five questions and it is the agency's to ask for.
-  ["transfer_employer"]),
+  # Both were recorded HERE as decisions rather than omissions while they were
+  # open, which is what made each of them one line to close. The section 9
+  # entry that asked the agency to choose is now answered in full.
+  #
+  # An employer RELEASING their helper is the one branch still told nothing -
+  # see the note on BRIEFING_AFTER[TRANSFER_EMPLOYER]. It is not visible to
+  # this check, which reads the service and not the branch, and that is worth
+  # knowing rather than working around: a check derived over services cannot
+  # see a gate.
+  []),
+ # A withheld price is said as what WE will do, never as a gap in our files.
+ # Live 2026-09-18: "The transfer fee is not stated in our records, so a
+ # consultant will confirm the exact amount" - true, and it tells the client
+ # about our filing and reads as though we do not know our own prices.
+ ("a withheld cost never remarks on our own records",
+  "never as what our records" in tpl.SERVICE_BRIEFING_NOTE, True),
+ ("...and the cost section is still required",
+  "Never leave this out" in tpl.SERVICE_BRIEFING_NOTE, True),
+
+ # An employer transfer briefs at the END, 2026-09-18, and the KEY is the
+ # whole of the care here. `referral_source` is the true second-to-last
+ # question and is the wrong answer: `_known_fields` fills it from the
+ # records for any returning client, so keyed there the briefing would be
+ # due from turn ONE and the retriever would spend a twenty-question intake
+ # searching for a briefing instead of for what the client just said.
+ ("an employer transfer explains itself at the end",
+  t.BRIEFING_AFTER.get(t.TRANSFER_EMPLOYER), "rest_day"),
+ # `.get()` and not `[...]`, and that is not tidiness: removing the entry
+ # outright made this assertion raise KeyError, so the harness printed a
+ # traceback and no FAIL line - which is the third time a check has crashed
+ # where it should have failed by name (2026-09-10, 2026-09-17, here).
+ ("...on a field only the client can fill",
+  t.BRIEFING_AFTER.get(t.TRANSFER_EMPLOYER, "") in ico._PORTABLE_ACROSS_SERVICES
+  or t.BRIEFING_AFTER.get(t.TRANSFER_EMPLOYER, "") in ico._known_fields({}), False),
+ # ...and far enough from the end that the RETRIEVER, which runs a node
+ # earlier, has the records before the collection completes. Measured as a
+ # position rather than an index, the way the direct-hire contact question
+ # is (2026-09-17).
+ ("...with questions left after it, because the retriever runs first",
+  [f.key for f in t.SERVICE_FIELDS[t.TRANSFER_EMPLOYER]].index(
+      t.BRIEFING_AFTER.get(t.TRANSFER_EMPLOYER, "email"))
+  < len(t.SERVICE_FIELDS[t.TRANSFER_EMPLOYER]) - 1, True),
+
+ # The direction an employer means by "transfer" is read off their own words.
+ # Agency, 2026-09-18: "if someone is coming and telling that i want transfer
+ # helper it means user intent is clear". The asymmetry between the two
+ # patterns is the accuracy - a release carries a possessive ("transfer MY
+ # helper"), taking one on does not ("a transfer helper") - so both
+ # directions are asserted, not just the reported one.
+ ("'i want transfer helper' is taking one on",
+  ico._transfer_direction_said(
+      {"incoming_text": "hi i want transfer helper"}, t.TRANSFER_EMPLOYER, {}),
+  ico._TAKING_ON_VALUE),
+ ("...and so is a phrasing no verb of ours appears in",
+  ico._transfer_direction_said(
+      {"incoming_text": "can you find me a transfer helper"},
+      t.TRANSFER_EMPLOYER, {}),
+  ico._TAKING_ON_VALUE),
+ ("...and 'transfer my helper' is releasing their own",
+  ico._transfer_direction_said(
+      {"incoming_text": "i want to transfer my helper"}, t.TRANSFER_EMPLOYER, {}),
+  ico._RELEASING_VALUE),
+ ("...and the junk value the extractor really returns is replaced",
+  ico._transfer_direction_said(
+      {"incoming_text": "hi i want transfer helper"}, t.TRANSFER_EMPLOYER,
+      {"transfer_direction": "transfer"}),
+  ico._TAKING_ON_VALUE),
+ # Fails towards ASKING. A message that decides nothing leaves the
+ # disambiguating question exactly where it is.
+ ("a message that says neither still asks",
+  [m for m in ("hi", "myself sanjay dutt", "i want childcare", "transfer",
+               "i want to hire a helper")
+   if ico._transfer_direction_said({"incoming_text": m}, t.TRANSFER_EMPLOYER, {})],
+  []),
+ # ...and it never flips a direction that is already decided, which would
+ # strand every field gated behind it mid-collection.
+ ("a decided direction is never overwritten",
+  ico._transfer_direction_said(
+      {"incoming_text": "i want to transfer my helper"}, t.TRANSFER_EMPLOYER,
+      {"transfer_direction": ico._TAKING_ON_VALUE}),
+  ""),
+ # The half found by REPLAYING the transcript rather than by reading the
+ # code, and the one that makes the rest hold: `collected` is
+ # {**previous, **extracted}, so the extractor handing back the same
+ # undecidable word on a later turn overwrites a direction already settled
+ # and the question comes back. A value that opens no branch may not
+ # replace one that does.
+ ("an undecidable value never overwrites a settled direction",
+  ico._settled_transfer_direction(
+      {"incoming_text": "myself sanjay dutt"}, t.TRANSFER_EMPLOYER,
+      {"transfer_direction": ico._TAKING_ON_VALUE},
+      {"transfer_direction": "transfer"}),
+  ico._TAKING_ON_VALUE),
+ ("...but a real correction still wins, because it decides something",
+  ico._settled_transfer_direction(
+      {"incoming_text": "actually i want to release my own helper"},
+      t.TRANSFER_EMPLOYER, {"transfer_direction": ico._TAKING_ON_VALUE},
+      {"transfer_direction": ico._RELEASING_VALUE}),
+  ""),
+ ("...and nothing is restored when nothing was ever settled",
+  ico._settled_transfer_direction(
+      {"incoming_text": "hello"}, t.TRANSFER_EMPLOYER, {},
+      {"transfer_direction": "transfer"}),
+  ""),
+ ("...and no other service is touched by it",
+  ico._transfer_direction_said(
+      {"incoming_text": "hi i want transfer helper"}, "new_hiring", {}), ""),
+ # The values written are the field's OWN options, so the gates recognise
+ # them. A value outside that pair opens neither gate, which is the exact
+ # deadlock (section 9.12) this exists to end.
+ ("the values it writes are the ones the gates know",
+  sorted((ico._TAKING_ON_VALUE, ico._RELEASING_VALUE)),
+  sorted(next(f for f in t.SERVICE_FIELDS[t.TRANSFER_EMPLOYER]
+              if f.key == "transfer_direction").options)),
+ ("...and each opens exactly one branch",
+  [len(t.applicable_fields(t.TRANSFER_EMPLOYER, {"transfer_direction": v}))
+   for v in (ico._TAKING_ON_VALUE, ico._RELEASING_VALUE)],
+  [19, 4]),
+
+ # The household question does not ask again about the children it has
+ # already been told about. Live 2026-09-18: "i have 4 childrens and all are
+ # under 15" -> "How many people live in your household, and who are they,
+ # such as adults, elderly parents or children?" -> "AS I TOLD THEN WHY
+ # ASKED ME AGAIN".
+ ("the household question is told what it already has",
+  "ALREADY told you this much" in ico._field_guidance(
+      t.TRANSFER_EMPLOYER,
+      {"requirement": "childcare", "children_detail": "4 children under 15"},
+      next(f for f in t.SERVICE_FIELDS[t.TRANSFER_EMPLOYER] if f.key == "household")),
+  True),
+ ("...and asks the whole question when it has nothing",
+  "ALREADY told you this much" in ico._field_guidance(
+      t.TRANSFER_EMPLOYER, {"requirement": "childcare"},
+      next(f for f in t.SERVICE_FIELDS[t.TRANSFER_EMPLOYER] if f.key == "household")),
+  False),
+ # A general instruction beats a specific one unless the specific one says so
+ # (2026-09-07, languages). The note above it says to ask for everything the
+ # written question asks for, which is the opposite of this.
+ ("...and it names the rule it overrides",
+  "OVERRIDES" in ico._field_guidance(
+      t.TRANSFER_EMPLOYER,
+      {"requirement": "childcare", "children_detail": "4 children under 15"},
+      next(f for f in t.SERVICE_FIELDS[t.TRANSFER_EMPLOYER] if f.key == "household")),
+  True),
+ # Derived from the gates on `requirement`, not from a list of two keys.
+ ("what it already has is derived from the care details themselves",
+  ico._care_details_already_told(
+      t.TRANSFER_EMPLOYER,
+      {"children_detail": "4 under 15", "elderly_detail": "2 parents"}),
+  ["the children: 4 under 15", "the elderly family member: 2 parents"]),
+
+ # The cooking question stops taking it as read that she will be cooking.
+ # Agency, 2026-09-18, mid-transfer, having said childcare: "i want childcare
+ # then why you are asking the cooking related question". Reworded rather
+ # than gated - a gate on `requirement` would make `_gates_are_exhaustive`
+ # true for that field and reinstate the 2026-09-08 blank-and-re-ask defect.
+ ("the cooking question asks IF, not only which kind",
+  next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "cooking").question,
+  "Would she need to do any cooking, and if so, any particular kind?"),
+ ("...and a bare no closes it instead of being re-asked",
+  ico._yes_no_question(
+      next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "cooking").question),
+  True),
+ ("...and `requirement` is still NOT gate-exhaustive",
+  ico._gates_are_exhaustive(
+      t.TRANSFER_EMPLOYER, "requirement",
+      [f.gate for f in t.SERVICE_FIELDS[t.TRANSFER_EMPLOYER]
+       if f.gate and f.gate.field == "requirement"]),
+  False),
+ ("...so a plain housework answer is never blanked and re-asked",
+  ico._undecidable_gate_keys(
+      t.TRANSFER_EMPLOYER,
+      {"transfer_direction": ico._TAKING_ON_VALUE, "requirement": "general house work"}),
+  []),
+
  # The old expression still appears verbatim - inside the docstring that
  # explains why it could never be true, which is an incident note and
  # stays (section 0.4). So assert the call site uses the PREDICATE

@@ -667,6 +667,138 @@ def _gates_are_exhaustive(
     )
 
 
+# Which of the two opposite things an employer means by "transfer", read off
+# their own words instead of put back to them as a question.
+#
+# Agency, 2026-09-18, on being asked "Are you looking to take on a transfer
+# helper already in Singapore, or to release your current helper to another
+# employer?" one message after opening with "hi i want transfer helper":
+# "this does not make any sence, because if someone is coming and telling that
+# i want transfer helper it means user intent is clear that he/she want
+# transfer helper that is already in singapore".
+#
+# This is the fix section 9.12 named and did not take - "resolving the
+# direction from the client's own opening message, which almost always says
+# it" - and it is worth being clear about why the other one was not enough.
+# `transfer_direction` HAS options and the extractor is not constrained to
+# them, so it keeps returning the bare word "transfer": true, useless, and
+# recognised by neither gate. `_undecidable_gate_keys` then does its job
+# correctly and re-asks, which is how a question the client had already
+# answered came back at them.
+#
+# The two patterns are NOT mirror images, and the asymmetry is the whole of the
+# accuracy here: a release is always written with a possessive - "transfer MY
+# helper", "release HER", "my current helper to another employer" - while
+# taking one on is written with "transfer" as an adjective, "a transfer
+# helper". "transfer my helper" therefore matches only the release pattern and
+# "transfer helper" only the take-on one, which is the pair of sentences this
+# has to tell apart.
+_RELEASES_THEIR_OWN = re.compile(
+    r"\b(?:transfer|release|send|move|pass)\s+(?:out\s+)?"
+    r"(?:my|our|her|his|the|this)\s+(?:current\s+|existing\s+|own\s+)?"
+    r"(?:helper|maid|worker|domestic\s+helper|mdw)\b"
+    r"|\btransfer(?:ring)?\s+(?:her|him)\b"
+    r"|\brelease\s+(?:my|our|her|his|the)\b"
+    r"|\btransfer(?:ring)?\s+out\b"
+    r"|\blet\s+(?:her|him)\s+go\b"
+    r"|\b(?:my|our)\s+(?:current\s+|existing\s+)?(?:helper|maid)\b"
+    r"[^.?!]{0,40}?\b(?:to\s+)?(?:another|new|different)\s+employer\b",
+    re.IGNORECASE,
+)
+
+_TAKES_ON_A_TRANSFER = re.compile(
+    r"\btransfer(?:red)?\s+(?:helper|maid|worker|domestic\s+helper|mdw)\b"
+    r"|\b(?:tak(?:e|ing)\s+(?:on|over))\b[^.?!]{0,30}?\btransfer\b"
+    r"|\btransfer\b[^.?!]{0,25}?\balready\s+in\s+singapore\b"
+    r"|\b(?:looking|want|wants|need|needs|hire|hiring)\s+(?:for\s+)?(?:a\s+)?transfer\b",
+    re.IGNORECASE,
+)
+
+# The field's own two options, so the value we write is one the gates already
+# recognise. Asserted against `Field.options` in selfcheck_flows.py rather than
+# trusted: a value outside that pair opens neither gate, which is the exact
+# deadlock this function exists to end.
+_TAKING_ON_VALUE = "taking on a transfer helper"
+_RELEASING_VALUE = "releasing my current helper"
+
+
+def _direction_is_decided(service_type: str, collected: dict[str, Any]) -> bool:
+    """Whether the stored direction already opens one of the two branches.
+
+    The same test `_undecidable_gate_keys` makes, derived from the flow's own
+    gates rather than from an imported pair of private constants.
+    """
+    gates = [
+        field.gate
+        for field in ticket_service.fields_for(service_type)
+        if field.gate and field.gate.field == "transfer_direction"
+    ]
+    return any(gate.state(collected) == "open" for gate in gates)
+
+
+def _transfer_direction_said(
+    state: ConversationState, service_type: str, collected: dict[str, Any]
+) -> str:
+    """The direction the client has just stated in so many words, or "".
+
+    Only ever fills a direction that is NOT already decided. A client who has
+    answered the question, or whose earlier message already settled it, is left
+    alone - flipping a live collection's direction mid-flow on the strength of
+    one sentence would strand every gated field behind it, which is the failure
+    `_undecidable_gate_keys` was written to end rather than to cause.
+
+    Fails towards ASKING: a message that matches both patterns, or neither,
+    returns "" and the disambiguating question is put exactly as it is today.
+    """
+    if service_type != ticket_service.TRANSFER_EMPLOYER:
+        return ""
+    text = state.get("incoming_text") or ""
+    if not text.strip() or _direction_is_decided(service_type, collected):
+        return ""
+    releasing = bool(_RELEASES_THEIR_OWN.search(text))
+    taking_on = bool(_TAKES_ON_A_TRANSFER.search(text))
+    if releasing == taking_on:
+        return ""
+    return _RELEASING_VALUE if releasing else _TAKING_ON_VALUE
+
+
+def _settled_transfer_direction(
+    state: ConversationState,
+    service_type: str,
+    previous: dict[str, Any],
+    collected: dict[str, Any],
+) -> str:
+    """The direction to write this turn: what they said, or what already stood.
+
+    The second half was found by REPLAYING the agency's own transcript against
+    the real model rather than by reading the code, and it is the half that
+    makes the first one hold. `collected = {**previous, **extracted}`, so the
+    extractor wins over what is already on file - by design, because a client
+    correcting us must beat our own fill (2026-09-17). The cost is that the
+    extractor handing back the same undecidable word on a LATER turn silently
+    overwrites a direction that was already settled, and the flow then asks the
+    question again exactly as it did before. Live: turn one settled it, turn two
+    ("myself sanjay dutt") returned "transfer" once more, and the
+    disambiguating question came back.
+
+    A value that opens no branch is not an answer, so it may not replace one
+    that does. Narrow on purpose: it only ever restores THIS field's own
+    previous value, and only when the new one decides nothing - a real
+    correction ("actually I want to release my own helper") decides something,
+    opens the other gate, and wins as it should.
+    """
+    said = _transfer_direction_said(state, service_type, collected)
+    if said:
+        return said
+    if service_type != ticket_service.TRANSFER_EMPLOYER:
+        return ""
+    if _direction_is_decided(service_type, collected):
+        return ""
+    if _direction_is_decided(service_type, previous):
+        return str(previous.get("transfer_direction") or "")
+    return ""
+
+
 def _known_fields(
     state: ConversationState, service_type: str | None = None
 ) -> dict[str, str]:
@@ -1624,6 +1756,25 @@ def _effective_options(
     return tuple(kept)
 
 
+def _care_details_already_told(
+    service_type: str, collected: dict[str, Any]
+) -> list[str]:
+    """What the client has already said about who is at home, for `household`.
+
+    Derived from the fields gated on `requirement` - children_detail,
+    elderly_detail - rather than from a list of two keys, so a third care
+    detail added tomorrow is covered by the same note.
+    """
+    told = []
+    for field in ticket_service.fields_for(service_type):
+        if not field.gate or field.gate.field != "requirement":
+            continue
+        value = str((collected or {}).get(field.key) or "").strip()
+        if value and value.lower() != ticket_service.UNANSWERED:
+            told.append(f"{field.label}: {value}")
+    return told
+
+
 def _field_guidance(
     service_type: str, collected: dict[str, Any], field: ticket_service.Field
 ) -> str:
@@ -1664,6 +1815,37 @@ def _field_guidance(
         "question that gets one of them is not this question. Never read it out "
         "verbatim like a form."
     )
+
+    # The household question overlaps the two care-detail questions, and a
+    # client who has just answered one of those reads it as being asked again.
+    # Live, 2026-09-18: "i have 4 childrens and all are under 15" -> "How many
+    # people live in your household, and who are they, such as adults, elderly
+    # parents or children?" -> "i have 12 peoples in my family 8 are adults and
+    # 4 are childrens AS I TOLD THEN WHY ASKED ME AGAIN".
+    #
+    # They are genuinely different questions - twelve people is not four
+    # children, and the count is what sizes the job - so the question stays and
+    # only what it asks FOR narrows. It came from the 2026-09-17 fix that added
+    # "and who are they": before that it was a bare headcount and could not
+    # collide with anything.
+    #
+    # Derived from the fields that are gated on `requirement`, not from a list
+    # of two keys, so a third care detail added tomorrow is covered by the same
+    # note instead of reopening the complaint.
+    if field.key == "household" and _care_details_already_told(service_type, collected):
+        parts.append(
+            "\n\nThey have ALREADY told you this much about who is at home - "
+            + "; ".join(_care_details_already_told(service_type, collected))
+            + ". Do not ask for any of it a second time. Ask only for what is "
+            "still missing: how many people live there in total, and who the "
+            "OTHERS are. Say in the question itself that you have their earlier "
+            "answer, so it reads as building on it rather than starting again - "
+            "and do not apologise, because nothing has gone wrong. This OVERRIDES "
+            "the instruction above to ask for everything the written question "
+            "asks for - the half they have already given is not still to be "
+            "asked, and a general rule beating a specific one is how the "
+            "languages question kept hiding four of its options (2026-09-07)."
+        )
 
     why = _WHY_WE_ASK.get(field.key)
     if why:
@@ -2044,6 +2226,25 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
 
     extracted = {**known, **extracted}
     collected = {**previous, **extracted}
+
+    # ...and an employer who said which kind of transfer they meant is not
+    # asked which kind of transfer they meant. Applied AFTER the extraction
+    # rather than inside `_known_fields`, because the value it has to beat is
+    # the extractor's own: `known` goes in UNDER the extraction by design
+    # (2026-09-17), so a fill placed there would lose to the bare word
+    # "transfer" every time - which is section 9.12, and is the defect.
+    direction = _settled_transfer_direction(
+        state, service_type, previous, collected
+    )
+    if direction:
+        logger.info(
+            "Conversation %s: transfer direction settled as %s without "
+            "asking",
+            state.get("conversation_id"),
+            direction,
+        )
+        extracted = {**extracted, "transfer_direction": direction}
+        collected = {**collected, "transfer_direction": direction}
 
     # A field the client has been asked about repeatedly and still not answered
     # is recorded as unanswered rather than asked again. Sales sees the gap
