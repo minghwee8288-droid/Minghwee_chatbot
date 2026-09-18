@@ -2170,6 +2170,35 @@ BRIEFING_AFTER: dict[str, str] = {
     # a briefing with no records is the 2026-09-09 defect, and that is the worse
     # failure of the two.
     CANDIDATE_HIRING: "availability",
+    # Work permit renewal, 2026-09-18. Agency, after testing the fixed flow:
+    # "after taking all the required details as per the flow the bot should
+    # tell the process and documents needed and timeline and fees in proper
+    # format without waiting for the user to ask". In their transcript it
+    # closed on the bare handover line and the client asked "what is the
+    # further process" and then "and what are the documents required" - both
+    # answered correctly, and both questions that should never have been
+    # theirs to ask. The third service to get a closing briefing, and the
+    # machinery needed no change.
+    #
+    # Keyed on `helper_name`, NOT on the last field, for the reason spelled
+    # out above: the RETRIEVER runs before the collector, so at the final turn
+    # the state it reads does not yet hold the final answer. The questions
+    # actually asked here are full_name -> helper_name -> permit_expiry
+    # (`helper_from_us` is filled from the records and never asked, 2026-09-17),
+    # so `helper_name` is answered exactly one turn before the collection
+    # completes. It also survives a returning client whose name and helper are
+    # both read off their file: those are filled on the opening turn, so the
+    # briefing is still due on the turn the permit expiry lands.
+    #
+    # Nothing here varies by nationality - a work permit renewal is $695 and
+    # about a week whoever she is - so unlike passport_renewal and home_leave
+    # this is not keyed on one, and FEE_BY_NATIONALITY has no entry for it.
+    #
+    # Adding it here also REMOVES the opening overview, via the
+    # BRIEFING_AFTER test in briefs_on_this_turn: a service that briefs at the
+    # end does not also brief at the start. That is the intended trade, and it
+    # is the same one passport_renewal made on 2026-09-09.
+    "renewal": "helper_name",
 }
 
 
