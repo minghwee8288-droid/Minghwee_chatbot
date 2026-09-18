@@ -1249,46 +1249,36 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             max_asks=2,
             options=("going home", "transferring to another employer", "not decided yet"),
         ),
-        # SPLIT IN TWO on 2026-09-18, because one question asking two things
-        # was answered once and closed.
+        # ONE question, about the NEW helper, and the history here is worth
+        # keeping because both ends of it were reported by the agency.
         #
-        # Live, the agency's own replacement test: "When are you planning for
-        # Loolia to leave, and when would you ideally like the new helper to
-        # start?" -> "she wants to leave in 2 weeks" -> and the flow went
-        # straight on to the preferences question. The client reported it
-        # himself: "it didnt followup this question (when would you ideally
-        # like the new helper to start?)". So the date a consultant needs in
-        # order to have somebody in place - the whole point of a replacement -
-        # never reached the ticket, and the transcript gives no sign anything
-        # was missed.
+        # It used to ask two things at once - "When are you planning to replace
+        # her, and when would you ideally want the new helper to start?" - and
+        # was closed by an answer to the first half. Their words, 2026-09-18:
+        # "it didnt followup this question (when would you ideally like the new
+        # helper to start?)". So it was split in two.
         #
-        # This is CLAUDE.md section 9.21 arriving for real: `children_detail`
-        # asks "how many children, and how old are they?" and is closed by "2
-        # kids". That entry says the honest fix is a half-answer detector in
-        # `_unfinished()`, and that collection gating is not to be changed in a
-        # hurry (sections 9.12, 9.21, 9.22, 9.23 all say so). Two fields is not
-        # gating at all: it cannot half-fire, it cannot strand a live
-        # collection, and a client who answers both at once still only spends
-        # one turn because the extractor fills both.
+        # The half that was split OFF was then removed the same day, on their
+        # instruction after seeing it live: "why this question is asking [When
+        # is your current helper planning to leave?] ... remove this question
+        # because it does not make any sense in the flow." They are right, and
+        # the transcript shows exactly why - asked when she was planning to
+        # leave, the client answered "she is not planning to leave but want her
+        # to leave my home". A replacement is the EMPLOYER ending it; she has
+        # no plan of her own to report. The wording was mine and it flipped the
+        # agency from the employer ("when are you planning to replace her") to
+        # her, which is what made it nonsense.
         #
-        # The exit date comes FIRST because it is the one they have already
-        # been thinking about - `current_helper_exit` has just asked where she
-        # is going - and the start date reads as the natural follow-up.
-        Field(
-            "current_helper_exit_date",
-            "when the current helper is leaving",
-            "When is your current helper planning to leave?",
-            max_asks=2,
-        ),
-        # Keeps the `timeline` key, and the key is now honest: `_DETAIL_LABELS`
-        # renders it "Needed by", which was never true of the old two-part
-        # question and is exactly true of this one. `lead.py` reads the same key
-        # for the lead's urgency, where the date that matters is when they need
-        # somebody, not when the last one goes.
+        # What the flow actually needs is the date somebody has to be in place
+        # by, and that is this one question. `current_helper_exit` already
+        # establishes WHERE she is going, which is the part a consultant acts
+        # on. `_DETAIL_LABELS` renders this "Needed by" and `lead.py` reads the
+        # same key for the lead's urgency - both true of the new helper's start
+        # date and neither true of the old helper's departure.
         Field(
             "timeline",
             "when the new helper should start",
-            "And when would you ideally like the new helper to start?",
+            "When would you ideally like the new helper to start?",
             max_asks=2,
         ),
         Field(
@@ -2593,7 +2583,6 @@ _DETAIL_LABELS = {
     "helper_tenure": "Current helper's time with them",
     "helper_from_us": "Where the current helper came from",
     "current_helper_exit": "Current helper going",
-    "current_helper_exit_date": "Current helper leaves",
     "replacement_preferences": "Wants in the replacement",
     "referral_source": "Heard about us via",
     "referrer_name": "Referred by",

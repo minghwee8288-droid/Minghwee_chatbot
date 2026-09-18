@@ -1475,6 +1475,25 @@ def briefs_on_this_turn(service_type: str | None, asked: dict | None) -> bool:
 # the top of a collection. A module constant rather than an inline string so
 # selfcheck_flows.py can assert it greets AND forbids re-asking. See the note
 # at the call site for the live conversation that produced it.
+# The ending every closing briefing must carry, and the test for whether the
+# model already wrote one. The test is deliberately loose - any of the three
+# ways the sanctioned line is phrased counts - because the point is not to make
+# every briefing end in the same words, it is that none of them ends without
+# telling the client their enquiry is with a person now.
+_ANNOUNCES_HANDOVER = re.compile(
+    r"\bpassed\s+(?:this|it|everything|them)\b"
+    r"|\blive\s+agent\b"
+    r"|\bconsultant\s+will\s+(?:be\s+in\s+touch|contact|connect|reach)\b"
+    r"|\bour\s+team\s+will\s+(?:be\s+in\s+touch|contact|connect|reach)\b",
+    re.IGNORECASE,
+)
+
+BRIEFING_CLOSING_LINE = (
+    "I've passed everything to our team, and a live agent will connect with "
+    "you shortly. In the meantime, is there anything else I can help you with?"
+)
+
+
 RECORD_NAME_NOTE = (
     "\n\nUse their name in THIS message: {name}. Open with a short greeting or "
     "acknowledgement that CARRIES the name - \"Thanks, {name}\", \"Hi {name}\", "
@@ -2859,6 +2878,30 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # "myanmar" the reply was "When does her current passport expire?", which is
     # that field's hand-written question verbatim, i.e. the fallback. Only mark
     # it given when the reply that actually goes out is not the fallback.
+    # A briefing that forgets to say the enquiry has been handed on is a client
+    # reading a list of steps with nothing telling them anybody has it. The
+    # agency asked for this sentence by name, 2026-09-18: "at last of this
+    # message this message should be attached [the handover line]".
+    #
+    # The note says so twice - as item 5 of the structure and again as its own
+    # paragraph - and the model still dropped it in 1 run of 3, which is this
+    # repo's standing argument for doing it in code as well. Appended, never
+    # substituted: whatever the model wrote is kept, and this only adds the
+    # ending when there is none.
+    #
+    # Skipped when the briefing was lost to a guard, because the fallback is a
+    # bare question and bolting a handover onto it would announce a handover
+    # for a turn that is about to ask something instead.
+    if briefing_due and reply.strip() and reply.strip() != fallback.strip():
+        if not _ANNOUNCES_HANDOVER.search(reply):
+            logger.info(
+                "Conversation %s: the %s briefing had no closing handover line "
+                "- appending it",
+                state.get("conversation_id"),
+                service_type,
+            )
+            reply = reply.rstrip() + "\n\n" + BRIEFING_CLOSING_LINE
+
     briefing_lost = briefing_due and reply.strip() == fallback.strip()
     if briefing_lost:
         logger.error(

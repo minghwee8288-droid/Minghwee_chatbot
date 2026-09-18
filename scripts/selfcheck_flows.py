@@ -456,16 +456,23 @@ rows = [
   (t.BRIEFING_AFTER.get("replacement"),
    [f.key for f in t.SERVICE_FIELDS["replacement"]][-2:]),
   ("timeline", ["timeline", "replacement_preferences"])),
- # One question asking two things was answered once and closed: "she wants to
- # leave in 2 weeks" against "when are you planning for her to leave, and when
- # would you ideally like the new helper to start?" - so the date a consultant
- # needs in order to have somebody in place never reached the ticket. Two
- # fields, because CLAUDE.md section 9.21's own fix is collection gating and
- # sections 9.12/9.21/9.22/9.23 all say that is not to be changed in a hurry.
- ("the replacement timeline is two questions, not one asking two things",
+ # The replacement timeline asks ONE thing, and it is about the NEW helper.
+ # It used to ask two ("when are you planning to replace her, AND when would
+ # you ideally want the new helper to start?") and was closed by an answer to
+ # the first half. Split on 2026-09-18; the half about the CURRENT helper's
+ # departure was removed the same day on the agency's instruction - asked when
+ # she planned to leave, a client answered "she is not planning to leave but
+ # want her to leave my home", because a replacement is the employer ending it
+ # and she has no plan of her own to report. Asserted as its ABSENCE, so it
+ # cannot come back by accident.
+ ("the replacement timeline asks about the NEW helper and nothing else",
   sorted(k for k in ("current_helper_exit_date", "timeline")
          if k in {f.key for f in t.SERVICE_FIELDS["replacement"]}),
-  ["current_helper_exit_date", "timeline"]),
+  ["timeline"]),
+ ("...and no flow anywhere asks when the current helper plans to leave",
+  sorted(svc for svc, fields in t.SERVICE_FIELDS.items()
+         for f in fields
+         if "planning to leave" in f.question.lower()), []),
  # ", and " is the join, not the word "and": the start-date question opens
  # "And when would you ideally like...", which is one ask reading as a
  # follow-on. The old field was "...to leave, and when would you ideally want
@@ -487,10 +494,28 @@ rows = [
    if gd.strip_leading_name(r, "amir khan") != r], []),
  ("...and the opener guard runs before it, or it has nothing to catch",
   _COLLECTOR_SRC.index("strip_leading_name(\n        strip_repeated_opener(") > 0, True),
- ("...and neither of them asks for both halves at once",
+ # ", and " is the join that made the old field two questions in one:
+ # "...to leave, and when would you ideally want the new helper to start?"
+ ("...and it does not join a second ask onto itself",
   [f.key for f in t.SERVICE_FIELDS["replacement"]
-   if f.key in ("current_helper_exit_date", "timeline")
-   and ", and " in f.question.lower()], []),
+   if f.key == "timeline" and ", and " in f.question.lower()], []),
+ # The closing briefing must always END by saying the enquiry is with a person.
+ # The agency asked for that sentence by name; the note says it twice and the
+ # model still dropped it in 1 run of 3, so the collector appends it when it is
+ # missing. Appended, never substituted.
+ ("a briefing that already announced the handover is left alone",
+  [r for r in ("Thank you, Ranbir. I've passed everything to our team, and a "
+               "live agent will connect with you shortly.",
+               "Our team will be in touch shortly.",
+               "I've passed this to our team and a live agent will connect "
+               "with you shortly.")
+   if not ico._ANNOUNCES_HANDOVER.search(r)], []),
+ ("...and one that only listed the steps is not",
+  bool(ico._ANNOUNCES_HANDOVER.search(
+      "Here is the process from here:\n1. Sign the form\n2. Collect her")), False),
+ ("...and the line that gets appended survives the guards that run on it",
+  (gd.strip_handover_talk(ico.BRIEFING_CLOSING_LINE) == ico.BRIEFING_CLOSING_LINE
+   and not gd.looks_like_document(ico.BRIEFING_CLOSING_LINE)), True),
  # A briefing keyed on a field its own flow never asks can never come due, and
  # the flow would close on the bare handover line with nothing to show for it.
  # Derived, so a fourth service cannot reopen it.
