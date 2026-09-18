@@ -35,6 +35,7 @@ from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
     CANDIDATE_PROCESS_COMES_LAST_NOTE,
     EXPIRING_SOON_NOTE,
+    HELPER_HOME_LEAVE_FOLLOW_UP_NOTE,
     HELPER_HOME_LEAVE_NOTE,
     OWN_PASSPORT_NOTE,
     UNPLACEABLE_NATIONALITY_NOTE,
@@ -2519,10 +2520,16 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # thread where a briefing has already gone out it still carries the figure,
     # which is why the note forbids quoting one as well.
     if service_type == "home_leave" and _home_leave_for_herself(state):
+        # Said once, then referred to rather than repeated. The flag is written
+        # by this same branch, so its ABSENCE is exactly "this is the first turn
+        # we have told her" - no second piece of state, and it cannot drift out
+        # of step with the branch that owns it.
+        already_told = "helper_home_leave" in (state.get("flagged_once") or [])
         logger.info(
             "Conversation %s: the HELPER is asking about her own home leave — "
-            "answering rather than running the employer's intake",
+            "answering rather than running the employer's intake (%s)",
             state.get("conversation_id"),
+            "follow-up" if already_told else "first time",
         )
         return {
             **lead_fields,
@@ -2536,12 +2543,20 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "reply": await _write(
                 {**dict(state), "rag_context": "", "rag_matches": []},
                 system_prompt_state,
-                HELPER_HOME_LEAVE_NOTE,
+                HELPER_HOME_LEAVE_FOLLOW_UP_NOTE
+                if already_told
+                else HELPER_HOME_LEAVE_NOTE,
                 fallback=(
-                    "Home leave is arranged through your employer, as we need "
-                    "their documents and signature before we can start it. "
-                    "Please let your employer know, and they can message us "
-                    "here and we will take it from there."
+                    # The fallback carries the routing line only on the turn the
+                    # note does. A guard discarding the reply must not be what
+                    # puts the repetition back.
+                    "Home leave has to be agreed with your employer, as we need "
+                    "their documents and signature before we can start it."
+                    if already_told
+                    else "Home leave is arranged through your employer, as we "
+                    "need their documents and signature before we can start "
+                    "it. Please let your employer know, and they can message "
+                    "us here and we will take it from there."
                 ),
                 max_sentences=3,
             ),

@@ -894,6 +894,78 @@ and the collection simply carries on - you do not need to guard against that.
 """
 
 
+# The SECOND turn onward. The note above is right once and wrong every time
+# after that: it is written as an instruction ("ask your employer to message us
+# here"), and an instruction repeated on every reply stops being help and
+# becomes a brush-off.
+#
+# Live 2026-09-18, the agency reading their own helper transcript: "bot is
+# telling again and again in every message [Please ask your employer to message
+# us here] which looks weird ... tell or mention this where it actually needs
+# like in starting first message is ok". Four of the seven replies carried it,
+# and the same four carried "a consultant can speak with your employer
+# directly" as well - the same sentence twice over, closing every message the
+# same way.
+#
+# Said once, then referred to rather than repeated, which is the rule
+# `returning_note`, `purpose_note` and `_heavy_workload` all follow. Nothing
+# new is remembered for it: `flagged_once` already carries the branch's own
+# flag, and its ABSENCE is what makes a turn the first one.
+HELPER_HOME_LEAVE_FOLLOW_UP_NOTE = """
+The person writing is the HELPER herself, asking about her OWN home leave, and
+you have ALREADY told her on an earlier message that home leave is arranged
+through her employer and that her employer can message us here.
+
+She heard you. Do not tell her again.
+
+ANSWER THE QUESTION SHE HAS JUST ASKED, in one or two sentences, inside that
+same frame. Her employer being the one who decides is context you may use
+freely - "the timing depends on when your employer confirms the dates", "your
+employer signs the embassy forms", "who pays for the ticket follows your
+employment contract" are all good answers and are what she is actually asking
+for.
+
+WHAT IS BANNED IS THE INSTRUCTION, not the fact:
+
+- "Please ask your employer to message us here"
+- "They can message us here and we will take it from there"
+- "If you prefer, a consultant can speak with your employer directly"
+
+Those belong on the first message and nowhere else. Say one of them again ONLY
+when she asks what she should do next, how to get it started, or who to talk
+to - or when she tells you her employer has refused, does not know, or will not
+act. Then it is an answer. Anywhere else it is the same sentence for the third
+time.
+
+Do not close every message the same way either. A short offer of further help
+is fine sometimes; on every single reply it reads as a door being shut.
+
+DO NOT PROMISE HER A LIVE AGENT, and do not say anyone will contact her. No
+ticket is raised on this turn, so nobody is coming, and a helper told to wait
+for a call that never arrives is worse off than one who was told plainly what
+to do. If she is stuck, the offer is that a consultant will speak to her
+EMPLOYER - that is the one we can actually keep.
+
+FOUR THINGS YOU MUST NOT DO:
+
+1. Do NOT give any fee, any timeline or any lead time. The cost of a home leave
+   is quoted to the EMPLOYER, who pays it, and every figure in this
+   conversation belongs to them.
+
+2. Do NOT give the document list. It opens with her employer's NRIC and it is
+   the employer's to produce.
+
+3. Do NOT tell her to book the air ticket, and do NOT ask her to send us a copy
+   of it.
+
+4. Do NOT ask the collection's questions - her employer's name, her travel
+   dates, which country she is from.
+
+If it turns out an employer is writing after all, they will name their helper
+and the collection simply carries on - you do not need to guard against that.
+"""
+
+
 CANDIDATE_BRIEFING_NOTE = """
 
 You now have everything you need from her, so THIS message is the one that tells
