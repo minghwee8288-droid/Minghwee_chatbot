@@ -643,6 +643,43 @@ def asks_for_process(text: str) -> bool:
     return bool(_ASKS_FOR_PROCESS.search(body))
 
 
+# The client telling us they have already asked, or that we never answered.
+#
+# Live, 2026-09-18 12:05: a work permit renewal collected four fields, raised a
+# ticket and closed on the handover line without ever stating the fee the
+# client opened with. They wrote "i have asked for the fees" and got "I've
+# noted that you're asking about the renewal fees, and a live agent is handling
+# it" - the second non-answer to the same question.
+#
+# It is deliberately NOT a question detector. `asks_something` already catches
+# the word "fees"; what none of the existing patterns can see is that this is a
+# SECOND attempt, which is the fact that decides whether acknowledging is a
+# reasonable reply or the worst possible one. Nothing here anchors on a
+# question mark or an interrogative opener, because a client re-asking rarely
+# uses either - the whole point is that they have stopped asking and started
+# complaining.
+#
+# First person only, and only about asking or being answered: "i asked" and
+# "you never told me", never a bare "again". "My employer asked me to" carries
+# "asked" and is not this, so the subject has to be "i" or the verb has to be
+# aimed at "you".
+_ASKS_AGAIN = re.compile(
+    r"\bi\s+(?:have\s+|already\s+|had\s+|just\s+)?asked\b"
+    r"|\bi\s+(?:have\s+)?(?:already\s+)?(?:told|said)\s+(?:you|u)\b"
+    r"|\bas\s+i\s+(?:said|asked|mentioned)\b"
+    r"|\byou\s+(?:never|did\s*n[o']?t|have\s*n[o']?t|has\s*n[o']?t|still\s+have\s*n[o']?t)"
+    r"\s+(?:told|answer(?:ed)?|said|given|give|reply|replied|respond(?:ed)?)\b"
+    r"|\bstill\s+(?:waiting|no\s+(?:answer|reply|response))\b"
+    r"|\bmy\s+question\s+(?:is\s+)?(?:still\s+)?(?:un)?answer",
+    re.IGNORECASE,
+)
+
+
+def asks_again(text: str) -> bool:
+    """Whether the client is restating something we did not answer."""
+    return bool(_ASKS_AGAIN.search(text or ""))
+
+
 # Our own last line ended in a question, and what came back is not itself a
 # question - so it is an ANSWER to us, whatever the classifier made of it.
 #

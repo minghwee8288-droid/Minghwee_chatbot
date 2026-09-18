@@ -52,6 +52,87 @@ _SUBJECTLESS_INTENTS = {
 _MONEY_SERVICES = {"fee_enquiry", "salary_enquiry"}
 
 
+# What the knowledge base CALLS a service, where that differs from its key.
+# Every other key reads as itself once the underscore is a space - "passport
+# renewal", "home leave", "direct hiring". `renewal` is the one that does not:
+# it reads as "renewal", of WHAT, while all 20-odd rows it has to match say
+# "work permit renewal". Tagging a query "(renewal)" is therefore half a
+# subject, and the embedder was being asked to bridge the other half.
+#
+# Measured 2026-09-18, through the real retriever, under service=renewal:
+#   what is the process          0.464 -> 0.661
+#   how long does it take        0.509 -> 0.753
+#   when should I start          0.567 -> 0.723
+#   what do I need to do myself  0.584 -> 0.687
+#   what documents are needed    0.625 -> 0.711
+# Better on 5 of 5, worse on none, and the top row is the right one in each.
+# On the money path it is the difference between answering and not: "i have
+# asked for the fees" scores 0.399 as "(cost of renewal)" - four thousandths
+# UNDER the soft floor, so `weak_retrieval` discards the reply and hands over
+# even though $695 is in the retrieved set - and 0.558 as "(cost of work
+# permit renewal)".
+#
+# Retrieval only, like `_RETRIEVAL_ALIASES` below it: the ticket, the lead, the
+# field list and the blocked-topic key all still say `renewal`. This is the
+# label we SEARCH with, and nothing else.
+_RETRIEVAL_LABELS = {"renewal": "work permit renewal"}
+
+
+def _readable_service(service_key: str | None) -> str:
+    """The subject to tag a query with, in the words the records use."""
+    key = service_key or ""
+    return _RETRIEVAL_LABELS.get(key, key.replace("_", " "))
+
+
+def _subject_service(state: ConversationState) -> str:
+    """What this turn is really ABOUT, for retrieval only.
+
+    "The whole conversation" is the assumption in the line above, and it holds
+    for an opening "how much do you charge?" - there genuinely is no other
+    subject. It is false for a price question asked LATER, about a service we
+    have already been handling, and that is how a client asked the same
+    question twice and was never answered.
+
+    Live, 2026-09-18 12:05. A work permit renewal ran to completion, the ticket
+    was raised and the topic parked; the client then wrote "i have asked for
+    the fees". That names no service, so `_named_service` cannot help and
+    service_type stays `fee_enquiry` - the classifier's money-stickiness rule
+    deliberately does NOT glue it back onto a PARKED service, because doing so
+    is how a genuinely new question gets swallowed by chase-dedup (2026-09-03).
+    So the query went out bare and the filter was dropped, and the search came
+    back with three question-less `document_chunk` rows at 0.436 - ABOVE the
+    soft floor, and carrying no fee at all. The client got "I'll check the fees
+    and come back to you shortly" for the second time, 0 runs out of 4.
+    Measured with the subject restored: the top row is "How much does it cost
+    to renew my helper's work permit?" and $695 is in the set.
+
+    Retrieval ONLY, exactly like `_RETRIEVAL_ALIASES`: the ticket, the lead,
+    the field list and the blocked-topic key all still see `fee_enquiry`, so
+    nothing here re-parks the topic or drags the turn back onto it - it decides
+    what we SEARCH FOR and nothing else.
+
+    `salary_enquiry` is deliberately not recovered, for the same reason it is
+    not in `_SUBJECTLESS_INTENTS`: what a helper earns is about the helper, and
+    service-tagging it measured WORSE (0.505 -> 0.446).
+    """
+    service = state.get("service_type") or ""
+    if service and service not in _MONEY_SERVICES:
+        return service
+    if (state.get("intent") or "") != "fee_enquiry":
+        return service
+    # The flow that actually ran, then the topic a ticket already parked. Both
+    # are services this conversation has genuinely been about; a topic key is
+    # `resolve_service(...) or intent`, so `fields_for` is what tells a real
+    # service from a ticket raised before one resolved.
+    collected = state.get("collected_service") or ""
+    if collected and collected not in _MONEY_SERVICES:
+        return collected
+    for key in state.get("blocked_topics") or {}:
+        if key and key not in _MONEY_SERVICES and ticket_service.fields_for(key):
+            return key
+    return service
+
+
 # The turn that explains a whole service is not searching for what the client
 # just said - they said "Indonesian" - it is searching for everything they are
 # about to be told. Measured 2026-09-08 against both nationalities: this exact
@@ -167,7 +248,7 @@ def _search_query(state: ConversationState) -> str:
 
     if _briefing_turn(state):
         service_key = state.get("service_type") or ""
-        service = service_key.replace("_", " ")
+        service = _readable_service(service_key)
         # A job seeker's closing message asks a different question, and the
         # difference is not cosmetic - see the note on CANDIDATE_BRIEFING_QUERY.
         if service_key in ticket_service.CANDIDATE_SERVICES:
@@ -181,7 +262,7 @@ def _search_query(state: ConversationState) -> str:
     # rag_retriever runs before info_collector on the same turn and reads the
     # same asked_field_counts, so both see the same answer.
     if briefs_on_this_turn(state.get("service_type"), state.get("asked_field_counts")):
-        service = (state.get("service_type") or "").replace("_", " ")
+        service = _readable_service(state.get("service_type"))
         return f"{OVERVIEW_QUERY}\n({service})"
 
     # A greeting or a piece of small talk is searched as it stands: it is not a
@@ -237,13 +318,13 @@ def _search_query(state: ConversationState) -> str:
         # words landed on `other` in a passport renewal and were answered in
         # full. fee_enquiry and salary_enquiry stay out of this set - money IS
         # a subject, and _MONEY_TALK below already widens those turns.
-        topic = state.get("service_type") or ""
+        topic = _subject_service(state)
         if topic in _MONEY_SERVICES and intent in _MONEY_SERVICES:
             topic = ""
         if not topic:
             return message
 
-    readable_topic = topic.replace("_", " ")
+    readable_topic = _readable_service(topic)
     # A price question is tagged with the PRICE of the service, not just the
     # service. The knowledge base phrases these rows "How much does it cost
     # to renew my helper's passport?", and a terse "what is cost" tagged only
@@ -379,8 +460,14 @@ def _service_filter(state: ConversationState) -> str | None:
     # whose answer is $450 - and the same on "what is the fee" and "how much do
     # you charge". None of these flows collects a money field, so the two rules
     # below cannot want the filter dropped here either.
-    if state.get("service_type") in FEE_STATED_SERVICES:
-        return _aliased(state.get("service_type"))
+    # `_subject_service` rather than `service_type`, so a price question asked
+    # about a service we have already handled is narrowed to that service
+    # instead of searching everything. Without it the fee question that opened
+    # the conversation is filtered correctly and the SAME question repeated
+    # after the handover is not - which is what produced an answer in one
+    # session and a holding line in the next.
+    if _subject_service(state) in FEE_STATED_SERVICES:
+        return _aliased(_subject_service(state))
 
     if _MONEY_TALK.search(state.get("incoming_text") or ""):
         return None

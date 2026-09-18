@@ -664,6 +664,80 @@ rows = [
   [_named_svc(m) for m in ("how much do you charge",
                            "how much does it cost to hire a helper")],
   [None, None]),
+ # --- 2026-09-18: the SAME fee question, asked twice, answered neither time --
+ # The 12:05 transcript. A renewal collected four fields, raised a ticket and
+ # closed on the handover line without ever stating the fee the client opened
+ # with; they wrote "i have asked for the fees" and were acknowledged again.
+ #
+ # A price question that names nothing still has a subject when the
+ # conversation has been about one. "The whole conversation" holds for an
+ # opening "how much do you charge?" and is false for a repeat after a
+ # handover, which is how the query went out bare.
+ ("a repeated fee question recovers the parked service as its subject",
+  rr._subject_service({"intent": "fee_enquiry", "service_type": "fee_enquiry",
+                       "blocked_topics": {"renewal": {"ticket_id": 1}}}), "renewal"),
+ ("...and the flow that ran is preferred to the parked topic",
+  rr._subject_service({"intent": "fee_enquiry", "service_type": "fee_enquiry",
+                       "collected_service": "passport_renewal",
+                       "blocked_topics": {"renewal": {"ticket_id": 1}}}),
+  "passport_renewal"),
+ # THE CONTROL: with nothing else in hand there is genuinely no other subject,
+ # and tagging it "(fee enquiry)" tags it with itself.
+ ("...but an opening fee question still has no subject",
+  rr._subject_service({"intent": "fee_enquiry", "service_type": "fee_enquiry",
+                       "blocked_topics": {}}), "fee_enquiry"),
+ # salary_enquiry stays out, for the reason it is not in _SUBJECTLESS_INTENTS:
+ # what a helper earns is about the helper, and tagging it measured WORSE.
+ ("...and a salary question is never given one",
+  rr._subject_service({"intent": "salary_enquiry", "service_type": "salary_enquiry",
+                       "blocked_topics": {"renewal": {"ticket_id": 1}}}),
+  "salary_enquiry"),
+ # `renewal` is the one service key that does not read as itself - "renewal",
+ # of what? - while every row it must match says "work permit renewal". As
+ # "(cost of renewal)" the repeated fee question scored 0.399, four
+ # thousandths UNDER the soft floor, so weak_retrieval discarded the reply and
+ # handed over with $695 sitting in the retrieved set. As "(cost of work
+ # permit renewal)" it scores 0.558.
+ ("the subject is tagged in the words the records use",
+  rr._readable_service("renewal"), "work permit renewal"),
+ ("...and every other key still reads as itself",
+  [rr._readable_service(k) for k in ("passport_renewal", "home_leave",
+                                     "direct_hiring", "new_hiring")],
+  ["passport renewal", "home leave", "direct hiring", "new hiring"]),
+ # A client restating a question is asking it, not chasing a case - and their
+ # phrasing is usually not interrogative, which is why every existing detector
+ # missed all six live phrasings.
+ ("a restated question is recognised as one",
+  [gd.asks_again(m) for m in ("i have asked for the fees",
+                              "you never told me the fee",
+                              "i already asked about the cost",
+                              "as i said i need the fees",
+                              "you didnt answer my question")],
+  [True] * 5),
+ # ...and does not fire on somebody else doing the asking, or on an ordinary
+ # question, which is already handled.
+ ("...and an ordinary message is not a restatement",
+  [gd.asks_again(m) for m in ("what is the cost",
+                              "my employer asked me to come back",
+                              "she asked for a day off",
+                              "i will ask my husband",
+                              "ok thanks")],
+  [False] * 5),
+ # The parked path has to see it too, or a repeat while a human owns the topic
+ # gets the holding line for the second time - which is the live transcript.
+ ("a parked topic answers a restated question",
+  btr.asks_general_info("i have asked for the fees"), True),
+ # ...but a genuine chase is still held, and "still waiting" overlaps both. It
+ # is tested first on purpose: a parked topic silences chasing.
+ ("...and a chase is still a chase",
+  [btr.asks_general_info(m) for m in ("any update on my case",
+                                      "i am still waiting for the fees")],
+  [False, False]),
+ # The note is gated on having something to answer WITH, so it can never turn
+ # an honest "I don't know" into an invented figure.
+ ("the restated-question note refuses the three non-answers",
+  all(p in tpl.ASKED_AGAIN_NOTE.lower()
+      for p in ("noted", "come back", "live agent")), True),
  # The intent names the SHAPE of the question; the in-flight service is its
  # subject. Tagging "what is the process" with "(process question)" scored
  # under the floor and got the parked-agent line on a question the KB answers.

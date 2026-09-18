@@ -405,6 +405,19 @@ introduction is required on this turn and on no other; it is how they learn \
 what they are talking to, and a client who finds out later feels misled. Do \
 not let a list, a process answer or a question push it off the front."""
 
+ASKED_AGAIN_NOTE = """
+
+The client is telling you they have ALREADY asked this and not been answered. \
+They are right, and this is the second time they have had to ask. Answer the \
+question NOW, in your first sentence, from the records above - the figure, the \
+timing or the document list, whatever they asked for. Do NOT say you have \
+noted it, do NOT say you will check and come back, and do NOT say a live agent \
+is handling it: every one of those is the reply that made them ask again, and \
+sending it a second time tells them we are not listening. If a consultant \
+genuinely has to confirm the exact amount, say the figure we hold FIRST and \
+that a consultant will confirm it second. Do not apologise at length - one \
+short acknowledgement at most, then the answer."""
+
 CONTACT_DISCOVERY_INSTRUCTION = """This number is not in our records and it is not \
 yet clear who you are speaking to — an employer looking to hire, a helper looking \
 for work, or an agency offering us candidates.

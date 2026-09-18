@@ -1070,6 +1070,66 @@ CASES = [
       "_stub_intent": {"intent": "new_hiring", "service_type": "new_hiring",
                        "contact_type": "employer", "confidence": 0.9},
       "_expect_state": {"service_type": "new_hiring"}}),
+
+    # --- 2026-09-18: the same fee question asked twice, answered neither time -
+    # The 12:05 transcript's last turn. Asserted on the PROMPT, not the reply:
+    # the note tells the model to answer from the records, and reading the
+    # reply would pass on any run where it happened to do so anyway - which it
+    # did on 1 to 2 runs of 4 before the note existed. The instruction either
+    # reaches the model or it does not.
+    ("response_generator", "a restated question is answered, not acknowledged",
+     {"intent": "fee_enquiry", "service_type": "fee_enquiry",
+      "incoming_text": "i have asked for the fees",
+      "history_text": "You: I've passed everything to our team, and a live agent "
+                      "will connect with you shortly.",
+      "_expect_prompt": "already asked"}),
+
+    # Gated on having something to answer WITH. Without records the note would
+    # be telling the model to state a figure it does not have, which is the one
+    # way this fix could invent a price.
+    ("response_generator", "...but not when there is nothing to answer with",
+     {"intent": "fee_enquiry", "service_type": "fee_enquiry",
+      "incoming_text": "i have asked for the fees",
+      "history_text": "You: I've passed everything to our team.",
+      "rag_matches": [], "rag_context": "", "rag_best_score": 0.0,
+      "_forbid_prompt": "already asked"}),
+
+    # ...and an ordinary question is untouched, so the note cannot leak onto
+    # every turn that happens to mention a fee.
+    ("response_generator", "...and an ordinary question does not get the note",
+     {"intent": "fee_enquiry", "service_type": "renewal",
+      "incoming_text": "what is the fee for work permit renewal",
+      "history_text": "",
+      "_forbid_prompt": "already asked"}),
+
+    # The parked path is the one the live client was actually on: the topic had
+    # a ticket, so this node wrote the reply that acknowledged the question for
+    # the second time.
+    # The records have to carry the figure the stub quotes, or ungrounded_figures
+    # correctly bins the reply and the state proves nothing about answerability -
+    # which is how this one failed on its first run.
+    ("blocked_topic_responder", "a restated question is answerable while parked",
+     {"intent": "renewal", "service_type": "renewal",
+      "incoming_text": "i have asked for the fees",
+      "history_text": "You: I've passed this to our team.",
+      "rag_matches": [{"similarity": 0.56,
+                       "question": "How much does it cost to renew my helper's work permit?",
+                       "answer": "The agency fee is approximately $695.",
+                       "chunk_type": "qa_pair"}],
+      "rag_context": "Based on our records:\n1. Q: How much does it cost to renew "
+                     "my helper's work permit?\n   A: The agency fee is approximately $695.",
+      "rag_best_score": 0.56,
+      "_stub_reply": "The work permit renewal fee is approximately $695.",
+      "_expect_reply": "695",
+      # Asserted on the INSTRUCTION, because the reply alone cannot tell the two
+      # branches apart: the stubbed model hands back the same text whichever
+      # template won, so this state was green with the fix removed until the
+      # runner was taught to capture the prompt. `intent` is deliberately
+      # `renewal`, which is NOT in KB_QUESTION_INTENTS, so `_answerable` has to
+      # reach asks_general_info to get here.
+      "_expect_prompt": "answer their question from",
+      "blocked_topics": {"renewal": {"ticket_id": 1,
+                                     "ticket_number": "CB-2026-0009"}}}),
 ]
 
 
@@ -1121,8 +1181,18 @@ async def _run_response_generator(state, stub=None):
 
 
 async def _run_blocked_topic_responder(state, stub=None):
+    # Captures the prompt for the same reason info_collector does. The stubbed
+    # model returns the same reply whichever instruction won, so a state that
+    # only reads the reply cannot tell "decided to answer" from "decided to
+    # acknowledge and happened not to bin my stub" - which is how the restated-
+    # question state was green with the fix removed (2026-09-18).
+    async def _capture(system_prompt, *a, **kw):
+        global _LAST_SYSTEM_PROMPT
+        _LAST_SYSTEM_PROMPT = system_prompt or ""
+        return stub or STEPPED_REPLY
+
     with patch("app.graph.nodes.blocked_topic_responder.complete",
-               new=AsyncMock(return_value=stub or STEPPED_REPLY), create=True):
+               new=_capture, create=True):
         from app.graph.nodes.blocked_topic_responder import blocked_topic_responder
         return await blocked_topic_responder(state)
 

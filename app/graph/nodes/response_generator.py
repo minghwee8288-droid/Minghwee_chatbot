@@ -10,6 +10,7 @@ from app.config import settings
 from app.graph.guards import (
     COST_DEFERRAL_REPLY,
     COST_WITHHELD_SERVICES,
+    asks_again,
     asks_for_process,
     clamp_reply,
     holding_reply,
@@ -29,6 +30,7 @@ from app.graph.llm import complete
 from app.graph.prompts.system import IDENTITY, build_system_prompt
 from app.graph.prompts.templates import (
     AGENCY_INFO_INSTRUCTION,
+    ASKED_AGAIN_NOTE,
     FIRST_CONTACT_INTRO_NOTE,
     CANDIDATE_INSTRUCTION,
     CASE_INSTRUCTION,
@@ -202,6 +204,24 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
     # PROCESS_INSTRUCTION is the one that dropped it (2026-09-17).
     if not (state.get("history_text") or "").strip():
         instruction += FIRST_CONTACT_INTRO_NOTE
+
+    # A second attempt at a question we did not answer. Appended after the
+    # template for the same reason as the note above - whichever instruction
+    # won the turn, none of them knows this is a REPEAT, and that is the fact
+    # that decides whether acknowledging is reasonable or the worst possible
+    # reply. Required alongside the retrieval fix rather than instead of it:
+    # with the records recovered but nothing said about the repeat, the fee
+    # went out in 1-2 runs of 4 and the other runs sent "I'll check the fees
+    # and come back to you shortly" - the exact line the client was objecting
+    # to. Gated on having something to answer WITH, so this can never turn a
+    # genuine "I don't know" into an invented figure.
+    if asks_again(state.get("incoming_text") or "") and state.get("rag_matches"):
+        instruction += ASKED_AGAIN_NOTE
+        logger.info(
+            "Conversation %s: client is re-asking something we did not answer "
+            "— answering from the records rather than acknowledging again",
+            state.get("conversation_id"),
+        )
 
     system_prompt = build_system_prompt(
         dict(state),

@@ -204,6 +204,9 @@ because the lead is opened early and the ticket is created much later.
 | A cost question never starts a second intake | `graph.route_after_rag` + `_other_service_established` | `fee_enquiry`/`salary_enquiry` collect ONLY when nothing else is in hand. |
 | ...and a cost question that NAMES a service is answered, not qualified | `intent_classifier` (the money rule) + `_named_service` | The door the row above leaves open: it keys on another service being ESTABLISHED, and here the service is named in the very message asking the price. The SERVICE moves and the INTENT deliberately does not — that is what routes it to `response_generator` instead of opening the named flow's intake. |
 | A passport phrasing is not the work permit's price | `_NAMED_SERVICE` order (`passport` before `renew`) | $450 against $695, both in `FEE_STATED_SERVICES`, so the wrong one goes out STATED rather than deferred. `ungrounded_figures` cannot catch it — $695 is genuinely in the records. The table got this right for insurance and wrong for passports for a fortnight. |
+| A price question that names nothing still has a subject if the conversation had one | `rag_retriever._subject_service` | "The whole conversation" holds for an opening *"how much do you charge?"* and is false for a repeat after the handover, where the query went out bare and returned three chunk rows with no fee at **0.436 — above** the floor. Retrieval only, like `_RETRIEVAL_ALIASES`: nothing re-parks the topic. `salary_enquiry` stays out, as it does from `_SUBJECTLESS_INTENTS`. |
+| The subject is tagged in the words the records use | `rag_retriever._RETRIEVAL_LABELS` | `renewal` is the one key that does not read as itself — of WHAT? — while every row says "work permit renewal". Better on 5 of 5 renewal probes, worse on none (+0.197 on the process, +0.243 on the timing), and on the money path it is 0.399 (**under** the floor, so `weak_retrieval` discards the reply) against 0.558. |
+| A client restating a question is asking it, not chasing | `guards.asks_again` + `ASKED_AGAIN_NOTE` + `asks_general_info` | Their phrasing is usually not interrogative at all, so every existing detector missed all six live phrasings. One definition, read by both answering paths. Gated on having records, so it can never turn an honest "I don't know" into a figure. Sits BELOW the chase test: *"still waiting"* overlaps genuinely and stays held. |
 | A question's SHAPE is not its subject | `rag_retriever._SUBJECTLESS_INTENTS` | `process_question`, `document_question`, `general_question` search under the in-flight service, as `other` already did. |
 | A care type is never inferred from a bare enquiry | `info_collector` (`_states_a_care_type` on the MESSAGE, not just the value) | "I want to hire a helper" fills nothing. A volunteered one still lands. |
 | A live collection survives a turn that resolves to no service | `intent_classifier` (no-service rule) | A turn with no topic in it cannot be a new topic. Guarded on the topic not being parked. |
@@ -844,6 +847,25 @@ Ordered by what will hurt first.
     applied to a field nobody asks — a value outside the set is not an answer
     and should fall back to the record fill rather than overwrite it.
 
+24. **The bot echoes a client's own capitalisation, so one name appears two ways
+    in one conversation.** Live 2026-09-18: "sushi" in one turn and "Sushi" two
+    turns later, "hoohoo" then "Hoohoo". Reported as a minor issue with the
+    request to "normalise once on capture".
+    Left alone deliberately. `RECORD_NAME_NOTE` tells the model to use the name
+    the client gave and explicitly **not to change the spelling of what they
+    wrote**, which is there because a client who types their name one way and
+    reads it back another has been corrected by a machine. Title-casing is
+    arguably not a spelling change, but the line between them is exactly the
+    kind of judgement that needs the agency rather than a guess: "de Silva",
+    "binti Abdullah" and "MARY GRACE" are all names that a naive
+    `.title()` damages, and two of the three are common here.
+    It is also cosmetic — nothing downstream keys on the casing, the lead and
+    the ticket carry whatever was typed — and name handling is the single most
+    reported area in this file (five separate complaints since 2026-09-08), so
+    a change here is far more likely to reopen one of those than to fix
+    anything. If the agency wants it normalised, it is one function at the
+    point of capture plus a decision about the particles.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
@@ -1071,6 +1093,93 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-18** — **The same fee question, asked twice, answered neither time.**
+  Reported as the renewal flow collecting slots and dumping to a live agent without
+  ever answering. Second distinct failure in this flow in a day, and the reporter's
+  sharpest observation — *"same question, same flow, different behaviour ... suggests
+  non-deterministic routing"* — is the one that found the defect.
+  (A) **Three quarters of it was already fixed and undeployed.** The four routing
+  shapes were measured at HEAD, 4 runs each: the fee question **opening** the
+  conversation answers 4/4; **after our own greeting** 4/4; **labelled as the service
+  rather than as money** 4/4. The 12:05 session predates the deploy of the fix
+  committed hours earlier, which is also why it ran `renewal`'s fields rather than
+  `fee_enquiry`'s. Measuring first is what stopped three of the four "fixes" from
+  being written against behaviour that already worked.
+  (B) **The fourth shape failed 0 of 4, and it is the last turn of the transcript.**
+  *"i have asked for the fees"* names no service, so the money rule from this morning
+  cannot fire, and the classifier's stickiness deliberately does NOT glue a question
+  back onto a **parked** topic — that is the 2026-09-03 rule, and it is right. So the
+  turn resolved to a bare `fee_enquiry`, `_search_query` blanked the topic on the
+  grounds that a money question whose service is also money "is the whole
+  conversation", and the query went out **bare**.
+  (C) **It came back at 0.436 — ABOVE the soft floor — on three question-less
+  `document_chunk` rows carrying no fee at all.** A confident score on rows that do
+  not answer, which is the 2026-09-08 clause-3.1 shape exactly, and why nothing
+  anywhere registered a problem.
+  (D) **"The whole conversation" is true of an opening "how much do you charge?" and
+  false of a repeat.** `_subject_service` recovers the last real service — the flow
+  that ran, then the parked topic — for **retrieval only**, the `_RETRIEVAL_ALIASES`
+  precedent: the ticket, the lead, the field list and the blocked-topic key all still
+  say `fee_enquiry`, so nothing re-parks the topic or drags the turn onto it.
+  (E) **That was not enough, and the four thousandths are the reason.** With the
+  subject restored the right row came top — *"How much does it cost to renew my
+  helper's work permit?"*, $695 in the set — at **0.399**, under the 0.40 floor, so
+  `weak_retrieval` **replaced the reply and handed over anyway** with the answer
+  sitting in the context. The same four-thousandths shape as the 2026-09-10 candidate
+  retrieval at 0.397.
+  (F) **Fixed by naming the subject properly rather than by lowering the floor.**
+  `renewal` is the one service key that does not read as itself — "renewal", of WHAT? —
+  while all 20-odd rows it must match say **work permit renewal**. Measured through the
+  real retriever: the process 0.464 → **0.661**, the timing 0.509 → **0.753**, when to
+  start 0.567 → **0.723**, what the employer does 0.584 → **0.687**, the documents
+  0.625 → **0.711**. **Better on 5 of 5, worse on none**, so this is a general subject
+  fix and not a money patch; the repeated fee question goes 0.399 → **0.558**. Lowering
+  `RAG_SOFT_FLOOR` would have bought the same turn by loosening every path in the
+  system, which is the opposite trade.
+  (G) **And with the records recovered the model still would not use them, 1-2 runs of
+  4.** *"i have asked for the fees"* is a complaint, not a question, so it reached for
+  *"I'll check the fees and come back to you shortly"* — **the exact line the client
+  was objecting to**. `asks_again` is deliberately NOT a question detector:
+  `asks_something` already sees the word "fees", and what no existing pattern could see
+  is that this is a SECOND attempt, which is the fact that decides whether
+  acknowledging is reasonable or the worst possible reply. All six live phrasings
+  scored False on every detector we had. 3-4 of 4 after, against 0 of 4 before.
+  (H) **Both answering paths, one definition** (§9.8). The parked path is where the
+  live client actually was, and `asks_general_info` missed every repeat phrasing too —
+  the sixth arrival of that one-word-gap family. It sits BELOW the chase test on
+  purpose, and that costs one phrasing: *"i am still waiting for the fees"* reads as a
+  chase and is still held. A parked topic silences chasing, the two genuinely overlap
+  in those words, and `_answerable()` still requires records above the floor, so the
+  failure is a holding line rather than an invented answer.
+  (I) **Gated on having records**, so the note can never turn an honest "I don't know"
+  into a figure — asserted in both directions.
+  (J) **Eight faults injected, eight red — and the parked-topic state was GREEN under
+  its own fault, for the fourth distinct reason this file has now recorded.** The
+  stubbed model hands back the same reply whichever instruction won, so reading the
+  reply could not tell "decided to answer" from "decided to acknowledge and happened
+  not to bin my stub". It proved the guards do not discard a grounded fee, which is
+  not what it claimed. `_run_blocked_topic_responder` now captures the system prompt
+  the way the other two runners do, and the state asserts the ANSWER instruction was
+  chosen; `intent` is deliberately `renewal`, which is **not** in
+  `KB_QUESTION_INTENTS`, so `_answerable` has to reach `asks_general_info` to get
+  there. The same state had also failed on its first run for the opposite reason —
+  the stub quoted $695 while that state's records were about passport timing, so
+  `ungrounded_figures` correctly binned it. **A state that expects a figure has to
+  ground it, and a state that expects a decision has to read the decision.**
+  (K) **Two of the reporter's six requested fixes were already satisfied and one rests
+  on a wrong premise**, and saying so is cheaper than building them. *Answer first,
+  qualify second* is what the morning's fix already does — turn 2 now reads *"The work
+  permit renewal fee is approximately $695 ... May I know your name?"* *Make routing
+  deterministic* describes a real symptom with the wrong cause: routing was already
+  deterministic, conditioned on something invisible — whether our own greeting ended in
+  a question mark, which flips `answering_our_question` and sends the turn to the
+  collector instead of the responder. Both paths answer, so it no longer matters.
+  **Not changed, and it is cosmetic:** the model echoes a client's own capitalisation
+  ("sushi" then "Sushi"). `RECORD_NAME_NOTE` forbids changing the SPELLING of what they
+  wrote, name handling has been reported five times, and normalising it is a persona
+  decision rather than a defect. §9.24.
+  `selfcheck_flows.py` is **518 assertions**; `smoke_nodes.py` is **116 states**.
 
 - **2026-09-18** — **"what do you mean by care? i am not asking for any new hiring...
   i came here for work permit renwal."** The agency's own test, 23:05, reported as the

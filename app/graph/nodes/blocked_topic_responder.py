@@ -21,6 +21,7 @@ from typing import Any
 from app.graph.guards import (
     COST_DEFERRAL_REPLY,
     COST_WITHHELD_SERVICES,
+    asks_again,
     asks_for_documents,
     asks_for_process,
     quotes_hiring_package_cost,
@@ -389,7 +390,22 @@ def asks_general_info(message: str) -> bool:
     text = message or ""
     if _CHASING_STATUS.search(text):
         return False
-    return bool(_GENERAL_INFO.search(text)) or asks_for_documents(text)
+    # A client restating a question we never answered is asking it, not chasing
+    # a case - and their phrasing is usually not interrogative at all, which is
+    # why _GENERAL_INFO cannot see it. Live 2026-09-18: "i have asked for the
+    # fees" scored False here and on every other detector, so a $695 answer we
+    # hold was handed to a human for the second time in the same conversation.
+    # Six repeat phrasings were measured and all six were False.
+    #
+    # It stays BELOW the chase test on purpose, and that costs one phrasing:
+    # "i am still waiting for the fees" reads as a chase and is still held.
+    # That is the right way round - a parked topic silences chasing, the two
+    # overlap genuinely in those words, and _answerable() additionally requires
+    # records above the floor, so the failure is a holding line rather than an
+    # invented answer.
+    return (bool(_GENERAL_INFO.search(text))
+            or asks_for_documents(text)
+            or asks_again(text))
 
 
 def _answerable(state: ConversationState) -> bool:
