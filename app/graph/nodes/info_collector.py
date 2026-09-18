@@ -907,6 +907,58 @@ def _states_a_preference(text: str) -> bool:
     return bool(re.sub(r"[^a-z0-9]+", "", remainder.lower()))
 
 
+# ADDITIVE, and the opposite shape to the test above, for exactly the reason
+# `_mentions_care` is the opposite shape to `_states_a_care_type` (2026-09-16):
+# the two answer different questions and one shape cannot serve both.
+# Subtractive is right for the VALUE - "does this describe a helper rather than
+# restate the request" - and a whitelist there would drop the first unfamiliar
+# thing anyone asks for. For the MESSAGE the question is "did they describe a
+# helper AT ALL", and a subtractive test says yes to almost any sentence.
+#
+# Live 2026-09-18, the agency's replacement test, 2 runs in 3: asked "when
+# would you ideally like the new helper to start?" the client answered "as soon
+# as possible after she leaves", and the extractor filed that as
+# `replacement_preferences`. It survives the subtractive test easily - "soon",
+# "leaves", "possible" - so the field looked answered, was never asked, and the
+# collection completed one question early. The closing briefing then went out
+# built on the ordinary turn's records rather than the briefing set, so it said
+# "I'll check the timeline and cost with the team" while the 4-to-6-week
+# timeline was sitting in the knowledge base, and listed "Confirmation of
+# Loolia's departure" as a required document.
+#
+# FAILS TOWARDS ASKING, like `_mentions_care`: a volunteered preference this
+# misses costs one question we were going to ask anyway, while a timing answer
+# accepted as a preference costs the client the question AND corrupts the
+# closing message. Only applied when the field was never put to them - once
+# asked, their answer is their answer.
+_DESCRIBES_A_HELPER = re.compile(
+    r"\b(?:filipin\w*|philippin\w*|indonesian?|myanmar|burmese|sri\s*lankan|indian)\b"
+    # "years" only counts beside the word experience. A bare number of years is
+    # what this flow's OWN tenure question is answered with - "since last
+    # year", "she has been with us for 3 years", "about 2 years" - three
+    # questions earlier, and filing that here is the same defect wearing a
+    # different hat.
+    r"|\bexperience[ds]?\b|\byears?\s+(?:of\s+)?experience\b"
+    r"|\bfresh\b|\bex[- ]?singapore\b"
+    r"|\benglish\b|\bmandarin\b|\bmalay\b|\btamil\b|\bcantonese\b|\bhokkien\b"
+    r"|\blanguages?\b|\bspeaks?\b|\bspeaking\b"
+    r"|\bcook\w*\b|\bchildcare\b|\bchildren\b|\bkids?\b|\bbaby\b|\binfant\b"
+    r"|\belderly\b|\beldercare\b|\bnewborn\b|\bcaring\b|\bclean\w*\b"
+    r"|\bhousework\b|\bpets?\b|\bdogs?\b|\bcats?\b"
+    r"|\bsmok\w*\b|\bdrink\w*\b|\bpolite\b|\bhonest\b|\bpatient\b|\bactive\b"
+    r"|\breligion\b|\bmuslim\b|\bchristian\b|\bcatholic\b|\bhindu\b|\bbuddhist\b"
+    r"|\bsingle\b|\bmarried\b|\bage[ds]?\b|\byoung\b|\beducat\w*\b"
+    r"|\bmust\s+be\b|\bshould\s+be\b|\bat\s+least\b|\bprefer\w*\b"
+    r"|\bsomeone\s+who\b|\bable\s+to\b",
+    re.IGNORECASE,
+)
+
+
+def _describes_a_helper(text: str) -> bool:
+    """Whether the client's own message says anything about the helper wanted."""
+    return bool(_DESCRIBES_A_HELPER.search(text or ""))
+
+
 # Facts about the CLIENT that stay true when the service changes, and so survive
 # the switch-reset below.
 #
@@ -1771,6 +1823,24 @@ async def _extract(
             logger.info(
                 "Conversation %s: ignoring '%s' for '%s' - it restates the request "
                 "rather than describing the helper they want",
+                state.get("conversation_id"),
+                text[:40],
+                key,
+            )
+            continue
+        # ...and the other half of the same trap, on the MESSAGE rather than on
+        # the value. See _DESCRIBES_A_HELPER: "as soon as possible after she
+        # leaves" is an answer to the TIMELINE question, and filing it here
+        # completed the collection one question early and built the closing
+        # briefing on the wrong records.
+        if (
+            key in _PREFERENCE_FIELDS
+            and not asked.get(key)
+            and not _describes_a_helper(state.get("incoming_text") or "")
+        ):
+            logger.info(
+                "Conversation %s: ignoring '%s' for '%s' - the client's message "
+                "described no helper, so the value was inferred rather than given",
                 state.get("conversation_id"),
                 text[:40],
                 key,

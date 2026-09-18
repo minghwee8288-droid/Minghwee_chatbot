@@ -449,6 +449,31 @@ rows = [
  # the bot answering it correctly - but only because the client asked.
  ("home leave closes with a briefing, keyed on her nationality",
   t.BRIEFING_AFTER.get("home_leave"), "nationality"),
+ # 2026-09-18, the agency's own ask. Keyed on the SECOND-TO-LAST field, not the
+ # last: the retriever runs before the collector, so on the turn that completes
+ # the collection the state it reads does not yet hold the final answer.
+ ("replacement closes with a briefing, keyed on the field before the last",
+  (t.BRIEFING_AFTER.get("replacement"),
+   [f.key for f in t.SERVICE_FIELDS["replacement"]][-2:]),
+  ("timeline", ["timeline", "replacement_preferences"])),
+ # One question asking two things was answered once and closed: "she wants to
+ # leave in 2 weeks" against "when are you planning for her to leave, and when
+ # would you ideally like the new helper to start?" - so the date a consultant
+ # needs in order to have somebody in place never reached the ticket. Two
+ # fields, because CLAUDE.md section 9.21's own fix is collection gating and
+ # sections 9.12/9.21/9.22/9.23 all say that is not to be changed in a hurry.
+ ("the replacement timeline is two questions, not one asking two things",
+  sorted(k for k in ("current_helper_exit_date", "timeline")
+         if k in {f.key for f in t.SERVICE_FIELDS["replacement"]}),
+  ["current_helper_exit_date", "timeline"]),
+ # ", and " is the join, not the word "and": the start-date question opens
+ # "And when would you ideally like...", which is one ask reading as a
+ # follow-on. The old field was "...to leave, and when would you ideally want
+ # the new helper to start?" - two asks, one comma, one answer.
+ ("...and neither of them asks for both halves at once",
+  [f.key for f in t.SERVICE_FIELDS["replacement"]
+   if f.key in ("current_helper_exit_date", "timeline")
+   and ", and " in f.question.lower()], []),
  # A briefing keyed on a field its own flow never asks can never come due, and
  # the flow would close on the bare handover line with nothing to show for it.
  # Derived, so a fourth service cannot reopen it.
@@ -2866,10 +2891,16 @@ rows = [
  # two sides could never be equal. Asserted across a whole turn sequence
  # rather than as one call, which is the only shape that would have caught
  # it.
+ # Measured on `insurance` rather than on `renewal` since 2026-09-18: `renewal`
+ # gained a CLOSING briefing that day, and a service that briefs at the end
+ # does not also brief at the start - so the exemplar had stopped exercising
+ # the thing it was written for and simply went red. `insurance` is the
+ # small-ticket service that still opens with an overview and has no closing
+ # briefing, which is exactly the shape this pair is about.
  ("the overview turn can actually happen, exactly once",
-  [n for n in range(6) if ico.briefs_on_this_turn("renewal", {"f": n})], [1]),
+  [n for n in range(6) if ico.briefs_on_this_turn("insurance", {"f": n})], [1]),
  ("it never lands on the introduction turn",
-  ico.briefs_on_this_turn("renewal", {}), False),
+  ico.briefs_on_this_turn("insurance", {}), False),
  ("a service that briefs at the END does not brief at the start too",
   ico.briefs_on_this_turn("passport_renewal", {"f": 1}), False),
  ("...and that holds for every service with a closing briefing",
@@ -2897,11 +2928,18 @@ rows = [
          and k not in ("fee_enquiry", "salary_enquiry")
          and k not in t.BRIEFING_AFTER
          and not ico.briefs_on_this_turn(k, {"f": 1})),
-  # The two that still explain themselves at NEITHER end, recorded as a
-  # decision rather than left as an omission. Both are the agency's to ask
-  # for: `replacement` is eight questions and `transfer_employer` up to
-  # twenty-five, so both are candidates for the same treatment.
-  ["replacement", "transfer_employer"]),
+  # `replacement` LEFT this list on 2026-09-18, on the agency's instruction
+  # after testing it: "after getting all the required details the bot should
+  # reply the process, required documents, timeline and the cost". Their
+  # transcript is why - it closed on the bare handover line and the client
+  # asked for the process, the documents and the cost in three separate
+  # messages, all three answered correctly and none of them a question he
+  # should have had to think of.
+  #
+  # `transfer_employer` is the one that still explains itself at NEITHER end,
+  # recorded as a decision rather than left as an omission. It is up to
+  # twenty-five questions and it is the agency's to ask for.
+  ["transfer_employer"]),
  # The old expression still appears verbatim - inside the docstring that
  # explains why it could never be true, which is an incident note and
  # stays (section 0.4). So assert the call site uses the PREDICATE

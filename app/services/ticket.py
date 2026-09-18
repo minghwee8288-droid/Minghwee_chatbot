@@ -1249,11 +1249,46 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             max_asks=2,
             options=("going home", "transferring to another employer", "not decided yet"),
         ),
+        # SPLIT IN TWO on 2026-09-18, because one question asking two things
+        # was answered once and closed.
+        #
+        # Live, the agency's own replacement test: "When are you planning for
+        # Loolia to leave, and when would you ideally like the new helper to
+        # start?" -> "she wants to leave in 2 weeks" -> and the flow went
+        # straight on to the preferences question. The client reported it
+        # himself: "it didnt followup this question (when would you ideally
+        # like the new helper to start?)". So the date a consultant needs in
+        # order to have somebody in place - the whole point of a replacement -
+        # never reached the ticket, and the transcript gives no sign anything
+        # was missed.
+        #
+        # This is CLAUDE.md section 9.21 arriving for real: `children_detail`
+        # asks "how many children, and how old are they?" and is closed by "2
+        # kids". That entry says the honest fix is a half-answer detector in
+        # `_unfinished()`, and that collection gating is not to be changed in a
+        # hurry (sections 9.12, 9.21, 9.22, 9.23 all say so). Two fields is not
+        # gating at all: it cannot half-fire, it cannot strand a live
+        # collection, and a client who answers both at once still only spends
+        # one turn because the extractor fills both.
+        #
+        # The exit date comes FIRST because it is the one they have already
+        # been thinking about - `current_helper_exit` has just asked where she
+        # is going - and the start date reads as the natural follow-up.
+        Field(
+            "current_helper_exit_date",
+            "when the current helper is leaving",
+            "When is your current helper planning to leave?",
+            max_asks=2,
+        ),
+        # Keeps the `timeline` key, and the key is now honest: `_DETAIL_LABELS`
+        # renders it "Needed by", which was never true of the old two-part
+        # question and is exactly true of this one. `lead.py` reads the same key
+        # for the lead's urgency, where the date that matters is when they need
+        # somebody, not when the last one goes.
         Field(
             "timeline",
-            "timeline",
-            "When are you planning to replace her, and when would you ideally want "
-            "the new helper to start?",
+            "when the new helper should start",
+            "And when would you ideally like the new helper to start?",
             max_asks=2,
         ),
         Field(
@@ -2199,6 +2234,41 @@ BRIEFING_AFTER: dict[str, str] = {
     # end does not also brief at the start. That is the intended trade, and it
     # is the same one passport_renewal made on 2026-09-09.
     "renewal": "helper_name",
+    # Replacement, 2026-09-18. Agency, after testing it as an employer: "after
+    # getting all the required details the bot should reply the process,
+    # required documents, timeline and the cost, and at last of this message
+    # this message should be attached [the handover line]." Their transcript is
+    # the argument: the flow closed on the bare handover line, and the client
+    # then asked "what is the further process", "and what are the documents
+    # required" and "ok and what is the timeline and cost for that" - three
+    # messages, all three answered correctly and in full, and not one of them
+    # a question he should have had to think of.
+    #
+    # This closes the FIRST half of the section 9 entry that asked whether
+    # `replacement` and `transfer_employer` should explain themselves too. They
+    # have now said so for replacement; transfer_employer is still open and is
+    # recorded there as a decision rather than an omission.
+    #
+    # Keyed on `timeline` - the second-to-last field - for the reason spelled
+    # out twice above: the retriever runs before the collector, so the final
+    # turn (the one answering `replacement_preferences`) reads a state that
+    # holds everything up to and including `timeline`.
+    #
+    # Measured before it was added, because a briefing with no records is the
+    # 2026-09-09 defect: BRIEFING_QUERY under `replacement` at
+    # BRIEFING_MATCH_COUNT returns all four sections inside the top ten and
+    # every row above the floor - what the employer does (0.633), what a
+    # replacement is (0.576), what happens after choosing (0.575), the cost
+    # (0.557), the documents (0.555), the process (0.529) and the timeline
+    # (0.515). No query change and no new row.
+    #
+    # `replacement` is in COST_WITHHELD_SERVICES, so the cost section defers to
+    # a consultant rather than quoting a package price, exactly as a Myanmar
+    # home leave does. That is the correct output here, not a gap: live, the
+    # answer it already gives is "if you are within the guarantee period there
+    # is no additional agency service fee, while government and third-party
+    # costs are separate".
+    "replacement": "timeline",
 }
 
 
@@ -2523,6 +2593,7 @@ _DETAIL_LABELS = {
     "helper_tenure": "Current helper's time with them",
     "helper_from_us": "Where the current helper came from",
     "current_helper_exit": "Current helper going",
+    "current_helper_exit_date": "Current helper leaves",
     "replacement_preferences": "Wants in the replacement",
     "referral_source": "Heard about us via",
     "referrer_name": "Referred by",
