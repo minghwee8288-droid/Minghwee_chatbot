@@ -613,6 +613,57 @@ rows = [
   g.route_after_rag(money_on_top), "response_generator"),
  ("a cost question on its own still collects",
   g.route_after_rag(money_alone), "info_collector"),
+ # --- 2026-09-18: ...and a cost question that NAMES a service ------------
+ # The door the 2026-09-07 fix left open. That one keyed on another service
+ # being ESTABLISHED; here the service is named in the very message asking the
+ # price, so nothing was established and fee_enquiry collected its own two
+ # fields. Live 23:05: "what is the fees for work permit renewal?" ->
+ # "Which nationality are you looking at?" -> "What kind of care would this be
+ # for?", the care question asked three times, the last AFTER "i am not asking
+ # for any new hiring". Neither field means anything for a renewal.
+ ("a fee question naming a service is answered, not qualified",
+  g.route_after_rag({"intent": "fee_enquiry", "service_type": "renewal",
+                     "collected_service": None, "blocked_topics": {}}),
+  "response_generator"),
+ # The SERVICE moves, the INTENT does not. Promoting the intent routes to the
+ # collector and opens the named service's own intake - a price question
+ # turned into a form, which is the defect being fixed, one service along.
+ ("...and promoting the intent instead would open an intake",
+  g.route_after_rag({"intent": "renewal", "service_type": "renewal",
+                     "collected_service": None, "blocked_topics": {}}),
+  "info_collector"),
+ # fee_enquiry's two fields are HIRING-shaped, which is why they cannot be put
+ # to a renewal client. Asserted so that "just add care_type to renewal" is
+ # never the fix somebody reaches for.
+ ("the money enquiries ask a care type and the renewals never do",
+  ([f.key for f in t.SERVICE_FIELDS["fee_enquiry"]] == ["nationality", "care_type"]
+   and not any(f.key == "care_type"
+               for s in ("renewal", "passport_renewal", "home_leave")
+               for f in t.SERVICE_FIELDS[s])), True),
+ # A passport renewal is $450 and a work permit renewal is $695, and
+ # FEE_STATED_SERVICES holds both - so resolving a passport phrasing to
+ # `renewal` states the wrong price rather than merely picking the wrong flow.
+ # `\brenew` was tested before `\bpassport`, so all four phrasings did.
+ # ungrounded_figures cannot catch it: $695 is genuinely in the records.
+ ("a passport phrasing names the passport service, not the work permit",
+  [_named_svc(m) for m in ("how much for passport renewal",
+                           "what is the cost to renew my helper passport",
+                           "renew my helper passport please",
+                           "how much does it cost to renew her passport?")],
+  ["passport_renewal"] * 4),
+ ("...and a work permit phrasing still names the work permit service",
+  [_named_svc(m) for m in ("what is the fees for work permit renewal?",
+                           "I want to renew my helper work permit")],
+  ["renewal"] * 2),
+ ("...and renewing an insurance is still the insurance",
+  _named_svc("cost of insurance renewal"), "insurance"),
+ # The control: a price question naming nothing must still reach the two
+ # fields that qualify it, or an opening "how much do you charge?" cannot be
+ # answered at all.
+ ("a price question naming no service names none",
+  [_named_svc(m) for m in ("how much do you charge",
+                           "how much does it cost to hire a helper")],
+  [None, None]),
  # The intent names the SHAPE of the question; the in-flight service is its
  # subject. Tagging "what is the process" with "(process question)" scored
  # under the floor and got the parked-agent line on a question the KB answers.
@@ -1185,8 +1236,15 @@ rows = [
   gd.answering_our_question(
       "You: Any preference on her age or experience, such as younger or at "
       "least 2 years of experience?", "yes i want 3 year experienced maid"), True),
+ # The VALUE here was corrected on 2026-09-18 and the claim was not. This
+ # asserts that naming another service is still a real switch - any truthy
+ # answer satisfies that - and it pinned "renewal", which is what
+ # `_named_service` returned rather than what is true: "renew my helper
+ # PASSPORT" is a passport renewal. The ordering bug was recorded here as the
+ # expected value, so the tripwire held the defect in place instead of
+ # catching it. It goes red on the fix, which is what it is for.
  ("naming another service is still a real switch",
-  _named_svc("i also want to renew my helper passport"), "renewal"),
+  _named_svc("i also want to renew my helper passport"), "passport_renewal"),
  ("an ordinary answer names no service",
   _named_svc("yes i want 3 year experienced maid"), None),
  # "returning client" was offered as an ANSWER to how they heard about us, so

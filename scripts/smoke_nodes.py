@@ -998,6 +998,78 @@ CASES = [
       "incoming_text": "ok noted thanks",
       "history_text": "client: hi\nbot: I've passed this to our team.",
       "blocked_topics": {"new_hiring": {"ticket_id": 1, "ticket_number": "CB-2026-0001"}}}),
+
+    # --- 2026-09-18: a money question that names a service -----------------
+    # The agency's transcript, 23:05. "what is the fees for work permit
+    # renewal?" opened the conversation, so nothing else was established, so
+    # fee_enquiry collected its own two fields - "Which nationality are you
+    # looking at?" then "What kind of care would this be for?" - and asked the
+    # care question three times, the last of them AFTER the client wrote "i am
+    # not asking for any new hiring".
+    #
+    # The service moves and the intent deliberately does not: that is what
+    # sends the turn to response_generator, where the price is answered. A
+    # state asserting only the service would stay green with the intent
+    # promoted too, which routes to the collector and opens a 4-question
+    # intake - the defect, one service along - so BOTH are asserted.
+    ("intent_classifier", "a fee question naming a service resolves to it",
+     {"incoming_text": "what is the fees for work permit renewal?",
+      "intent": None, "service_type": None, "history_text": "",
+      "_stub_intent": {"intent": "fee_enquiry", "service_type": "fee_enquiry",
+                       "contact_type": "employer", "confidence": 0.9},
+      "_expect_state": {"service_type": "renewal", "intent": "fee_enquiry"}}),
+
+    # The half that is a wrong PRICE rather than a wrong label. `_NAMED_SERVICE`
+    # tested `\brenew` before `\bpassport`, so every passport phrasing resolved
+    # to the WORK PERMIT service - $695 where the answer is $450, both of them
+    # in FEE_STATED_SERVICES, so the figure goes out stated rather than
+    # deferred.
+    ("intent_classifier", "...and a passport fee is not the work permit's",
+     {"incoming_text": "how much for passport renewal", "intent": None,
+      "service_type": None, "history_text": "",
+      "_stub_intent": {"intent": "fee_enquiry", "service_type": "fee_enquiry",
+                       "contact_type": "employer", "confidence": 0.9},
+      "_expect_state": {"service_type": "passport_renewal",
+                        "intent": "fee_enquiry"}}),
+
+    # A service whose price we withhold still moves, so the turn is answered
+    # with the deferral line a consultant stands behind rather than qualified.
+    ("intent_classifier", "...and a withheld price moves service too",
+     {"incoming_text": "what is the fee for a transfer", "intent": None,
+      "service_type": None, "history_text": "",
+      "_stub_intent": {"intent": "fee_enquiry", "service_type": "fee_enquiry",
+                       "contact_type": "employer", "confidence": 0.9},
+      "_expect_state": {"service_type": "transfer", "intent": "fee_enquiry"}}),
+
+    # THE CONTROL, and the reason this is a named-service rule and not a ban on
+    # fee_enquiry collecting. A price question that names nothing cannot be
+    # answered without knowing what for - which is what those two fields are
+    # for, and what `_other_service_established` deliberately keeps collectible.
+    ("intent_classifier", "...but a bare price question still qualifies",
+     {"incoming_text": "how much do you charge", "intent": None,
+      "service_type": None, "history_text": "",
+      "_stub_intent": {"intent": "fee_enquiry", "service_type": "fee_enquiry",
+                       "contact_type": "employer", "confidence": 0.9},
+      "_expect_state": {"service_type": "fee_enquiry", "intent": "fee_enquiry"}}),
+
+    # THE SECOND CONTROL, and it exists because a fault injection found it
+    # missing rather than because it was designed in. Widening the rule to fire
+    # on every turn (`if True:` in place of the SOFT_SERVICES test) left the
+    # four states above green and both suites passing - so they proved the rule
+    # does the right thing on a money turn and said nothing about what it does
+    # on any other one.
+    #
+    # Unwidened, this is the case `_WANTS_SERVICE` guards in the parked-topic
+    # correction below: a helper's passport mentioned mid-hire is not a request
+    # to renew it. The money rule skips it because new_hiring is not a SOFT
+    # service, and that is the half being asserted.
+    ("intent_classifier", "...and an ordinary turn naming a service is left alone",
+     {"incoming_text": "her passport is expiring soon", "intent": "new_hiring",
+      "service_type": "new_hiring",
+      "history_text": "You: Any preference on her age or experience?",
+      "_stub_intent": {"intent": "new_hiring", "service_type": "new_hiring",
+                       "contact_type": "employer", "confidence": 0.9},
+      "_expect_state": {"service_type": "new_hiring"}}),
 ]
 
 
@@ -1055,10 +1127,30 @@ async def _run_blocked_topic_responder(state, stub=None):
         return await blocked_topic_responder(state)
 
 
+async def _run_intent_classifier(state, stub=None):
+    """The classifier, with the model's own verdict stubbed in.
+
+    The state carries `_stub_intent` - what the LLM returned live - so what is
+    exercised here is the POST-PROCESSING that runs on top of it: the
+    stickiness rules, the named-service corrections and the money rule. Those
+    are where every classifier fix in this file's history actually lives, and
+    until 2026-09-18 this node had no execution cover at all.
+    """
+    verdict = state.pop("_stub_intent", None) or {
+        "intent": state.get("intent"), "service_type": state.get("service_type"),
+        "contact_type": state.get("contact_type"), "confidence": 0.9,
+    }
+    with patch("app.graph.nodes.intent_classifier.complete_json",
+               new=AsyncMock(return_value=dict(verdict))):
+        from app.graph.nodes.intent_classifier import intent_classifier
+        return await intent_classifier(state)
+
+
 RUNNERS = {
     "info_collector": _run_info_collector,
     "response_generator": _run_response_generator,
     "blocked_topic_responder": _run_blocked_topic_responder,
+    "intent_classifier": _run_intent_classifier,
 }
 
 

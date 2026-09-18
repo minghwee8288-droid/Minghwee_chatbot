@@ -202,6 +202,8 @@ because the lead is opened early and the ticket is created much later.
 | The notice-period question is only put about a helper who is still employed | `_STILL_EMPLOYED` gate | `excludes` first, so "free to take a new job" and "between jobs" do not match on the word they contain. |
 | A passport-renewal answer never names a route we have not established | `info_collector._NATIONALITY_DEPENDENT` + `_known_nationality` | The paperwork differs by nationality and the retrieval filter is DROPPED when the nationality is unknown, so all three routes compete. |
 | A cost question never starts a second intake | `graph.route_after_rag` + `_other_service_established` | `fee_enquiry`/`salary_enquiry` collect ONLY when nothing else is in hand. |
+| ...and a cost question that NAMES a service is answered, not qualified | `intent_classifier` (the money rule) + `_named_service` | The door the row above leaves open: it keys on another service being ESTABLISHED, and here the service is named in the very message asking the price. The SERVICE moves and the INTENT deliberately does not — that is what routes it to `response_generator` instead of opening the named flow's intake. |
+| A passport phrasing is not the work permit's price | `_NAMED_SERVICE` order (`passport` before `renew`) | $450 against $695, both in `FEE_STATED_SERVICES`, so the wrong one goes out STATED rather than deferred. `ungrounded_figures` cannot catch it — $695 is genuinely in the records. The table got this right for insurance and wrong for passports for a fortnight. |
 | A question's SHAPE is not its subject | `rag_retriever._SUBJECTLESS_INTENTS` | `process_question`, `document_question`, `general_question` search under the in-flight service, as `other` already did. |
 | A care type is never inferred from a bare enquiry | `info_collector` (`_states_a_care_type` on the MESSAGE, not just the value) | "I want to hire a helper" fills nothing. A volunteered one still lands. |
 | A live collection survives a turn that resolves to no service | `intent_classifier` (no-service rule) | A turn with no topic in it cannot be a new topic. Guarded on the topic not being parked. |
@@ -821,6 +823,27 @@ Ordered by what will hurt first.
     collection gating, which §9.12 and §9.21 both say is not to be changed in a
     hurry.
 
+23. **A country answers `helper_from_us`, whose three values are not countries.**
+    Found 2026-09-18 while re-running the fixed transcript: replaying the
+    original client's *"indonesia"* — which after the fix is a reply to a
+    message that asked nothing — the extractor filed it as
+    `helper_from_us = "Indonesia"`. That field carries where the current
+    helper's Work Permit came from, and since 2026-09-17 it is filled from the
+    records in three fixed wordings and **never asked**, so the only way a
+    country reaches it is the extractor. The client's own words beat the fill
+    by design (`extracted = {**known, **extracted}`), which is right for a real
+    correction and is what lets this through.
+    Left alone on purpose. The turn that produced it cannot arise from this
+    path any more — the fee question is now answered without asking anything,
+    so there is no bare nationality to mis-file. Nobody has reported it. The
+    damage is bounded: it reaches a consultant as one odd line on a ticket
+    beside the helper's name, not as a wrong price or a wrong document. And the
+    fix is collection gating, which §9.12, §9.21 and §9.22 each say is not to be
+    changed in a hurry. The honest shape, when somebody wants it: the field's
+    three values are a closed set, so this is `Field.options_are_exhaustive`
+    applied to a field nobody asks — a value outside the set is not an answer
+    and should fall back to the record fill rather than overwrite it.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
@@ -1048,6 +1071,87 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-18** — **"what do you mean by care? i am not asking for any new hiring...
+  i came here for work permit renwal."** The agency's own test, 23:05, reported as the
+  renewal flow leaking new-hire questions. It is not that, and the difference is the
+  whole fix.
+  (A) **Reproduced 1 run of 1 before anything was touched, and it is WORSE than the
+  report.** "what is the fees for work permit renewal?" → *"...approximately $695 ...
+  Which nationality are you looking at?"* → "indonesia" → *"What kind of care would this
+  be for?"* → "i didn't understand" → a correct rephrase of the same question → and then,
+  after the client wrote the sentence above, **the care question a third time**.
+  (B) **Those two questions are `fee_enquiry`'s own fields, verbatim** — `nationality`
+  and `care_type` — not `new_hiring`'s. Nothing leaked and no flow was mixed: the
+  renewal flow never ran, because the turn never resolved to `renewal`. `fee_enquiry` is
+  a *service* with a two-field intake, and those fields are hiring-shaped because they
+  exist to pin down a question that cannot be answered without them.
+  (C) **Three of the four suspected causes in the report are not what happened**, and
+  acting on them would have made it worse. The intent was `fee_enquiry` on **all four
+  turns** — perfectly stable — so *locking the active intent* would have locked the wrong
+  one harder. `renewal` has four fields, so *"the renewal flow has no slot list"* is not
+  the case. And the clarification handler asked for already exists and already ran: turn
+  3 **did** rephrase (*"Sorry, I meant what care will the helper provide..."*). It
+  rephrased a question that should never have been asked, which is why rephrasing harder
+  is not the fix.
+  (D) **It is the 2026-09-07 defect** (*"But I come here for passport renewal not for
+  care"*) **arriving through the one door that fix left open.** That one keys on another
+  service being ESTABLISHED, and `_other_service_established` deliberately leaves an
+  opening money question collectible so a bare *"how much do you charge?"* can be
+  qualified at all. Here the client named the service **in the message asking the
+  price**, and nothing read it — `_named_service` has returned `renewal` for that
+  sentence the whole time and is consulted on no money path.
+  (E) **The SERVICE moves and the INTENT deliberately does not.** That is the entire
+  mechanism: with `service_type` set, `_other_service_established` is true, so
+  `route_after_rag` sends the turn to `response_generator` and the price is **answered**.
+  Promoting the intent as well routes it to the collector and opens the named service's
+  own four-question intake — a price question turned into a form, which is the defect
+  being fixed one service along. Both halves are asserted, because a check reading only
+  the service stays green with the intent promoted too.
+  (F) **The answer was in hand before the first question was asked** — $695, retrieved
+  on turn 1 at **0.654**. Three questions were put to a client to reach a figure the bot
+  already held.
+  (G) **And the obvious fix would have introduced a WRONG PRICE, which is the more
+  serious half of this commit.** `_NAMED_SERVICE` tested `\brenew` before `\bpassport`,
+  so **every** passport phrasing resolved to `renewal` — the work permit service —
+  measured 4 of 4. A passport renewal is **$450** and a work permit renewal is **$695**,
+  and `FEE_STATED_SERVICES` holds both, so the wrong figure goes out **stated** rather
+  than deferred, and `ungrounded_figures` waves it through because $695 really is in the
+  records. The table had reasoned about exactly this hazard for insurance
+  (*"renew my insurance names both"*) and not for passports. Live before: *"how much for
+  passport renewal"* → **$695**. After: **$450**.
+  (H) **An existing assertion went red, and the check was wrong rather than the code.**
+  *"naming another service is still a real switch"* pinned
+  `_named_svc("i also want to renew my helper passport") == "renewal"` — its CLAIM is
+  satisfied by any truthy answer, and the value it recorded was simply what the function
+  returned. So the tripwire was **holding the defect in place instead of catching it**.
+  Corrected to `passport_renewal` with its reasoning kept (§0.3).
+  (I) **Five faults injected; one came back GREEN in both suites and it was the checks.**
+  Widening the rule to fire on every turn rather than only a money one left all four new
+  states passing — so they proved what the rule does on a money turn and said nothing
+  about any other turn, where it would hijack *"her passport is expiring"* mid-hire, the
+  case `_WANTS_SERVICE` guards. A second control now asserts an ordinary turn naming a
+  service is left alone, and that injection goes red. Fourth time a green injection has
+  been the injection's or the check's fault and not the code's.
+  (J) **`intent_classifier` had no execution cover at all** until this commit, which is
+  why (I) was possible. Every classifier fix in this log lives in the post-processing
+  that runs on top of the model's verdict — the stickiness rules and the named-service
+  corrections — and all of it was tested by calling predicates. `smoke_nodes.py` now runs
+  the node with the model's verdict stubbed to what it returned live.
+  (K) **Verified live against the real model.** The reported turn: *"The work permit
+  renewal fee is approximately $695, and the exact amount will be confirmed"* — and the
+  care question appears on **no turn of the transcript, ever**. Passport → **$450**.
+  Transfer → the consultant deferral, no intake. Home leave → $400/$250 by nationality.
+  The three controls are untouched: *"how much do you charge"*, *"how much does it cost
+  to hire a helper"* and *"what salary should I budget"* all still reach `fee_enquiry`'s
+  two questions, which is what that carve-out is for.
+  **Not changed, and recorded rather than rushed:** replaying the original client's words
+  after the fix, *"indonesia"* — now a reply to a message that asked nothing — was
+  extracted into `helper_from_us`, whose three values are record-derived strings about
+  where a helper came from, not a country. It is a mis-extraction on a turn that can no
+  longer arise from this path, nobody has reported it, and it is collection gating, which
+  §9.12/§9.21/§9.22 all say is not to be changed in a hurry. §9.23.
+  `selfcheck_flows.py` is **507 assertions**; `smoke_nodes.py` is **112 states**.
 
 - **2026-09-17** — **"is Polo's current Work Permit from Ming Hwee, or was she hired
   elsewhere?" — asked of a client we have never placed anyone with.** The agency

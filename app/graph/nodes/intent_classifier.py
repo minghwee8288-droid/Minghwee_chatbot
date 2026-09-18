@@ -130,9 +130,20 @@ _NAMED_SERVICE = (
     # Before renewal: "renew my insurance" names both, and the one the client
     # actually asked for is the insurance.
     (re.compile(r"\binsuran", re.I), "insurance"),
+    # ...and before renewal for the SAME reason, which this table got right for
+    # insurance and wrong for passports until 2026-09-18. "renew my helper's
+    # passport" names both, and the one the client asked for is the passport:
+    # `\brenew` matched first, so every passport phrasing resolved to `renewal`
+    # - the WORK PERMIT service. Measured, 4 phrasings out of 4.
+    #
+    # It is a wrong PRICE, not merely a wrong label: a passport renewal is $450
+    # and a work permit renewal is $695, and `FEE_STATED_SERVICES` holds both,
+    # so the figure goes out stated rather than deferred. "A wrong price is
+    # worse than a vague one" (2026-09-08) - and `ungrounded_figures` cannot
+    # help, because $695 is genuinely in the records it grounds on.
+    (re.compile(r"\bpassport\b", re.I), "passport_renewal"),
     (re.compile(r"\brenew", re.I), "renewal"),
     (re.compile(r"\breplace", re.I), "replacement"),
-    (re.compile(r"\bpassport\b", re.I), "passport_renewal"),
     (re.compile(r"\bhome\s*leave\b|\bgoing\s+home\b", re.I), "home_leave"),
     (re.compile(r"\bdirect\s*hir", re.I), "direct_hiring"),
 )
@@ -536,6 +547,59 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
             "Keeping active service %s despite a %s question", active_service, service_type
         )
         service_type = active_service
+
+    # A money question that NAMES a service is a question ABOUT that service.
+    #
+    # The rule above rescues a price question asked on top of a live service.
+    # It cannot help when the price question IS the opening message, because
+    # there is no active service to stick to - and that is the case
+    # `_other_service_established` deliberately leaves collectible, so that a
+    # bare "how much do you charge?" still gets qualified. fee_enquiry and
+    # salary_enquiry each carry two fields, `nationality` and `care_type`, and
+    # those fields are HIRING-shaped: they exist to pin down a question that
+    # cannot be answered without them.
+    #
+    # Live, 2026-09-17 23:05, reproduced 1 run of 1. The opening message was
+    # "what is the fees for work permit renewal?" - a money question with a
+    # service named in it. Nothing else was in hand, so fee_enquiry collected,
+    # and the client was asked its two fields in order:
+    #   "Which nationality are you looking at?"   -> "indonesia"
+    #   "What kind of care would this be for?"    -> "i didn't understand"
+    # ...then, correctly per its own rules, REPHRASED the care question - and
+    # on being told "what do you mean by care? i am not asking for any new
+    # hiring...i came here for work permit renwal" asked it a THIRD time.
+    # Neither field means anything for a renewal: a work permit renewal is
+    # $695 whatever her nationality, and nobody renewing a permit is choosing a
+    # kind of care. The $695 itself was right and was in the retrieved set on
+    # turn 1 at 0.654 - the answer was in hand before the first question.
+    #
+    # This is the 2026-09-07 defect ("But I come here for passport renewal not
+    # for care") arriving through the one door that fix left open. That one
+    # keyed on another service being ESTABLISHED; here the client named the
+    # service in the very message that asks the price, and nothing read it.
+    #
+    # The SERVICE moves and the INTENT deliberately does not. That is the whole
+    # fix: with service_type set, `_other_service_established` is true, so
+    # route_after_rag sends the turn to response_generator and the price is
+    # ANSWERED. Promoting the intent as well would route it to the collector
+    # and open the named service's own intake - turning a price question into a
+    # form, which is the defect this is fixing, one service along.
+    #
+    # Not gated on `_WANTS_SERVICE`, unlike the parked-topic correction below.
+    # That gate exists so "her passport is expiring" mid-collection is not read
+    # as a passport request. Here the classifier has already decided this turn
+    # is a money question, and a money question naming a passport is about a
+    # passport - while "how much for passport renewal" carries no want-verb at
+    # all and would be thrown away by such a gate.
+    if service_type in SOFT_SERVICES:
+        named_in_money = _named_service(message)
+        if named_in_money and named_in_money != service_type:
+            logger.info(
+                "Conversation %s: %r is a %s question naming %r - answering it as "
+                "a question about that service rather than qualifying it",
+                state.get("conversation_id"), message[:60], service_type, named_in_money,
+            )
+            service_type = named_in_money
 
     # Deterministic new-service correction, independent of how the model labelled
     # this turn. If the client NAMES and ASKS FOR concrete work whose topic is
