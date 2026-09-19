@@ -909,6 +909,21 @@ CASES = [
     # She says so herself on the very first turn she says it, with no question
     # from us at all - "i am helper" and "my employer" are the two things only
     # she writes.
+    # ...and the question this branch removes is the HELPER's name, never the
+    # client's own. Found by replaying the transcript after the branch started
+    # firing on the opening message: the note said "her name is already on
+    # file", which is false on the turn before she has given it, and the model
+    # correctly did as it was told and skipped straight to the nationality -
+    # 0 of 4. `full_name` is the field five separate complaints since
+    # 2026-09-08 have been about NOT being asked.
+    ("info_collector", "...and she is still asked for her own name",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "i want to renew my passport",
+      "collected_info": {}, "asked_field_counts": {},
+      "history_text": "",
+      "_stub_extraction": {},
+      "_expect_prompt": "May I know your name?",
+      "_forbid_prompt": "May I know your helper's name?"}),
     ("info_collector", "...or says outright that she is the helper",
      {"service_type": "passport_renewal", "intent": "passport_renewal",
       "incoming_text": "i am a helper, i want to renew my passport",
@@ -1528,6 +1543,56 @@ CASES = [
       "_expect_prompt": "answer their question from",
       "blocked_topics": {"renewal": {"ticket_id": 1,
                                      "ticket_number": "CB-2026-0009"}}}),
+
+    # --- 2026-09-19: the opening turn, and the question about US ----------
+    # Run rather than predicated. A pattern that matches proves nothing if
+    # nothing reads it - the "imported and never called" hole this file has
+    # recorded four times - and the whole defect here was that the collector
+    # never knew a question had been asked.
+    ("info_collector", "a question about what we assumed reaches the answer instruction",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "how you know for what service i need helper",
+      "collected_info": {}, "asked_field_counts": {"full_name": 1},
+      "history_text": "You: So you're looking to hire a helper, and I'll ask a "
+                      "few details. May I know your name?",
+      "_stub_extraction": {},
+      "_expect_prompt": "The client has also ASKED you something"}),
+    # The control that makes it safe: an ordinary answer must NOT be read as a
+    # question, or the collector promises to come back with an answer to
+    # nothing (2026-09-08).
+    ("info_collector", "...while an ordinary answer is not",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "3-4",
+      "collected_info": {}, "asked_field_counts": {"household": 1},
+      "history_text": "You: How many people live in your household?",
+      "_stub_extraction": {},
+      "_forbid_prompt": "The client has also ASKED you something"}),
+    # The opening turn names the service it understood and states nothing else
+    # about the client - and still ends with the question.
+    ("info_collector", "the opening turn names what it understood, and asserts nothing else",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "hey i need helper",
+      "collected_info": {}, "asked_field_counts": {},
+      "history_text": "",
+      "_stub_extraction": {},
+      "_expect_prompt": "NAMING WHAT YOU HAVE UNDERSTOOD"}),
+    ("info_collector", "...and is told the message still ends with the question",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "hey i need helper",
+      "collected_info": {}, "asked_field_counts": {},
+      "history_text": "",
+      "_stub_extraction": {},
+      "_expect_prompt": "ENDS WITH THE QUESTION"}),
+    # ...and it is said ONCE. Said again at question nine it is the preamble
+    # the note forbids by name.
+    ("info_collector", "...but only on the opening turn",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "condo",
+      "collected_info": {"full_name": "Sallu", "requirement": "childcare"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "home_type": 1},
+      "history_text": "You: What type of home are you in?",
+      "_stub_extraction": {},
+      "_forbid_prompt": "NAMING WHAT YOU HAVE UNDERSTOOD"}),
 ]
 
 

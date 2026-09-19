@@ -359,11 +359,17 @@ def _hh():
 
 
 def _purpose_note() -> str:
-    """The opening-turn reason, as the model is handed it."""
+    """The opening-turn reason, as the model is handed it.
+
+    Two halves: the per-service lead-in, still built inline, and the fixed
+    rules, which moved to `ico.PURPOSE_NOTE_RULES` on 2026-09-19 so they could
+    be asserted directly rather than scraped out of the source.
+    """
     src = (Path(__file__).resolve().parents[1]
            / "app/graph/nodes/info_collector.py").read_text(encoding="utf-8")
     start = src.find("purpose_note = (")
-    return _flat(src[start:src.find("# They stated a requirement", start)])
+    return _flat(src[start:src.find("# They stated a requirement", start)]
+                 + " " + ico.PURPOSE_NOTE_RULES)
 
 
 # The live transcript, plus the five shapes that must NOT fire.
@@ -1154,6 +1160,13 @@ rows = [
       {"full_name": "Vaidik", "helper_name": "Polo"}), "own"),
  # ...and her collection note stops the model talking to her about "your
  # helper", which is what it did on home leave when nothing told it otherwise.
+ # The question this branch removes is the HELPER's name, never the client's
+ # own. The note used to assert "her name is already on file", which is false
+ # on the turn before she gives it - and the model did as it was told and
+ # skipped it, 0 runs of 4.
+ ("...but her own name is still asked for",
+  ("this branch removes the helper-name question, never the client's own"
+   in _flat(tpl.HELPER_OWN_PASSPORT_NOTE)), True),
  ("her questions are about her, not about somebody she employs",
   ("IS the passport holder" in tpl.HELPER_OWN_PASSPORT_NOTE,
    "never \"your\nhelper's\"" in tpl.HELPER_OWN_PASSPORT_NOTE
@@ -1930,6 +1943,94 @@ rows = [
   bool(ico._ASKS_SOMETHING.search("Is there a fee for this?")), True),
  ("and the 2026-09-02 case still fires",
   bool(ico._ASKS_SOMETHING.search("In 2 weeks can you provide")), True),
+ # --- 2026-09-19: a question about US is a question --------------------
+ # The agency tested new hiring: "hey i need helper" -> "how you know for what
+ # service i need helper", and the reply restated what we would do and asked
+ # for the name again. ANSWER_THEN_ASK never fired, because none of this family
+ # carries a question mark and none of it matched anything above - so the
+ # collector did not know a question had been put at all.
+ ("a question about what we have assumed is a question",
+  [m for m in ("how you know for what service i need helper",
+               "how do you know what i need",
+               "how u know",
+               "why are you asking me this",
+               "why you are asking about my helper name",
+               "why you asking this",
+               "why do you need my name",
+               "what makes you think i want to hire",
+               "who said i want to hire")
+   if not ico._ASKS_SOMETHING.search(m)], []),
+ # ...and it fails towards silence, because a question nobody asked draws a
+ # promise to come back with an answer that can never come (2026-09-08).
+ ("...and an ordinary answer still is not",
+  [m for m in ("3-4", "Indonesia", "6 bedroom and 6 bathrooms are there",
+               "yes", "i have 4 childrens", "next year march", "Vaidik Dubey",
+               "general housework", "no smoking please",
+               "that is why you should send profiles",
+               "my friend who said you are good")
+   if ico._ASKS_SOMETHING.search(m)], []),
+ # The two patterns have to agree about the same sentence, which is the rule
+ # the note above _ASKS_SOMETHING was written for. Anything _VALUE_IS_QUESTION
+ # reads as a question has its VALUE thrown away; if _ASKS_SOMETHING does not
+ # also read it as one, the client's question is discarded AND unanswered in
+ # the same turn. Five of eight phrasings disagreed before this.
+ ("what one pattern discards, the other answers",
+  [m for m in ("who said i want to hire", "why are you asking me this",
+               "why you are asking about my helper name",
+               "what makes you think i want to hire", "why do you need my name",
+               "how do you know what i need")
+   if ico._VALUE_IS_QUESTION.search(m) and not ico._ASKS_SOMETHING.search(m)],
+  []),
+ # ...and the answer to it is their own words, never our brochure. Live, the
+ # same turn: "We help with new hiring, direct hiring, replacement, transfer,
+ # Work Permit renewal, home leave arrangement and passport renewal. Which
+ # service do you need?" - a menu in reply to "how do you know" reads as though
+ # we are still guessing, and answers nothing.
+ ("...and it is answered from their own words",
+  ("HOW YOU KNOW WHAT THEY NEED" in tpl.ANSWER_THEN_ASK_INSTRUCTION,
+   "listing the services we sell" in tpl.ANSWER_THEN_ASK_INSTRUCTION),
+  (True, True)),
+ # Nor by disowning the reading. It was a reasonable reading of what they
+ # wrote, they asked how we knew rather than for it to be withdrawn, and an
+ # apology leaves them with no service and no question to answer - which is
+ # the 2026-09-10 defect this file records as section 9.19, reported a second
+ # time and therefore acted on.
+ ("...and never by taking the reading back",
+  "do NOT apologise for the reading" in tpl.ANSWER_THEN_ASK_INSTRUCTION, True),
+
+ # --- 2026-09-19: the opening turn states nothing about the client -----
+ # "I'll ask a few details so we can understand your household and find a
+ # suitable helper; may I know your name?" to somebody who had written four
+ # words. The agency: "their intent is not clear. I didn't say that I want
+ # household help. How can the bot say I want to understand your household?"
+ ("no collection reason describes the client's own situation",
+  sorted(k for k, v in P.items()
+         if re.search(r"\b(?:their|your)\s+(?:household|home|family)\b", v)),
+  []),
+ # The reason is a SENTENCE, not a clause bolted onto the name question. The
+ # 2026-09-17 version of this rule said "its own clause", and a clause joined
+ # by a semicolon is still one - the same fault wearing different punctuation.
+ ("the reason is its own sentence, and the semicolon is named",
+  ("its OWN SENTENCE" in ico.PURPOSE_NOTE_RULES,
+   "semicolon" in ico.PURPOSE_NOTE_RULES), (True, True)),
+ # An inference the client cannot see is one they cannot correct.
+ ("the opening turn names the service it understood",
+  ("NAMING WHAT YOU HAVE UNDERSTOOD" in ico.PURPOSE_NOTE_RULES,
+   "STATE NOTHING ABOUT THEIR SITUATION" in ico.PURPOSE_NOTE_RULES),
+  (True, True)),
+ # ...and all of that is framing for a question that still has to be in the
+ # message. Measured before this line existed: the opening turn came back as
+ # three sentences of preamble and no question, on both the employer and the
+ # candidate side.
+ ("...and the message still ends with the question",
+  "ENDS WITH THE QUESTION" in ico.PURPOSE_NOTE_RULES, True),
+ # A job seeker reading the seven services finds nothing she is the client
+ # for. Registering helpers is a built flow with its own 15 fields, its own
+ # closing briefing and its own lead table - it was simply missing from the
+ # one place the bot says what we do.
+ ("the service list says who the seven are for",
+  ("TO EMPLOYERS" in _IDENTITY,
+   "register HELPERS who are looking" in _IDENTITY), (True, True)),
  # A bare "Yes" closed "Any preference on her age or how much experience she
  # should have?" and the agent got a preference with no content.
  ("a bare yes does not answer an open question",

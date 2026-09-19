@@ -193,8 +193,18 @@ COLLECTOR_INTRO_NOTE = (
 )
 
 
+# The REASON for a run of questions, never the wording of it.
+#
+# Not one of these may describe the client's own situation. The agency,
+# 2026-09-19, testing new hiring: "hey i need helper" was answered "I'll ask a
+# few details so we can understand your household and find a suitable helper",
+# and they wrote back - "their intent is not clear. I didn't say that I want
+# household help. How can the bot say I want to understand your household?"
+# They are right: on that turn we know four words, and "YOUR household" is a
+# decision about them that they have not made and cannot see us making. A
+# reason says why WE are asking; it does not tell a client what they want.
 _COLLECTION_PURPOSE = {
-    "new_hiring": "so we can match a helper who actually suits their household",
+    "new_hiring": "so we only put forward helpers who suit the job they need doing",
     "candidate_new_hiring": "so we can put her in front of the right employers",
     # "For Direct Hire, the bot should avoid using the word paperwork"
     # - the agency, 2026-09-17. It is our word for our own filing, and to a
@@ -209,6 +219,51 @@ _COLLECTION_PURPOSE = {
     # and she has less patience for it than an employer does.
     "transfer": "so we can find you an employer who suits",
 }
+
+
+# The fixed half of the opening-turn note: everything that is not the
+# per-service reason above. A module constant rather than an inline string
+# so selfcheck_flows.py can assert the rules it carries - the same reason
+# RECORD_NAME_NOTE is one.
+PURPOSE_NOTE_RULES = (
+    "\n\nTHE REASON BELONGS TO THE QUESTIONS AS A WHOLE, NOT TO THE ONE "
+    "YOU ARE ABOUT TO ASK. Say it as its OWN SENTENCE, ending in a full "
+    "stop, and then ask the first question as a separate sentence. A "
+    "semicolon, a dash or a \"so\" joining the two makes it the reason for "
+    "THAT question again - the same fault wearing different punctuation, "
+    "which is what went out on 2026-09-19: \"I'll ask a few details so we "
+    "can understand your household and find a suitable helper; may I know "
+    "your name?\". "
+    "Never bolt it onto that question as the reason for THAT question. "
+    "Live, 2026-09-17: \"May I know your name so we can recommend a "
+    "helper suited to your household?\" - a name does not help anyone "
+    "match a helper, and the client came straight back with \"why will "
+    "knowing my name help you in recommending a helper that suits my "
+    "household?\". A reason that does not survive being questioned is "
+    "worse than no reason at all."
+    "\n\nOPEN THAT SENTENCE BY NAMING WHAT YOU HAVE UNDERSTOOD. They "
+    "have told you what they want in a handful of words and you have "
+    "picked one of our services off it, so put that back to them as a "
+    "short clause at the FRONT of the reason sentence, not as a sentence "
+    "of its own: \"So you are looking to hire a helper - I will ask a few "
+    "things, <reason>.\" AN INFERENCE THE CLIENT CANNOT SEE IS ONE THEY "
+    "CANNOT CORRECT, and on 2026-09-19 the agency tested exactly that: "
+    "\"hey i need helper\" got the reason and the name question with "
+    "nothing saying what we had taken it to mean, and they wrote back "
+    "\"how you know for what service i need helper\"."
+    "\n\nSTATE NOTHING ABOUT THEIR SITUATION THAT THEY HAVE NOT SAID. "
+    "Not their household, not their family, not where they live, not "
+    "which kind of help they want, not whether they have had a helper "
+    "before. On this turn you know one thing: the words they used. "
+    "Everything else is what the questions are for, and a client whose "
+    "circumstances are described back to them before they have given any "
+    "reads it as us having decided about them."
+    "\n\nAND THE MESSAGE STILL ENDS WITH THE QUESTION. All of the above "
+    "is framing for the question you are actually here to ask, and "
+    "framing that arrives without it is a message the client cannot "
+    "reply to - they wait, or they answer a question nobody put. Two "
+    "sentences of preamble at the very most, then ask."
+)
 
 
 _SMALL_TICKET_SERVICES = frozenset({"renewal", "passport_renewal", "insurance"})
@@ -1396,7 +1451,31 @@ _ASKS_SOMETHING = re.compile(
     # never asked, which leaves them waiting for a reply that cannot come.
     # _VALUE_IS_QUESTION anchors all of its own word alternatives at ^ for
     # exactly this reason; these two were the pair that got left unanchored.
-    r"|^\s*(?:is|are)\s+there\b",
+    r"|^\s*(?:is|are)\s+there\b"
+    # A question about US - what we have just assumed, or why we are asking at
+    # all. Not one of these carries a question mark in practice and not one of
+    # them matched anything above, so the collector did not know a question had
+    # been put and simply asked its next field. Live 2026-09-19, the agency's
+    # own new-hiring test: "hey i need helper" -> "how you know for what
+    # service i need helper" was answered by restating what we would do and
+    # asking for the name again, because ANSWER_THEN_ASK never fired.
+    #
+    # `_VALUE_IS_QUESTION` already reads four of these five as questions - so
+    # the two patterns disagreed about the same sentence, which is the mismatch
+    # the note above this one exists to prevent. Measured before the fix:
+    # 5 of 8 phrasings read as a question by one and not the other, and one of
+    # the five is the HELPER's own line from the 2026-09-19 passport transcript
+    # ("why you are asking about my helper name").
+    #
+    # "who said" is anchored at ^ because it is a relative clause anywhere else
+    # ("my friend who said you are good"); the rest carry their own verb, so
+    # "this is why you should send profiles" does not match while "why you are
+    # asking" does.
+    r"|\bhow\s+(?:do\s+|did\s+|does\s+)?(?:you|u)\s+know\b"
+    r"|\bwhy\s+(?:are\s+you|you\s+are|you\s+asking|do\s+you|did\s+you|"
+    r"would\s+you|is\s+it)\b"
+    r"|\bwhat\s+makes\s+you\s+think\b"
+    r"|^\s*who\s+(?:said|told)\b",
     re.IGNORECASE,
 )
 
@@ -2918,16 +2997,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             f"{purpose}. Put it in your own words, not those ones, and say it ONCE "
             "— here, at the top. Never explain yourself again in this conversation, "
             "and never turn it into a preamble you attach to every question."
-            "\n\nTHE REASON BELONGS TO THE QUESTIONS AS A WHOLE, NOT TO THE ONE "
-            "YOU ARE ABOUT TO ASK. Say it as its own clause about what you are "
-            "going to ask for, then ask the first question as its own sentence. "
-            "Never bolt it onto that question as the reason for THAT question. "
-            "Live, 2026-09-17: \"May I know your name so we can recommend a "
-            "helper suited to your household?\" - a name does not help anyone "
-            "match a helper, and the client came straight back with \"why will "
-            "knowing my name help you in recommending a helper that suits my "
-            "household?\". A reason that does not survive being questioned is "
-            "worse than no reason at all."
+            + PURPOSE_NOTE_RULES
         )
 
     # More work than one helper can carry: say so once, then carry on.

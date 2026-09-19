@@ -319,7 +319,14 @@ because the lead is opened early and the ticket is created much later.
 | The salary bands say SGD on both sides of the desk | `budget.options` → `_matched_options("budget")` | The currency is on the BANDS, not just the question, because `_field_guidance` reads the options into what is actually asked — live that produced "such as below $500, $500-600" with no currency named. The digits are untouched: they are the grounding `ungrounded_figures` reads (2026-09-09 D). |
 
 | Claire introduces herself whichever instruction wins the turn | `templates.FIRST_CONTACT_INTRO_NOTE` + `response_generator` + `smoke_nodes.py` | A first message that is a PROCESS question swaps the whole instruction for `PROCESS_INSTRUCTION`, which says nothing about introducing yourself — so the client never learned what they were talking to. Appended AFTER the template is chosen, because the instruction that loses rule 1 is always the specialised one (2026-09-04 was the collector, 2026-09-17 the process path). |
-| The reason for a run of questions is never bolted onto the first one | `info_collector` `purpose_note` | "May I know your name so we can recommend a helper suited to your household?" — a name does not help match a helper, and the client came straight back with "why will knowing my name help you". The note said "give the reason before you ask"; "X so that Y" reads as before-you-ask and is still wrong. A reason that does not survive being questioned is worse than no reason. |
+| The reason for a run of questions is never bolted onto the first one | `info_collector.PURPOSE_NOTE_RULES` | "May I know your name so we can recommend a helper suited to your household?" — a name does not help match a helper, and the client came straight back with "why will knowing my name help you". The note said "give the reason before you ask"; "X so that Y" reads as before-you-ask and is still wrong. A reason that does not survive being questioned is worse than no reason. **2026-09-19: "its own clause" was not enough** — a clause joined by a semicolon is still one, and that is exactly what went out. It is its own SENTENCE now, and the semicolon is named. |
+| ...and the opening turn NAMES the service it understood, so a wrong reading is correctable | `PURPOSE_NOTE_RULES` ("NAMING WHAT YOU HAVE UNDERSTOOD") | The agency, 2026-09-19: *"hey i need helper"* → *"I'll ask a few details so we can understand your household…"* → *"how you know for what service i need helper"*. An inference the client cannot see is one they cannot correct. Put back as a short clause at the FRONT of the reason sentence, not as a sentence of its own - measured, a third sentence of preamble pushes the question out of the message entirely. |
+| ...and states nothing else about them at all | `PURPOSE_NOTE_RULES` ("STATE NOTHING ABOUT THEIR SITUATION") + the `_COLLECTION_PURPOSE` sweep | *"their household"* in the reason is a decision about a client who has written four words. Derived over the whole table rather than fixed on `new_hiring`, so a reason added tomorrow that describes the client fails by name. |
+| ...and the message still ends with the question | `PURPOSE_NOTE_RULES` ("ENDS WITH THE QUESTION") | All of that is framing for the question we are there to ask, and the first draft of it produced three sentences of preamble and no question - on the employer side AND the candidate side. Measured 0/4 before the line, 8/8 after. |
+| A question about US is a question | `info_collector._ASKS_SOMETHING` (the how-you-know family) | *"how you know for what service i need helper"*, *"why you are asking about my helper name"*, *"who said i want to hire"* - none carries a question mark, none matched anything else, so `ANSWER_THEN_ASK` never fired and the collector simply asked its next field. `_VALUE_IS_QUESTION` read four of them as questions and threw the VALUE away, so the client's question was discarded AND unanswered in the same turn — the exact mismatch the note above that pattern exists to prevent. |
+| ...and it is answered from their own words, never from the service list | `ANSWER_THEN_ASK_INSTRUCTION` | *"We help with new hiring, direct hiring, replacement, transfer, Work Permit renewal, home leave arrangement and passport renewal. Which service do you need?"* — a menu in reply to "how do you know" reads as though we are still guessing. The answer is *"You said you need a helper, so I took that as hiring - tell me if it is something else."* |
+| ...and never by taking the reading back | the same note | It was a reasonable reading and they asked how we knew, not for it to be withdrawn. Disowning it leaves them with no service, no question to answer and an apology nobody asked for - §9.19, reported a second time and therefore acted on rather than guessed at. |
+| The seven services are the EMPLOYER's side of the desk, and the prompt says so | `system.IDENTITY` | A job seeker reading them finds nothing she is the client for - and registering helpers is a built flow with 15 fields, its own closing briefing and its own lead table. Live before: a helper asking what we do got *"I'll confirm the suitable options with our team and come back to you."* After: *"We register helpers looking for work and match them with employers."* |
 | A question that names its own options names ALL of them | `home_type` (and `languages`, `nationality`) | "Option of asking landed property is missing" — it was in the options and never in the question, so `_field_guidance` picked two as examples and a client in a landed house was never shown their own. The room counts went so the list could be read out without brackets (2026-09-10), and `home_type` left `_DIGITS_ON_PURPOSE` with them. |
 | The household question asks who lives there, not just how many | `SERVICE_FIELDS[...]["household"]` | Six people is two adults and four children, or four adults and two elderly parents — different jobs. `children_detail` and `elderly_detail` are both GATED on `requirement`, so an elderly parent in a childcare-only household was never asked about at all. |
 | More work than one helper can carry is said once, before moving on | `info_collector._heavy_workload` + `state.flagged_once` + `smoke_nodes.py` | BOTH halves required — more than one kind of work AND a large household, by headcount or home size. A big family with one clear job is an ordinary placement, and telling that client their job is too big talks them out of a hire, so it fails towards silence. Advice, never a refusal, and no figure: a number gets the reply binned and they lose the advice with it. Recorded only when the reply was not the bare fallback (2026-09-08 `briefing_lost`). |
@@ -1145,6 +1152,91 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-19** - **"hey i need helper" was answered with a decision about the
+  client's household, and the question about that decision was answered with a
+  menu.** The agency's new-hiring test, and the second half of it is a gap that
+  had also been swallowing the HELPER's own objection two days earlier.
+  (A) **What they saw.** *"hey i need helper"* -> *"Hi, I'm Claire, Ming Hwee's
+  AI assistant. I'll ask a few details to understand your household and find a
+  suitable match; may I know your name?"* -> *"how you know for what service i
+  need helper"* -> *"We help with new hiring, direct hiring, replacement,
+  transfer, Work Permit renewal, home leave arrangement and passport renewal.
+  Which service do you need?"* Their words: *"their intent is not clear. I
+  didn't say that I want household help. How can the bot say I want to
+  understand your household?"*
+  (B) **They are right, and the first half is the 2026-09-17 rule with a
+  loophole in it.** That rule already said the reason for a run of questions
+  belongs to the questions as a whole and must not be bolted onto the name
+  question - and it asked for the reason as "its own CLAUSE". A clause joined
+  by a semicolon is still its own clause, which is what shipped: *"...find a
+  suitable helper; may I know your name?"* It is its own SENTENCE now, ending
+  in a full stop, and the note names the semicolon, the dash and the "so" by
+  which the model keeps re-welding it.
+  (C) **And the reason itself was a decision about them.** *"so we can match a
+  helper who actually suits THEIR HOUSEHOLD"* said to somebody who has written
+  four words. Swept over the whole `_COLLECTION_PURPOSE` table rather than
+  fixed on the one service, so a reason added tomorrow that describes the
+  client fails by name.
+  (D) **The opening turn now NAMES the service it understood.** *"So you are
+  looking to hire a helper - I'll ask a few details..."* An inference the
+  client cannot see is one they cannot correct, which is `recognised_note`'s
+  argument from 2026-09-04 pointed at the service instead of at a record. It
+  goes at the FRONT of the reason sentence and not as a sentence of its own,
+  because measured, a third sentence of preamble pushes the question out of the
+  message entirely - 0 of 4 on both the employer and the candidate side until
+  the note said outright that the message still ends with the question, then
+  8 of 8.
+  (E) **The second complaint is a one-word gap, and it is the sixth of its
+  family.** `_ASKS_SOMETHING` decides whether the collector knows a question has
+  been put. It did not match *"how you know for what service i need helper"* -
+  no question mark, and "how you know" is not "how do you know". So
+  `ANSWER_THEN_ASK` never fired, nothing was answering anything, and the model
+  simply restated what it was going to do. `_VALUE_IS_QUESTION`, which is
+  broader, DID read four phrasings of this family as questions and threw the
+  VALUE away - so the client's question was discarded AND unanswered in the
+  same turn, which is the exact mismatch the note above that pattern was
+  written about in 2026-09-02. **Measured: 5 of 8 phrasings disagreed**, and
+  one of the five is the HELPER's own line from the passport transcript two
+  days ago - *"why you are asking about my helper name"*.
+  (F) **The answer to "how do you know" is their own words.** *"You said you
+  need a helper, so I took that as hiring - tell me if it is something else."*
+  Not the service list: a menu in reply to that question reads as though we are
+  still guessing and answers nothing. And **not an apology** - the first version
+  of the note produced *"You're right, I shouldn't assume the service. What
+  would you like help with?"*, which leaves them with no service, no question
+  and an apology nobody asked for. That is §9.19, which said a prompt rule
+  against disowning our own replies was deliberately not taken because
+  *"nobody has reported the shape twice"*. It has now been reported twice, so
+  it is taken - and scoped to a reading that has been QUESTIONED rather than
+  CONTRADICTED, so a real correction still switches the service.
+  (G) **The helper's half, which is what the agency asked to be checked
+  separately.** Her routing is right - *"hey i need job"*, *"i am looking for
+  work"* both reach `candidate_registration` - but `IDENTITY` said *"the agency
+  provides seven core services"* and listed seven employer services. Registering
+  helpers is a built flow with 15 fields, its own closing briefing and its own
+  lead table, and it was missing from the one place the bot says what we do.
+  Live before: a job seeker asking what we provide got *"I'll confirm the
+  suitable options with our team and come back to you."* After: *"We register
+  helpers looking for work and match them with employers."*
+  (H) **And the replay found a regression from this morning's commit.** With the
+  passport branch now deciding on the OPENING message, `HELPER_OWN_PASSPORT_NOTE`
+  was being read on the turn before she has given her name - and it asserted
+  *"her name is already on file"*. The model did as it was told and skipped
+  straight to the nationality, **0 runs of 4**, on the one field five separate
+  complaints since 2026-09-08 have been about NOT being asked. The note now says
+  the branch removes the HELPER-name question and never the client's own. 4 of 4
+  after, and it has a smoke state of its own.
+  (I) **Fourteen faults injected, fourteen red**, plus a separate check that the
+  new smoke state bites on its own rather than riding on the predicate
+  assertions - the "imported and never called" hole, guarded for the fifth
+  time.
+  (J) **Verified live against the real model.** The agency's two turns, the two
+  ways a helper says she wants work, and an employer asking what we do before
+  naming anything. The passport flows from this morning replay unchanged, both
+  hers and the employer's.
+  `selfcheck_flows.py` is **617 assertions**; `smoke_nodes.py` is **155
+  states**.
 
 - **2026-09-19** - **The disambiguating question lasted one round, and the
   agency were right to take it back.** Their words on reading it: *"when someone
