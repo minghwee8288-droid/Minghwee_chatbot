@@ -857,32 +857,6 @@ and the collection simply carries on - you do not need to guard against that.
 """
 
 
-WHOSE_PASSPORT_NOTE = """
-You do not yet know whose passport this renewal is for, and it decides
-everything that follows - so ask, and ask nothing else.
-
-Ming Hwee renews a DOMESTIC HELPER's passport, through her own country's
-embassy here in Singapore. Two different people ask us for it and both are
-welcome: the employer, about the helper who works for them, and the HELPER
-herself, about her own passport.
-
-They have said "my passport" without naming a helper, and that is genuinely
-ambiguous - an employer often says it meaning their maid's. So put ONE short
-question: is it their own passport, or their helper's?
-
-DO NOT ask for a helper's name in this message. That is the question that has
-to wait for this answer, and asking it of a helper reads as though she is
-giving us somebody else's details, which is what the agency reported when
-they tested this as a helper.
-
-DO NOT guess, do not lead them towards either answer, and do not suggest that
-one of the two would be a problem. Neither is.
-
-DO NOT give a fee, a timeline or a document list here. Every figure in the
-records belongs to a route we have not established yet.
-"""
-
-
 HELPER_OWN_PASSPORT_NOTE = """
 The person writing IS the passport holder. She is a domestic helper renewing
 her own passport, and that is a service we provide to her directly - the

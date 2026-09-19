@@ -816,19 +816,21 @@ CASES = [
     # branch never fires - and this branch has to do three things the predicate
     # cannot show: answer instead of collecting, NOT hand over, and not finish
     # the collection.
-    ("info_collector", "their own passport is answered, not collected",
+    ("info_collector", "a denial is taken at face value and collected for THEM",
      {"service_type": "passport_renewal", "intent": "passport_renewal",
       "incoming_text": "There isn't any helper here. I want to renew my passport",
       "collected_info": {"full_name": "Rats"},
       "asked_field_counts": {"full_name": 1, "helper_name": 1},
       "history_text": "bot: may I know your helper's name?",
-      "_expect_prompt": "is it their own passport",
+      "_stub_extraction": {},
+      "_expect_collected": {"helper_name": "Rats"},
+      "_expect_prompt": "The person writing IS the passport holder",
       # `flagged_once` is the half that makes the NEXT turn work. Without it
-      # the answer to this question lands nowhere and it is asked again, and
-      # an assertion on the predicate cannot see that, because it supplies the
-      # flag itself.
+      # the decision is re-taken from a later message that no longer says it,
+      # and an assertion on the predicate cannot see that, because it supplies
+      # the flag itself.
       "_expect_state": {"info_complete": False, "needs_handover": False,
-                        "flagged_once": ["passport_holder_asked"]}}),
+                        "flagged_once": ["passport_holder_is_the_sender"]}}),
     # ...and the question it must NOT ask on that turn is the one that started
     # the complaint. The agency's words: she "should not be asked for the
     # helper's name as if she is providing someone else's details".
@@ -838,18 +840,25 @@ CASES = [
       "collected_info": {"full_name": "Rats"},
       "asked_field_counts": {"full_name": 1, "helper_name": 1},
       "history_text": "bot: may I know your helper's name?",
-      "_forbid_prompt": "field to collect: helper's name"}),
-    # The records are stripped on that turn, which is the guard half rather
-    # than the prompt half: the retrieved set holds "$450" and would ground it.
-    ("info_collector", "...and the helper's fee is not offered to the model",
+      "_forbid_prompt": "May I know your helper's name?"}),
+    # ...and the one client who IS refused on this branch rather than on the
+    # nationality answer: he has already named his helper, so we know he
+    # employs one and the passport he has just asked about is his own. The
+    # records are stripped on that turn, which is the guard half rather than
+    # the prompt half: the retrieved set holds "$450" and would ground it.
+    ("info_collector", "an employer asking about HIS own passport beside hers is refused",
      {"service_type": "passport_renewal", "intent": "passport_renewal",
-      "incoming_text": "There isn't any helper here. I want to renew my passport",
-      "collected_info": {"full_name": "Rats"},
+      "incoming_text": "and also I want to renew my passport",
+      "collected_info": {"full_name": "Sallu", "helper_name": "Lily"},
       "asked_field_counts": {"full_name": 1, "helper_name": 1},
       "rag_context": "A passport renewal costs approximately $450 and takes "
                      "approximately 3 working days.",
-      "history_text": "bot: may I know your helper's name?",
-      "_forbid_prompt": "450"}),
+      "history_text": "bot: which country is Lily's passport from?",
+      "_stub_extraction": {},
+      "_expect_prompt": "not one we can renew",
+      "_forbid_prompt": "450",
+      "_expect_state": {"info_complete": False, "needs_handover": False,
+                        "flagged_once": ["own_passport"]}}),
     # The same request on the service the words actually misroute into.
     ("info_collector", "...on the work-permit flow it lands in too",
      {"service_type": "renewal", "intent": "renewal",
@@ -857,7 +866,8 @@ CASES = [
       "collected_info": {"full_name": "Vaidik", "helper_name": "Polo"},
       "asked_field_counts": {"full_name": 1, "helper_name": 1},
       "history_text": "bot: Here is everything for Polo's passport renewal.",
-      "_expect_prompt": "is it their own passport"}),
+      "_stub_extraction": {},
+      "_expect_prompt": "not one we can renew"}),
 
     # --- 2026-09-19: and the answer she gives -----------------------------
     # The agency tested passport renewal AS THE HELPER and the 2026-09-17
@@ -874,16 +884,28 @@ CASES = [
       "incoming_text": "my own passport",
       "collected_info": {"full_name": "kareena"},
       "asked_field_counts": {"full_name": 1},
-      "flagged_once": ["passport_holder_asked"],
-      "history_text": "You: Is this your own passport, or your helper's?",
+      "history_text": "You: May I know your name?",
       "_stub_extraction": {},
       "_expect_collected": {"helper_name": "kareena"},
       "_expect_prompt": "The person writing IS the passport holder",
-      # `passport_said_mine` rides along because her answer says it again -
-      # harmless, and _merge_unique keeps one copy.
       "_expect_state": {"info_complete": False,
-                        "flagged_once": ["passport_holder_is_the_sender",
-                                         "passport_said_mine"]}}),
+                        "flagged_once": ["passport_holder_is_the_sender"]}}),
+    # ...and the turn the agency actually objected to, which is the FIRST one.
+    # "i want to renew my passport" settles it there and then, so the
+    # helper-name question is never even queued - a decision that waits for
+    # her name arrives one question too late, which is the transcript they
+    # sent: "May I know your name?" -> "my self kareena" -> "May I know your
+    # HELPER's name?".
+    ("info_collector", "...decided on the opening message, so no helper is ever asked for",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "i want to renew my passport",
+      "collected_info": {},
+      "asked_field_counts": {},
+      "history_text": "",
+      "_stub_extraction": {},
+      "_forbid_prompt": "May I know your helper's name?",
+      "_expect_state": {"info_complete": False,
+                        "flagged_once": ["passport_holder_is_the_sender"]}}),
     # She says so herself on the very first turn she says it, with no question
     # from us at all - "i am helper" and "my employer" are the two things only
     # she writes.
@@ -900,14 +922,13 @@ CASES = [
     # employer who meant their maid's goes straight back to the collection.
     ("info_collector", "...and an employer who meant their helper's carries on",
      {"service_type": "passport_renewal", "intent": "passport_renewal",
-      "incoming_text": "my helper's passport",
+      "incoming_text": "i want to renew my helper's passport",
       "collected_info": {"full_name": "Vaidik"},
       "asked_field_counts": {"full_name": 1},
-      "flagged_once": ["passport_holder_asked"],
-      "history_text": "You: Is this your own passport, or your helper's?",
+      "history_text": "You: May I know your name?",
       "_stub_extraction": {},
-      "_forbid_prompt": "The person writing IS the passport holder",
-      "_expect_state": {"flagged_once": ["passport_holder_is_a_helper"]}}),
+      "_expect_prompt": "May I know your helper's name?",
+      "_forbid_prompt": "The person writing IS the passport holder"}),
     # The refusal did not go away - it moved onto evidence. A Singaporean
     # employer renewing their OWN passport says the same sentence she does, so
     # what separates them is the country the passport is from: we renew through

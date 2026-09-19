@@ -1068,23 +1068,37 @@ rows = [
  # clients' own passports." She had written "i want to renew my passport then
  # why you are asking about my helper name i dont have any helper".
  #
- # THE TWO CASES ARE THE SAME SENTENCE. The employer that branch was built for
- # wrote "There isn't any helper here. I want to renew my passport"; she wrote
- # "i dont have any helper". Nothing in either says which of them is a domestic
- # helper - so the flow asks, once, rather than guessing, and what finally
- # settles it is the nationality question it already asks.
- ("an ambiguous 'my passport' is asked about, not guessed at",
-  ico._whose_passport(
-      {"incoming_text": "There isn't any helper here. I want to renew my passport",
-       "flagged_once": []}, {"full_name": "Rats"}), "ask"),
- # Never before we know their own name. The introduction and "May I know your
- # name?" come first, and on the opening message this is ambiguous ON PURPOSE
- # (2026-09-17) - it is the SECOND question, about a helper's name, that this
- # has to get in front of.
- ("...but not before we have even asked their name",
+ # The first answer to that was a disambiguating question, and the agency took
+ # it back the same day: "the intent is clear naa, it means the user is helper
+ # and wants to renew their passport ... this question does not make any
+ # sense." So "my passport" with no helper named IS the sender's, decided on
+ # the message that says it, and what catches the 2026-09-17 employer instead
+ # is the nationality question the flow already asks.
+ ("'my passport' is the passport of the person writing it",
+  [m for m in ("i want to renew my passport",
+               "I want to renew my passport",
+               "hi i need to renew my own passport",
+               "my passport is expiring, can you renew it")
+   if ico._whose_passport({"incoming_text": m, "flagged_once": []},
+                          {}) != "sender"], []),
+ # Decided on the FIRST message, before we have asked their name - because it
+ # is the helper-NAME question, not the refusal, that the agency objected to,
+ # and a decision that waits for the name arrives one question too late.
+ ("...and decided before their own name has been asked for",
   ico._whose_passport(
       {"incoming_text": "i want to renew my passport", "flagged_once": []},
-      {}), None),
+      {}), "sender"),
+ # A denial is the same statement written the other way round, and it names a
+ # helper in order to say there is not one - so it must not be read as "my
+ # helper's". This is the 2026-09-17 employer's own sentence.
+ ("a denial beats the helper word inside it",
+  [m for m in ("There isn't any helper here. I want to renew my passport",
+               "i want to renew my passport then why you are asking about my "
+               "helper name i dont have any helper",
+               "i dont have a helper, its my passport",
+               "no helper, its for me")
+   if ico._whose_passport({"incoming_text": m, "flagged_once": []},
+                          {"full_name": "Rats"}) != "sender"], []),
  # She says so herself, and then nothing is asked at all.
  ("a helper who says she is one is believed straight away",
   [m for m in ("i am a helper, i want to renew my passport",
@@ -1092,77 +1106,31 @@ rows = [
                "my employer said to message you about my passport")
    if ico._whose_passport({"incoming_text": m, "flagged_once": []},
                           {"full_name": "kareena"}) != "sender"], []),
- # Her answer to the one question we put.
- ("her answer is read as hers",
-  [m for m in ("my own", "mine", "my own passport", "its me",
-               "for me", "i am the helper", "me")
+ # Settled answers stick, so the decision is not re-taken from a later message
+ # that no longer says it - "kareena", "indonesia" and a date all say nothing
+ # about whose passport this is.
+ ("a settled answer is not re-decided from a later message",
+  [m for m in ("my self kareena", "indonesia", "next year march", "ok")
    if ico._whose_passport(
-       {"incoming_text": m, "flagged_once": ["passport_holder_asked"]},
-       {"full_name": "kareena"}) != "sender"], []),
- # ...and a denial wins over the word "helper" inside it, which is how the
- # denial is actually written. Her own reply to this question was "i want to
- # renew my passport then why you are asking about my helper name i dont have
- # any helper" - read helper-word-first that is an answer of "my helper's",
- # the exact opposite of what she said. Found by planning the live replay, not
- # by reading the code.
- ("a denial beats the helper word inside it",
-  [m for m in ("i want to renew my passport then why you are asking about my "
-               "helper name i dont have any helper",
-               "i dont have a helper, its my passport",
-               "no helper, its for me")
-   if ico._whose_passport(
-       {"incoming_text": m, "flagged_once": ["passport_holder_asked"]},
-       {"full_name": "kareena"}) != "sender"], []),
- ("...and his as his helper's",
-  [m for m in ("my helper's", "my helper", "the maid's one",
-               "her passport", "for her", "hers")
-   if ico._whose_passport(
-       {"incoming_text": m, "flagged_once": ["passport_holder_asked"]},
-       {"full_name": "Vaidik"}) != "hers"], []),
- # It FAILS TOWARDS THE EXISTING FLOW. An answer we cannot read is asked about
- # once more and then let go, so a client who will not answer ends up in the
- # employer collection rather than in a loop - the max_asks rule, applied to a
- # branch that has no field to count.
- ("an answer nobody can read is asked about once more",
-  ico._whose_passport(
-      {"incoming_text": "hmm", "flagged_once": ["passport_holder_asked"]},
-      {"full_name": "Vaidik"}), "ask"),
- ("...and then let go rather than looped on",
-  ico._whose_passport(
-      {"incoming_text": "hmm",
-       "flagged_once": ["passport_holder_asked", "passport_holder_asked_twice"]},
-      {"full_name": "Vaidik"}), None),
- # Settled answers stick, so neither side is asked twice...
- ("a settled answer is not asked again",
-  (ico._whose_passport(
-      {"incoming_text": "Indonesia",
-       "flagged_once": ["passport_holder_is_the_sender"]}, {}),
-   ico._whose_passport(
-       {"incoming_text": "Indonesia",
-        "flagged_once": ["passport_holder_is_a_helper"]}, {})),
-  ("sender", None)),
+       {"incoming_text": m,
+        "flagged_once": ["passport_holder_is_the_sender"]}, {}) != "sender"],
+  []),
  # ...and naming a helper takes it back, so a client who corrects us costs
  # nothing and needs no special case - the 2026-09-11 rule.
  ("...and naming a helper releases it",
   ico._whose_passport(
       {"incoming_text": "sorry i meant my helper's passport",
        "flagged_once": ["passport_holder_is_the_sender"]}, {}), None),
- # ...and the question arrives BEFORE the helper-name one, not after she has
- # objected to it. The opening message is where "my passport" is written, and
- # by the turn it matters it is two messages back - so it is remembered. Their
- # transcript is what this is for: "i want to renew my passport" -> "May I know
- # your name?" -> "my self kareena" -> "May I know your HELPER's name?".
- ("the question replaces the helper-name one rather than following it",
-  ico._whose_passport(
-      {"incoming_text": "my self kareena",
-       "flagged_once": ["passport_said_mine"]}, {"full_name": "kareena"}),
-  "ask"),
- # ...and it stops the moment there is a helper to talk about, so an employer
- # who said "my passport" once and then named his maid is never asked again.
- ("...and stops once there is a helper on the record",
-  ico._whose_passport(
-      {"incoming_text": "Lily", "flagged_once": ["passport_said_mine"]},
-      {"full_name": "Sallu", "helper_name": "Lily"}), None),
+ # ...but a denial and her saying outright that she is a helper both BEAT that
+ # release, for the reason above: each contains the word that would otherwise
+ # undo what she has just told us.
+ ("...but not on the two sentences that only she writes",
+  [m for m in ("i dont have any helper", "i am a helper",
+               "there isnt any helper, it is mine")
+   if ico._whose_passport(
+       {"incoming_text": m,
+        "flagged_once": ["passport_holder_is_the_sender"]}, {}) != "sender"],
+  []),
 
  # THE EMPLOYER FLOW IS UNTOUCHED, which is what the agency asked for by name.
  # None of these reaches the branch at all: they name a helper, so "my
@@ -1175,13 +1143,15 @@ rows = [
                "Sallu", "Lily", "indonesia", "On 26/10/2026")
    if ico._whose_passport({"incoming_text": m, "flagged_once": []},
                           {"full_name": "Sallu"}) is not None], []),
- # The one question must not ask for a helper's name, which is the question
- # that has to wait for its answer.
- ("the question asks whose it is and nothing else",
-  ("their own passport, or their helper's" in tpl.WHOSE_PASSPORT_NOTE,
-   "DO NOT ask for a helper's name" in tpl.WHOSE_PASSPORT_NOTE,
-   bool(re.search(r"\d{3}", tpl.WHOSE_PASSPORT_NOTE))),
-  (True, True, False)),
+ # The one case where "my passport" is genuinely NOT the sender's: we already
+ # hold a helper on this conversation, so we know they employ one and the
+ # passport they have just asked about is their own. That needs no nationality
+ # test - a named helper is the evidence the test stands in for elsewhere.
+ ("...and an employer who has named his helper is refused, not served",
+  ico._whose_passport(
+      {"incoming_text": "Also I want to renew my passport also",
+       "flagged_once": []},
+      {"full_name": "Vaidik", "helper_name": "Polo"}), "own"),
  # ...and her collection note stops the model talking to her about "your
  # helper", which is what it did on home leave when nothing told it otherwise.
  ("her questions are about her, not about somebody she employs",
