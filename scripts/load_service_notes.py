@@ -230,7 +230,7 @@ ROWS: list[dict[str, Any]] = [
             "There is no single answer, because it turns on your requirements and on "
             "which helper you choose. What we work to is your own date - so the "
             "question we ask is when you need her to start, and we plan back from "
-            "that. A consultant will confirm the timeline once your requirements are "
+            "that. Our agent will confirm the timeline once your requirements are "
             "in and we know which helper you are going for."
         ),
     },
@@ -521,7 +521,7 @@ ROWS: list[dict[str, Any]] = [
             "means identity documents for the children or elderly family members she "
             "would be looking after. Everything else is the same as a first hire - your "
             "identity document, proof of your monthly income, and the forms we prepare "
-            "for you to sign. A consultant will confirm whether your household qualifies "
+            "for you to sign. Our agent will confirm whether your household qualifies "
             "for a second helper before anything is submitted."
         ),
     },
@@ -717,7 +717,7 @@ ROWS: list[dict[str, Any]] = [
             "we register her for the programme within the window MOM allows. On handover "
             "day you complete an orientation checklist together with her and with us, "
             "and all three sign it. The placement fee is settled that day, by PayNow, "
-            "cash or cheque, and a consultant will have taken you through the figures "
+            "cash or cheque, and our agent will have taken you through the figures "
             "well before then. Her Work Permit card comes through afterwards and we pass "
             "it to you. We call you and her within a week of her arrival to check how "
             "she is settling in."
@@ -902,7 +902,7 @@ ROWS: list[dict[str, Any]] = [
             "and we arrange it as an insured bond so you are not putting the money up "
             "yourself. She also needs medical insurance and personal accident insurance "
             "meeting MOM's minimum coverage, which we arrange to MOM's specifications "
-            "alongside her medical examination. A consultant will confirm the current "
+            "alongside her medical examination. Our agent will confirm the current "
             "minimums and what the cover costs."
         ),
     },
@@ -1105,7 +1105,7 @@ ROWS: list[dict[str, Any]] = [
             "It is $450 for a Filipino helper and $450 for an Indonesian helper. That "
             "covers us handling the embassy paperwork, the forms and the runner who "
             "takes her through the appointment. If your helper is of another "
-            "nationality, tell us and a consultant will confirm the cost for her "
+            "nationality, tell us and our agent will confirm the cost for her "
             "embassy."
         ),
     },
@@ -1275,7 +1275,7 @@ ROWS: list[dict[str, Any]] = [
             "contract says. If a Filipino helper's application has to be rushed there "
             "is an additional $40, and the embassy will want proof of the urgency or "
             "a letter explaining it. If your helper is of another nationality, tell "
-            "us and a consultant will confirm the cost for her embassy."
+            "us and our agent will confirm the cost for her embassy."
         ),
     },
     {
@@ -1537,7 +1537,7 @@ ROWS: list[dict[str, Any]] = [
             "bond of $5,000 for a helper who is not Malaysian, and we put it in place "
             "as an insured bond so you are not laying the money out yourself. She also "
             "needs medical insurance and personal accident insurance at the coverage "
-            "MOM sets, and we buy those before the Work Permit is issued. A consultant "
+            "MOM sets, and we buy those before the Work Permit is issued. Our agent "
             "will confirm the coverage figures for you."
         ),
     },
@@ -1607,8 +1607,8 @@ ROWS: list[dict[str, Any]] = [
         "section_heading": "Replacement - cost",
         "question": "How much does a replacement cost?",
         "answer": (
-            "That depends on your original agreement and the circumstances, so a "
-            "consultant will confirm it rather than have me give you half a picture. "
+            "That depends on your original agreement and the circumstances, so our "
+            "agent will confirm it rather than have me give you half a picture. "
             "What I can tell you is that a replacement within your guarantee period "
             "carries no additional agency service fee, and that you sign a Replacement "
             "Services and Fees form rather than the full new-hire schedule. Government "
@@ -1634,7 +1634,7 @@ ROWS: list[dict[str, Any]] = [
         "section_heading": "Transfer - cost",
         "question": "How much does a transfer cost?",
         "answer": (
-            "There is a transfer fee, and a consultant will confirm the amount for "
+            "There is a transfer fee, and our agent will confirm the amount for "
             "your situation rather than have me quote you something that turns out not "
             "to apply. It is a good deal less involved than a full overseas "
             "recruitment, since there is no embassy stage and no flight. Government "
@@ -1651,7 +1651,7 @@ ROWS: list[dict[str, Any]] = [
             "already found the helper yourself and there is no sourcing, matching or "
             "interviewing for us to do. What you are paying for is the processing - "
             "the MOM application, the documents, the insurance and bond, and getting "
-            "her here and settled. A consultant will confirm the exact figure for your "
+            "her here and settled. Our agent will confirm the exact figure for your "
             "case."
         ),
     },
@@ -2043,7 +2043,7 @@ ROWS += [
             "Anything you may have arranged separately with an agency in your "
             "own country is a different matter and not something we can answer "
             "for - if you have a question about a loan or about money being "
-            "taken from your salary, tell us and a consultant will go through "
+            "taken from your salary, tell us and our agent will go through "
             "it with you properly."
         ),
     },
@@ -2566,8 +2566,9 @@ UPDATES += [
                   "mechanics; and 'approximately weeks or months' reached a client",
         "set": {"answer": (
             "It depends on her nationality. For a Filipino helper it is "
-            "approximately 6 to 8 weeks. For an Indonesian helper it is "
-            "approximately 3 working days. For a Myanmar helper the in-person "
+            "approximately 6 to 8 weeks. For an Indonesian helper it takes more "
+            "than 3 working days, and how much more depends on when her "
+            "embassy can see her. For a Myanmar helper the in-person "
             "part is generally completed within a day, but the wait for an "
             "appointment slot can run to several weeks, and sometimes months. "
             "These are estimates and can vary."
@@ -2585,10 +2586,26 @@ UPDATES += [
     {
         "where": {"question": "How long does passport renewal take for an Indonesian helper?",
                   "service_type": "passport_renewal"},
-        "reason": "same - the operating-hours and online-appointment detail is ours",
+        # Corrected 2026-09-19. The agency tested an Indonesian renewal and
+        # sent back one sentence: "Renewal of Indo passport may take more
+        # than 3 working days." Stated flat, the figure read as the whole
+        # answer - which is what the client budgets against, and it is the
+        # only nationality of the three whose row claimed a hard number
+        # with nothing about the wait in front of it. PH says 6 to 8 weeks
+        # and MM says outright that the appointment slot is the
+        # unpredictable part.
+        #
+        # They gave no replacement figure, so none is invented: the floor
+        # is stated as the floor and the rest is deferred to a person. A
+        # plausible-sounding span here would be quoted to a client as
+        # though it came from the agency.
+        "reason": "2026-09-19, the agency: 'Renewal of Indo passport may take "
+                  "more than 3 working days'. Stated flat it read as the whole "
+                  "answer; no replacement span was given, so none is invented.",
         "set": {"answer": (
-            "Approximately 3 working days. This is an estimate and can vary with "
-            "appointment availability and document verification."
+            "More than 3 working days. How much more depends on when the "
+            "Indonesian embassy can see her and on document verification, "
+            "so our agent will confirm the timing for her case."
         )},
     },
     {
@@ -2618,7 +2635,7 @@ UPDATES += [
             "It is approximately $450 for a Filipino helper and approximately "
             "$450 for an Indonesian helper. That covers us handling the "
             "paperwork and the forms from end to end. If your helper is of "
-            "another nationality, tell us and a consultant will confirm the "
+            "another nationality, tell us and our agent will confirm the "
             "cost for her embassy."
         )},
     },
@@ -2759,6 +2776,29 @@ UPDATES.append(
 )
 
 
+# The Indonesian process row carries the same 3-working-days figure as the
+# timing rows corrected above, in its last clause. Correcting one and leaving
+# the other is how the knowledge base ends up stating two timelines for one
+# service - the 2026-09-10 transfer sweep, one nationality along.
+UPDATES.append(
+    {
+        "where": {"question": "What is the process for renewing an Indonesian "
+                              "helper's passport?",
+                  "service_type": "passport_renewal"},
+        "reason": "2026-09-19: the same correction as the ID timing row - it said "
+                  "'usually about 3 working days', which the agency says is a floor "
+                  "rather than the answer.",
+        "set": {"answer": (
+            "It is processed through the Indonesian embassy in Singapore. An "
+            "appointment is booked, she attends in person, and the renewal is "
+            "processed from there. It takes more than 3 working days in total, "
+            "and how much more depends on when the embassy can see her and on "
+            "document verification."
+        )},
+    }
+)
+
+
 TEXT_REPLACEMENTS: list[dict[str, str]] = [
     # The agency gave the Filipino salary figures on 2026-09-17 and they
     # CONTRADICT what was already loaded, in both directions: three live rows
@@ -2820,6 +2860,49 @@ TEXT_REPLACEMENTS: list[dict[str, str]] = [
         "reason": "the Filipino minimum is S$650, not S$570 (agency, "
                   "2026-09-17). These two rows state it inside a "
                   "nationality comparison filed under new_hiring.",
+    },
+    # 2026-09-19, the agency, on the closing briefing of a passport renewal:
+    # "it should not be (Consultant) it should be (Our agent)". Applied to
+    # every service rather than to the one they tested, because the word is
+    # not a fact about passport renewal - it is what the agency calls its own
+    # staff, and the SAME message was already closing with "a live agent will
+    # connect with you shortly". Two names for one person, four lines apart.
+    #
+    # Two needles for one word, because nine rows open the sentence and three
+    # carry it mid-sentence, and the replacement is case-sensitive.
+    {
+        "old": "A consultant will",
+        "new": "Our agent will",
+        "reason": "the agency calls the person who picks the case up an agent, "
+                  "not a consultant (2026-09-19). Sentence-initial form.",
+    },
+    {
+        "old": "a consultant will",
+        "new": "our agent will",
+        "reason": "the same word mid-sentence - 'tell us and a consultant will "
+                  "confirm the cost for her embassy' is the line they quoted.",
+    },
+    # Two more phrasings, found by reading the live rows back after the first
+    # pass rather than by assuming two needles covered it - the same way the
+    # S$570 salary figure turned up in two more rows on 2026-09-17. One is the
+    # marketing page ("fully managed by our consultants"), one the website form
+    # confirmation ("A Ming Hwee consultant will reach out within 24 hours").
+    #
+    # The five internal PIPELINE chunks that also carry the word are left
+    # alone: they say "Owner: Sales -> Admin" and "case hands to Admin for
+    # deployment logistics", so the word is the least of what is wrong with
+    # them being retrievable at all. Recorded rather than patched.
+    {
+        "old": "our consultants",
+        "new": "our agents",
+        "reason": "the same rename, in the imported marketing copy (2026-09-19).",
+    },
+    {
+        "old": "A Ming Hwee consultant will",
+        "new": "A Ming Hwee agent will",
+        "reason": "the same rename in the website form confirmation. Deliberately "
+                  "longer than 'Ming Hwee consultant', which would also rewrite a "
+                  "line of scripts/TEST_SCRIPT.md that is not client-facing.",
     },
     {
         "old": "(WhatsApp: 80119456 / Tel: 6534 2277)",

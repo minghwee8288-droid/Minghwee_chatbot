@@ -2048,7 +2048,7 @@ SERVICE_FIELDS[CANDIDATE_HIRING] += [
 # Live, 2026-09-08: the closing briefing for a MYANMAR helper opened "The cost
 # is $450". That figure is real and it is in the retrieved records - the row
 # reads "$450 for a Filipino helper and $450 for an Indonesian helper ... if
-# your helper is of another nationality, tell us and a consultant will confirm
+# your helper is of another nationality, tell us and our agent will confirm
 # the cost for her embassy" - so ungrounded_figures passed it happily. Grounded
 # is not the same as true: it is the other two nationalities' price, quoted to
 # a client whose price we do not know.

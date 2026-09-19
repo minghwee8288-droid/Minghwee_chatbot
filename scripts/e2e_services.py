@@ -325,7 +325,7 @@ def grade(result: dict) -> list[tuple[str, bool, str]]:
             last.splitlines()[0][:60] if last.splitlines() else "")
         add("timeline and cost are both there",
             any(w in last.lower() for w in ("day", "week", "month"))
-            and ("$" in last or "consultant will confirm" in last.lower()))
+            and ("$" in last or "agent will confirm" in last.lower()))
         add("the document list is introduced by a sentence (2026-09-09)",
             bool(re.search(r"(need|require|from you)[^\n]*:\s*\n\s*1[.)]", last, re.I)))
         add("the client's own next steps are there, introduced too (2026-09-09)",

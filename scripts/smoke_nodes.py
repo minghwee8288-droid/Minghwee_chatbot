@@ -253,7 +253,7 @@ CASES = [
                              "passport_expiry": 1, "permit_expiry": 1},
       "briefed_services": [],
       "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
-      "rag_context": "A consultant will confirm the cost for her embassy.",
+      "rag_context": "Our agent will confirm the cost for her embassy.",
       "history_text": "You: Thanks, and when does her Work Permit expire?"}),
     ("info_collector", "direct hire",
      {"service_type": "direct_hiring", "intent": "direct_hiring",
@@ -1238,7 +1238,7 @@ CASES = [
                       "are $4,225, with a combined total of about $4,285."),
       # The deferral, not the figure and not the bare holding line: the client
       # is told WHY they are getting a person instead of a number.
-      "_expect_reply": "would rather one of our consultants",
+      "_expect_reply": "would rather one of our agents",
       "blocked_topics": {"new_hiring": {"ticket_id": 1,
                                         "ticket_number": "CB-2026-0001"}}}),
     ("blocked_topic_responder", "ordinary message, parked",
@@ -1797,7 +1797,7 @@ async def _lid_checks() -> list[tuple[str, bool]]:
          patch.object(_msg.conversation_service, "touch_outbound", new=AsyncMock()):
         await _msg.send_bot_reply(
             {"id": 3766, "customer_number": "+6598887777"},
-            "A consultant will confirm the exact fee for your situation.")
+            "Our agent will confirm the exact fee for your situation.")
     results.append(("what we are about to say is recorded before we say it",
                     marked_before_send == [True]))
 

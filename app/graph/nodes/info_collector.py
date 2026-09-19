@@ -1698,7 +1698,7 @@ def briefs_on_this_turn(service_type: str | None, asked: dict | None) -> bool:
 _ANNOUNCES_HANDOVER = re.compile(
     r"\bpassed\s+(?:this|it|everything|them)\b"
     r"|\blive\s+agent\b"
-    r"|\bconsultant\s+will\s+(?:be\s+in\s+touch|contact|connect|reach)\b"
+    r"|\b(?:consultant|agent)\s+will\s+(?:be\s+in\s+touch|contact|connect|reach)\b"
     r"|\bour\s+team\s+will\s+(?:be\s+in\s+touch|contact|connect|reach)\b",
     re.IGNORECASE,
 )
@@ -2544,10 +2544,10 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # client would get the bare question anyway. Load the fee into the KB and
     # this starts quoting it with no code change.
     # NOT on the same turn as the introduction. Live 2026-09-04 19:40, the
-    # opening message was "Hi Vaidik, I'm Claire, Ming Hwee's AI assistant, and
-    # I'll bring in one of our consultants whenever needed. Passport renewal
-    # timing depends on your helper's nationality and embassy. May I know your
-    # helper's name?" — three things at once, and the middle one said nothing,
+    # opening message introduced Claire, promised to bring somebody in
+    # whenever needed, and then said passport renewal timing depends on the
+    # helper's nationality and embassy before asking her name — three things
+    # at once, and the middle one said nothing,
     # because on turn one we do not yet know the nationality it depends on. The
     # briefing waits a turn; by then an answer or two is in and it can be
     # concrete.
@@ -2580,7 +2580,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "they do not, say what the job involves and stop - do not estimate one."
             f"{chr(10)}{chr(10)}A record saying the timing DEPENDS on something is "
             "not a lead time. If the records say there is no single answer, or that "
-            "it turns on which helper they choose, or that a consultant will confirm "
+            "it turns on which helper they choose, or that our agent will confirm "
             "it later, then you have no lead time to give: leave it out entirely and "
             "do not tell them it depends. Saying \"the exact timeline will be "
             "confirmed once we know more\" costs them a sentence and tells them "
@@ -2730,7 +2730,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
                 "nationality. The records name a price for other nationalities; "
                 "that price is theirs and not hers. Do not quote it, do not "
                 "adapt it, and do not give a range. Say in one short sentence "
-                "that a consultant will confirm the cost for her embassy, and "
+                "that our agent will confirm the cost for her embassy, and "
                 "carry on with the timing and the process."
             )
         # Home leave only: book the ticket now and send us a copy, so the agent

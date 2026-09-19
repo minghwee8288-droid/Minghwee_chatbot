@@ -354,6 +354,9 @@ because the lead is opened early and the ticket is created much later.
 | ...and the records are STRIPPED from that turn, not just forbidden | the branch passes `rag_context=""` to `_write` | `ungrounded_figures` grounds on the retrieved set, which on that turn really does hold $450 — so the prompt rule alone would have been the only thing standing between a client and a price for a service we do not sell them. With the records blanked, any figure the model produces is ungrounded and takes the whole reply with it. `FEE_BY_NATIONALITY`'s lesson pointed at a person instead of a country. |
 | ...and "my passport" is only read as theirs once we know the helper's name | `_MY_PASSPORT` + the `helper_name` test | A bare *"I want to renew my passport"* is genuinely ambiguous — plenty of employers say it meaning their maid's — so on the first message it is left alone and the flow's own first question surfaces it. Once we hold her name, *"Also I want to renew my passport also"* cannot mean hers. |
 
+| The person who picks the case up has ONE name, and it is "our agent" | `SERVICE_BRIEFING_NOTE` + `TEXT_REPLACEMENTS` | The closing briefing deferred the cost to "a consultant" four lines above closing with "a live agent will connect with you shortly" - one message, two names, one person. The agency asked for the word by name on 2026-09-19. Swept over the ROWS rather than listed, so a row written tomorrow that reaches for the old word fails by name. |
+| ...and the two guards keyed on the old word were changed with it | `guards._CONTACT_PROMISE` + `info_collector._ANNOUNCES_HANDOVER` | Neither is about vocabulary: one decides whether a time inside a numbered step is a callback nobody promised, the other whether a closing briefing announced the handover at all. A rename that left them behind would have switched both off silently. Both accept the old word too, for a row or a reply that has not caught up. |
+| A timeline we hold only a floor for is stated as a floor | the three Indonesian passport rows | "Approximately 3 working days" was the only one of the three nationalities claiming a hard number with nothing about the wait in front of it - PH says 6 to 8 weeks, MM says outright that the appointment slot is the unpredictable part. The agency tested it and said it "may take more than 3 working days". They gave no replacement span, so none is invented: it says more than 3 working days and defers the rest. |
 | A direct hire explains itself at the END, with the cost and the timeline beside the process | `ticket.BRIEFING_AFTER["direct_hiring"]` | It arrived welded onto question two instead - "Thanks, john. Direct hire involves processing the MOM application, documents, insurance and bond, and getting the helper here and settled; may I know the full name of the helper you would like to hire?" Adding the entry is also what REMOVES the opening overview, so this is one change and not two. Keyed on `helper_availability`, the last REQUIRED field: the three after it are optional, and keying on one of those loses the briefing whenever a client declines it. |
 | A question about WHEN is not answered by a sentence about WHERE | `info_collector._ASKS_WHEN` + `_echoes_another_answer` | "No she is on Myanmar right Now" filled `helper_availability` with "Myanmar right now", so the start date was never asked and the ticket carried a country. The test is an ECHO of another answer we hold, not "does this state a time" - the value genuinely contains one, and it is attached to the country. Derived over the QUESTION, so all eight when-fields across the services are covered and not just the one reported. |
 | ...and the name of the service they asked for answers none of its own questions | `info_collector._restates_the_service` | "i want to do direct hire" filled `helper_transfer_case` - the ONE question that decides the route - with the value "direct hire", 4 runs of 4. Scoped to the service IN HAND, because `current_helper_exit` offers "going home" (which reads as `home_leave`) and `transfer_direction`'s junk value reads as `transfer`, not `transfer_employer`. |
@@ -877,6 +880,29 @@ Ordered by what will hurt first.
     anything. If the agency wants it normalised, it is one function at the
     point of capture plus a decision about the particles.
 
+25. **Five internal pipeline chunks are retrievable under `new_hiring`, and
+    they read as staff instructions.** Found on 2026-09-19 while sweeping the
+    knowledge base for the word "consultant". Rows `6cf60cdb`, `f0bf5da9`,
+    `ec41d419`, `6e6570a4` and `cacd5925` carry verbatim
+    *"Milestone stage: IPA issued & recorded → HANDOFF | What happens: MOM
+    issues the IPA letter; consultant records it; case hands to Admin for
+    deployment logistics. | Owner: Sales → Admin"*. Four are
+    `contact_type='employer'` and one is `all`, so a hiring client can reach
+    all five.
+    **This is the exact content the 2026-09-08 load was written to keep OUT** -
+    that entry records a "what's the process" question retrieving the internal
+    pipeline brief and the bot reciting our own workflow to the person it is
+    being run on, and it is why every row written since has been rewritten from
+    the client's side. These five predate that rule; they came in with the bulk
+    import.
+    They have not been seen in a reply and did not top any of the process
+    probes run since, which is why this is recorded rather than acted on - and
+    the honest fix is not a word swap. It is either deleting five rows of
+    somebody else's imported content, or rewriting them from the client's side,
+    and both are the agency's call. `TEXT_REPLACEMENTS` is the path if they
+    only want the wording corrected; §9.15 is the same shape for stale transfer
+    timelines in the same import.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
@@ -1114,6 +1140,86 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-19** - **Passport renewal: two names for one person in one message,
+  and the only timeline we stated as a hard number.** The agency tested it and
+  reported two things, both small and both right. A third was found underneath
+  and is left alone deliberately.
+  (A) **"it should not be (Consultant) it should be (Our agent)".** They
+  pointed at one line of the closing briefing - *"A consultant will confirm the
+  exact cost for her embassy."* **The argument for doing it everywhere is four
+  lines below that sentence in the same message**: it closes with *"a live
+  agent will connect with you shortly"*. One message, two names, one person,
+  and the client has no way of knowing they are the same. The word is not a
+  fact about passport renewal - it is what the agency calls its own staff - so
+  it moved on every service, the cost-deferral fallback, and 14 live rows.
+  (B) **The two guards keyed on the old word would have gone quiet, and that
+  is the half that mattered.** `_CONTACT_PROMISE` decides whether a time
+  inside a numbered step is a callback nobody promised, and it matched
+  `consultant will` and `live agent`; `_ANNOUNCES_HANDOVER` decides whether a
+  closing briefing announced the handover at all, and matched the same two. A
+  find-and-replace would have left *"our agent will call you within 2 hours"*
+  walking straight through the first and a briefing ending on *"our agent will
+  be in touch"* reading as a briefing that ended on nothing. Both take either
+  word now, so a row or a reply that has not caught up is still caught.
+  (C) **"Renewal of Indo passport may take more than 3 working days."** Three
+  rows said *"approximately 3 working days"* flat, and Indonesia was the only
+  one of the three nationalities claiming a hard number with nothing about the
+  wait in front of it: the Philippines says 6 to 8 weeks, and Myanmar says
+  outright that the appointment slot is the unpredictable part. The agency gave
+  no replacement span, so **none is invented** - the figure is stated as the
+  floor it is, and the rest is deferred to a person. A plausible-sounding span
+  here would reach a client as though it came from them.
+  (D) **Corrected in the entries that already own those rows, not in new
+  ones.** A second `UPDATES` entry for a question that already has one is the
+  2026-09-09 defect: the later of the two wins on every run and the loader
+  stops being idempotent. Two were edited in place and the third - the ID
+  process row, which carried the same figure in its last clause and had no
+  entry - got a new one. Correcting one and leaving the other is how the
+  knowledge base ends up stating two timelines for one service (2026-09-10).
+  (E) **The needles were not enough, and reading the rows BACK is what showed
+  it.** Two phrasings covered nine rows; a live read-back found five more in
+  the imported material under wordings the needles could not see - *"fully
+  managed by our consultants"* and *"A Ming Hwee consultant will reach out
+  within 24 hours"*. Two more needles, deliberately longer than they need to
+  be: `"Ming Hwee consultant"` alone would also have rewritten a line of
+  `scripts/TEST_SCRIPT.md` that no client reads. The same shape as the S$570
+  salary figure turning up in two more rows on 2026-09-17, and the same cure -
+  sweep the database, do not assume the first pass was the whole set.
+  (F) **The self-check caught ITSELF, twice, and both times it was right.**
+  The sweep asserts that no file but the loader carries a replaced string, so
+  the first draft of the new assertions failed for quoting the agency's own
+  sentence - which is exactly what the phone-number check did to itself on
+  2026-09-11. The old phrasing is now read FROM the loader's needles by
+  `_was_called()`, which returns a placeholder rather than raising if they
+  vanish, so a missing needle is a RED line naming the assertion instead of a
+  traceback (2026-09-10).
+  (G) **One injection came back GREEN and it was the check.** *"our agent will
+  call you within 2 hours"* stays matched with the agent clause removed,
+  because **"call you" is a trigger in its own right** - so the assertion
+  proved the guard works and said nothing whatever about the word this commit
+  changed. Reworded to a sentence carrying no other trigger, plus a control
+  that a step promising nobody anything is still left alone. Ten faults, ten
+  red after it.
+  (H) **Verified live against the real model, both routes, the agency's own
+  five turns.** Myanmar: *"Our agent will confirm the exact fee for your
+  Myanmar helper's passport renewal."* with the closing line unchanged, so the
+  message now names one person twice instead of two people once. Indonesia:
+  *"It takes more than 3 working days."* and *"The cost is approximately $450,
+  and our agent will confirm the exact fee for your situation."* The rest of
+  the flow is untouched - four questions, no question repeated, and the
+  expiring-passport warning still fires on a passport three weeks out.
+  **Reported and NOT changed, both flagged to the agency rather than guessed
+  at.** The Myanmar document list asks for *"a copy of her Singapore work
+  pass"* and *"a copy of her Work Permit"* as two numbered items, which for a
+  helper is one card; it survives in the two rows the 2026-09-08 rewrite did
+  not reach, which is why an Indonesian renewal does not show it. And the
+  closing process told the employer to *"sign and return the Application for
+  Passport Renewal Form"*, which our own records say is the form **she**
+  completes. Both are content questions only Ming Hwee can settle, and the
+  agency asked for the first to be left alone until they have checked their own
+  checklist. Five internal pipeline chunks are §9.25.
+  `selfcheck_flows.py` is **593 assertions**; `smoke_nodes.py` is **140 states**.
 
 - **2026-09-18** - **Direct hire: the process arrived on question two, the start
   date never arrived at all, and one retried send silenced the conversation for

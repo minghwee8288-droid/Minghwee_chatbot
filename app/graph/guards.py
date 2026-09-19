@@ -91,7 +91,7 @@ _PACKAGE_COST = re.compile(
 # claim the cost is unknowable — only that a person will do the costing.
 COST_DEFERRAL_REPLY = (
     "The cost depends on nationality, experience and how the package is put "
-    "together, so I would rather one of our consultants take you through the "
+    "together, so I would rather one of our agents take you through the "
     "full breakdown than give you half a figure. I will get that arranged."
 )
 
@@ -870,7 +870,7 @@ _BARE_MARKER = re.compile(r"^\s*\d+[.)]\s*$")
 # has not made is that it is attached to one of these.
 _CONTACT_PROMISE = re.compile(
     r"\b(call|ring|phone|contact|reach)\s+you\b"
-    r"|\bget\s+back\s+to\s+you\b|\blive\s+agent\b|\bconsultant\s+will\b",
+    r"|\bget\s+back\s+to\s+you\b|\blive\s+agent\b|\b(?:consultant|agent)\s+will\b",
     re.IGNORECASE,
 )
 

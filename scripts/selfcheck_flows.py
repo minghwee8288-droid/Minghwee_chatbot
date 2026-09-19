@@ -101,6 +101,23 @@ def _text_replacements() -> list[dict]:
 
 _REPLACEMENTS = _text_replacements()
 
+
+def _was_called(first_letter: str) -> str:
+    """What the person who follows up used to be called, read from the loader.
+
+    Never typed out here. The sweep further down asserts that no file except
+    the loader carries a replaced string, so a check that spells one out fails
+    it - which is exactly what the first draft of the 2026-09-11 phone-number
+    check did to itself, and what the first draft of this one did on
+    2026-09-19. Returning a placeholder rather than raising keeps a missing
+    needle a RED line naming the assertion instead of a traceback (2026-09-10).
+    """
+    for rule in _REPLACEMENTS:
+        if (rule["old"].startswith(first_letter)
+                and rule["old"].lower().endswith("consultant will")):
+            return rule["old"]
+    return "<the replaced word is gone from the loader>"
+
 # Every file that could name a phone number, minus the loader, which names the
 # old one on purpose - it is the needle it searches for.
 _NUMBER_SWEEP = {
@@ -1888,7 +1905,7 @@ rows = [
  ("the employer half of a transfer is covered too",
   "transfer_employer" in gd.COST_WITHHELD_SERVICES, True),
  ("replacement and transfer defer the fee to a person",
-  all(any("consultant will confirm" in r["answer"] for r in lsn.ROWS
+  all(any("agent will confirm" in r["answer"] for r in lsn.ROWS
           if r["service_type"] == svc and "cost" in r["question"].lower())
       for svc in ("replacement", "transfer")), True),
  # Three rows ANSWERED the question the table answers, with a different
@@ -2583,7 +2600,7 @@ rows = [
  # which is what the loan row itself instructs.
  ("it does not deny the placement loan it cannot speak for",
   ("loan" in _FEE_ROW.get("answer", "").lower(),
-   "consultant" in _FEE_ROW.get("answer", "").lower()),
+   "agent" in _FEE_ROW.get("answer", "").lower()),
   (True, True)),
 
  # --- the closing message says the registration is finished, 2026-09-10 -
@@ -2768,6 +2785,84 @@ rows = [
  ("a replaced string survives nowhere but the loader that replaces it",
   sorted(f for f, src in _NUMBER_SWEEP.items()
          if any(r["old"] in src for r in _REPLACEMENTS)), []),
+
+ # --- one name for the person who picks it up, 2026-09-19 --------------
+ # The agency read the closing briefing of a passport renewal and objected to
+ # one line of it: the cost section deferred to a consultant. Their
+ # instruction was the word, not the sentence - "it should not be (Consultant)
+ # it should be (Our agent)". The old phrasing is not written out anywhere in
+ # this file; see _was_called.
+ #
+ # Applied to every service rather than to the one they tested, and the reason
+ # is in the same message: four lines below that sentence it closed with "a
+ # live agent will connect with you shortly". One message, two names, one
+ # person. The word is not a fact about passport renewal - it is what the
+ # agency calls its own staff.
+ #
+ # Swept over the ROWS rather than listed, so a row written tomorrow that
+ # reaches for the old word fails by name. The repo half is already covered
+ # by the needle sweep below, and the old phrasing is deliberately NOT
+ # written out here: it is one of the loader's replacement needles, and
+ # spelling it out makes this file fail its own sweep - which is what the
+ # first draft did, exactly as the phone number did on 2026-09-11.
+ ("no knowledge-base row calls them a consultant",
+  sorted({r["question"] for r in lsn.ROWS
+          if "consultant" in _flat(str(r.get("answer") or "")).lower()}), []),
+ # ...and the instruction that writes the closing briefing names the word
+ # outright rather than leaving it to an example. An example is what the
+ # briefing had, and the model followed the rest of the note and not it.
+ ("...and the briefing note says so in as many words",
+  ("our agent" in tpl.SERVICE_BRIEFING_NOTE,
+   "never \"a consultant\"" in tpl.SERVICE_BRIEFING_NOTE),
+  (True, True)),
+ # The two guards that were keyed on the old word, and would have gone quiet
+ # on the new one. Neither is about vocabulary: the first decides whether a
+ # time inside a numbered step is a callback nobody promised, the second
+ # whether a closing briefing announced the handover at all. A rename that
+ # left these behind would have disabled both silently, which is the shape
+ # this file has recorded four times.
+ # The sentences deliberately carry NO other trigger. The first draft used
+ # "our agent will call you within 2 hours" and stayed GREEN under the fault,
+ # because "call you" is a trigger of its own - so it proved the guard works
+ # and said nothing at all about the word this commit changed.
+ ("a callback time is still caught when the person is called an agent",
+  bool(gd._CONTACT_PROMISE.search(
+      "our agent will confirm that within 2 hours")), True),
+ ("...and the old word still is, for a reply that has not caught up",
+  bool(gd._CONTACT_PROMISE.search(
+      _was_called("a") + " confirm that within 2 hours")), True),
+ ("...while a step that promises nobody anything is left alone",
+  bool(gd._CONTACT_PROMISE.search(
+      "you receive 3 to 5 matched profiles within 48 hours")), False),
+ ("a briefing that ends on our agent counts as announcing the handover",
+  bool(ico._ANNOUNCES_HANDOVER.search("Our agent will be in touch shortly.")), True),
+ ("...and so does one that ends on the old word",
+  bool(ico._ANNOUNCES_HANDOVER.search(
+      _was_called("A") + " be in touch shortly.")), True),
+
+ # --- the Indonesian passport timeline, 2026-09-19 ---------------------
+ # "Renewal of Indo passport may take more than 3 working days" - the agency,
+ # having tested it. Three rows stated "3 working days" flat, and it was the
+ # only one of the three nationalities claiming a hard number with nothing
+ # about the wait in front of it: PH says 6 to 8 weeks, MM says outright that
+ # the appointment slot is the unpredictable part.
+ #
+ # They gave no replacement span, so none is invented - the figure is stated
+ # as the floor it is. Asserted over the UPDATES that own those rows, because
+ # a fourth row reintroducing the flat figure is the way this comes back.
+ ("no passport row states 3 working days as the whole answer",
+  sorted({u["where"]["question"] for u in lsn.UPDATES
+          if u["where"].get("service_type") == "passport_renewal"
+          and "3 working days" in _flat(str(u["set"].get("answer") or "")).lower()
+          and "more than 3 working days"
+              not in _flat(str(u["set"].get("answer") or "")).lower()}),
+  []),
+ # ...and all three of them still say it, so the floor was not simply deleted.
+ ("...and all three that carry it say more than",
+  len([u for u in lsn.UPDATES
+       if u["where"].get("service_type") == "passport_renewal"
+       and "more than 3 working days"
+           in _flat(str(u["set"].get("answer") or "")).lower()]), 3),
 
  # --- who the ROWS are written for, 2026-09-10 -------------------------
  # effective_contact_type puts a master record above one message, rightly.
