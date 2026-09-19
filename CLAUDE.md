@@ -330,6 +330,8 @@ because the lead is opened early and the ticket is created much later.
 | An answer to one question does not rewrite a DIFFERENT field that is already answered | `info_collector._ASKS_FOR_CARE` | *"In my family there are 8 peoples ... and 1 is elderly care"* - an answer to "who lives in your household" - rewrote `requirement` from *"childcare"* to *"childcare, eldercare"*. The two care-type guards beside it only run while a field has NEVER been asked, on the principle that once asked their answer is their answer; this is the case neither covers. A client who actually asks for the care still changes it. |
 | ...so the workload warning cannot fire on a care type nobody asked for | the same rule | Measured: `_heavy_workload` fires on the rewritten value and does NOT fire on the one he gave. He was told one helper could not manage his household because of a service he never asked for, corrected it, and the advice stood - it is said once and never revisited. |
 | A client who has asked for an experienced helper is not then offered a first-timer | `info_collector._already_wants_experience` | *"she should be 4+ year experienced"* → *"Are you open to a first-timer...?"* → *"yes i am open for first timer"*, and the ticket carried both for a consultant to ring about. The question is not dropped - where the experience was got is a real question nothing else asks - only the half already answered. `\d+ years OLD` is excluded by a lookahead: an age answer is not four decades of experience. |
+| The closing briefing gives the SPAN or nothing, and never defers the timing to a person | `SERVICE_BRIEFING_NOTE` ("THE TIMING LINE IS A SPAN OR IT IS NOTHING") | Measured on new hiring's new briefing: 3 runs of 4 gave "approximately 4 to 6 weeks" and the fourth wrote *"The timeline will be confirmed by our agent based on your requirements and selected helper"* - the "it depends" sentence the agency had removed from the OPENING overview on 2026-09-17, arriving at the other end of the flow, because the rule lived only in that note and `new_hiring` no longer gets one. A record saying there is no single answer is our filing explaining why the question is hard, sitting beside a row that answers it. 9 runs of 10 after. |
+| ...while the COST may still be deferred where we hold none | the paragraph beside it | Or the rule swallows the fee deferral this same note asks for everywhere else. Verified live on a MYANMAR passport renewal, which has no fee on record: the timing is given and *"Our agent will confirm the exact fee for her embassy"* survives. |
 | A hire has ONE lead time | `load_service_notes.TEXT_REPLACEMENTS` | The knowledge base stated **2-3, 3-4, 3-6, 3-8, 4-8 and 6-8 weeks** for a hire, five reachable under `new_hiring` and three in the SAME retrieved set, so the model quoted whichever. The agency gives one: about 4 to 6 weeks from signing overseas, 1 to 2 weeks from the interview for a transfer. The per-nationality spans are REMOVED rather than replaced - we hold no lead time per nationality, which is the call the 2026-09-17 salary sweep made in the same sentence. |
 | A question about US is a question | `info_collector._ASKS_SOMETHING` (the how-you-know family) | *"how you know for what service i need helper"*, *"why you are asking about my helper name"*, *"who said i want to hire"* - none carries a question mark, none matched anything else, so `ANSWER_THEN_ASK` never fired and the collector simply asked its next field. `_VALUE_IS_QUESTION` read four of them as questions and threw the VALUE away, so the client's question was discarded AND unanswered in the same turn — the exact mismatch the note above that pattern exists to prevent. |
 | ...and it is answered from their own words, never from the service list | `ANSWER_THEN_ASK_INSTRUCTION` | *"We help with new hiring, direct hiring, replacement, transfer, Work Permit renewal, home leave arrangement and passport renewal. Which service do you need?"* — a menu in reply to "how do you know" reads as though we are still guessing. The answer is *"You said you need a helper, so I took that as hiring - tell me if it is something else."* |
@@ -1283,7 +1285,20 @@ Append here, newest first. One entry per behavioural change.
   given; the name is still echoed in the client's own casing (section 9.24);
   and an Indonesian Buddhist helper was accepted without comment, which is a
   very thin pool.
-  `selfcheck_flows.py` is **633 assertions**; `smoke_nodes.py` is **159
+  (L) **And the briefing deferred the timing in 1 run of 4**, which only
+  showed up because the closing message was measured rather than read once.
+  *"The timeline will be confirmed by our agent based on your requirements and
+  selected helper"* is the "it depends" sentence the agency had removed from
+  the OPENING overview on 2026-09-17 - and the rule against it lived only in
+  that note, which `new_hiring` no longer gets. The closing note now carries
+  it: give the span if the records state one, leave the line out if they do
+  not, and never hand the timing to a person. The COST deferral is explicitly
+  exempted in the paragraph beside it, or the rule would swallow the one this
+  note asks for everywhere else. 9 runs of 10 after, and verified live on a
+  MYANMAR passport renewal - no fee on record - where the timing is given and
+  *"Our agent will confirm the exact fee for her embassy"* is untouched. Five
+  more faults, five red.
+  `selfcheck_flows.py` is **637 assertions**; `smoke_nodes.py` is **159
   states**.
 
 - **2026-09-19** - **"hey i need helper" was answered with a decision about the

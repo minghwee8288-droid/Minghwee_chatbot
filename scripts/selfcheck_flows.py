@@ -2043,6 +2043,28 @@ rows = [
   rr.BRIEFING_MATCH_COUNT > 5, True),
  ("the briefing forbids inventing what the records do not give",
   "say nothing at all about that one" in tpl.SERVICE_BRIEFING_NOTE, True),
+ # The closing briefing may defer a PRICE we do not hold. It may not defer a
+ # TIMELINE that is sitting in the records above it. Measured 2026-09-19 on
+ # new_hiring's new briefing: 3 runs of 4 gave the span and the fourth wrote
+ # "The timeline will be confirmed by our agent based on your requirements and
+ # selected helper" - which is the "it depends" sentence the agency had removed
+ # from the opening overview on 2026-09-17, arriving at the other end of the
+ # flow. The rule lived only in the overview note, and new_hiring no longer
+ # gets one.
+ ("the closing briefing gives the span rather than deferring it",
+  ("THE TIMING LINE IS A SPAN OR IT IS NOTHING" in tpl.SERVICE_BRIEFING_NOTE,
+   "timeline will be confirmed by" in tpl.SERVICE_BRIEFING_NOTE), (True, True)),
+ # ...and a record explaining why the question is hard is not an answer to it.
+ ("...and knows that 'no single answer' is not a lead time",
+  "NO SINGLE ANSWER" in tpl.SERVICE_BRIEFING_NOTE, True),
+ # The other half, or the rule swallows the fee deferral this note asks for
+ # everywhere else - Myanmar has no passport-renewal price and saying so is
+ # right.
+ ("...while the COST may still be deferred where we hold none",
+  "That is NOT the same as the cost" in tpl.SERVICE_BRIEFING_NOTE, True),
+ # ...and it must not turn into an invitation to invent one.
+ ("...and a service with no span states none rather than guessing",
+  "leave the timing line out entirely" in tpl.SERVICE_BRIEFING_NOTE, True),
  ("and forbids naming another nationality's route",
   "leave the rest" in tpl.SERVICE_BRIEFING_NOTE, True),
  # Cross-questioning after the briefing is the point of it.

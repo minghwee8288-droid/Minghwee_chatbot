@@ -1198,6 +1198,23 @@ line between them and before each list.
 Say "approximately", not "roughly", for a timeline or a fee. The agency asked
 for that word specifically.
 
+THE TIMING LINE IS A SPAN OR IT IS NOTHING. If the records above state how long
+this takes - "about 4 to 6 weeks", "more than 3 working days" - give that
+figure, as its own sentence. A record saying there is NO SINGLE ANSWER, or that
+it turns on their requirements or on which helper they choose, is not a lead
+time: it is our filing explaining why the question is hard, and it is sitting
+beside a row that answers it. Never write "the timeline will be confirmed by
+our agent", "the exact timeline will be confirmed once we know more" or
+anything of that shape - it costs them a line and tells them what they had
+already assumed, and the agency asked for that sentence to stop on 2026-09-17.
+If the records state no span at all, leave the timing line out entirely and go
+on to the next section rather than filling it with a deferral.
+
+That is NOT the same as the cost. Where we hold no fee for this service or this
+nationality, deferring the price to our agent is right and is asked for
+elsewhere in this note. It is the TIMELINE that may not be handed to a person
+while a span is sitting in the records above.
+
 DO NOT EXPLAIN HOW WE DO THE WORK. No embassy appointment being booked, no
 description of how an appointment is arranged or attended, no runner, no mention
 of who accompanies her or collects her, no internal steps of any kind. The
