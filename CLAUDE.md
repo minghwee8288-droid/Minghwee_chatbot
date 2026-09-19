@@ -323,6 +323,14 @@ because the lead is opened early and the ticket is created much later.
 | ...and the opening turn NAMES the service it understood, so a wrong reading is correctable | `PURPOSE_NOTE_RULES` ("NAMING WHAT YOU HAVE UNDERSTOOD") | The agency, 2026-09-19: *"hey i need helper"* → *"I'll ask a few details so we can understand your household…"* → *"how you know for what service i need helper"*. An inference the client cannot see is one they cannot correct. Put back as a short clause at the FRONT of the reason sentence, not as a sentence of its own - measured, a third sentence of preamble pushes the question out of the message entirely. |
 | ...and states nothing else about them at all | `PURPOSE_NOTE_RULES` ("STATE NOTHING ABOUT THEIR SITUATION") + the `_COLLECTION_PURPOSE` sweep | *"their household"* in the reason is a decision about a client who has written four words. Derived over the whole table rather than fixed on `new_hiring`, so a reason added tomorrow that describes the client fails by name. |
 | ...and the message still ends with the question | `PURPOSE_NOTE_RULES` ("ENDS WITH THE QUESTION") | All of that is framing for the question we are there to ask, and the first draft of it produced three sentences of preamble and no question - on the employer side AND the candidate side. Measured 0/4 before the line, 8/8 after. |
+| Every employer intake closes by explaining itself | `ticket.BRIEFING_AFTER` | `new_hiring` was the last one without it, and the biggest: 22 questions and then the bare handover line, so the client asked the process, the documents, the timeline and the charges in four consecutive messages. Keyed on `start_timeline`, the last REQUIRED field - everything after it is optional, and an optional field a client declines is never filled. Adding the entry is also what REMOVES the opening overview, so no employer intake briefs at the start any more. |
+| ...and the closing briefing is cost-GUARDED, not just cost-instructed | the completion `_write` (`withhold_cost=`) | It was the only `_write` call in the collector with no cost guard on it, and it is the one message that talks about price by construction - `SERVICE_BRIEFING_NOTE` requires a cost section. Four services in `COST_WITHHELD_SERVICES` now brief at the end, so four closing messages were relying on the prompt alone for a rule the agency gave by name on 2026-09-04. The same "wired into two paths and never the third" shape as `blocked_topic_responder` on 2026-09-10. |
+| ...and a briefing swapped for the deferral is LOST, not delivered | `briefing_lost` | Marked given it would never be retried, and the client reads a sentence about the price and nothing about the process - the 2026-09-08 defect, in the branch added the same day as the guard above it. |
+| ...and it asks for its own clock by name | `rag_retriever.BRIEFING_QUERY_BY_SERVICE` | Measured: under the general briefing query NO timing row came back for `new_hiring` - not in the top 10 and not in the top 18 - so the closing message had no lead time to give. Naming the clock ("from signing to her first day") puts all three timing rows in the set and lifts the whole set from 0.42-0.52 to 0.61-0.70. It deliberately drops "how much does it cost", which matches `_PRICE_QUESTION` and would drop the service filter (2026-09-10). |
+| An answer to one question does not rewrite a DIFFERENT field that is already answered | `info_collector._ASKS_FOR_CARE` | *"In my family there are 8 peoples ... and 1 is elderly care"* - an answer to "who lives in your household" - rewrote `requirement` from *"childcare"* to *"childcare, eldercare"*. The two care-type guards beside it only run while a field has NEVER been asked, on the principle that once asked their answer is their answer; this is the case neither covers. A client who actually asks for the care still changes it. |
+| ...so the workload warning cannot fire on a care type nobody asked for | the same rule | Measured: `_heavy_workload` fires on the rewritten value and does NOT fire on the one he gave. He was told one helper could not manage his household because of a service he never asked for, corrected it, and the advice stood - it is said once and never revisited. |
+| A client who has asked for an experienced helper is not then offered a first-timer | `info_collector._already_wants_experience` | *"she should be 4+ year experienced"* → *"Are you open to a first-timer...?"* → *"yes i am open for first timer"*, and the ticket carried both for a consultant to ring about. The question is not dropped - where the experience was got is a real question nothing else asks - only the half already answered. `\d+ years OLD` is excluded by a lookahead: an age answer is not four decades of experience. |
+| A hire has ONE lead time | `load_service_notes.TEXT_REPLACEMENTS` | The knowledge base stated **2-3, 3-4, 3-6, 3-8, 4-8 and 6-8 weeks** for a hire, five reachable under `new_hiring` and three in the SAME retrieved set, so the model quoted whichever. The agency gives one: about 4 to 6 weeks from signing overseas, 1 to 2 weeks from the interview for a transfer. The per-nationality spans are REMOVED rather than replaced - we hold no lead time per nationality, which is the call the 2026-09-17 salary sweep made in the same sentence. |
 | A question about US is a question | `info_collector._ASKS_SOMETHING` (the how-you-know family) | *"how you know for what service i need helper"*, *"why you are asking about my helper name"*, *"who said i want to hire"* - none carries a question mark, none matched anything else, so `ANSWER_THEN_ASK` never fired and the collector simply asked its next field. `_VALUE_IS_QUESTION` read four of them as questions and threw the VALUE away, so the client's question was discarded AND unanswered in the same turn — the exact mismatch the note above that pattern exists to prevent. |
 | ...and it is answered from their own words, never from the service list | `ANSWER_THEN_ASK_INSTRUCTION` | *"We help with new hiring, direct hiring, replacement, transfer, Work Permit renewal, home leave arrangement and passport renewal. Which service do you need?"* — a menu in reply to "how do you know" reads as though we are still guessing. The answer is *"You said you need a helper, so I took that as hiring - tell me if it is something else."* |
 | ...and never by taking the reading back | the same note | It was a reasonable reading and they asked how we knew, not for it to be withdrawn. Disowning it leaves them with no service, no question to answer and an apology nobody asked for - §9.19, reported a second time and therefore acted on rather than guessed at. |
@@ -1152,6 +1160,131 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-19** - **New hiring, tested end to end as an employer: 22 questions
+  and then "a live agent will connect with you shortly".** The agency sent four
+  screenshots. What they show is a flow that collects well and explains nothing,
+  plus three smaller faults they did not report and one the replay found
+  underneath.
+  (A) **The closing briefing, which is what the transcript is really about.**
+  After the last question the client asked *"ok what is the further process"*,
+  *"and what are the documents needed"*, *"and what is the timeline"* and
+  *"what are the charges"* - four consecutive messages, all four answerable,
+  none of which he should have had to think of. `new_hiring` was the LAST
+  employer service with no `BRIEFING_AFTER` entry; the same complaint closed
+  `replacement` and `transfer_employer` on 2026-09-18 and `direct_hiring` the
+  day after.
+  (B) **Keyed on `start_timeline`, the last REQUIRED field**, for the reason
+  this table now states six times: the retriever runs before the collector, so
+  the key has to be filled a turn before the collection completes. Everything
+  after it is optional and an optional field a client declines is never filled
+  - which is exactly the argument `direct_hiring` made on 2026-09-18. Asserted
+  as a derived rule now: no briefing is keyed on the last field of its own
+  flow.
+  (C) **And the briefing had no lead time to give**, which is a retrieval
+  problem and not a prompt one. Measured at BRIEFING_MATCH_COUNT: under the
+  general briefing query NOT ONE timing row came back for `new_hiring`, in the
+  top 10 or the top 18, because "how long does it take" does not read as "how
+  long does it take TO HIRE A HELPER" among forty rows about process steps.
+  `BRIEFING_QUERY_BY_SERVICE` names the clock - "from signing to her first
+  day" - and all three timing rows come back with the whole set lifting from
+  0.42-0.52 to 0.61-0.70. It also drops "how much does it cost", which matches
+  `_PRICE_QUESTION` and DROPS the service filter (the 2026-09-10 defect that
+  put $450 into a job seeker's briefing); the cost is withheld on this service
+  anyway.
+  (D) **Then the timing rows disagreed with each other.** Swept: the knowledge
+  base stated **2-3, 3-4, 3-6, 3-8, 4-8 and 6-8 weeks** for a hire - five of
+  them reachable under `new_hiring` and THREE in the same retrieved set, so the
+  model could quote any of them. Live it gave up and passed the question to an
+  agent; replayed at HEAD before the fix it answered "around 6 to 8 weeks",
+  which is not the agency's figure. The agency gives one: about 4 to 6 weeks
+  from signing for an overseas hire, 1 to 2 weeks from the interview for a
+  transfer. Eleven needles, 16 row edits, loader idempotent on the second run,
+  and a re-sweep of the live database shows **1-2 and 4-6 and nothing else** -
+  the 2-3 that remains is `direct_hiring`'s helper already in Singapore, which
+  is a different question. The PER-NATIONALITY spans are removed rather than
+  replaced: we hold no lead time per nationality, and inventing three is the
+  mistake section 9 records for Myanmar twice. The same call the 2026-09-17
+  salary sweep made in the same sentence.
+  (E) **"1 is elderly care" rewrote what he had asked for.** Asked how many
+  people live in his household and who they are, he wrote *"In my family there
+  are 8 peoples ... and 1 is elderly care"* - describing WHO IS AT HOME, which
+  is precisely what that question asks. `requirement` went from *"childcare"*
+  to *"childcare, eldercare"*, `elderly_detail` opened on it, and he wrote
+  *"no no i dont want elderly care help service you just ask me that how many
+  peoples are there in you household ... by mistake i wrote the elderly care i
+  am writing elderly person"*. The two care-type guards beside this one run
+  only while a field has NEVER been asked, on the principle that once asked
+  their answer is their answer - and this is the case neither of them covers:
+  asked, answered, then overwritten by a turn answering something else. A
+  client who actually ASKS for the care still changes it, so a real correction
+  is not lost.
+  (F) **And the one-helper workload warning fired on that false premise and was
+  never withdrawn.** Measured both ways: `_heavy_workload` returns True on the
+  rewritten value and **False** on the one he gave. So he was told one helper
+  could not manage his household because of a service he never asked for, he
+  corrected it, the bot said "We'll focus on childcare only" - and the advice
+  stood, because it is said once and never revisited. Fixed at the cause rather
+  than by building a withdrawal: with (E) in place it does not fire at all.
+  (G) **"4+ year experienced" and then "are you open to a first-timer?"** He
+  said yes, and the ticket carried `helper_profile: 4+ years experienced` and
+  `hire_source: first-timer` - two contradictory instructions for a consultant
+  to ring him about. The question is NOT dropped: where the experience was got
+  is a real question and nothing else asks it. Only the half he had already
+  answered goes. Live after: *"Should her experience be from Singapore,
+  overseas, or as a transfer helper already in Singapore?"*
+  (H) **The replay found a guard missing from the path this commit was
+  adding.** The completion `_write` - the one that writes the closing briefing
+  - was the ONLY `_write` call in the collector with no `withhold_cost` on it,
+  and it is the one message that talks about price by construction, because
+  `SERVICE_BRIEFING_NOTE` requires a cost section. FOUR services in
+  `COST_WITHHELD_SERVICES` brief at the end, so four closing messages have been
+  relying on the prompt alone for the rule the agency gave by name on
+  2026-09-04. The same "wired into two paths and never the third" shape as
+  `blocked_topic_responder` on 2026-09-10. And a briefing swapped for the
+  deferral is now recorded as LOST rather than delivered - marked given it
+  would never be retried, which is the 2026-09-08 defect arriving in the branch
+  added the same day as the guard.
+  (I) **Fourteen faults injected, thirteen red. The one that stayed green is
+  worth more than the thirteen.** Breaking a timeline needle in the loader
+  changes nothing any check can see, because the needles have already been
+  applied and an applied needle matches nothing by construction - the property
+  that makes the loader idempotent is the same one that makes a broken needle
+  invisible. The 2026-09-17 answer to this ("count through `old`, which is the
+  half that has to match something") does not reach it. What protects those
+  corrections is the live sweep in (D), not an assertion, and that is written
+  down here rather than papered over. Two other greens were the checks and both
+  are fixed: `"any experience is fine"` contains the word "experience" and
+  needed the `_NO_PREFERENCE` test in front of the pattern, and the cost-guard
+  injection had only MOVED the string, which a source-count assertion cannot
+  see - re-injected as a clean removal it goes red in both suites.
+  (J) **The salary-floor sweep was reading a figure and calling it a subject.**
+  The 2026-09-17 checks selected the floor rules by `"S$650" in new`, and this
+  round's timeline sweep edits the same nationality sentence a second time, so
+  its `new` carries the corrected salary while its `old` has nothing to do with
+  the floor. It read as a fourth floor rule with nothing to replace. Keyed on
+  the OLD figure now. And the comment explaining that was caught by the needle
+  sweep for quoting a replaced string - the third time that check has caught
+  this file.
+  (K) **Verified live against the real model, all 27 turns of their own
+  transcript.** `requirement` stays "childcare" and the workload warning never
+  fires; the elderly-detail question is never asked; the experience question
+  offers no first-timer; and the collection closes with *"It takes
+  approximately 4 to 6 weeks from signing with us for an overseas helper to
+  start"*, the cost deferred to an agent, the two documents, the six steps and
+  the handover line. The four questions he had to ask are all answered inside
+  that one message, and asked again afterwards they answer consistently -
+  *"and what is the timeline"* now returns **4 to 6 weeks** where it previously
+  returned a handover.
+  **Reported and NOT changed, because each is the agency's to settle:** the
+  cost is still withheld on a new hire (their 2026-09-04 instruction against
+  their 2026-09-17 flow); the salary bands offered to an Indonesian client
+  still start below $500, because the Philippines is the only floor they have
+  given; the name is still echoed in the client's own casing (section 9.24);
+  and an Indonesian Buddhist helper was accepted without comment, which is a
+  very thin pool.
+  `selfcheck_flows.py` is **633 assertions**; `smoke_nodes.py` is **159
+  states**.
 
 - **2026-09-19** - **"hey i need helper" was answered with a decision about the
   client's household, and the question about that decision was answered with a

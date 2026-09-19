@@ -1240,6 +1240,25 @@ def _echoes_another_answer(text: str, captured: dict[str, Any], key: str) -> boo
 # Fields that must name the work, not the enquiry.
 _CARE_TYPE_FIELDS = {"requirement", "care_type"}
 
+# A message that ASKS FOR care, as opposed to one that merely mentions it.
+#
+# The difference decides whether an already-answered care type may be
+# rewritten. "In my family there are 8 peoples ... and 1 is elderly care" is
+# an answer to "who lives in your household" and asks for nothing; "I also
+# need someone to look after my mother" is a client changing what they want.
+#
+# Deliberately narrow and first-person: it is the difference between naming a
+# person and asking for a service. A message matching nothing here leaves the
+# stated requirement exactly as the client gave it.
+_ASKS_FOR_CARE = re.compile(
+    r"\b(?:i|we)\s+(?:also\s+|will\s+|would\s+)?(?:want|need|require|"
+    r"am\s+looking|are\s+looking|prefer)\b"
+    r"|\bshe\s+(?:should|will|would|must|has\s+to|needs?\s+to|can)\b"
+    r"|\b(?:also|as\s+well|in\s+addition|on\s+top\s+of\s+that)\b"
+    r"|\blooking\s+for\b",
+    re.IGNORECASE,
+)
+
 # The same trap as _CARE_TYPE_FIELDS, one field along: a value that restates
 # the REQUEST rather than describing the helper they want.
 #
@@ -2020,6 +2039,39 @@ def _effective_options(
     return tuple(kept)
 
 
+# Whether the client has already said she must be experienced.
+#
+# `helper_profile` asks about age and experience; `hire_source` then asks
+# whether they are open to a FIRST-TIMER. Asked back to back those two
+# contradict each other, and live 2026-09-19 the ticket carried both: "4+
+# years experienced" and "first-timer", which a consultant has to ring the
+# client to resolve.
+#
+# Narrow on purpose. "No preference", "any age" and an age-only answer say
+# nothing about experience and leave the question exactly as it is - the
+# where-she-worked half of it is a real question that nothing else asks.
+_STATES_EXPERIENCE = re.compile(
+    # "...years OLD" is the other half of the same question and says nothing
+    # about experience - without the lookahead, "around 30 to 40 years old"
+    # reads as forty years of it and the where-she-worked question disappears.
+    r"\b\d+\s*\+?\s*(?:year|yr)s?\b(?!\s*old\b)"
+    r"|\bexperienced?\b"
+    r"|\bnot\s+a\s+(?:first[\s-]?timer|fresher|fresh)\b"
+    r"|\bno\s+(?:first[\s-]?timer|fresher|freshie)\b",
+    re.IGNORECASE,
+)
+
+
+def _already_wants_experience(collected: dict[str, Any]) -> bool:
+    """Has the client already said the helper must have experience?"""
+    value = str((collected or {}).get("helper_profile") or "").strip()
+    if not value or value.lower() == ticket_service.UNANSWERED:
+        return False
+    if _NO_PREFERENCE.match(value):
+        return False
+    return bool(_STATES_EXPERIENCE.search(value))
+
+
 def _care_details_already_told(
     service_type: str, collected: dict[str, Any]
 ) -> list[str]:
@@ -2109,6 +2161,30 @@ def _field_guidance(
             "asks for - the half they have already given is not still to be "
             "asked, and a general rule beating a specific one is how the "
             "languages question kept hiding four of its options (2026-09-07)."
+        )
+
+    # ...and the same shape one question along. `helper_profile` asks about her
+    # age and experience; `hire_source` then asks whether they are open to a
+    # FIRST-TIMER. Live 2026-09-19: "she should be 4+ year experienced" ->
+    # "Are you open to a first-timer, or would you prefer someone who has
+    # worked in Singapore, worked abroad, or is already here as a transfer
+    # helper?" -> "yes i am open for first timer". Both went on the ticket, and
+    # a consultant now has to ring the client to find out which they meant.
+    #
+    # The question is NOT dropped: where her experience was got is a real
+    # question and nothing else asks it. Only the half they have already
+    # answered goes.
+    if field.key == "hire_source" and _already_wants_experience(collected):
+        parts.append(
+            "\n\nThey have already told you she should be experienced - "
+            + str(collected.get("helper_profile") or "").strip()
+            + ". Do NOT offer them a first-timer, and do not ask whether they "
+            "are open to one: they have just said they are not, and asking "
+            "invites an answer that contradicts the one you already hold. Ask "
+            "only the half that is still open - WHERE that experience should "
+            "have been got: in Singapore, abroad, or as a transfer helper "
+            "already here. This OVERRIDES the instruction above to ask for "
+            "everything the written question asks for."
         )
 
     why = _WHY_WE_ASK.get(field.key)
@@ -2314,6 +2390,46 @@ async def _extract(
                 "named no care type, so the value was inferred rather than given",
                 state.get("conversation_id"),
                 text[:40],
+                key,
+            )
+            continue
+        # ...and once a care type has been GIVEN, an answer to a DIFFERENT
+        # question does not silently replace it. The two rules above both
+        # run only while the field has never been asked, on the principle
+        # that once asked "their answer is their answer" - and this is the
+        # case neither of them covers: asked, answered, and then overwritten
+        # by a turn that was answering something else.
+        #
+        # Live 2026-09-19. He answered "childcare". Four questions later,
+        # asked how many people live in the household and who they are, he
+        # wrote "In my family there are 8 peoples ... and 1 is elderly care"
+        # - describing WHO IS AT HOME, which is precisely what that question
+        # asks for - and `requirement` was rewritten to "childcare,
+        # eldercare". `elderly_detail` opened on it, the one-helper workload
+        # warning fired on it (measured: it fires on the rewritten value and
+        # does NOT fire on the value he gave), and he had to write "no no i
+        # dont want elderly care help service you just ask me that how many
+        # peoples are there in you household ... by mistake i wrote the
+        # elderly care i am writing elderly person".
+        #
+        # A real correction still wins, because a correction ASKS for
+        # something - "I also need someone for my mother", "she should look
+        # after my mum too". It fails towards KEEPING what the client
+        # actually told us, which is the right way round: the cost of
+        # ignoring a volunteered addition is one question, and the cost of
+        # accepting an invented one is a helper matched against a job nobody
+        # asked for.
+        if (
+            key in _CARE_TYPE_FIELDS
+            and asked.get(key)
+            and str(captured.get(key) or "").strip()
+            and not _ASKS_FOR_CARE.search(state.get("incoming_text") or "")
+        ):
+            logger.info(
+                "Conversation %s: keeping '%s' for '%s' - this turn answers a "
+                "different question and asks for no change",
+                state.get("conversation_id"),
+                str(captured.get(key))[:40],
                 key,
             )
             continue
@@ -3449,6 +3565,15 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         # lists of five is ten of the budget before a word of prose.
         max_sentences=20 if briefing_due else 3,
         stepped=briefing_due,
+        # Found 2026-09-19 while giving `new_hiring` its closing briefing: this
+        # is the ONLY _write call in the collector with no cost guard on it,
+        # and it is the one message that talks about price by construction -
+        # SERVICE_BRIEFING_NOTE requires a cost section. Four services in
+        # COST_WITHHELD_SERVICES now brief at the end, so four closing messages
+        # were relying on the prompt alone for the rule the agency gave by name
+        # on 2026-09-04. The same "wired into two paths and never the third"
+        # shape as `blocked_topic_responder` on 2026-09-10.
+        withhold_cost=service_type in COST_WITHHELD_SERVICES,
     )
 
     # A briefing that was generated and then discarded by a guard leaves the
@@ -3481,7 +3606,14 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             )
             reply = reply.rstrip() + "\n\n" + BRIEFING_CLOSING_LINE
 
-    briefing_lost = briefing_due and reply.strip() == fallback.strip()
+    # ...and a briefing swapped for the cost deferral is LOST in exactly the
+    # same way as one swapped for the fallback: the client reads a sentence
+    # about the price and nothing about the process, the documents or the
+    # timing. Marked given, it would never be tried again - which is the
+    # 2026-09-08 defect, in the branch added the same day the guard was.
+    briefing_lost = briefing_due and reply.strip() in (
+        fallback.strip(), COST_DEFERRAL_REPLY.strip()
+    )
     if briefing_lost:
         logger.error(
             "Conversation %s: the %s briefing was discarded by a guard and the "

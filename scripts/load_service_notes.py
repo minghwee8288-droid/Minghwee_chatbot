@@ -2856,7 +2856,7 @@ TEXT_REPLACEMENTS: list[dict[str, str]] = [
     # correction turns into a rewrite (2026-09-08).
     {
         "old": "(salary: S$570-850/month, timeline: 4-8 weeks)",
-        "new": "(salary: S$650-850/month, timeline: 4-8 weeks)",
+        "new": "(salary: S$650-850/month)",
         "reason": "the Filipino minimum is S$650, not S$570 (agency, "
                   "2026-09-17). These two rows state it inside a "
                   "nationality comparison filed under new_hiring.",
@@ -2903,6 +2903,92 @@ TEXT_REPLACEMENTS: list[dict[str, str]] = [
         "reason": "the same rename in the website form confirmation. Deliberately "
                   "longer than 'Ming Hwee consultant', which would also rewrite a "
                   "line of scripts/TEST_SCRIPT.md that is not client-facing.",
+    },
+    # --- one hiring timeline, not six (2026-09-19) -----------------------
+    # These all survive in raw bulk-import chunks and the two Q&A rows built
+    # from them, which is the residue section 9.15 predicted: the 2026-09-08
+    # and 2026-09-10 corrections went through UPDATES, which keys on
+    # `question`, and reached the rows that have one.
+    #
+    # The per-nationality timelines are REMOVED rather than replaced. The
+    # agency has given one lead time for a hire and none per nationality, and
+    # inventing three is the mistake section 9 records for Myanmar twice - the
+    # same call the 2026-09-17 salary sweep made when it corrected the Filipino
+    # figures and left Indonesia and Myanmar alone in the same sentence.
+    {
+        "old": "The entire process from first consultation to your helper's "
+               "first day takes 3-8 weeks depending on whether you hire a "
+               "transfer helper or from overseas.",
+        "new": "The entire process takes around 1 to 2 weeks from the "
+               "interview if you take on a transfer helper already in "
+               "Singapore, and about 4 to 6 weeks from signing if you hire "
+               "from overseas.",
+        "reason": "the agency gives ONE new-hire lead time (about 4 to 6 weeks from signing) and 1 to 2 weeks from the interview for a transfer. The knowledge base stated six different spans - see the comment above.",
+    },
+    {
+        "old": "From signing with Ming Hwee to your helper's first day: 3-4 "
+               "weeks for a transfer helper already in Singapore, and 6-8 "
+               "weeks for an overseas hire.",
+        "new": "From signing with Ming Hwee to your helper's first day: around "
+               "1 to 2 weeks from the interview for a transfer helper already "
+               "in Singapore, and about 4 to 6 weeks for an overseas hire.",
+        "reason": "the agency gives ONE new-hire lead time (about 4 to 6 weeks from signing) and 1 to 2 weeks from the interview for a transfer. The knowledge base stated six different spans - see the comment above.",
+    },
+    {
+        "old": "Transfer maids are faster to place (2-3 weeks vs. 6-8 weeks)",
+        "new": "Transfer maids are faster to place (around 1 to 2 weeks from "
+               "the interview against about 4 to 6 weeks from signing)",
+        "reason": "the agency gives ONE new-hire lead time (about 4 to 6 weeks from signing) and 1 to 2 weeks from the interview for a transfer. The knowledge base stated six different spans - see the comment above.",
+    },
+    {
+        "old": "(salary: S$650-850/month, timeline: 4-8 weeks)",
+        "new": "(salary: S$650-850/month)",
+        "reason": "the same sweep. The per-nationality spans are dropped rather than rewritten: we hold no lead time per nationality.",
+    },
+    {
+        "old": "(salary: S$550-750/month, timeline: 3-6 weeks)",
+        "new": "(salary: S$550-750/month)",
+        "reason": "the same sweep. The per-nationality spans are dropped rather than rewritten: we hold no lead time per nationality.",
+    },
+    {
+        "old": "Myanmar helpers offer the fastest placement (2-3 weeks), some "
+               "have basic Mandarin",
+        "new": "Myanmar helpers are usually the fastest to place, some have "
+               "basic Mandarin",
+        "reason": "the same sweep. The per-nationality spans are dropped rather than rewritten: we hold no lead time per nationality.",
+    },
+    {
+        "old": "Hire a transfer maid if you need someone quickly (2-3 weeks), "
+               "want to interview in person",
+        "new": "Hire a transfer maid if you need someone quickly - around 1 to "
+               "2 weeks from the interview - want to interview in person",
+        "reason": "the agency gives ONE new-hire lead time (about 4 to 6 weeks from signing) and 1 to 2 weeks from the interview for a transfer. The knowledge base stated six different spans - see the comment above.",
+    },
+    {
+        "old": "want more candidates to choose from, and can wait 6-8 weeks.",
+        "new": "want more candidates to choose from, and can wait about 4 to 6 "
+               "weeks from signing.",
+        "reason": "the agency gives ONE new-hire lead time (about 4 to 6 weeks from signing) and 1 to 2 weeks from the interview for a transfer. The knowledge base stated six different spans - see the comment above.",
+    },
+    # The "How soon can she start?" row, which is IN the closing briefing's
+    # retrieved set - rank 6 of 10, measured - so this pair is the one a client
+    # is most likely to be read.
+    {
+        "old": "4\u20138 wks Overseas hire",
+        "new": "4 to 6 wks Overseas hire",
+        "reason": "the agency gives ONE new-hire lead time (about 4 to 6 weeks from signing) and 1 to 2 weeks from the interview for a transfer. The knowledge base stated six different spans - see the comment above.",
+    },
+    {
+        "old": "2\u20133 wks Transfer hire",
+        "new": "1 to 2 wks Transfer hire",
+        "reason": "the agency gives ONE new-hire lead time (about 4 to 6 weeks from signing) and 1 to 2 weeks from the interview for a transfer. The knowledge base stated six different spans - see the comment above.",
+    },
+    {
+        "old": "Already in Singapore and ready now \u2014 interview in person "
+               "and start in 2\u20133 weeks.",
+        "new": "Already in Singapore and ready now \u2014 interview in person "
+               "and start in around 1 to 2 weeks.",
+        "reason": "the agency gives ONE new-hire lead time (about 4 to 6 weeks from signing) and 1 to 2 weeks from the interview for a transfer. The knowledge base stated six different spans - see the comment above.",
     },
     {
         "old": "(WhatsApp: 80119456 / Tel: 6534 2277)",

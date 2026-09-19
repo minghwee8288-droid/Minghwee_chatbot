@@ -101,6 +101,17 @@ def _text_replacements() -> list[dict]:
 
 _REPLACEMENTS = _text_replacements()
 
+# Which needles are the 2026-09-17 SALARY-FLOOR correction, as opposed to any
+# other rule that happens to carry the same figure.
+#
+# Keyed on the OLD figure, not the new one. The 2026-09-19 timeline sweep edits
+# the same nationality-comparison sentence a second time - to drop a lead time
+# we do not hold - so its `new` carries the corrected salary while its `old`
+# has nothing to do with the floor. Read by the installed figure, that rule
+# looked like a fourth floor correction with no old figure to replace.
+def _FLOOR_RULE(rule: dict) -> bool:
+    return "S$570" in rule["old"]
+
 
 def _was_called(first_letter: str) -> str:
     """What the person who follows up used to be called, read from the loader.
@@ -356,6 +367,17 @@ def _workload_note() -> str:
 
 def _hh():
     return next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "household")
+
+
+def _collector_src() -> str:
+    """info_collector's source, for the few rules that are about a CALL SITE.
+
+    A predicate can be perfect and never be called (2026-09-10, -16, -17); the
+    reverse is also true - a guard can be passed on one _write call and not the
+    one beside it, and only the source says which.
+    """
+    return (Path(__file__).resolve().parents[1]
+            / "app/graph/nodes/info_collector.py").read_text(encoding="utf-8")
 
 
 def _purpose_note() -> str:
@@ -1312,20 +1334,38 @@ rows = [
  # new_hiring. Found by SWEEPING for the old figure after the first two were
  # corrected, which is the only reason the third is here at all.
  ("every way the old floor is written is corrected",
-  sum(1 for r in _REPLACEMENTS if "S$650" in r["new"]), 3),
+  sum(1 for r in _REPLACEMENTS if _FLOOR_RULE(r)), 3),
  # ...and each of those rules is actually LOOKING for the old floor. The first
  # version of this check counted the corrected text instead, so blanking a
  # needle outright left it green - the rule still installed S$650, at a string
  # that no longer existed anywhere. Counted through `old`, which is the half
  # that has to match something.
- ("...and each of them is looking for the figure it replaces",
-  [r["new"][:45] for r in _REPLACEMENTS
-   if "S$650" in r["new"] and "S$570" not in r["old"]], []),
+ ("...and each of them installs the figure that replaces it",
+  [r["old"][:45] for r in _REPLACEMENTS
+   if _FLOOR_RULE(r) and "S$650" not in r["new"]], []),
  ("...and they are distinct needles, not one rule written three times",
-  len({r["old"] for r in _REPLACEMENTS if "S$650" in r["new"]}), 3),
+  len({r["old"] for r in _REPLACEMENTS if _FLOOR_RULE(r)}), 3),
  ("Indonesia and Myanmar are left alone in the same sentence",
   [n for n in ("Indonesian", "Myanmar")
-   if any(n in r["old"] for r in _REPLACEMENTS)], []),
+   if any(n in r["old"] for r in _REPLACEMENTS if _FLOOR_RULE(r))], []),
+ # --- 2026-09-19: one hiring timeline, not six -------------------------
+ # Swept after a client asked "and what is the timeline" at the end of a full
+ # intake and was handed to an agent. The knowledge base stated 2-3, 3-4, 3-6,
+ # 3-8, 4-8 and 6-8 weeks for a hire, five of them reachable under new_hiring
+ # and three in the SAME retrieved set. The agency gives one: about 4 to 6
+ # weeks from signing for an overseas hire, 1 to 2 weeks from the interview for
+ # a transfer.
+ ("no replacement installs a hiring span we do not hold",
+  sorted({m for r in _REPLACEMENTS
+          for m in re.findall(r"\b\d+\s*[-\u2013]\s*\d+\s*(?:wks?|weeks?)",
+                              r["new"])}), []),
+ # ...and the sweep is a group of rules, not one. A single needle would have
+ # corrected the Q&A rows and left the bulk-import chunks they were built from
+ # saying something else - which is how the knowledge base got six spans in the
+ # first place.
+ ("...and the sweep is keyed on every wording that carried one",
+  sum(1 for r in _REPLACEMENTS
+      if re.search(r"\b\d+\s*[-\u2013]\s*\d+\s*(?:wks?|weeks?)", r["old"])), 12),
  ("the salary row states the floor and the experienced starting point",
   [d for d in ("S$650", "S$670")
    if not any(d in r["answer"] for r in lsn.ROWS
@@ -1341,13 +1381,113 @@ rows = [
  # renewal and false of a 25-question first-time hire.
  ("the two hiring flows are not called a short, well-defined job",
   ico._SMALL_TICKET_SERVICES & {"new_hiring", "direct_hiring"}, set()),
- ("...but they are in the set that explains itself up front",
+ # They are still in _OVERVIEW_AT_START, and that is what makes the entry in
+ # BRIEFING_AFTER the thing that decides it: take the closing briefing away
+ # and the opening overview comes straight back, rather than the flow ending
+ # up with neither.
+ ("...and they stay in the set, so losing the closing briefing restores it",
   {"new_hiring", "direct_hiring"} <= ico._OVERVIEW_AT_START, True),
  # The agency's flow puts Cost/Fee straight after Process & Timeline. On these
  # two their own 2026-09-04 instruction forbids a price outright, and
  # quotes_hiring_package_cost enforces it whatever the prompt says - so the
  # overview is told not to spend its one sentence on a figure that is about to
  # be swapped for the deferral line.
+ # --- 2026-09-19: the new-hiring round ---------------------------------
+ # 22 questions and then "a live agent will connect with you shortly", so the
+ # client asked the process, the documents, the timeline and the charges in
+ # four consecutive messages. new_hiring was the LAST employer service with no
+ # closing briefing.
+ ("new hiring closes by explaining itself",
+  t.BRIEFING_AFTER.get("new_hiring"), "start_timeline"),
+ # Keyed on the last REQUIRED field. Everything after it is optional, and an
+ # optional field a client declines is never filled - which is how the key
+ # would stop coming due at all (the direct_hiring argument, 2026-09-18 C).
+ ("...on a field the flow always fills",
+  (next(f for f in t.SERVICE_FIELDS["new_hiring"]
+        if f.key == "start_timeline").optional), False),
+ # ...and never on the LAST field of its flow, on any service. The retriever
+ # runs before the collector, so a key filled on the completion turn arrives
+ # one turn too late and the briefing is built with no records at all - the
+ # 2026-09-09 defect, which is invisible because a briefing that never happens
+ # looks exactly like one working quietly. Derived over the whole table.
+ ("no briefing is keyed on the last field of its own flow",
+  sorted(svc for svc, key in t.BRIEFING_AFTER.items()
+         if [f.key for f in t.SERVICE_FIELDS.get(svc, [])][-1:] == [key]), []),
+ # The briefing needs records or it is built on nothing. Measured: under the
+ # GENERAL briefing query no timing row came back for new_hiring at all - not
+ # in the top 10 and not in the top 18 - so the closing message had no lead
+ # time to give, which is one of the four things the client had to ask for.
+ ("new hiring asks for its own clock by name",
+  ("from signing to her first day"
+   in _rr.BRIEFING_QUERY_BY_SERVICE.get("new_hiring", "")), True),
+ # ...and deliberately not for the cost. "how much does it cost" matches
+ # _PRICE_QUESTION, which DROPS the service filter - the 2026-09-10 defect that
+ # put the passport renewal's $450 into a job seeker's briefing - and
+ # new_hiring is in COST_WITHHELD_SERVICES, so the deferral line goes out
+ # whatever is retrieved.
+ ("...and not for a price it may not quote",
+  "how much does it cost" in _rr.BRIEFING_QUERY_BY_SERVICE.get("new_hiring", ""),
+  False),
+ ("...while every other service keeps the general query",
+  sorted(_rr.BRIEFING_QUERY_BY_SERVICE), ["new_hiring"]),
+
+ # An answer to the HOUSEHOLD question describes who lives there. It is not a
+ # care requirement, however many care words it contains. Live: "In my family
+ # there are 8 peoples ... and 1 is elderly care" rewrote `requirement` from
+ # "childcare" to "childcare, eldercare".
+ ("naming a person in the household is not asking for that care",
+  [m for m in ("In my family there are 8 peoples in these 8 peoples there are "
+               "2 females and 2 are males and 1 is elderly care",
+               "8 people, 3 children and 1 elderly",
+               "we are 5, my mother is elderly")
+   if ico._ASKS_FOR_CARE.search(m)], []),
+ # ...while a client who actually asks for it still changes it.
+ ("...but asking for it still does",
+  [m for m in ("i also need someone to look after my mother",
+               "she should look after my mum as well",
+               "we want eldercare too",
+               "i am looking for eldercare")
+   if not ico._ASKS_FOR_CARE.search(m)], []),
+ # `helper_profile` asks about experience and `hire_source` then offers a
+ # first-timer. Live: "she should be 4+ year experienced" -> "Are you open to a
+ # first-timer...?" -> "yes i am open for first timer", and the ticket carried
+ # both.
+ ("an experience requirement is recognised",
+  [v for v in ("4+ years experienced", "at least 2 years experience",
+               "experienced helper", "5 years")
+   if not ico._already_wants_experience({"helper_profile": v})], []),
+ ("...and no preference is not one",
+  # "any experience is fine" is the one that needs the _NO_PREFERENCE test in
+  # front of the pattern: it contains the word "experience", so read by the
+  # pattern alone it is a client demanding experience when they have just said
+  # the opposite. Found by injecting the fault rather than by reading it.
+  [v for v in ("no preference", "any", "", "around 30 to 40 years old",
+               "any experience is fine", "no preference on experience")
+   if ico._already_wants_experience({"helper_profile": v})], []),
+ ("...and the question then drops the first-timer half",
+  ("Do NOT offer them a first-timer" in _flat(ico._field_guidance(
+      "new_hiring", {"helper_profile": "4+ years experienced"},
+      next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "hire_source")))),
+  True),
+ ("...and keeps it when nothing has been said about experience",
+  ("Do NOT offer them a first-timer" in _flat(ico._field_guidance(
+      "new_hiring", {"helper_profile": "no preference"},
+      next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "hire_source")))),
+  False),
+ # The closing briefing is the one message that talks about price by design -
+ # SERVICE_BRIEFING_NOTE requires a cost section - and until 2026-09-19 it was
+ # the only _write call in the collector with no cost guard on it. Four
+ # services in COST_WITHHELD_SERVICES brief at the end, so four closing
+ # messages were relying on the prompt alone for a rule the agency gave by
+ # name. The same "wired into two paths and never the third" shape as
+ # blocked_topic_responder on 2026-09-10.
+ ("the closing briefing is cost-guarded, not just cost-instructed",
+  _collector_src().count("withhold_cost=service_type in COST_WITHHELD_SERVICES"), 2),
+ # ...and a briefing swapped for the deferral is LOST, not delivered. Marked
+ # given it would never be retried, which is the 2026-09-08 defect arriving in
+ # the branch added the same day as the guard.
+ ("...and a deferred briefing is retried rather than recorded as given",
+  "COST_DEFERRAL_REPLY.strip()" in _collector_src(), True),
  ("a cost-withheld overview is told not to quote a price",
   [k for k in ("new_hiring", "direct_hiring") if k not in _guards.COST_WITHHELD_SERVICES],
   []),
@@ -3303,11 +3443,19 @@ rows = [
  # name. So the set is now `new_hiring` alone, and the OTHER half of that is
  # asserted two entries down: a flow that leaves the overview must have a
  # closing briefing instead, never neither.
- ("the flow that still explains itself up front is new_hiring",
+ # ...and EMPTIED on 2026-09-19, by the same instruction arriving at the last
+ # flow that had no closing briefing. The agency tested new hiring end to end
+ # and it finished on the bare handover line after 22 questions, so the client
+ # asked the process, the documents, the timeline and the charges one after
+ # another. Adding the BRIEFING_AFTER entry is what REMOVES the opening
+ # overview - one change, not two - which is exactly the trade `direct_hiring`
+ # made the day before. No employer intake now briefs at the start; every one
+ # of them briefs at the end.
+ ("no flow explains itself up front any more",
   [k for k in ("new_hiring", "direct_hiring")
-   if not ico.briefs_on_this_turn(k, {"f": 1})], ["direct_hiring"]),
- ("...on exactly one turn, like every other service that does",
-  [n for n in range(6) if ico.briefs_on_this_turn("new_hiring", {"f": n})], [1]),
+   if ico.briefs_on_this_turn(k, {"f": 1})], []),
+ ("...because each of them briefs at the END instead",
+  [k for k in ("new_hiring", "direct_hiring") if k not in t.BRIEFING_AFTER], []),
  ("...and never on the introduction turn",
   ico.briefs_on_this_turn("new_hiring", {}), False),
  # A flow that briefs at neither end is a flow whose client is told nothing

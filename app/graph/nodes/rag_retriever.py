@@ -165,6 +165,31 @@ BRIEFING_QUERY = (
 # and came back with the passport renewal's $450, which the model then wrote
 # into her briefing. ungrounded_figures binned the reply and it was logged as a
 # lost briefing, so she got the plain handover line and no explanation at all.
+# ...and one service needs its own, for the reason `_RETRIEVAL_LABELS` exists:
+# a bare "how long does it take" does not read as "how long does it take TO
+# HIRE A HELPER", and `new_hiring` has forty rows about process steps to lose
+# it among. Measured 2026-09-19, at BRIEFING_MATCH_COUNT: with the general
+# query NO timing row comes back at all, not in the top 10 and not in the top
+# 18 - so the closing briefing had no lead time to give and the client asked
+# for it separately, which is the complaint this is part of. Naming the clock
+# ("from signing to her first day") puts all three timing rows in the set and
+# lifts the whole set from 0.42-0.52 to 0.61-0.70.
+#
+# It also drops "how much does it cost", and that is deliberate rather than
+# incidental: that phrase matches _PRICE_QUESTION, which DROPS the service
+# filter - the 2026-09-10 defect that put the passport renewal's $450 into a
+# job seeker's briefing. `new_hiring` is in COST_WITHHELD_SERVICES, so the
+# deferral line goes out whatever is retrieved, and there is nothing for the
+# cost clause to buy here.
+BRIEFING_QUERY_BY_SERVICE = {
+    "new_hiring": (
+        "how long does it take to hire a helper from signing to her first "
+        "day, what documents are needed from me, and what happens next once "
+        "I confirm"
+    ),
+}
+
+
 CANDIDATE_BRIEFING_QUERY = (
     "what happens after I register, what documents do you need from me, "
     "what happens at the interview, what happens after an employer chooses "
@@ -253,7 +278,8 @@ def _search_query(state: ConversationState) -> str:
         # difference is not cosmetic - see the note on CANDIDATE_BRIEFING_QUERY.
         if service_key in ticket_service.CANDIDATE_SERVICES:
             return f"{CANDIDATE_BRIEFING_QUERY}\n({service})"
-        return f"{BRIEFING_QUERY}\n({service})"
+        query = BRIEFING_QUERY_BY_SERVICE.get(service_key, BRIEFING_QUERY)
+        return f"{query}\n({service})"
 
     # The small-ticket overview turn — same trick, different briefing. The
     # predicate is imported from the collector rather than copied, because the

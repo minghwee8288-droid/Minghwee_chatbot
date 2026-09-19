@@ -1238,7 +1238,13 @@ CASES = [
     # "Once the service or intent has been identified, the bot should
     # proactively explain the relevant process and expected timeline/lead time,
     # without waiting for the user to ask."
-    ("info_collector", "new hiring explains itself before the questions",
+    # ...and REVERSED on 2026-09-19, by the agency's own end-to-end test. New
+    # hiring gained a CLOSING briefing, and adding that entry is what removes
+    # the opening overview - one change, not two, the same trade direct hire
+    # made the day before. The client had asked the process, the documents,
+    # the timeline and the charges in four consecutive messages after 22
+    # questions, so the end is where the explaining was missing.
+    ("info_collector", "new hiring no longer explains itself before the questions",
      {"service_type": "new_hiring", "intent": "new_hiring",
       "incoming_text": "Thomas",
       "collected_info": {"full_name": "Thomas"},
@@ -1246,29 +1252,130 @@ CASES = [
       "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
       "rag_context": "Hiring from overseas usually takes 4 to 6 weeks.",
       "history_text": "bot: May I know your name?",
-      "_expect_prompt": "roughly how long it takes"}),
+      "_forbid_prompt": "roughly how long it takes"}),
     # ...and it is not told it is a short job we handle end to end, which is
     # true of a permit renewal and false of a 25-question hire.
-    ("info_collector", "...and is not called a short, well-defined job",
+    # ...and the half of that pair that has to hold instead: the CLOSING
+    # briefing fires. Run, not predicated - `briefing_due` returning True
+    # proves nothing if nothing appends the note, which is the "imported and
+    # never called" hole this file has now recorded five times.
+    ("info_collector", "new hiring explains itself at the END instead",
      {"service_type": "new_hiring", "intent": "new_hiring",
-      "incoming_text": "Thomas",
-      "collected_info": {"full_name": "Thomas"},
-      "asked_field_counts": {"full_name": 1},
+      "incoming_text": "on whatsapp only",
+      "collected_info": {
+          "full_name": "Sanju", "requirement": "childcare",
+          "children_detail": "3 children under 18", "household": "8",
+          "home_type": "condo", "home_size": "10 bedrooms, 5 bathrooms",
+          "helper_room": "own room", "pets": "yes", "pet_detail": "2 dogs",
+          "languages": "English", "preferred_nationality": "Indonesian",
+          "helper_religion": "Buddhist", "helper_profile": "4+ years",
+          "hire_source": "worked in Singapore", "cooking": "Chinese",
+          "special_duties": "no", "budget": "$650",
+          "rest_day": "weekly days off",
+          "start_timeline": "as soon as possible",
+          "additional_notes": "no smoking", "referral_source": "Google",
+          "update_channel": "WhatsApp"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1,
+                             "start_timeline": 1, "update_channel": 1},
+      "briefed_services": [],
       "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
-      "rag_context": "Hiring from overseas usually takes 4 to 6 weeks.",
-      "history_text": "bot: May I know your name?",
-      "_forbid_prompt": "short, well-defined job"}),
-    # ...and the overview does not spend its one sentence on a price that
-    # quotes_hiring_package_cost is about to swap for the deferral line.
-    ("info_collector", "...and is told not to put a package price in it",
+      "rag_context": "Hiring a helper takes about 4 to 6 weeks from signing. "
+                     "From you we need your NRIC and proof of income.",
+      "history_text": "You: Would you prefer updates by email or WhatsApp?",
+      "_stub_extraction": {},
+      "_expect_prompt": "CLOSE IT ONCE"}),
+    # ...and the cost stays withheld in it, which is the 2026-09-04 rule and
+    # is enforced by quotes_hiring_package_cost whatever the prompt says.
+    ("info_collector", "...and the closing briefing still withholds the package price",
      {"service_type": "new_hiring", "intent": "new_hiring",
-      "incoming_text": "Thomas",
-      "collected_info": {"full_name": "Thomas"},
-      "asked_field_counts": {"full_name": 1},
+      "incoming_text": "on whatsapp only",
+      "collected_info": {
+          "full_name": "Sanju", "requirement": "childcare",
+          "children_detail": "3 children under 18", "household": "8",
+          "home_type": "condo", "home_size": "10 bedrooms, 5 bathrooms",
+          "helper_room": "own room", "pets": "yes", "pet_detail": "2 dogs",
+          "languages": "English", "preferred_nationality": "Indonesian",
+          "helper_religion": "Buddhist", "helper_profile": "4+ years",
+          "hire_source": "worked in Singapore", "cooking": "Chinese",
+          "special_duties": "no", "budget": "$650",
+          "rest_day": "weekly days off",
+          "start_timeline": "as soon as possible",
+          "additional_notes": "no smoking", "referral_source": "Google",
+          "update_channel": "WhatsApp"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1,
+                             "start_timeline": 1, "update_channel": 1},
+      "briefed_services": [],
       "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
-      "rag_context": "The total package is approximately $4,225.",
-      "history_text": "bot: May I know your name?",
-      "_expect_prompt": "Do NOT put a total, a package price"}),
+      "rag_context": "The total service fee and third-party costs are $4,225.",
+      "history_text": "You: Would you prefer updates by email or WhatsApp?",
+      "_stub_extraction": {},
+      "_stub_reply": "The total package is approximately $4,225.",
+      "_expect_reply": "rather one of our agents"}),
+
+    # --- 2026-09-19: the care type an answer to another question rewrote ---
+    # "In my family there are 8 peoples ... and 1 is elderly care" is an answer
+    # to "who lives in your household". It rewrote `requirement` from
+    # "childcare" to "childcare, eldercare", opened elderly_detail, and fired
+    # the one-helper workload warning on a premise that was never true.
+    #
+    # Run rather than predicated: the pattern is only half of it, and what
+    # matters is what reaches `collected_info`.
+    ("info_collector", "an answer about who lives there does not rewrite the care type",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "In my family there are 8 peoples in these 8 peoples "
+                       "there are 2 females and 2 are males and 1 is elderly care",
+      "collected_info": {"full_name": "Sanju", "requirement": "childcare",
+                         "children_detail": "3 children under 18"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1,
+                             "children_detail": 1, "household": 1},
+      "history_text": "You: And besides the 3 children, how many people live "
+                      "in your household and who are they?",
+      "_stub_extraction": {"requirement": "childcare, eldercare",
+                           "household": "8"},
+      "_expect_collected": {"household": "8"},
+      "_expect_not_collected": ["requirement"]}),
+    # ...and a client who actually asks for it still changes it, or a real
+    # correction is lost and that is worse than the defect.
+    ("info_collector", "...but a client who asks for it still changes it",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "i also need someone to look after my mother",
+      "collected_info": {"full_name": "Sanju", "requirement": "childcare"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1},
+      "history_text": "You: How many people live in your household?",
+      "_stub_extraction": {"requirement": "childcare, eldercare"},
+      "_expect_collected": {"requirement": "childcare, eldercare"}}),
+
+    # --- 2026-09-19: the question that contradicted the answer before it ---
+    ("info_collector", "an experienced-helper client is not offered a first-timer",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "she should be 4+ year experienced",
+      "collected_info": {
+          "full_name": "Sanju", "requirement": "childcare",
+          "children_detail": "3 children under 18", "household": "8",
+          "home_type": "condo", "home_size": "10 bedrooms, 5 bathrooms",
+          "helper_room": "own room", "pets": "no", "languages": "English",
+          "preferred_nationality": "Indonesian", "helper_religion": "Buddhist",
+          "helper_profile": "4+ years experienced"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1,
+                             "helper_profile": 1},
+      "history_text": "You: Any preference on her age or experience?",
+      "_stub_extraction": {},
+      "_expect_prompt": "Do NOT offer them a first-timer"}),
+    ("info_collector", "...while a client with no preference still is",
+     {"service_type": "new_hiring", "intent": "new_hiring",
+      "incoming_text": "no preference",
+      "collected_info": {
+          "full_name": "Sanju", "requirement": "childcare",
+          "children_detail": "3 children under 18", "household": "8",
+          "home_type": "condo", "home_size": "10 bedrooms, 5 bathrooms",
+          "helper_room": "own room", "pets": "no", "languages": "English",
+          "preferred_nationality": "Indonesian", "helper_religion": "Buddhist",
+          "helper_profile": "no preference"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1,
+                             "helper_profile": 1},
+      "history_text": "You: Any preference on her age or experience?",
+      "_stub_extraction": {},
+      "_forbid_prompt": "Do NOT offer them a first-timer"}),
     # The control at the other end: a turn deeper into the same flow gets no
     # overview at all. A note that fires on every turn is the 2026-09-17
     # workload defect, and a _forbid_ on a turn that could never carry it

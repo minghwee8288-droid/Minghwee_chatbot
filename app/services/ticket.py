@@ -2385,6 +2385,21 @@ BRIEFING_AFTER: dict[str, str] = {
     # briefing for the deferral line and the client would lose the process and
     # the documents with it.
     "direct_hiring": "helper_availability",
+    # The last flow to get one, and the biggest. The agency tested it end to
+    # end on 2026-09-19 and the collection closed on the bare handover line
+    # after 22 questions - so the client asked the process, the documents, the
+    # timeline and the charges, one after another, four questions nobody
+    # should have had to think of. The same complaint they made about
+    # `direct_hiring`, `replacement` and `transfer_employer`, arriving at the
+    # one flow that never had it.
+    #
+    # Keyed on `start_timeline`, the LAST REQUIRED field, for the reason
+    # spelled out five times in this table: the retriever runs before the
+    # collector, so the key has to be filled a turn before the collection
+    # completes or the briefing is built with no records. Everything after it
+    # is optional, and an optional field a client declines is never filled -
+    # which is exactly how `direct_hiring` would have lost its briefing.
+    "new_hiring": "start_timeline",
 }
 
 
