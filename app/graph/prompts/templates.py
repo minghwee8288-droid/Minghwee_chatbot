@@ -818,7 +818,13 @@ timing line has already told them.
 
 
 OWN_PASSPORT_NOTE = """
-The client is asking about THEIR OWN passport, not their helper's.
+The passport this client has described is not one we can renew.
+
+They have told us it is their own rather than a helper's, and the country
+it is from is not one of the three embassies we work with here - the
+Philippines, Indonesia and Myanmar. A domestic helper renewing her own
+passport IS a client of ours and is served like any other; this is not
+that.
 
 The passport renewal Ming Hwee handles is a domestic helper's passport, renewed
 through her own country's embassy here in Singapore. We do not renew a client's
@@ -848,6 +854,73 @@ THREE THINGS YOU MUST NOT DO:
 
 If it turns out they meant their helper's passport after all, they will say so
 and the collection simply carries on - you do not need to guard against that.
+"""
+
+
+WHOSE_PASSPORT_NOTE = """
+You do not yet know whose passport this renewal is for, and it decides
+everything that follows - so ask, and ask nothing else.
+
+Ming Hwee renews a DOMESTIC HELPER's passport, through her own country's
+embassy here in Singapore. Two different people ask us for it and both are
+welcome: the employer, about the helper who works for them, and the HELPER
+herself, about her own passport.
+
+They have said "my passport" without naming a helper, and that is genuinely
+ambiguous - an employer often says it meaning their maid's. So put ONE short
+question: is it their own passport, or their helper's?
+
+DO NOT ask for a helper's name in this message. That is the question that has
+to wait for this answer, and asking it of a helper reads as though she is
+giving us somebody else's details, which is what the agency reported when
+they tested this as a helper.
+
+DO NOT guess, do not lead them towards either answer, and do not suggest that
+one of the two would be a problem. Neither is.
+
+DO NOT give a fee, a timeline or a document list here. Every figure in the
+records belongs to a route we have not established yet.
+"""
+
+
+HELPER_OWN_PASSPORT_NOTE = """
+The person writing IS the passport holder. She is a domestic helper renewing
+her own passport, and that is a service we provide to her directly - the
+passport we renew is always a helper's, whoever asks us about it.
+
+So every remaining question is about HER:
+
+- "your passport", "your Work Permit", "your nationality" - never "your
+  helper's". She does not employ anybody.
+- Her name is already on file and it is the name on the passport. Do not ask
+  it again, and do not ask for a helper's name.
+- Do not tell her to go through her employer. She has come to us and we can
+  take it from here; where her employer has to sign something or provide a
+  copy, that is one item on a list, not a reason to send her away.
+
+Ask the next question plainly and warmly, exactly as you would for anyone else.
+"""
+
+
+HELPER_PASSPORT_BRIEFING_NOTE = """
+
+WHOSE DOCUMENTS ARE WHOSE. This briefing is going to the HELPER, and the
+records it is built from are written to the employer - "a copy of your NRIC"
+in them means the EMPLOYER's NRIC, not hers. Sent to her unchanged that list
+contradicts itself, because somebody holding a Work Permit does not hold an
+NRIC. So assign every item to the person it actually belongs to:
+
+- her passport, and her Work Permit: HERS.
+- an NRIC or identity document: her EMPLOYER's. Say so - "a copy of your
+  employer's NRIC" - so she knows to ask them for it rather than looking for
+  something she does not have.
+- a form or an undertaking the records say the employer signs: say that it is
+  her employer who signs it.
+
+Everything else is unchanged. She gets the same timing, the same fee and the
+same steps as anybody else asking about this renewal - do not water it down,
+do not tell her to have her employer contact us instead, and do not add a
+condition the records do not state.
 """
 
 

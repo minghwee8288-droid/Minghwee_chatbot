@@ -39,7 +39,10 @@ from app.graph.prompts.templates import (
     EXPIRING_SOON_NOTE,
     HELPER_HOME_LEAVE_FOLLOW_UP_NOTE,
     HELPER_HOME_LEAVE_NOTE,
+    HELPER_OWN_PASSPORT_NOTE,
+    HELPER_PASSPORT_BRIEFING_NOTE,
     OWN_PASSPORT_NOTE,
+    WHOSE_PASSPORT_NOTE,
     UNPLACEABLE_NATIONALITY_NOTE,
     CANDIDATE_BRIEFING_NOTE,
     HOME_LEAVE_TICKET_NOTE,
@@ -430,6 +433,142 @@ _OWN_PASSPORT_EXPLICIT = re.compile(
 #     your helper's name?") is what surfaces it, which is exactly how the
 #     second transcript reached the explicit denial above.
 _MY_PASSPORT = re.compile(r"\bmy\s+(?:own\s+)?passport\b", re.IGNORECASE)
+
+# ---------------------------------------------------------------------------
+# ...and the other half of the same question, which took until 2026-09-19 to
+# arrive: the HELPER herself, renewing her own passport.
+#
+# The agency tested it as a new user. "i want to renew my passport" -> "May I
+# know your name?" -> "my self kareena" -> "Thanks, kareena. May I know your
+# HELPER's name?" -> "i want to renew my passport then why you are asking about
+# my helper name i dont have any helper" - and the branch above then REFUSED
+# her: "Ming Hwee handles passport renewal for domestic helpers only, not
+# clients' own passports." She wrote back "what ?? i can understand that i just
+# to your agency to renew my passport because agency provide this service then
+# why you are telling me these things ?" and was refused a second time.
+#
+# She is right and the refusal was built one case too narrow. Their words:
+# "The Passport Renewal service is available who approaches the agency,
+# including the helper herself, who wants to renew her own passport, and the
+# employer, who wants to renew the passport of their helper. Since the passport
+# being renewed will always be the helper's passport, the flow should handle
+# both scenarios accordingly."
+#
+# THE TWO CASES ARE THE SAME SENTENCE, which is what makes this hard. The
+# employer this branch was built for on 2026-09-17 wrote "There isn't any
+# helper here. I want to renew my passport"; she wrote "i dont have any helper".
+# Nothing in either message says which of them is a domestic helper, so
+# guessing picks one of two bad outcomes: refusing a client we serve, or
+# quoting a helper's embassy fee to a Singaporean.
+#
+# So we ASK - once, and only where the message is ambiguous. An employer who
+# writes "renew my helper passport" never reaches this at all, which is what
+# keeps the working flow working.
+#
+# ...and what settles it in the end is a question the flow already asks. The
+# passport we renew goes through the Philippine, Indonesian or Myanmar embassy
+# here; a passport from anywhere else is not a domestic helper's and is the
+# 2026-09-17 case. So the nationality question does the refusing, on evidence,
+# instead of a pattern guessing from "my passport".
+
+# Her answer to the one question we put. Read only on the turn after we asked
+# it, so short answers ("mine", "me", "my own") are safe here in a way they
+# would not be anywhere else.
+_PASSPORT_IS_MINE = re.compile(
+    r"\bmy\s+own\b|\bmine\b|\bmyself\b|\bmy\s+self\b"
+    r"|\bmy\s+(?:passport|one)\b"
+    r"|\bfor\s+me\b|\bit'?s\s+me\b|\bits\s+me\b"
+    r"|\b(?:i\s*am|i'?m|im)\s+(?:a\s+|the\s+)?"
+    r"(?:helper|maid|domestic\s+worker|fdw)\b"
+    r"|^\s*me\s*$",
+    re.IGNORECASE,
+)
+
+# The other answer. `_HELPER_WORD` catches "my helper's" and "the maid's"; this
+# is for the answers that name her without the noun.
+_PASSPORT_IS_HERS = re.compile(
+    r"\bher\s+(?:own\s+)?(?:passport|one)\b|\bhers\b|\bfor\s+her\b",
+    re.IGNORECASE,
+)
+
+# What this conversation has settled about whose passport it is. All four live
+# in `flagged_once`, which _merge_unique accumulates and _TURN_RESET leaves
+# alone - the same store the two branches above already use, rather than a
+# fifth piece of state that can drift out of step with them.
+_HOLDER_IS_SENDER = "passport_holder_is_the_sender"
+_HOLDER_IS_A_HELPER = "passport_holder_is_a_helper"
+_HOLDER_ASKED = "passport_holder_asked"
+_HOLDER_ASKED_TWICE = "passport_holder_asked_twice"
+# ...and the one that makes the question arrive in time. The opening
+# message is where "my passport" is actually written, and by the turn it
+# matters - the turn we would otherwise ask for a HELPER's name - it is two
+# messages back in the history. Remembered rather than re-read, because
+# `_asks_about_own_passport` deliberately looks at this turn's message only.
+_SAID_MINE = "passport_said_mine"
+
+
+def _whose_passport(state: ConversationState, collected: dict) -> str | None:
+    """Whose passport this renewal is for: "sender", "hers", "ask" or None.
+
+    None means there is nothing to decide and the collection runs exactly as it
+    did before - which is every employer who names a helper, i.e. almost all of
+    them.
+
+    It FAILS TOWARDS THE EXISTING FLOW at both ends. An answer we cannot read
+    is asked about once more and then let go, so a client who will not answer
+    this ends up in the employer collection rather than in a loop; and the
+    settled answers release the moment a helper is named, the same way the
+    two branches above release.
+    """
+    flags = state.get("flagged_once") or []
+    text = state.get("incoming_text") or ""
+    if _HOLDER_IS_SENDER in flags:
+        # Naming a helper takes it back, so a client who corrects us costs
+        # nothing and needs no special case (the 2026-09-11 rule).
+        return None if _HELPER_WORD.search(text) else "sender"
+    if _HOLDER_IS_A_HELPER in flags:
+        return None
+    if not text.strip():
+        return None
+    # She says so herself. This wins over everything below, including the
+    # helper-word test, because "i am a helper" and "my employer" both contain
+    # the words that would otherwise rule them out.
+    if _SPEAKING_AS_HELPER.search(text):
+        return "sender"
+    if _HOLDER_ASKED in flags:
+        # A DENIAL wins over the helper word, for the reason
+        # _OWN_PASSPORT_EXPLICIT wins over it above: "i dont have any helper"
+        # names a helper in order to say there is not one. Her own reply to
+        # this question, in the agency's transcript, was "i want to renew my
+        # passport then why you are asking about my helper name i dont have
+        # any helper" - read helper-word-first, that is an answer of "my
+        # helper's", which is the opposite of what she said.
+        if _OWN_PASSPORT_EXPLICIT.search(text):
+            return "sender"
+        if _HELPER_WORD.search(text) or _PASSPORT_IS_HERS.search(text):
+            return "hers"
+        if _PASSPORT_IS_MINE.search(text):
+            return "sender"
+        return None if _HOLDER_ASKED_TWICE in flags else "ask"
+    # They said "my passport" earlier and we now know their own name but not a
+    # helper's - which is exactly the turn the helper-name question would go
+    # out on. Ask instead. Without this she is asked for a helper's name once
+    # and has to object before anything happens, which is the transcript the
+    # agency sent rather than the flow they asked for.
+    if (
+        _SAID_MINE in flags
+        and str(collected.get("full_name") or "").strip()
+        and not str(collected.get("helper_name") or "").strip()
+    ):
+        return "ask"
+    if not _asks_about_own_passport(state, collected):
+        return None
+    # Never before we know their own name. The introduction and "May I know
+    # your name?" come first, and on the opening message "renew my passport" is
+    # ambiguous on purpose (2026-09-17) - it is the SECOND question, the one
+    # about a helper's name, that this has to get in front of.
+    return "ask" if str(collected.get("full_name") or "").strip() else None
+
 
 # The two services "renew my passport" actually lands in. Measured rather than
 # assumed: a bare "I want to renew my passport" classifies as
@@ -2396,6 +2535,45 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         collected = {**collected, **exhausted}
         extracted = {**extracted, **exhausted}
 
+    # Whose passport is this? Decided HERE rather than at the branch below,
+    # because the answer changes which fields are still missing and
+    # `missing_fields` runs between the two. A helper renewing her own passport
+    # has already given the only name this flow needs - hers is the name on the
+    # passport - so `helper_name` is filled from it and the question that
+    # started this whole complaint is never put to her.
+    #
+    # Filled into `extracted` as well as `collected`, so it reaches `carry` and
+    # survives the turn. It goes in UNDER nothing: by this point the extraction
+    # has already run, and a helper who later names somebody else still wins,
+    # because naming a helper releases the branch entirely.
+    whose_passport = None
+    if service_type in _PASSPORT_SERVICES:
+        whose_passport = _whose_passport(state, collected)
+        if whose_passport == "sender":
+            holder = str(collected.get("full_name") or "").strip()
+            if holder and not str(collected.get("helper_name") or "").strip():
+                logger.info(
+                    "Conversation %s: the passport is the sender's own - "
+                    "filling helper_name from her own name rather than asking",
+                    state.get("conversation_id"),
+                )
+                extracted = {**extracted, "helper_name": holder}
+                collected = {**collected, "helper_name": holder}
+
+    # Written on EVERY return below, so the answer survives the turn wherever
+    # the turn happens to end - the question, the briefing or the refusal. A
+    # flag set on one path and not another is how a settled answer gets asked
+    # for twice.
+    passport_flags: list[str] = []
+    if whose_passport == "sender":
+        passport_flags = [_HOLDER_IS_SENDER]
+    elif whose_passport == "hers":
+        passport_flags = [_HOLDER_IS_A_HELPER]
+    if service_type in _PASSPORT_SERVICES:
+        said = state.get("incoming_text") or ""
+        if _MY_PASSPORT.search(said) and not _HELPER_WORD.search(said):
+            passport_flags = passport_flags + [_SAID_MINE]
+
     # §23.5: a client who cannot give a case ID is reassured and the flow
     # continues. Said once, on the turn the question is dropped.
     dropped_note = ""
@@ -2751,6 +2929,15 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         if service_type == "passport_renewal" and _expires_before_we_finish(collected):
             briefing_note += EXPIRING_SOON_NOTE
 
+        # ...and if the passport is HERS, the document list has to be read to
+        # the right person. The records say "a copy of your NRIC" meaning the
+        # EMPLOYER's, so sent to her unchanged the list asks a Work Permit
+        # holder for an NRIC - which is the contradiction the 2026-09-17 entry
+        # describes, arriving from the opposite direction. Nothing else about
+        # the briefing changes: same timing, same fee, same steps.
+        if whose_passport == "sender":
+            briefing_note += HELPER_PASSPORT_BRIEFING_NOTE
+
     # The very first thing this client has ever heard from us. Rule 1 and the
     # stage line in build_system_prompt both call for the introduction, but on a
     # collector turn they compete with COLLECTOR_INSTRUCTION's "ask for that one
@@ -2920,8 +3107,74 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # and on a conversation where a helper's briefing has already gone out it
     # still carries $450. The note forbids quoting a fee for that reason as
     # well as this one.
-    if service_type in _PASSPORT_SERVICES and _asks_about_own_passport(
-        state, collected
+    # ONE question, and only where the message genuinely does not say. An
+    # employer who writes "renew my helper passport" never gets here, which is
+    # what leaves the working flow untouched.
+    if whose_passport == "ask":
+        asked_before = _HOLDER_ASKED in (state.get("flagged_once") or [])
+        logger.info(
+            "Conversation %s: asking whose passport this is (%s)",
+            state.get("conversation_id"),
+            "again" if asked_before else "first time",
+        )
+        return {
+            **lead_fields,
+            "collected_info": carry,
+            "service_type": service_type,
+            "collected_service": service_type,
+            "asked_field_counts": counts,
+            "missing_field_keys": [],
+            "info_complete": False,
+            # Asked twice at most. An answer we cannot read then lets the
+            # ordinary collection resume rather than looping on a question
+            # nobody is answering - the `max_asks` rule, applied to a branch.
+            "flagged_once": passport_flags + (
+                [_HOLDER_ASKED, _HOLDER_ASKED_TWICE] if asked_before
+                else [_HOLDER_ASKED]
+            ),
+            # The records are stripped for the reason the refusal strips them:
+            # every figure on this turn belongs to a route we have not
+            # established, and `ungrounded_figures` would pass all of them
+            # because they really are in our records.
+            "reply": await _write(
+                {**dict(state), "rag_context": "", "rag_matches": []},
+                system_prompt_state,
+                WHOSE_PASSPORT_NOTE,
+                fallback=(
+                    "Just to make sure I get this right - is this your own "
+                    "passport, or your helper's?"
+                ),
+                max_sentences=2,
+            ),
+            "needs_handover": False,
+        }
+
+    # The refusal, which now fires on EVIDENCE rather than on a guess. It used
+    # to mean "you said the passport is yours", and that read a helper out of
+    # her own service - the 2026-09-19 defect. It now means "you said it is
+    # yours AND the country it is from is not one of the three embassies we
+    # renew through", which is the only test that tells a Singaporean employer
+    # from a Filipino helper, because the two write the same sentence.
+    #
+    # `nationality_code` is the same normalisation the retrieval filter uses,
+    # so this refuses exactly where the records could not have answered anyway.
+    not_a_helpers_passport = False
+    if whose_passport == "sender":
+        stated = str(collected.get("nationality") or "").strip()
+        code = lead_service.nationality_code(stated)
+        not_a_helpers_passport = (
+            bool(stated)
+            and stated.lower() != UNANSWERED
+            and (not code or code == "none")
+        )
+    if service_type in _PASSPORT_SERVICES and (
+        not_a_helpers_passport
+        # ...and once given, it stays given, so "why not?" lands here rather
+        # than being met with the next collection question.
+        or (
+            "own_passport" in (state.get("flagged_once") or [])
+            and _asks_about_own_passport(state, collected)
+        )
     ):
         logger.info(
             "Conversation %s: client is asking about their OWN passport, not a "
@@ -3076,6 +3329,14 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # exclamation mark it is two and clamp_reply cuts the question off.
     first_contact = _is_first_contact(state)
 
+    # Every remaining question is about HER, not about somebody she employs.
+    # Without this the model does what it did on home leave (2026-09-18): it
+    # rewords the employer's questions for whoever is in front of it and the
+    # flow never notices whose answers it is collecting.
+    helper_passport_note = (
+        HELPER_OWN_PASSPORT_NOTE if whose_passport == "sender" else ""
+    )
+
     if missing:
         next_field = missing[0]
         previous = last_bot_line(state.get("history_text", ""))
@@ -3092,6 +3353,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             + small_ticket_note
             + nationality_note
             + location_note
+            + helper_passport_note
             + purpose_note
             + returning_note
             + record_name_note
@@ -3155,7 +3417,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             # alone. Recorded ONLY when the reply is not the bare fallback,
             # for the reason briefing_lost exists (2026-09-08): a note a
             # guard threw away must be tried again, not filed as delivered.
-            "flagged_once": (
+            "flagged_once": passport_flags + (
                 ["workload"]
                 if workload_note
                 and (reply or "").strip() != (next_field.question or "").strip()
@@ -3256,6 +3518,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         "missing_field_keys": [],
         "info_complete": True,
         "reply": reply,
+        "flagged_once": passport_flags,
         # Said once - _merge_unique accumulates and _TURN_RESET leaves this
         # alone. Never recorded when the briefing did not survive the guards.
         "briefed_services": [service_type] if (briefing_due and not briefing_lost) else [],

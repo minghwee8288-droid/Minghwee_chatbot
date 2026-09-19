@@ -354,6 +354,11 @@ because the lead is opened early and the ticket is created much later.
 | ...and the records are STRIPPED from that turn, not just forbidden | the branch passes `rag_context=""` to `_write` | `ungrounded_figures` grounds on the retrieved set, which on that turn really does hold $450 — so the prompt rule alone would have been the only thing standing between a client and a price for a service we do not sell them. With the records blanked, any figure the model produces is ungrounded and takes the whole reply with it. `FEE_BY_NATIONALITY`'s lesson pointed at a person instead of a country. |
 | ...and "my passport" is only read as theirs once we know the helper's name | `_MY_PASSPORT` + the `helper_name` test | A bare *"I want to renew my passport"* is genuinely ambiguous — plenty of employers say it meaning their maid's — so on the first message it is left alone and the flow's own first question surfaces it. Once we hold her name, *"Also I want to renew my passport also"* cannot mean hers. |
 
+| A passport renewal is for a HELPER's passport, and she may be the one asking | `info_collector._whose_passport` | The 2026-09-17 branch refused her: *"Ming Hwee handles passport renewal for domestic helpers only, not clients' own passports"*, to a helper renewing her own. Agency, 2026-09-19: the service is open to whoever approaches, "since the passport being renewed will always be the helper's passport". |
+| ...and where the message does not say which of them is asking, we ask | the `"ask"` branch + `_SAID_MINE` | The employer that branch was built for wrote *"There isn't any helper here"*; she wrote *"i dont have any helper"*. **The same sentence**, so guessing picks one of two bad outcomes. Asked ONCE, and only where a helper is not named - an employer who writes "renew my helper passport" never reaches it. Remembered from the opening message so it arrives INSTEAD of the helper-name question, not after she has objected to it. |
+| ...and a denial beats the word "helper" inside it | `_OWN_PASSPORT_EXPLICIT` first in the answer test | *"i dont have any helper"* names a helper in order to say there is not one. Read helper-word-first, her own reply reads as "my helper's" - the opposite of what she said. Found by planning the live replay, not by reading the code. |
+| The refusal fires on the nationality, not on a guess about who is asking | `nationality_code` in the refusal condition | We renew through the Philippine, Indonesian and Myanmar embassies and nowhere else, so a passport from anywhere else is not a domestic helper's. That is the one test that separates a Singaporean employer from a Filipino helper, because the two write the same sentence. It costs the 2026-09-17 case one extra turn and buys back a client we were turning away. |
+| Her document list says whose documents they are | `HELPER_PASSPORT_BRIEFING_NOTE` | All 21 rows are written to the employer, so "a copy of your NRIC" in them means HIS. Sent to her unchanged it asks a Work Permit holder for an NRIC - the 2026-09-17 contradiction arriving from the opposite direction. Her list reads "a copy of your employer's NRIC". Same timing, same fee, same steps: the agency asked for "process, documents, timeline, fees accordingly". |
 | The person who picks the case up has ONE name, and it is "our agent" | `SERVICE_BRIEFING_NOTE` + `TEXT_REPLACEMENTS` | The closing briefing deferred the cost to "a consultant" four lines above closing with "a live agent will connect with you shortly" - one message, two names, one person. The agency asked for the word by name on 2026-09-19. Swept over the ROWS rather than listed, so a row written tomorrow that reaches for the old word fails by name. |
 | ...and the two guards keyed on the old word were changed with it | `guards._CONTACT_PROMISE` + `info_collector._ANNOUNCES_HANDOVER` | Neither is about vocabulary: one decides whether a time inside a numbered step is a callback nobody promised, the other whether a closing briefing announced the handover at all. A rename that left them behind would have switched both off silently. Both accept the old word too, for a row or a reply that has not caught up. |
 | A timeline we hold only a floor for is stated as a floor | the three Indonesian passport rows | "Approximately 3 working days" was the only one of the three nationalities claiming a hard number with nothing about the wait in front of it - PH says 6 to 8 weeks, MM says outright that the appointment slot is the unpredictable part. The agency tested it and said it "may take more than 3 working days". They gave no replacement span, so none is invented: it says more than 3 working days and defers the rest. |
@@ -1140,6 +1145,91 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-19** - **The helper renewing her OWN passport was refused the service
+  she was asking for, twice, by the branch built to protect it.** The agency
+  tested passport renewal as a new user and this is the 2026-09-17 fix meeting
+  the case it was written one client too narrow for.
+  (A) **What she saw.** *"i want to renew my passport"* -> *"May I know your
+  name?"* -> *"my self kareena"* -> *"Thanks, kareena. May I know your HELPER's
+  name?"* -> *"i want to renew my passport then why you are asking about my
+  helper name i dont have any helper"* -> **"Ming Hwee handles passport renewal
+  for domestic helpers only, not clients' own passports."** She wrote back
+  *"what ?? i can understand that i just to your agency to renew my passport
+  because agency provide this service then why you are telling me these things
+  ?"* and was refused a second time. Their instruction: the service is open to
+  whoever approaches - the helper about her own passport, the employer about
+  their helper's - "since the passport being renewed will always be the
+  helper's passport, the flow should handle both scenarios accordingly".
+  (B) **THE TWO CASES ARE THE SAME SENTENCE, and that is the whole difficulty.**
+  The employer the branch was built for on 2026-09-17 wrote *"There isn't any
+  helper here. I want to renew my passport"*; she wrote *"i dont have any
+  helper"*. Nothing in either message says which of them is a domestic helper,
+  so a pattern that guesses picks one of two bad outcomes: refusing a client we
+  serve, or quoting a helper's embassy fee to a Singaporean. So the flow ASKS -
+  once, and only where no helper has been named. An employer who writes "renew
+  my helper passport" never reaches it, which is what leaves the working flow
+  exactly where it was.
+  (C) **The question arrives INSTEAD of the helper-name question, not after
+  it**, which is the half the agency actually asked for. "my passport" is
+  written in the OPENING message and by the turn it matters it is two messages
+  back, so it is remembered (`_SAID_MINE`) rather than re-read -
+  `_asks_about_own_passport` looks at this turn's message only, by design. Live
+  after: *"my self kareena"* -> *"Is the passport for yourself or your
+  helper?"* She is never asked for a helper's name at all.
+  (D) **What finally settles it is a question the flow already asks.** The
+  passport we renew goes through the Philippine, Indonesian or Myanmar embassy
+  here; a passport from anywhere else is not a domestic helper's. So the
+  refusal moved off a guess about who is asking and onto the nationality
+  answer - the same `nationality_code` normalisation the retrieval filter uses,
+  so it refuses exactly where the records could not have answered anyway. It
+  costs the 2026-09-17 client one extra turn and buys back a client we were
+  turning away. Verified live: *"Singapore"* -> the refusal, and *"why not? can
+  you still help me"* still lands in the same branch rather than being met with
+  the next collection question (the 2026-09-11 rule).
+  (E) **Her name IS the name on the passport**, so `helper_name` is filled from
+  it and the question is never put. Filled early, before `missing_fields` runs,
+  because that is what decides which questions are left - the two are eighty
+  lines apart and a fill placed after it changes nothing.
+  (F) **Her briefing had to say whose documents are whose.** All 21
+  `passport_renewal` rows are written to the employer, so "a copy of your NRIC"
+  in them means HIS. Sent to her unchanged the list asks a Work Permit holder
+  for an NRIC, which is the 2026-09-17 contradiction arriving from the opposite
+  direction. Live after: *"1. A copy of your employer's NRIC 2. A copy of your
+  Work Permit 3. A copy of your passport"*. Nothing else is watered down -
+  same timing, same $450, same steps, because the agency asked for "process,
+  documents, timeline, fees accordingly".
+  (G) **A denial beats the word "helper" inside it, and the LIVE REPLAY is what
+  found that** - planning it, before running it. Her own reply to the new
+  question is *"...why you are asking about my helper name i dont have any
+  helper"*, and read helper-word-first that is an answer of **"my helper's"**,
+  the exact opposite of what she said. `_OWN_PASSPORT_EXPLICIT` is tested first
+  now, the same precedence it already has one function along, and for the same
+  reason: a denial names a helper in order to say there is not one.
+  (H) **One service key, not two.** `transfer`/`transfer_employer` is the
+  precedent for splitting by audience, and it was measured and rejected here:
+  all 21 rows are `contact_type='all'`, so she can already retrieve every one
+  of them, and a second key would need its own ticket fallback, retrieval
+  alias, lead kind, briefing key and a dozen derived sweeps. The accepted cost,
+  recorded rather than buried: her enquiry still opens an EMPLOYER lead,
+  because `kind_for` keys on the service. The ticket carries the truth and
+  nobody has asked for the lead table to change; `kind_for`'s `transfer` branch
+  is the shape of the fix if they do.
+  (I) **Fourteen faults injected, fourteen red - after one came back GREEN and
+  it was the check.** Nothing asserted that her briefing note ever reaches the
+  prompt: the note existed, was correct, and was checked by reading its
+  CONTENT, so deleting the line that appends it left every assertion passing.
+  That is the "imported and never called" hole for the fourth time (2026-09-10,
+  -16, -17, here), and the cure is the same one - a state that RUNS the node
+  and reads the system prompt it was handed, plus an employer control on the
+  same turn so it cannot pass by firing on everything.
+  (J) **Verified live against the real model, three transcripts.** Hers, turn
+  for turn, ending in the briefing above. The employer's from the same day -
+  *"Hey i want to Renew my Helper Passport"* - which is **unchanged in every
+  turn**, including *"1. A copy of your NRIC"*, which is correctly his. And the
+  Singaporean, refused.
+  `selfcheck_flows.py` is **611 assertions**; `smoke_nodes.py` is **148
+  states**.
 
 - **2026-09-19** - **Passport renewal: two names for one person in one message,
   and the only timeline we stated as a hard number.** The agency tested it and

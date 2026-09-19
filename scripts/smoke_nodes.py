@@ -822,13 +822,23 @@ CASES = [
       "collected_info": {"full_name": "Rats"},
       "asked_field_counts": {"full_name": 1, "helper_name": 1},
       "history_text": "bot: may I know your helper's name?",
-      "_expect_prompt": "asking about THEIR OWN passport",
+      "_expect_prompt": "is it their own passport",
       # `flagged_once` is the half that makes the NEXT turn work. Without it
-      # "why not?" is met with "May I know your helper's name?" again, and the
-      # assertion on the predicate cannot see that, because it supplies the
+      # the answer to this question lands nowhere and it is asked again, and
+      # an assertion on the predicate cannot see that, because it supplies the
       # flag itself.
       "_expect_state": {"info_complete": False, "needs_handover": False,
-                        "flagged_once": ["own_passport"]}}),
+                        "flagged_once": ["passport_holder_asked"]}}),
+    # ...and the question it must NOT ask on that turn is the one that started
+    # the complaint. The agency's words: she "should not be asked for the
+    # helper's name as if she is providing someone else's details".
+    ("info_collector", "...and not for a helper's name on that turn",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "There isn't any helper here. I want to renew my passport",
+      "collected_info": {"full_name": "Rats"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1},
+      "history_text": "bot: may I know your helper's name?",
+      "_forbid_prompt": "field to collect: helper's name"}),
     # The records are stripped on that turn, which is the guard half rather
     # than the prompt half: the retrieved set holds "$450" and would ground it.
     ("info_collector", "...and the helper's fee is not offered to the model",
@@ -847,7 +857,126 @@ CASES = [
       "collected_info": {"full_name": "Vaidik", "helper_name": "Polo"},
       "asked_field_counts": {"full_name": 1, "helper_name": 1},
       "history_text": "bot: Here is everything for Polo's passport renewal.",
-      "_expect_prompt": "asking about THEIR OWN passport"}),
+      "_expect_prompt": "is it their own passport"}),
+
+    # --- 2026-09-19: and the answer she gives -----------------------------
+    # The agency tested passport renewal AS THE HELPER and the 2026-09-17
+    # branch refused her twice. Their instruction: the service is available to
+    # whoever approaches, and "since the passport being renewed will always be
+    # the helper's passport, the flow should handle both scenarios".
+    #
+    # Run rather than predicated, because the predicate cannot show the two
+    # things that matter: that `helper_name` is filled from her OWN name, so
+    # the question is never put, and that the instruction stops talking about
+    # "your helper".
+    ("info_collector", "she says the passport is her own, and the flow collects for HER",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "my own passport",
+      "collected_info": {"full_name": "kareena"},
+      "asked_field_counts": {"full_name": 1},
+      "flagged_once": ["passport_holder_asked"],
+      "history_text": "You: Is this your own passport, or your helper's?",
+      "_stub_extraction": {},
+      "_expect_collected": {"helper_name": "kareena"},
+      "_expect_prompt": "The person writing IS the passport holder",
+      # `passport_said_mine` rides along because her answer says it again -
+      # harmless, and _merge_unique keeps one copy.
+      "_expect_state": {"info_complete": False,
+                        "flagged_once": ["passport_holder_is_the_sender",
+                                         "passport_said_mine"]}}),
+    # She says so herself on the very first turn she says it, with no question
+    # from us at all - "i am helper" and "my employer" are the two things only
+    # she writes.
+    ("info_collector", "...or says outright that she is the helper",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "i am a helper, i want to renew my passport",
+      "collected_info": {"full_name": "kareena"},
+      "asked_field_counts": {"full_name": 1},
+      "history_text": "You: May I know your helper's name?",
+      "_stub_extraction": {},
+      "_expect_collected": {"helper_name": "kareena"},
+      "_expect_prompt": "The person writing IS the passport holder"}),
+    # The other answer, and the one that keeps the working flow working: an
+    # employer who meant their maid's goes straight back to the collection.
+    ("info_collector", "...and an employer who meant their helper's carries on",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "my helper's passport",
+      "collected_info": {"full_name": "Vaidik"},
+      "asked_field_counts": {"full_name": 1},
+      "flagged_once": ["passport_holder_asked"],
+      "history_text": "You: Is this your own passport, or your helper's?",
+      "_stub_extraction": {},
+      "_forbid_prompt": "The person writing IS the passport holder",
+      "_expect_state": {"flagged_once": ["passport_holder_is_a_helper"]}}),
+    # The refusal did not go away - it moved onto evidence. A Singaporean
+    # employer renewing their OWN passport says the same sentence she does, so
+    # what separates them is the country the passport is from: we renew through
+    # the Philippine, Indonesian and Myanmar embassies and nowhere else.
+    ("info_collector", "a passport from outside the three embassies is still refused",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "Singapore",
+      "collected_info": {"full_name": "Rats", "helper_name": "Rats",
+                         "nationality": "Singapore"},
+      "asked_field_counts": {"full_name": 1, "nationality": 1},
+      "flagged_once": ["passport_holder_is_the_sender"],
+      "rag_context": "A passport renewal costs approximately $450.",
+      "history_text": "You: Which country is your passport from?",
+      "_stub_extraction": {},
+      "_expect_prompt": "not one we can renew",
+      "_forbid_prompt": "450",
+      "_expect_state": {"info_complete": False, "needs_handover": False,
+                        "flagged_once": ["own_passport"]}}),
+    # HER CLOSING BRIEFING, which is the half a content assertion cannot see.
+    # The note existed and was correct while nothing appended it - the
+    # "imported and never called" hole (2026-09-10, -16, -17), and the only
+    # injection of this round that came back green.
+    ("info_collector", "...and her closing briefing is read to HER",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "next year march",
+      "collected_info": {"full_name": "kareena", "helper_name": "kareena",
+                         "nationality": "Indonesia",
+                         "passport_expiry": "next year march"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "nationality": 1, "passport_expiry": 1},
+      "flagged_once": ["passport_holder_is_the_sender"],
+      "briefed_services": [],
+      "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
+      "rag_context": "An Indonesian helper's passport renewal takes more than "
+                     "3 working days and costs approximately $450. We need a "
+                     "copy of your NRIC, her work permit and her passport.",
+      "history_text": "You: When does your current passport expire?",
+      "_stub_extraction": {},
+      "_expect_prompt": "WHOSE DOCUMENTS ARE WHOSE"}),
+    # ...and an EMPLOYER's briefing is untouched, which is the control that
+    # makes the one above safe: his list really is "a copy of your NRIC".
+    ("info_collector", "...while an employer's briefing is not",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "next year march",
+      "collected_info": {"full_name": "Sallu", "helper_name": "Lily",
+                         "nationality": "Indonesia",
+                         "passport_expiry": "next year march"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "nationality": 1, "passport_expiry": 1},
+      "briefed_services": [],
+      "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
+      "rag_context": "An Indonesian helper's passport renewal takes more than "
+                     "3 working days and costs approximately $450.",
+      "history_text": "You: When does Lily's current passport expire?",
+      "_stub_extraction": {},
+      "_forbid_prompt": "WHOSE DOCUMENTS ARE WHOSE"}),
+    # ...and the control that makes that safe. A helper from one of the three
+    # is served exactly like anybody else - refusing her is the defect being
+    # fixed, and a test that only proves the refusal fires would not see it.
+    ("info_collector", "...while a helper from one of the three is served",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "Indonesia",
+      "collected_info": {"full_name": "kareena", "helper_name": "kareena",
+                         "nationality": "Indonesia"},
+      "asked_field_counts": {"full_name": 1, "nationality": 1},
+      "flagged_once": ["passport_holder_is_the_sender"],
+      "history_text": "You: Which country is your passport from?",
+      "_stub_extraction": {},
+      "_forbid_prompt": "not one we can renew"}),
     # The control. A helper's passport renewal is untouched - this is the
     # service, and breaking it to fix the edge case would be the worse trade.
     ("info_collector", "...while a helper's passport renewal still collects",
