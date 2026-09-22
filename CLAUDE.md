@@ -253,6 +253,8 @@ because the lead is opened early and the ticket is created much later.
 | A price we hold for two nationalities is not the third's price | `ticket.FEE_BY_NATIONALITY` + `fee_is_known_for()` | **$450** was quoted for a **Myanmar** helper. It is in the records (as PH/ID's price), so `ungrounded_figures` passed it. |
 | The passport briefing is timeline, then cost, then documents | `SERVICE_BRIEFING_NOTE` | Shirley, 2026-09-09: "nationality → timeline → requirements/documents". It never explains the embassy, the appointment or the runner — that is our processing. |
 | Passport renewal does not ask where she is, nor about the work permit | `SERVICE_FIELDS["passport_renewal"]` | Both called out at the 2026-09-09 meeting: location is irrelevant, and WP renewal is "a completely separate process". |
+| A protocol event is not a client message, INBOUND as well as outbound | `message.has_message_content` (was `has_reply_content`) + `webhook.handle_inbound` | `text_for_llm` falls back to `[<type> message]` when there is no body, so a delete notice reached the graph as though the client had typed it - and the collector, finding nothing answered, asked its next question again in different words. Live: *"do you have any pets at home?"* then *"Is there anything else living in the home, such as pets?"*, a minute apart. The predicate already existed and was wired to the outbound path alone. |
+| ...and the test is the CONTENT, never a list of type names | the same predicate | A protocol event nobody has seen yet still carries nothing a person wrote, and a voice note or an uncaptioned image carries no body either - a rule reading the TYPE would drop both. |
 | A greeting is greeted back, and an announced question is told to go ahead | `guards.greeting_only` + `response_generator.greeting_back` | `has_no_request` covers two shapes and both got the string written for the second: *"Hi"* was answered *"Sure, go ahead. What would you like to know?"* Go-ahead answers a request to ask; to a greeting it presupposes the intent. The name comes from our RECORDS, and nothing of their file is read back - a greeting is not the place to prove we remember them. |
 | ...and the PROMPT is what had to change, not just the canned string | `system.build_system_prompt` (the stage line) | Most greeting turns are answered by the model, and rule 7 plus the stage line both said *"do NOT greet again"* on every turn with history - right when they asked something, wrong when their whole message IS the greeting. One definition in `guards`, read by the node that picks the reply and by the prompt that tells the model whether it may greet at all (§9.8). |
 | ...and a client who greets twice is still only greeting | `guards.without_greeting` | *"hello, good morning"* left *"good morning"* after one strip, which matches no announcement, so it read as a real request. Stripped in a loop now. |
@@ -1169,6 +1171,46 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-22** - **"Is there anything else living in the home, such as
+  pets?" - asked one minute after the pets question.** The agency: *"What do
+  you mean by is there anything else living in the home, such as pets when you
+  have already ask if there are any pets. 'Anything else living in the home' is
+  not an appropriate question"*.
+  (A) **The cause is in the transcript and is easy to miss: the client DELETED
+  a message.** WhatsApp sends the revoke as an ordinary entry in Whapi's
+  `messages` array, with no body. `IncomingMessage.text_for_llm` falls back to
+  `[<type> message]` when there is nothing else, so the delete notice reached
+  the graph as though the client had typed the words **"[action message]"**.
+  The collector read a message that answered nothing and asked its next
+  question again - `pets` is `max_asks=2`, so the machinery allowed the re-ask
+  and only the wording changed. Reproduced 4 runs of 4.
+  (B) **The guard already existed and was wired to ONE path.**
+  `has_reply_content` has been on the outbound side since 2026-09-18, and its
+  own docstring says *"reactions, delete notices and other protocol events
+  arrive the same way"* - it was written for the case where one of these
+  silenced conversation 3766. Inbound had nothing. The same "wired into one
+  path and never the other" shape as `quotes_hiring_package_cost` on
+  2026-09-10, and the fix is the same: one predicate, both callers, renamed
+  `has_message_content` because it is no longer about replies.
+  (C) **Checked FIRST, before anything happens.** A protocol event is not
+  stored, not read-receipted, not debounced and never engages the bot - it is
+  not handled at all, which is the distinction the 2026-09-14 LID fix had to
+  make for the same reason.
+  (D) **The test is the CONTENT, not a list of type names.** Measured on the
+  real payload shapes: a delete, a reaction and an edit all stop; a text
+  message, a **voice note** and an **uncaptioned image** all get through -
+  those last two carry no body either, so a rule reading the TYPE would have
+  dropped a client's voice message. A protocol event nobody has seen yet still
+  carries nothing a person wrote.
+  (E) **And the injection found that the OUTBOUND half had no cover at all.**
+  `if False:` at that call site came back GREEN in both suites - the 2026-09-18
+  fix for conversation 3766 had never been asserted, so a thumbs-up from the
+  agency's own handset could have gone back to standing the bot down
+  permanently and nothing would have said so. It has three checks now, and the
+  injection goes red.
+  (F) Five faults injected, five red. `selfcheck_flows.py` is **648
+  assertions**; `smoke_nodes.py` is **174 states**.
 
 - **2026-09-22** - **"Hi" was answered "Sure, go ahead. What would you like to
   know?"** The agency, testing on a thread whose last exchange was an insurance

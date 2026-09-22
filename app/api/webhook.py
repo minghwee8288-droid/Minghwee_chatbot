@@ -502,7 +502,7 @@ async def maybe_return_to_bot(conversation: dict[str, Any]) -> dict[str, Any]:
     # covers two cases that look identical from here: a bot crash
     # (REASON_CONFUSED) and an outbound event agent_took_over() silenced the
     # bot for but that had nothing storable — a reaction, a delete notice —
-    # see has_reply_content(). Conversation 3766 was exactly the second case:
+    # see has_message_content(). Conversation 3766 was exactly the second case:
     # the handover log said "agent replied directly", but there was no
     # message row to ever measure an idle time against, so this fell through
     # to the old 72h "unknown cause" branch and stayed stuck for most of a
@@ -551,6 +551,22 @@ async def handle_inbound(message: IncomingMessage) -> None:
     """Store an incoming client message and queue it for the bot."""
     if _already_processed(message.whapi_message_id):
         logger.debug("Replayed webhook for %s — ignoring", message.whapi_message_id)
+        return
+
+    # A reaction, a delete notice or another protocol event is not a message
+    # the client sent, and it must not cost them a turn. `text_for_llm` falls
+    # back to "[<type> message]" when there is no body, so one of these reaches
+    # the graph looking like something they typed - and the collector, finding
+    # nothing answered, asks its next question again in different words. Live
+    # 2026-09-22: the client deleted a message and was asked about pets twice,
+    # a minute apart. Checked FIRST, so a protocol event is not stored, not
+    # read-receipted, not debounced and never engages the bot at all.
+    if not message_service.has_message_content(message):
+        logger.debug(
+            "Ignoring contentless inbound event on %s (type=%s) — not a client message",
+            message.customer_number,
+            message.message_type,
+        )
         return
 
     phone = message.customer_number
@@ -739,13 +755,13 @@ async def handle_outbound(message: IncomingMessage) -> None:
         return
 
     # A reaction, a delete notice or some other protocol event is not a human
-    # replying — see has_reply_content(). Silencing the bot on one of these
+    # replying — see has_message_content(). Silencing the bot on one of these
     # leaves last_agent_message_at() with nothing to ever find, which is
     # exactly what happened to conversation 3766: stuck in human_active with
     # no stored message to measure an idle time against, so recovery fell
     # through to the 72h unknown-cause safety net instead of the 10-minute
     # agent pause it should have gotten if a real reply had been sent.
-    if not message_service.has_reply_content(message):
+    if not message_service.has_message_content(message):
         logger.debug(
             "Ignoring contentless outbound event on conversation %s (type=%s) — not an agent reply",
             conversation["id"],

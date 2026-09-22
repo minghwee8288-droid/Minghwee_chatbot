@@ -1972,6 +1972,128 @@ async def _lid_checks() -> list[tuple[str, bool]]:
                         f"{'claimed' if should_claim else 'left to the human'}",
                         bool(claimed) is should_claim))
 
+    # --- a protocol event is not a client message, 2026-09-22 ------------
+    # The client deleted a message and was asked about pets twice, a minute
+    # apart, the second time as "Is there anything else living in the home,
+    # such as pets?" - the agency: "'Anything else living in the home' is not
+    # an appropriate question". `text_for_llm` falls back to "[<type> message]"
+    # when there is no body, so the delete notice reached the graph as though
+    # they had typed it; the collector found nothing answered and re-asked
+    # (pets is max_asks=2, so only the wording changed).
+    #
+    # `has_message_content` already existed and was wired to the OUTBOUND path
+    # alone - the same "one path and never the other" shape as the hiring cost
+    # guard on 2026-09-10 - so this runs handle_inbound and reads whether the
+    # event ever reached the debouncer, not whether the predicate is right.
+    _EVENTS = (
+        ("a deleted message", {"type": "action", "text": None,
+                               "action": {"type": "delete", "target": "x"}},
+         False),
+        ("a reaction", {"type": "reaction", "text": None,
+                        "action": {"type": "reaction", "emoji": "x",
+                                   "target": "x"}}, False),
+        ("an edit notice", {"type": "action", "text": None,
+                            "action": {"type": "edit", "target": "x"}}, False),
+        # The controls. A voice note and an image carry no body either, and
+        # both are real messages a client sent - a rule that reads the TYPE
+        # rather than the content would drop them.
+        ("a text message", {"type": "text", "text": {"body": "3 bedroom condo"}},
+         True),
+        ("a voice note", {"type": "voice", "text": None,
+                          "voice": {"link": "https://e/a.ogg",
+                                    "mime_type": "audio/ogg"}}, True),
+        ("an image with no caption", {"type": "image", "text": None,
+                                      "image": {"link": "https://e/a.jpg",
+                                                "mime_type": "image/jpeg"}},
+         True),
+    )
+    for label, over, should_reach in _EVENTS:
+        over = {k: v for k, v in over.items() if v is not None}
+        msg = parse_webhook(payload(**{
+            "from": "917970027379@s.whatsapp.net",
+            "chat_id": "917970027379@s.whatsapp.net",
+            "id": f"ev-{label}", "text": None, **over}))
+        if not msg:
+            results.append((f"{label} is parsed away before the bot", not should_reach))
+            continue
+        msg = msg[0]
+        reached: list[bool] = []
+
+        async def _add(_m, _r=reached):
+            _r.append(True)
+
+        row = {"id": 7, "customer_number": "917970027379",
+               "bot_status": _conv.BOT_ACTIVE, "langgraph_thread_id": "t-1"}
+        with patch.object(_wh.conversation_service, "get_by_phone",
+                          new=AsyncMock(return_value=row)), \
+             patch.object(_wh, "may_engage",
+                          new=AsyncMock(return_value=(True, "ok"))), \
+             patch.object(_wh, "maybe_return_to_bot",
+                          new=AsyncMock(return_value=row)), \
+             patch.object(_wh.conversation_service, "get_or_create",
+                          new=AsyncMock(return_value=(row, False))), \
+             patch.object(_wh.message_service, "store_incoming", new=AsyncMock()), \
+             patch.object(_wh.conversation_service, "touch_inbound",
+                          new=AsyncMock()), \
+             patch.object(_wh, "_schedule_read_receipt", new=lambda *a, **k: None), \
+             patch.object(_wh, "_should_identify", new=lambda *a, **k: False), \
+             patch.object(_wh.transcription_service, "is_speech",
+                          new=lambda *a, **k: False), \
+             patch.object(_wh.debouncer, "add", new=_add):
+            await _wh.handle_inbound(msg)
+        results.append((
+            f"{label} {'reaches' if should_reach else 'never reaches'} the bot",
+            bool(reached) is should_reach))
+
+    # ...and the OUTBOUND half, which has had this guard since 2026-09-18 and
+    # never had a check: injecting `if False:` there on 2026-09-22 came back
+    # GREEN in both suites. A reaction sent from the agency's own handset -
+    # a thumbs-up on a client's message - must not be read as an agent taking
+    # the thread over, because a stand-down with no stored message leaves
+    # last_agent_message_at() nothing to measure an idle window against and
+    # the bot is silent until the 72h safety net.
+    for label, over, should_stand_down in (
+        ("an agent's reaction", {"type": "reaction",
+                                 "action": {"type": "reaction", "emoji": "x",
+                                            "target": "y"}}, False),
+        ("an agent's delete notice", {"type": "action",
+                                      "action": {"type": "delete",
+                                                 "target": "y"}}, False),
+        ("a real agent reply", {"type": "text",
+                                "text": {"body": "I will call you shortly"}},
+         True),
+    ):
+        msg = parse_webhook(payload(**{
+            "from_me": True, "from": "6565342277@s.whatsapp.net",
+            "chat_id": "917970027379@s.whatsapp.net",
+            "id": f"out-{label}", "text": None, **over}))[0]
+        stood_down: list[bool] = []
+
+        async def _took_over(_conversation, _s=stood_down):
+            _s.append(True)
+
+        row = {"id": 8, "customer_number": "917970027379",
+               "bot_status": _conv.BOT_ACTIVE, "langgraph_thread_id": "t-1"}
+        with patch.object(_wh.message_service, "was_sent_by_bot",
+                          new=AsyncMock(return_value=False)), \
+             patch.object(_wh.conversation_service, "get_by_phone",
+                          new=AsyncMock(return_value=row)), \
+             patch.object(_wh.message_service, "echoes_our_own_send",
+                          new=lambda *a, **k: False), \
+             patch.object(_wh.message_service, "is_auto_reply",
+                          new=AsyncMock(return_value=False)), \
+             patch.object(_wh.message_service, "store_agent_reply",
+                          new=AsyncMock()), \
+             patch.object(_wh.conversation_service, "touch_outbound",
+                          new=AsyncMock()), \
+             patch.object(_wh.debouncer, "flush_now", new=AsyncMock()), \
+             patch.object(_wh.handover_service, "agent_took_over",
+                          new=_took_over):
+            await _wh.handle_outbound(msg)
+        results.append((
+            f"{label} {'stands the bot down' if should_stand_down else 'does NOT stand the bot down'}",
+            bool(stood_down) is should_stand_down))
+
     # --- the chat-list fallback, 2026-09-14 ------------------------------
     # GET /chats/<lid> is not reliable. Measured on the live channel, same
     # minute: /chats/95786411008174@lid returned {"type":"unknown"} with no

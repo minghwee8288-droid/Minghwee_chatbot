@@ -193,18 +193,37 @@ async def store_incoming(conversation_id: int, message: IncomingMessage) -> dict
     return await _insert_ignoring_duplicates(payload)
 
 
-def has_reply_content(message: IncomingMessage) -> bool:
-    """Whether this outbound event is an actual message, not a reaction/protocol event.
+def has_message_content(message: IncomingMessage) -> bool:
+    """Whether this event is an actual message, not a reaction/protocol event.
 
     Whapi's ``messages`` array is not limited to text and media: reactions,
-    delete notices and other protocol events arrive the same way, with
-    ``from_me=True`` and nothing store_agent_reply can persist. Conversation
-    3766 got silenced by exactly one of these — the handover row said "agent
-    replied directly", but wp_chat_messages has no matching outbound row at
-    all, so last_agent_message_at() could never find it and the standdown had
-    no idle time to measure against, ever. The caller must check this BEFORE
-    deciding the thread has a real agent on it — storage succeeding or failing
-    is a separate question from whether there was anything to store.
+    delete notices and other protocol events arrive the same way, with nothing
+    ``_storable_body`` can persist.
+
+    OUTBOUND, that mattered because one of them silenced conversation 3766 —
+    the handover row said "agent replied directly", but wp_chat_messages had no
+    matching outbound row at all, so last_agent_message_at() could never find
+    it and the standdown had no idle time to measure against, ever.
+
+    INBOUND, it was wired nowhere until 2026-09-22, and the cost is a whole
+    extra TURN. `text_for_llm` falls back to "[<type> message]" when there is
+    no body, so a delete notice reached the graph as though the client had
+    typed those words: the collector read a message that answered nothing and
+    asked its next question a second time. Live, one minute apart, and the
+    agency saw both — "do you have any pets at home?" and then "Is there
+    anything else living in the home, such as pets?" (`pets` has max_asks=2,
+    so the machinery allowed the re-ask and only the wording changed). Their
+    words: "'Anything else living in the home' is not an appropriate question".
+    The same "wired into one path and never the other" shape as
+    `quotes_hiring_package_cost` on 2026-09-10.
+
+    Content, not a list of type names: a protocol event we have never seen is
+    still one that carries nothing a person wrote. A voice note passes here on
+    its media and is transcribed afterwards.
+
+    The caller must check this BEFORE deciding anything about the thread —
+    storage succeeding or failing is a separate question from whether there was
+    anything to store.
     """
     return _storable_body(message) is not None or bool(message.media_url)
 
@@ -215,7 +234,7 @@ async def store_agent_reply(conversation_id: int, message: IncomingMessage) -> d
     Never raises: the caller uses this on the agent-detection path, and failing
     to store a row must not stop the bot from standing down.
     """
-    if not has_reply_content(message):
+    if not has_message_content(message):
         return None
     payload = {
         "conversation_id": conversation_id,

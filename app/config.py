@@ -206,7 +206,7 @@ class Settings(BaseSettings):
     # replied on the thread, before the bot tries again on its own. Covers
     # both a bot crash mid-turn (REASON_CONFUSED — "Bot could not answer" in
     # the portal) and an outbound event that silenced the bot but left nothing
-    # to store (see has_reply_content() in app/services/message.py) — both
+    # to store (see has_message_content() in app/services/message.py) — both
     # look identical to maybe_return_to_bot(), and neither has anything to
     # lose by retrying soon rather than waiting out human_active_timeout_hours,
     # which used to be the only fallback and left a client stuck for most of a
