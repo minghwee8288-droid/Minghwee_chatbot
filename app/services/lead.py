@@ -80,6 +80,33 @@ def nationality_code(value: str | None) -> str | None:
     return None
 
 
+def nationality_in_play(collected: dict | None) -> str | None:
+    """The PH/ID/MM code this conversation is about, if we know it yet.
+
+    Two fields, because the two sides of the desk answer different questions:
+    a HELPER gives her own `nationality`, an EMPLOYER gives the
+    `preferred_nationality` they are hiring for. Her own answer wins where
+    both exist, being a fact rather than a preference.
+
+    'none' is what nationality_code() returns for "no preference", and that is
+    the ABSENCE of an answer rather than an answer - which is the case that
+    matters most, because it is a real and common reply to the hiring flow's
+    own nationality question and there is no single agency fee to give for it.
+
+    One function, three readers - rag_retriever (which rows to search),
+    info_collector (may this briefing quote a fee) and response_generator (may
+    this answer quote one). They were three copies until 2026-09-22 and two of
+    them had already diverged: the collector's read `nationality` alone, so on
+    a hiring turn the retrieval filter narrowed on a preference the fee guard
+    could not see. Section 9.8.
+    """
+    collected = collected or {}
+    code = nationality_code(
+        str(collected.get("nationality") or "")
+    ) or nationality_code(str(collected.get("preferred_nationality") or ""))
+    return code if code and code != "none" else None
+
+
 # §0: temperature is a fixed default, not something the bot judges. Sales sets
 # it once they have spoken to the client.
 DEFAULT_TEMPERATURE = "warm"

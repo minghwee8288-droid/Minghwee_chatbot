@@ -2073,7 +2073,36 @@ SERVICE_FIELDS[CANDIDATE_HIRING] += [
 FEE_BY_NATIONALITY: dict[str, frozenset[str]] = {
     "passport_renewal": frozenset({"PH", "ID"}),
     "home_leave": frozenset({"PH", "ID"}),
+    # 2026-09-22. Unlike the two above, we hold a price for all THREE
+    # nationalities here - so this entry is not about a missing price, it is
+    # about which of the three is hers. The agency fee for a new hire is
+    # $1,428 / $1,188 / $1,168 and for a transfer $1,688 / $1,588 / $1,288, and
+    # all three sit in the same retrieved set on a turn where the nationality
+    # is not yet established. A briefing that picks one is right a third of the
+    # time. Their rule 12: identify the service AND the nationality before
+    # giving a fee.
+    #
+    # It bites hardest on "no preference", which is a real and common answer to
+    # the hiring flow's own nationality question and is exactly the case where
+    # there is no single agency fee to give.
+    "new_hiring": frozenset({"PH", "ID", "MM"}),
+    "transfer": frozenset({"PH", "ID", "MM"}),
+    "transfer_employer": frozenset({"PH", "ID", "MM"}),
 }
+
+
+def fee_varies_by_nationality(service_type: str | None) -> bool:
+    """Whether this service has a different price for different nationalities.
+
+    The companion to fee_is_known_for, and the distinction matters: that one
+    answers "may we quote", this one answers "is the nationality the thing
+    standing in the way". A passport renewal for a MYANMAR helper is a service
+    we price per nationality and hold no figure for; a new hire with no
+    nationality settled is one we hold all three figures for and cannot pick
+    between. Both must refuse to quote, and they refuse differently - the first
+    says our agent will confirm, the second asks which nationality.
+    """
+    return (service_type or "") in FEE_BY_NATIONALITY
 
 
 def fee_is_known_for(service_type: str | None, nationality_code: str | None) -> bool:

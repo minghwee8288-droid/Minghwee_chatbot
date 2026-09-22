@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 from app.config import settings
-from app.graph.guards import FEE_STATED_SERVICES, last_bot_line
+from app.graph.guards import FEE_STATED_SERVICES, asks_about_price, last_bot_line
 from app.graph.nodes.info_collector import briefs_on_this_turn
 from app.graph.state import (
     AGENCY_INFO_INTENT,
@@ -17,7 +17,7 @@ from app.graph.state import (
 from app.services import contact as contact_service
 from app.services import rag
 from app.services import ticket as ticket_service
-from app.services.lead import nationality_code
+from app.services.lead import nationality_code, nationality_in_play
 
 logger = logging.getLogger(__name__)
 
@@ -521,15 +521,8 @@ def _service_filter(state: ConversationState) -> str | None:
     return _aliased(state.get("service_type"))
 
 
-# A question about what WE charge, as opposed to money in general. Timing
-# words are deliberately absent: "how much time does it take" is not a price
-# question and must keep the widening retry it has had since 2026-09-03.
-_PRICE_QUESTION = re.compile(
-    r"\bcosts?\b|\bprices?\b|\bfees?\b|\bcharges?\b"
-    r"|\bhow\s+much\s+(?:is|are|does|do|would|will|for|to)\b"
-    r"|\bhow\s+much\s*[?.!]*\s*$",
-    re.IGNORECASE,
-)
+# _PRICE_QUESTION moved to guards on 2026-09-22 - response_generator needs the
+# same test, and the two must agree (section 9.8).
 
 
 def _nationality(state: ConversationState) -> str | None:
@@ -539,11 +532,7 @@ def _nationality(state: ConversationState) -> str | None:
     employer) narrow the same way. 'none' is what nationality_code() returns
     for "no preference", which is not a filter — it is the absence of one.
     """
-    collected = state.get("collected_info") or {}
-    code = nationality_code(
-        str(collected.get("nationality") or "")
-    ) or nationality_code(str(collected.get("preferred_nationality") or ""))
-    return code if code and code != "none" else None
+    return nationality_in_play(state.get("collected_info"))
 
 
 async def rag_retriever(state: ConversationState) -> dict[str, Any]:
@@ -599,7 +588,7 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
     # was written for on 2026-09-03 was "How much time it takes in renewal" - a
     # TIMING question inside passport_renewal that needed the `renewal` rows,
     # and it still widens exactly as it did.
-    fee_question = state.get("intent") == "fee_enquiry" or _PRICE_QUESTION.search(
+    fee_question = state.get("intent") == "fee_enquiry" or asks_about_price(
         state.get("incoming_text") or ""
     )
     if service in FEE_STATED_SERVICES and fee_question:

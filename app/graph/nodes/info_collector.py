@@ -715,10 +715,19 @@ def _known_nationality(state: ConversationState) -> str | None:
     note below fires on exactly the turns where the retrieval filter was
     dropped. 'none' is "no preference", which is the absence of an answer, not
     an answer.
+
+    That "same source" was a claim rather than a fact until 2026-09-22: this
+    read `nationality` alone while rag_retriever read `preferred_nationality`
+    as well, so on a HIRING turn the retrieval filter narrowed and this
+    returned None. It did not show, because the only services keyed on a
+    nationality were passport renewal and home leave, and both ask
+    `nationality` outright. Adding the hiring and transfer fees to
+    FEE_BY_NATIONALITY is what made the gap load-bearing - an employer answers
+    "Filipino" into `preferred_nationality`, and without this every hiring
+    briefing would have deferred a fee we hold. Section 9.8, one definition
+    read by two callers, found by using the second one.
     """
-    collected = state.get("collected_info") or {}
-    code = lead_service.nationality_code(str(collected.get("nationality") or ""))
-    return code if code and code != "none" else None
+    return lead_service.nationality_in_play(state.get("collected_info"))
 
 
 def _is_first_contact(state: ConversationState) -> bool:
@@ -3076,12 +3085,21 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         if service_type not in ticket_service.CANDIDATE_SERVICES and not (
             ticket_service.fee_is_known_for(service_type, _known_nationality(state))
         ):
+            # "her embassy" is the right phrase for a passport renewal and
+            # a home leave, where the fee IS an embassy's, and nonsense for a
+            # hiring package. The rest of the addendum is unchanged and still
+            # verified live on those two.
+            _whose = (
+                "her embassy"
+                if service_type in ("passport_renewal", "home_leave")
+                else "her nationality"
+            )
             briefing_note += (
                 "\n\nWe do NOT have a fee on record for a helper of this "
                 "nationality. The records name a price for other nationalities; "
                 "that price is theirs and not hers. Do not quote it, do not "
                 "adapt it, and do not give a range. Say in one short sentence "
-                "that our agent will confirm the cost for her embassy, and "
+                f"that our agent will confirm the cost for {_whose}, and "
                 "carry on with the timing and the process."
             )
         # Home leave only: book the ticket now and send us a copy, so the agent

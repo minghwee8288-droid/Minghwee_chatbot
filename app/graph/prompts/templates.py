@@ -1255,3 +1255,82 @@ The records may describe more than one route, because these differ by
 nationality. You KNOW hers. Use only what applies to her and leave the rest out
 entirely - do not name another country's forms, embassy or fee.
 """
+
+
+# Rule 12 of the agency's 2026-09-22 fee brief: "If the user asks an ambiguous
+# question such as 'How much is the fee?', first identify the service and
+# nationality from the conversation/context before providing the fee."
+#
+# Measured, which is why this note exists at all: "how much is the agency fee
+# for a new hire?" with no nationality settled retrieves the Indonesian row at
+# 0.688 and the Filipino and Myanmar rows at 0.679 - nine thousandths apart,
+# all three in the set, all three correct for somebody. Whichever the model
+# reaches for it is right one time in three, and the client cannot tell.
+#
+# It offers a CHOICE rather than forcing the question, because the three
+# figures are a perfectly good answer when they are labelled - and a client who
+# has not chosen a nationality is often asking precisely in order to choose.
+FEE_NEEDS_NATIONALITY_NOTE = """
+
+The price of this service DEPENDS ON THE HELPER'S NATIONALITY, and this
+conversation has not established which nationality this is about. The records
+above therefore hold more than one fee, and every one of them is correct for
+somebody and wrong for everybody else.
+
+Do NOT pick one and give it as the price. Do NOT average them, give a range
+across them, or say "from" the lowest one.
+
+Do one of these two things. Either give the figure for each nationality the
+records name, saying which is which in the same breath - that is a real answer
+and it is often exactly what they are asking in order to choose. Or say in one
+sentence that the fee depends on her nationality and ask which one they have in
+mind. Do not do both.
+"""
+
+
+# The other half, for a service we price per nationality and hold no figure for
+# THIS one - a Myanmar passport renewal or home leave. The nationality is not
+# the obstacle here; the missing figure is, so asking which nationality would
+# be asking a question we already know the answer to.
+FEE_NOT_HELD_FOR_NATIONALITY_NOTE = """
+
+We do NOT have a fee on record for a helper of this nationality. The records
+above name a price for other nationalities; that price is theirs and not hers.
+Do not quote it, do not adapt it, and do not give a range. Say in one short
+sentence that our agent will confirm the cost for her, and answer the rest of
+what they asked - the timing and the process are unaffected.
+"""
+
+
+# Rules 9, 10 and 15 of the 2026-09-22 fee brief. Rule 10 is the one that bit:
+# "If the user asks for the total cost, do not calculate a total unless all
+# applicable components are clearly defined."
+#
+# Found by running their own example 6 live. Asked "What are the fees for
+# Indonesian new hire?" with the $1,188 agency fee and the seven third-party
+# figures all correctly retrieved, the model ADDED THEM UP and wrote $1,647 -
+# a number in no record and not the sum of anything. ungrounded_figures caught
+# it and binned the whole reply, so the client got a handover instead of the
+# fee we hold: the guard worked and the answer was still lost.
+#
+# Appended on every fee turn that has records, not just a nationality-priced
+# one - a work permit renewal is $695 and a client asking "and what else do I
+# pay" is owed the same discipline.
+FEE_ANSWER_NOTE = """
+
+FEES ARE SEPARATE AMOUNTS, NOT A SUM. Give each figure exactly as the records
+write it. Do NOT add figures together, do NOT work out a total, and do not
+present any number that is not written in the records - if they ask what it all
+comes to, say what each part is and which parts vary, and let our agent do the
+costing.
+
+Answer the part they asked about. If they asked what the agency fee is, give
+that one figure and say in the same breath that insurance and the third-party
+processing fees are charged separately - do not read the whole breakdown out
+unless they asked for the whole breakdown.
+
+Where the records state a figure exactly, give it exactly: do not soften it
+into "approximately". Where a fee is marked as subject to change, say so. A fee
+that applies only in a particular case is only mentioned when that case
+applies.
+"""

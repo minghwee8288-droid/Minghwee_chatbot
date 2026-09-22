@@ -51,9 +51,27 @@ def _digit_forms(text: str) -> set[str]:
 # the $5,000 bond under `transfer`), so a mechanical net is worth having on top
 # of the deferral rows. The bond and the salary are still not caught - see
 # quotes_hiring_package_cost.
+#
+# 2026-09-22: `new_hiring`, `transfer` and `transfer_employer` LEAVE this set,
+# because the agency has now given their prices. This reverses the half of the
+# 2026-09-04 instruction that covered them, and it is their reversal rather
+# than an inference from it - the fee schedule they sent states an agency fee
+# for each of the six service+nationality combinations and asks in as many
+# words that the bot answer "how much does Philippines transfer helper cost?"
+# with $1,688. Section 9 has carried "may a new hire's cost be quoted at all?"
+# as an open question for them since 2026-09-17, against their own 2026-09-17
+# flow which puts Cost/Fee immediately after Process & Timeline. This is the
+# answer, and the open item closes with it.
+#
+# `direct_hiring` and `replacement` STAY. The schedule gives no figure for
+# either, and the rule that a service with no stated price defers to a person
+# is the agency's own ("the service which do not have the timeline and cost ...
+# live agent will handle that"). `fee_enquiry` stays too, and it is the load-
+# bearing one: it is what a bare "how much do you charge?" resolves to when no
+# service has been established, and their rule 12 is that an ambiguous fee
+# question is answered only once the service and the nationality are known.
 COST_WITHHELD_SERVICES = frozenset({
-    "new_hiring", "direct_hiring", "fee_enquiry",
-    "replacement", "transfer", "transfer_employer",
+    "direct_hiring", "fee_enquiry", "replacement",
 })
 
 # The other half of the agency's 2026-09-08 cost table: the services whose fee
@@ -67,7 +85,22 @@ COST_WITHHELD_SERVICES = frozenset({
 # much does it cost" inside a PASSPORT renewal returned the WORK PERMIT renewal
 # row (0.510) - $695 quoted to a client whose answer is $450 - on all three
 # phrasings tried. Filtered it returns the right row every time (0.419-0.486).
-FEE_STATED_SERVICES = frozenset({"renewal", "passport_renewal", "home_leave"})
+#
+# The three that joined on 2026-09-22 are the ones that matter most here, and
+# membership does more than permit a figure: `_service_filter` KEEPS the
+# service filter for these, and the widening retry is refused, so a fee
+# question inside a transfer cannot reach a new hire's fee and vice versa.
+# That is the agency's own first rule - "never answer a user's fee question
+# using information from another service simply because the nationality or fee
+# category is similar" - enforced by retrieval rather than by asking the model
+# nicely. `transfer` and `transfer_employer` are BOTH here on purpose: the
+# employer's key is what _subject_service returns and the candidate's key is
+# what _aliased() rewrites it to, and the no-widening test reads the aliased
+# value.
+FEE_STATED_SERVICES = frozenset({
+    "renewal", "passport_renewal", "home_leave",
+    "new_hiring", "transfer", "transfer_employer",
+})
 
 
 # A figure presented as the cost of the engagement, rather than a figure that
@@ -94,6 +127,29 @@ COST_DEFERRAL_REPLY = (
     "together, so I would rather one of our agents take you through the "
     "full breakdown than give you half a figure. I will get that arranged."
 )
+
+
+# A question about what WE charge, as opposed to money in general. Timing
+# words are deliberately absent: "how much time does it take" is not a price
+# question and must keep the widening retry it has had since 2026-09-03.
+#
+# Moved here from rag_retriever on 2026-09-22, when a second caller appeared.
+# It decides two things that have to agree about the same sentence: whether
+# retrieval may widen off this service, and whether the reply may put a figure
+# on a service whose price depends on a nationality we have not established.
+# Two copies of it would be section 9.8 in the one place it costs a client a
+# wrong price.
+_PRICE_QUESTION = re.compile(
+    r"\bcosts?\b|\bprices?\b|\bfees?\b|\bcharges?\b"
+    r"|\bhow\s+much\s+(?:is|are|does|do|would|will|for|to)\b"
+    r"|\bhow\s+much\s*[?.!]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def asks_about_price(text: str) -> bool:
+    """Whether this message is asking what something costs."""
+    return bool(_PRICE_QUESTION.search(text or ""))
 
 
 def quotes_hiring_package_cost(reply: str) -> bool:

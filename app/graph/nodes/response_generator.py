@@ -11,6 +11,7 @@ from app.graph.guards import (
     COST_DEFERRAL_REPLY,
     _NO_REQUEST_MAX_WORDS,
     COST_WITHHELD_SERVICES,
+    asks_about_price,
     asks_again,
     asks_for_process,
     clamp_reply,
@@ -38,6 +39,9 @@ from app.graph.prompts.templates import (
     CANDIDATE_INSTRUCTION,
     CASE_INSTRUCTION,
     CONTACT_DISCOVERY_INSTRUCTION,
+    FEE_ANSWER_NOTE,
+    FEE_NEEDS_NATIONALITY_NOTE,
+    FEE_NOT_HELD_FOR_NATIONALITY_NOTE,
     HANDOVER_TOKEN,
     PROCESS_INSTRUCTION,
     RESPONDER_INSTRUCTION,
@@ -50,7 +54,8 @@ from app.graph.state import (
     ConversationState,
 )
 from app.services import handover as handover_service
-from app.services.lead import EMPLOYER_LEAD_SERVICES
+from app.services import ticket as ticket_service
+from app.services.lead import EMPLOYER_LEAD_SERVICES, nationality_in_play
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +263,52 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
             "— answering from the records rather than acknowledging again",
             state.get("conversation_id"),
         )
+
+    # A price question about a service we price PER NATIONALITY, where the
+    # nationality is either unknown or one we hold no figure for. Appended
+    # after the template for the same reason as the two notes above: whichever
+    # instruction won the turn, none of them knows this, and it is the fact
+    # that decides whether a figure may be given at all.
+    #
+    # The agency's rules 8 and 12, 2026-09-22: never combine fees from
+    # different nationalities, and identify the service AND the nationality
+    # before answering an ambiguous fee question. Until this commit the two
+    # hiring services had no price to give at all, so the question could not
+    # arise; now the records hold three, nine thousandths apart.
+    #
+    # Gated on a PRICE question, not on money generally - "how much time does a
+    # transfer take" is not a fee question and must not be told the fee depends
+    # on her nationality. `asks_about_price` is the same test retrieval uses to
+    # decide whether to widen, deliberately (section 9.8).
+    _fee_turn = state.get("intent") == "fee_enquiry" or asks_about_price(
+        state.get("incoming_text") or ""
+    )
+    _service = state.get("service_type")
+    # Rules 9, 10 and 15: one figure per part, never a total nobody stated.
+    # Gated on having records, so it can never dress up an "I don't know" as a
+    # breakdown - the same gate ASKED_AGAIN_NOTE has for the same reason.
+    if _fee_turn and state.get("rag_matches"):
+        instruction += FEE_ANSWER_NOTE
+    if _fee_turn and ticket_service.fee_varies_by_nationality(_service):
+        _nat = nationality_in_play(state.get("collected_info"))
+        if not _nat:
+            instruction += FEE_NEEDS_NATIONALITY_NOTE
+            logger.info(
+                "Conversation %s: fee question on %s with no nationality settled "
+                "\u2014 the records hold one fee per nationality, so the reply may "
+                "not pick one",
+                state.get("conversation_id"),
+                _service,
+            )
+        elif not ticket_service.fee_is_known_for(_service, _nat):
+            instruction += FEE_NOT_HELD_FOR_NATIONALITY_NOTE
+            logger.info(
+                "Conversation %s: no fee on record for %s/%s \u2014 deferring the "
+                "figure rather than quoting another nationality's",
+                state.get("conversation_id"),
+                _service,
+                _nat,
+            )
 
     system_prompt = build_system_prompt(
         dict(state),

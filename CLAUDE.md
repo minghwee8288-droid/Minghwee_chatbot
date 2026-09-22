@@ -253,6 +253,12 @@ because the lead is opened early and the ticket is created much later.
 | A price we hold for two nationalities is not the third's price | `ticket.FEE_BY_NATIONALITY` + `fee_is_known_for()` | **$450** was quoted for a **Myanmar** helper. It is in the records (as PH/ID's price), so `ungrounded_figures` passed it. |
 | The passport briefing is timeline, then cost, then documents | `SERVICE_BRIEFING_NOTE` | Shirley, 2026-09-09: "nationality → timeline → requirements/documents". It never explains the embassy, the appointment or the runner — that is our processing. |
 | Passport renewal does not ask where she is, nor about the work permit | `SERVICE_FIELDS["passport_renewal"]` | Both called out at the 2026-09-09 meeting: location is irrelevant, and WP renewal is "a completely separate process". |
+| A fee is quoted for THIS service and THIS nationality, or not at all | `FEE_STATED_SERVICES` + `FEE_BY_NATIONALITY` + `_service_filter` | The agency's first rule of 2026-09-22: *"never answer a fee question using information from another service simply because the nationality or fee category is similar."* Six agency fees now sit in the KB - $1,688/$1,588/$1,288 for a transfer and $1,428/$1,188/$1,168 for a new hire - and membership of `FEE_STATED_SERVICES` is what KEEPS the service filter on a price question and REFUSES the widening retry, so a transfer question cannot reach a hire's fee. Both transfer keys are in it: the employer's is what `_subject_service` returns, the candidate's is what `_aliased()` rewrites it to. |
+| ...and the three we hold are not guessed between before we know which | `ticket.fee_varies_by_nationality` + `FEE_NEEDS_NATIONALITY_NOTE` | Measured: *"how much is the agency fee for a new hire?"* with no nationality settled returns ID at **0.688** and PH and MM at **0.679** - nine thousandths apart, all three correct for somebody. Whichever the model reaches for it is right one time in three and the client cannot tell which. The note offers a choice rather than forcing a question, because three labelled figures are a real answer and a client who has not chosen a nationality is often asking in order to choose. |
+| ...and a nationality we hold NO figure for is a different refusal | `fee_is_known_for` + `FEE_NOT_HELD_FOR_NATIONALITY_NOTE` | A Myanmar passport renewal is a service we price per nationality and hold no price for. Asking which nationality would be asking a question we already have the answer to, so that one defers to an agent instead. Two predicates because they answer two questions: *may we quote* and *is the nationality what stands in the way*. |
+| The fees are separate amounts and are never added into a total | `templates.FEE_ANSWER_NOTE` | Their rule 10. Found by running their own example 6: asked *"What are the fees for Indonesian new hire?"* with the $1,188 agency fee and all seven third-party figures correctly retrieved, the model ADDED THEM UP and wrote **$1,647** - a number in no record and not the sum of anything. `ungrounded_figures` binned the whole reply, so the guard worked and the client still lost the answer to a handover. |
+| A superseded fee table is retired from retrieval, never rewritten | `load_service_notes.RETIRED` (`is_active`) | Form A of the signed Client Service Agreement carries a blank form's illustrative amounts, and they WIN on the form's own words: *"what is the total service fee?"* returned **$1,568 at 0.648** against the correct Filipino row at 0.536, and *"what is the placement fee?"* returned **$4,225 at 0.687**. PART C is also a superseded copy of the Filipino third-party table - $340 against their $350, $200 against $250, $50 against $60. Retired via `is_active`, which `kb_hygiene.sql` already documents as the reversible way to do this: their signed agreement is not ours to rewrite (§9.25), and a superseded price is not ours to serve. |
+| One reader decides which nationality a conversation is about | `lead.nationality_in_play` | Three copies, and two had already diverged: the collector read `nationality` alone while retrieval read `preferred_nationality` too - so on a HIRING turn the filter narrowed on a preference the fee guard could not see. Invisible until the hiring fee became nationality-priced, at which point every hiring briefing would have deferred a fee we hold. §9.8, found by using the second caller. |
 | A protocol event is not a client message, INBOUND as well as outbound | `message.has_message_content` (was `has_reply_content`) + `webhook.handle_inbound` | `text_for_llm` falls back to `[<type> message]` when there is no body, so a delete notice reached the graph as though the client had typed it - and the collector, finding nothing answered, asked its next question again in different words. Live: *"do you have any pets at home?"* then *"Is there anything else living in the home, such as pets?"*, a minute apart. The predicate already existed and was wired to the outbound path alone. |
 | ...and the test is the CONTENT, never a list of type names | the same predicate | A protocol event nobody has seen yet still carries nothing a person wrote, and a voice note or an uncaptioned image carries no body either - a rule reading the TYPE would drop both. |
 | A greeting is greeted back, and an announced question is told to go ahead | `guards.greeting_only` + `response_generator.greeting_back` | `has_no_request` covers two shapes and both got the string written for the second: *"Hi"* was answered *"Sure, go ahead. What would you like to know?"* Go-ahead answers a request to ask; to a greeting it presupposes the intent. The name comes from our RECORDS, and nothing of their file is read back - a greeting is not the place to prove we remember them. |
@@ -934,6 +940,29 @@ Ordered by what will hurt first.
     only want the wording corrected; §9.15 is the same shape for stale transfer
     timelines in the same import.
 
+26. **Two items in the 2026-09-22 fee schedule need the agency to confirm
+    them, and both are recorded rather than guessed at.**
+    (a) **The Filipino new hire's replacement terms contradict themselves in
+    their own document.** The flyer heading says *"2 replacements within 6
+    months"* and the package section says *"2 - CONFIRM"*. The agency flagged
+    this themselves and asked that it be kept as a validation item rather than
+    silently resolved. The count agrees in both places, so the row states **2
+    replacements within 6 months** - the flyer's own complete sentence - and
+    the period is the half nobody has confirmed.
+    (b) **Myanmar new hire lists "Bank Worker: $55 optional", and no row says
+    it.** Every other service in the schedule lists *"Bond Waiver of Indemnity:
+    $55"* in that slot, so this is almost certainly the same item typed
+    differently - and "almost certainly" is not a condition that can be stated
+    to a client. Rule 6 of their own brief says an optional fee is mentioned
+    only when its condition applies, and rule 14 says to report what the KB
+    does not hold rather than guess; there is no way to state the condition for
+    "Bank Worker". It is therefore left OUT of the Myanmar new-hire row, which
+    understates that one optional item by $55 and says in the same breath that
+    an agent confirms the full breakdown. One word from them and it is one
+    line. The same block of their brief also says *"confirm the exact treatment
+    of optional/conditional fees before presenting them as mandatory"*, which
+    is the instruction this follows.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
@@ -944,13 +973,19 @@ at a time.
   already quotes a fee wherever the agency has given one (`FEE_STATED_SERVICES`:
   renewal, passport renewal, home leave) and defers everywhere else. Nothing here
   needs changing when the figures arrive; they are rows.
-- **And the half of that which is a decision, not a figure: may a new hire's cost be
-  quoted at all?** Their 2026-09-17 flow puts Cost/Fee immediately after Process &
-  Timeline. Their 2026-09-04 instruction says the opposite for exactly these two
-  services — a new hire's price never reaches anyone before a salesperson has spoken
-  to them — and `quotes_hiring_package_cost` enforces it. Both cannot hold. Salary,
-  the levy and the $5,000 bond already go out; it is the package total that does not.
-  One sentence from them settles it.
+- ~~**And the half of that which is a decision, not a figure: may a new hire's cost
+  be quoted at all?**~~ **ANSWERED 2026-09-22, and built.** What was put to them:
+  their 2026-09-17 flow puts Cost/Fee immediately after Process & Timeline, their
+  2026-09-04 instruction says a new hire's price never reaches anyone before a
+  salesperson has spoken to them, and `quotes_hiring_package_cost` enforced the
+  second. They settled it by sending the fee schedule and asking in as many words
+  that the bot answer *"How much does Philippines transfer helper cost?"* with
+  $1,688. `new_hiring`, `transfer` and `transfer_employer` have left
+  `COST_WITHHELD_SERVICES`. **`direct_hiring` and `replacement` have NOT** - the
+  schedule gives no figure for either, and their own rule stands: *"the service
+  which do not have the timeline and cost ... live agent will handle that"*. Those
+  two are what is still open on price, and the answer is a figure rather than a
+  decision.
 - ~~**Should a helper's religion be collected?**~~ **ANSWERED 2026-09-17, and
   built** — see the change log. What was put to them: we already hold
   `candidates.religion` on every live row, no flow asked it, and the thing it decides
@@ -1171,6 +1206,134 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-22** - **The agency's consolidated fee schedule: six agency fees
+  per service and nationality, and the 2026-09-04 rule reversed for two of the
+  three services it covered.** Their brief runs to fifteen rules, and the ones
+  that shaped the work are 8 (never combine nationalities), 10 (never compute a
+  total) and 12 (identify the service AND the nationality before answering an
+  ambiguous fee question).
+  (A) **THE REVERSAL, and it is theirs rather than an inference from them.**
+  `new_hiring`, `transfer` and `transfer_employer` have LEFT
+  `COST_WITHHELD_SERVICES`. Section 9 has carried *"may a new hire's cost be
+  quoted at all?"* as an open question since 2026-09-17 - their 2026-09-04
+  instruction against their own 2026-09-17 flow - and this closes it: they sent
+  the figures and asked in as many words that *"How much does Philippines
+  transfer helper cost?"* be answered with $1,688. **`direct_hiring` and
+  `replacement` stay withheld**, because the schedule gives no figure for
+  either and their own rule stands - *"the service which do not have the
+  timeline and cost ... live agent will handle that"*.
+  (B) **Eighteen rows, three per service+nationality, and that shape is their
+  rule 9.** *"If the user asks only for the agency/package fee, answer only
+  that fee first - do not unnecessarily provide the entire fee breakdown."* One
+  row carrying all six fee categories cannot be retrieved by a third of it, and
+  `clamp_reply` gives a fee answer two sentences, so a six-category row arrives
+  as whichever two the model picks. Split into the agency fee, the replacement
+  terms and the third-party list, each question retrieves its own answer:
+  0.68-0.87 on all six of their worked examples, every one returning its own
+  service and its own nationality on top.
+  (C) **Membership of `FEE_STATED_SERVICES` is what makes "never mix services"
+  mechanical rather than hopeful.** It KEEPS the service filter on a price
+  question and REFUSES the widening retry - so a transfer question cannot reach
+  a hire's fee, which is the failure their first rule is about. Both transfer
+  keys are in it: the employer's is what `_subject_service` returns and the
+  candidate's is what `_aliased()` rewrites it to, and the no-widening test
+  reads the aliased value.
+  (D) **Rule 12 needed a note, because the three hiring fees are nine
+  thousandths apart.** Measured: *"how much is the agency fee for a new hire?"*
+  with no nationality settled returns ID at **0.688**, PH at **0.679** and MM
+  at **0.679** - all three in the set, all three correct for somebody. The note
+  offers a choice rather than forcing a question, because three labelled
+  figures are a real answer and a client who has not chosen a nationality is
+  often asking in order to choose. Live: *"how much is the fee?"* -> *"The
+  agency fee depends on her nationality: Philippines $1,428, Indonesia $1,188,
+  or Myanmar $1,168; insurance and third-party processing fees are charged
+  separately."*
+  (E) **And the other half of that is a different refusal.** A Myanmar passport
+  renewal is priced per nationality and we hold no figure for it - asking which
+  nationality would be asking a question we have the answer to. Two predicates,
+  `fee_varies_by_nationality` and `fee_is_known_for`, because they answer two
+  questions: is the nationality what stands in the way, and may we quote.
+  (F) **Rule 10 was found by running their own example 6.** Asked *"What are
+  the fees for Indonesian new hire?"* with the $1,188 agency fee and all seven
+  third-party figures correctly retrieved, the model **added them up and wrote
+  $1,647** - a number in no record and not the sum of anything.
+  `ungrounded_figures` binned the whole reply, so the guard did its job and the
+  client got a handover instead of a fee we hold. `FEE_ANSWER_NOTE` says the
+  fees are separate amounts and never a sum, and it fires on every fee turn
+  with records rather than only a nationality-priced one.
+  (G) **The superseded Form A tables WIN on the form's own words, and that is
+  what the guard had been hiding.** Measured after the rows were loaded:
+  *"what is the total service fee?"* returned Form A's **$1,568 at 0.648**
+  against the correct Filipino row at 0.536, and *"what is the placement fee?"*
+  returned **$4,225 at 0.687**. PART C is also a superseded copy of the
+  Filipino third-party table - $340 against their $350, $200 against $250, $50
+  against $60. Those three are **RETIRED via `is_active`**, which
+  `kb_hygiene.sql` already documents as the reversible way to do this: the
+  signed Client Service Agreement is not ours to rewrite (section 9.25), and a
+  price the agency has replaced is not ours to serve. The salary line of Form A
+  stays - *"Basic Salary $650"* is a salary, not a fee, and $650 is the
+  Filipino floor. After: every probe returns the correct nationality row first.
+  (H) **The transfer deferral row said we could not quote a price we now
+  hold**, and it was top for *"what is the all in cost of a transfer?"* at
+  0.644. Rewritten to give all three figures - and narrowed to
+  `contact_type='employer'`, because it was `all` and a helper pays Ming Hwee
+  nothing (2026-09-10). The same reasoning that made the transfer document
+  checklist employer-only.
+  (I) **The Indonesian passport span, which closes a 2026-09-19 item.** They
+  gave a floor then (*"may take more than 3 working days"*) and no span, so
+  none was invented. They have now given it: **2 weeks**. Three rows carried
+  the floor and all three are corrected - and the correction had to move INTO
+  the `UPDATES` entries that already owned those rows, not sit beside them as a
+  replacement. The first attempt did the latter and **the second run of the
+  loader flip-flopped the text between the two wordings**: UPDATES set the
+  floor back, TEXT_REPLACEMENTS rewrote it to the span, every run. That is the
+  2026-09-09 defect arriving through the other mechanism, and running the
+  script twice is what caught it, as section 10 requires.
+  (J) **One nationality reader, three callers** (section 9.8). The collector
+  read `nationality` alone while retrieval read `preferred_nationality` too, so
+  on a HIRING turn the filter narrowed on a preference the fee guard could not
+  see. Invisible for as long as only passport renewal and home leave were
+  nationality-priced, because both ask `nationality` outright - and
+  load-bearing the moment the hiring fee joined them, since an employer answers
+  *"Filipino"* into the other field and every hiring briefing would have
+  deferred a fee we hold.
+  (K) **Two tripwires fired and both were right to.** The closing-briefing
+  state and the parked-path state were written to prove the 2026-09-04 rule for
+  `new_hiring`. Inverted with their reasoning kept rather than deleted, and the
+  guard keeps its cover through `direct_hiring` - which is the service that
+  still proves it. The parked one moved rather than being deleted, because it
+  is the only cover that path has ever had.
+  (L) **Eighteen faults injected, eighteen red - after three came back GREEN and a
+  fourth was a no-op, and every one of those was the CHECK.** The three greens
+  were all the new response_generator states, and they were green because the
+  patch that added them used an anchor inside a webhook function: eight tuples
+  sat there as bare expressions, evaluated and discarded, never run. A state
+  that is not in `CASES` is not a check, and it looks exactly like a passing
+  one. Moved, and all three go red. The no-op was an injection whose old and
+  new text were identical; the fourth green was a fault that added an unused
+  nationality code, which changes nothing - re-cut as a removal it goes red.
+  A fifth, the rule-10 note, was green because nothing asserted it reached the
+  prompt, and it has two states now.
+  (M) **Verified live against the real model, 10 of 10** - their six worked
+  examples and four controls. EX1 $1,588, EX2 $450, EX3 $328 *"subject to
+  change"* with 2 replacements in 6 months, EX4 $695, EX5 $1,688, EX6 $1,188.
+  The controls: an ambiguous fee question gives all three labelled, a direct
+  hire still defers, a Myanmar passport renewal still defers, and *"how long
+  does an Indonesian passport renewal take?"* answers **2 weeks** without being
+  told the price depends on her nationality - which is the gate that keeps the
+  2026-09-03 widening retry intact.
+  (N) **The loader is a no-op on two consecutive runs**, rows and replacements
+  and retirements alike.
+  **Recorded and NOT guessed at, both section 9.26:** the Filipino new hire's
+  replacement period, where their flyer says *"2 replacements within 6 months"*
+  and their package section says *"2 - CONFIRM"* - kept as a validation item at
+  their own request; and Myanmar new hire's *"Bank Worker: $55 optional"*,
+  which every other service lists as *"Bond Waiver of Indemnity: $55"* and
+  which is therefore left OUT of that row rather than guessed at, because there
+  is no way to state the condition under which it applies.
+  `selfcheck_flows.py` is **670 assertions**; `smoke_nodes.py` is
+  **185 states**.
 
 - **2026-09-22** - **"Is there anything else living in the home, such as
   pets?" - asked one minute after the pets question.** The agency: *"What do

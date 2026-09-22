@@ -2231,6 +2231,213 @@ ROWS += [
     },
 ]
 
+# --- The agency's consolidated fee schedule, 2026-09-22 ---------------------
+#
+# Their instruction: "the chatbot can accurately answer questions about agency/
+# package fees, replacement terms, documentation fees, third-party/processing
+# fees, optional/conditional fees, timelines" - per SERVICE and per
+# NATIONALITY, and "never answer a user's fee question using information from
+# another service simply because the nationality or fee category is similar."
+#
+# THREE rows per service+nationality rather than one, and that is the shape
+# their own rule 9 asks for: "if the user asks only for the agency/package fee,
+# answer only that fee first - do not unnecessarily provide the entire fee
+# breakdown unless relevant." One row carrying all six categories cannot be
+# retrieved by a third of it, and clamp_reply gives a fee answer two sentences,
+# so a six-category row arrives as whichever two the model picks.
+#
+# The NATIONALITY is in the question AND in the first clause of every answer.
+# _nationality() filters retrieval only on a nationality already COLLECTED, and
+# a fee question is usually the first message of the conversation - so on the
+# turn that matters most all three nationalities are in the retrieved set and
+# the only thing that separates them is how each row reads. That is the same
+# thing that separates PH from ID on home leave today.
+#
+# contact_type='employer' on all of them. These are the employer's fees; a
+# helper pays Ming Hwee nothing (2026-09-10), and `transfer` is the CANDIDATE's
+# own service key - so an employer-labelled row under it is reachable by an
+# employer (whose service_type is transfer_employer, aliased onto `transfer`
+# for the filter) and invisible to her, which is exactly right.
+_FEE_ROWS: list[dict[str, Any]] = []
+
+# (service_type, nationality, label, agency fee, replacement fee, extra note)
+_PACKAGES = [
+    ("transfer", "PH", "transfer helper from the Philippines", "$1,688", "$288", ""),
+    ("transfer", "ID", "transfer helper from Indonesia", "$1,588", "$288", ""),
+    ("transfer", "MM", "transfer helper from Myanmar", "$1,288", "$288", ""),
+    ("new_hiring", "PH", "new hire from the Philippines", "$1,428", "$238", ""),
+    ("new_hiring", "ID", "new hire from Indonesia", "$1,188", "$288",
+     " This documentation fee is subject to change."),
+    ("new_hiring", "MM", "new hire from Myanmar", "$1,168", "$328",
+     " This documentation fee is subject to change."),
+]
+
+_SERVICE_WORD = {"transfer": "transfer helper", "new_hiring": "new hire"}
+
+# The recruitment-fee terms the agency states for the Philippines (both
+# services) and nothing else. Written where they gave them and not generalised:
+# inferring another nationality's payment terms from these is the mistake
+# section 9 records for Myanmar twice.
+_PH_RECRUITMENT_NOTE = (
+    " The recruitment fee is borne by the employer, is not deductible from the "
+    "helper's salary, and is not refundable."
+)
+
+for _svc, _nat, _label, _fee, _repl, _repl_note in _PACKAGES:
+    _notes = _PH_RECRUITMENT_NOTE if _nat == "PH" else ""
+    _FEE_ROWS.append({
+        "service_type": _svc,
+        "nationality": _nat,
+        "contact_type": "employer",
+        "section_heading": f"Employer - fees for a {_label}",
+        "question": f"How much does a {_label} cost?",
+        "answer": (
+            f"The agency fee for a {_label} is {_fee}. That is the agency fee "
+            f"on its own - insurance and the third-party processing fees are "
+            f"charged separately and are not included in it." + _notes
+        ),
+    })
+    _FEE_ROWS.append({
+        "service_type": _svc,
+        "nationality": _nat,
+        "contact_type": "employer",
+        "section_heading": f"Employer - replacement for a {_label}",
+        "question": f"What is the replacement fee for a {_label}?",
+        "answer": (
+            f"For a {_label}, the package includes 2 replacements within 6 "
+            f"months, and the replacement and documentation fee is {_repl}."
+            + _repl_note +
+            " The replacement does not include the insurance or the "
+            "third-party processing fees, which are charged again on the "
+            "replacement helper."
+        ),
+    })
+
+ROWS += _FEE_ROWS
+
+# The third-party and optional fees, written out per service+nationality
+# because they genuinely differ - an Indonesian new hire pays $120 for embassy
+# contract processing where a Filipino one pays $200 for embassy documentation
+# and another $480 to the Philippine side, and a transfer pays neither.
+ROWS += [
+    {
+        "service_type": "transfer",
+        "nationality": "PH",
+        "contact_type": "employer",
+        "section_heading": "Employer - third-party fees for a Filipino transfer helper",
+        "question": (
+            "What third-party and processing fees apply to a transfer helper "
+            "from the Philippines?"
+        ),
+        "answer": (
+            "On top of the agency fee for a Filipino transfer helper there is "
+            "insurance at $590, MOM processing at $70 and lodging at $120. "
+            "Two further charges apply only in particular cases: a bond waiver "
+            "of indemnity is $55 if you want it, and there is an additional "
+            "$60 on the agency fee for a worker with a year or more of "
+            "overseas experience or for a caregiver."
+        ),
+    },
+    {
+        "service_type": "transfer",
+        "nationality": "ID",
+        "contact_type": "employer",
+        "section_heading": "Employer - third-party fees for a Indonesian transfer helper",
+        "question": (
+            "What third-party and processing fees apply to a transfer helper "
+            "from Indonesia?"
+        ),
+        "answer": (
+            "On top of the agency fee for an Indonesian transfer helper there "
+            "is insurance at $590, which includes the waiver of co-payment on "
+            "hospital expenses, MOM processing at $70 and lodging at $120. Two "
+            "further charges apply only in particular cases: a bond waiver of "
+            "indemnity is $55 if you want it, and there is an additional $60 "
+            "on the agency fee for a worker with a year or more of overseas "
+            "experience or for a caregiver."
+        ),
+    },
+    {
+        "service_type": "transfer",
+        "nationality": "MM",
+        "contact_type": "employer",
+        "section_heading": "Employer - third-party fees for a Myanmar transfer helper",
+        "question": (
+            "What third-party and processing fees apply to a transfer helper "
+            "from Myanmar?"
+        ),
+        "answer": (
+            "On top of the agency fee for a Myanmar transfer helper there is "
+            "insurance at $590, MOM processing at $70 and lodging at $120. Two "
+            "further charges apply only in particular cases: a bond waiver of "
+            "indemnity is $55 if you want it, and there is an additional $80 "
+            "on the agency fee for a worker with a year or more of overseas "
+            "experience or for a caregiver."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "PH",
+        "contact_type": "employer",
+        "section_heading": "Employer - third-party fees for a Filipino new hire",
+        "question": (
+            "What third-party and processing fees apply to a new hire from "
+            "the Philippines?"
+        ),
+        "answer": (
+            "On top of the agency fee for a Filipino new hire there is "
+            "insurance at $590, MOM processing at $70, the medical, MOM "
+            "thumbprint, transport and lodging at $350, the Settling-In "
+            "Programme course at $77, embassy documentation processing at "
+            "$200, the Philippine insurance, POEA and processing fees at $480, "
+            "and the air ticket at $250. The Philippine recruitment fee is one "
+            "month of the helper's salary, so it follows whatever salary you "
+            "agree with her. A bond waiver of indemnity is $55 if you want it, "
+            "and there is an additional $60 on the agency fee for an "
+            "ex-boarded domestic worker."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "ID",
+        "contact_type": "employer",
+        "section_heading": "Employer - third-party fees for a Indonesian new hire",
+        "question": (
+            "What third-party and processing fees apply to a new hire from "
+            "Indonesia?"
+        ),
+        "answer": (
+            "On top of the agency fee for an Indonesian new hire there is "
+            "insurance at $590, MOM processing at $70, the medical, MOM "
+            "thumbprint, transport and lodging at $350, the Settling-In "
+            "Programme course at $77, embassy contract processing at $120, and "
+            "the Indonesia agency processing and air ticket at $440. These "
+            "third-party processing fees are payable upfront. A bond waiver of "
+            "indemnity is $55 if you want it, and there is an additional $60 "
+            "for an ex-abroad or Christian domestic worker."
+        ),
+    },
+    {
+        "service_type": "new_hiring",
+        "nationality": "MM",
+        "contact_type": "employer",
+        "section_heading": "Employer - third-party fees for a Myanmar new hire",
+        "question": (
+            "What third-party and processing fees apply to a new hire from "
+            "Myanmar?"
+        ),
+        "answer": (
+            "On top of the agency fee for a Myanmar new hire there is "
+            "insurance at $590, MOM processing at $70, the medical, MOM "
+            "thumbprint, transport and lodging at $350, and the Myanmar agency "
+            "processing and air ticket at $440. The Settling-In Programme "
+            "training is $77 where it applies. There is an additional $60 for "
+            "an ex-abroad or Christian domestic worker, and the placement fee "
+            "is payable upfront by the employer."
+        ),
+    },
+]
+
 UPDATES: list[dict[str, Any]] = [
     {
         "where": {"question": "How long does a direct hire take?",
@@ -2566,8 +2773,8 @@ UPDATES += [
                   "mechanics; and 'approximately weeks or months' reached a client",
         "set": {"answer": (
             "It depends on her nationality. For a Filipino helper it is "
-            "approximately 6 to 8 weeks. For an Indonesian helper it takes more "
-            "than 3 working days, and how much more depends on when her "
+            "approximately 6 to 8 weeks. For an Indonesian helper it takes "
+            "approximately 2 weeks, and that moves with when her "
             "embassy can see her. For a Myanmar helper the in-person "
             "part is generally completed within a day, but the wait for an "
             "appointment slot can run to several weeks, and sometimes months. "
@@ -2595,15 +2802,22 @@ UPDATES += [
         # and MM says outright that the appointment slot is the
         # unpredictable part.
         #
-        # They gave no replacement figure, so none is invented: the floor
-        # is stated as the floor and the rest is deferred to a person. A
-        # plausible-sounding span here would be quoted to a client as
-        # though it came from the agency.
-        "reason": "2026-09-19, the agency: 'Renewal of Indo passport may take "
-                  "more than 3 working days'. Stated flat it read as the whole "
-                  "answer; no replacement span was given, so none is invented.",
+        # They gave no replacement figure THEN, so none was invented: the
+        # floor was stated as the floor and the rest deferred to a person.
+        #
+        # 2026-09-22: they gave the span - 2 weeks - in the consolidated fee
+        # and timeline schedule. Edited HERE rather than corrected by a
+        # TEXT_REPLACEMENT beside it, which is the 2026-09-09 rule: two
+        # corrections owning one row means the later one wins on every run and
+        # the loader stops being idempotent. Measured, not reasoned about - the
+        # first attempt at this used a replacement and the second run of the
+        # script flip-flopped the text between the two wordings.
+        "reason": "2026-09-22: the agency gave the Indonesian passport renewal "
+                  "span as 2 weeks. Until then they had given only a floor "
+                  "('may take more than 3 working days') and no span, so the "
+                  "row correctly stated a floor and deferred the rest.",
         "set": {"answer": (
-            "More than 3 working days. How much more depends on when the "
+            "Approximately 2 weeks. How much that moves depends on when the "
             "Indonesian embassy can see her and on document verification, "
             "so our agent will confirm the timing for her case."
         )},
@@ -2785,16 +2999,50 @@ UPDATES.append(
         "where": {"question": "What is the process for renewing an Indonesian "
                               "helper's passport?",
                   "service_type": "passport_renewal"},
-        "reason": "2026-09-19: the same correction as the ID timing row - it said "
-                  "'usually about 3 working days', which the agency says is a floor "
-                  "rather than the answer.",
+        "reason": "2026-09-22: the same correction as the ID timing row, which "
+                  "now carries the agency's own span of 2 weeks. It said "
+                  "'usually about 3 working days', then the 2026-09-19 floor.",
         "set": {"answer": (
             "It is processed through the Indonesian embassy in Singapore. An "
             "appointment is booked, she attends in person, and the renewal is "
-            "processed from there. It takes more than 3 working days in total, "
-            "and how much more depends on when the embassy can see her and on "
+            "processed from there. It takes approximately 2 weeks in total, "
+            "and that moves with when the embassy can see her and with "
             "document verification."
         )},
+    }
+)
+
+
+# The transfer deferral row, written on 2026-09-08 when the agency's cost
+# table left transfer blank and the honest answer was "our agent will confirm".
+# They have now given it - $1,688 / $1,588 / $1,288 - so the row says we cannot
+# quote a price we hold, and it was TOP for "what is the all in cost of a
+# transfer?" at 0.644, ahead of every row that carries the figure.
+#
+# It also narrows to the employer. It was contact_type 'all', which put an
+# EMPLOYER's price list in front of a helper - and a helper pays Ming Hwee
+# nothing (2026-09-10, their own answer, and its own row). The same reasoning
+# that made the transfer document checklist employer-only on 2026-09-10.
+UPDATES.append(
+    {
+        "where": {"question": "How much does a transfer cost?",
+                  "service_type": "transfer"},
+        "reason": "2026-09-22: the agency gave the transfer fee per "
+                  "nationality, so deferring it states the opposite of what "
+                  "we hold; and the fee is the employer's, not the helper's.",
+        "set": {
+            "contact_type": "employer",
+            "section_heading": "Employer - transfer cost by nationality",
+            "answer": (
+                "It depends on which country she is from. The agency fee is "
+                "$1,688 for a Filipino transfer helper, $1,588 for an "
+                "Indonesian one and $1,288 for a helper from Myanmar. That is "
+                "the agency fee on its own - the insurance, the MOM processing "
+                "fee and the lodging are charged separately, and a transfer is "
+                "a good deal less involved than a full overseas recruitment "
+                "because there is no embassy stage and no flight."
+            ),
+        },
     }
 )
 
@@ -3008,6 +3256,52 @@ TEXT_REPLACEMENTS: list[dict[str, str]] = [
         "new": "65342277",
         "reason": "The same number written without a space.",
     },
+    # --- The 2026-09-22 fee schedule, where it supersedes what is loaded ---
+    #
+    # The INDONESIAN passport renewal span (2 weeks) is NOT corrected here.
+    # Those three rows all carry a `question`, so UPDATES already owns them and
+    # they are edited there. A replacement pointed at a row UPDATES also sets
+    # is not a correction - it is a fight, and the loader runs both on every
+    # run, so the text flip-flops and "idempotent" stops being true. Found by
+    # running the script twice, which section 10 requires for exactly this.
+    # (2) "When should I start" said 2 months before you NEED the passport.
+    # The agency's own wording is 2 months before it EXPIRES, which is the
+    # date the client can actually look up, and the Indonesian half of that
+    # sentence said only "it is quicker" - now a span.
+    {
+        "old": "For a Filipino helper, start about 2 months before you need "
+               "the new passport - the embassy appointment and the processing "
+               "together take that sort of time. For an Indonesian helper it "
+               "is quicker, but the appointment still has to be available.",
+        "new": "For a Filipino helper, start about 2 months before the current "
+               "passport expires - the embassy appointment and the processing "
+               "together take that sort of time. For an Indonesian helper "
+               "allow approximately 2 weeks, and the appointment still has to "
+               "be available.",
+        "reason": "the agency's advice is 2 months before EXPIRY, which is a "
+                  "date the client holds, and they gave the Indonesian span.",
+    },
+    # (3) The one live row that states a competing AGENCY fee for a hire.
+    # "the agency placement package (S$2,800-3,800 depending on nationality)"
+    # sat inside a first-year total, in the two copies of the cost FAQ - and
+    # the agency fee for a new hire is $1,428 / $1,188 / $1,168 by nationality.
+    # A client asking what the agency charges could be read either figure.
+    #
+    # The figure is REMOVED rather than replaced, which is the call made for
+    # the per-nationality lead times on 2026-09-19: we do not know what that
+    # range was measuring - agency fee alone, or agency plus third-party - and
+    # a plausible-sounding replacement reaches a client as though the agency
+    # had given it. The first-year total is left alone: it is labelled as a
+    # total including salary and levy, it is their own published FAQ, and they
+    # have not replaced it.
+    {
+        "old": "the agency placement package (S$2,800-3,800 depending on "
+               "nationality)",
+        "new": "the agency and processing fees, which depend on her "
+               "nationality and on whether she is a new hire or a transfer",
+        "reason": "it competes with the agency fee the 2026-09-22 schedule "
+                  "states per nationality ($1,428 / $1,188 / $1,168).",
+    },
 ]
 
 # A replacement is a blunt instrument pointed at live client-facing text, so the
@@ -3018,6 +3312,76 @@ for _r in TEXT_REPLACEMENTS:
     assert len(_r["old"]) >= 8, f"replacement needle too short to be safe: {_r['old']!r}"
     assert _r["old"] != _r["new"], f"replacement is a no-op: {_r['old']!r}"
     assert _r["reason"].strip(), f"replacement without a stated reason: {_r['old']!r}"
+
+
+# Rows that state a fee the agency has since replaced, and that no edit can
+# honestly fix - they are the fee tables of a BLANK Form A in the Client
+# Service Agreement, with "(Variable)" markers and "$________" blanks beside
+# the amounts. They were illustrative when the contract was drafted; measured
+# on 2026-09-22 they are also what retrieval hands back when a client uses the
+# form's own words, and they now disagree with the agency's schedule:
+#
+#   "what is the total service fee?"  -> Form A $1,568 at 0.648, ahead of the
+#                                        correct Filipino row at 0.536
+#   "what is the placement fee?"      -> Form A at 0.687, correct row at 0.530
+#
+# And PART C's Filipino third-party table is a superseded copy of the one the
+# agency has just sent: it says $340 where they now say $350, $200 where they
+# say $250, and $50 where they say $60.
+#
+# RETIRED, not deleted and not rewritten. `is_active` is the mechanism
+# kb_hygiene.sql already documents for this ("Retire them - reversible, set
+# is_active back to TRUE to restore"), and the match function filters on it.
+# That matters here more than usual: this is the agency's own signed
+# agreement, and rewriting a clause of it on our own initiative is not this
+# repo's call (section 9.25). Taking a superseded fee table out of RETRIEVAL
+# leaves their document intact and stops the bot quoting a price the agency
+# has replaced.
+#
+# The salary line of Form A is deliberately NOT retired: "Basic Salary $650"
+# is an example of a salary rather than a fee, and $650 is the Filipino floor.
+RETIRED: list[dict[str, str]] = [
+    {
+        "needle": "PART B: Service Fee: Total Service Fee | S$ Amount: $1,568",
+        "reason": "superseded by the 2026-09-22 agency fee per nationality "
+                  "($1,428 PH / $1,188 ID / $1,168 MM).",
+    },
+    {
+        "needle": "PART D: Placement Fees: Total Service Fee + 3rd Party Costs "
+                  "(Variable) | S$ Amount: $4,225",
+        "reason": "the $4,225/$4,285 pair that reached a client on 2026-09-10; "
+                  "superseded, and a total the agency does not state.",
+    },
+    {
+        "needle": "PART C: 3rd Party Costs: Total 3rd Party Costs (Variable) | "
+                  "S$ Amount: $2,657",
+        "reason": "a superseded copy of the Filipino third-party table - $340 "
+                  "against their $350, $200 against $250, $50 against $60.",
+    },
+]
+
+
+async def _retire_superseded(dry_run: bool) -> int:
+    """Take a superseded row out of retrieval without deleting it.
+
+    Idempotent: it only looks at rows that are still active, so a second run
+    finds nothing. Reversible by hand - set is_active back to TRUE.
+    """
+    retired = 0
+    for rule in RETIRED:
+        rows = await db.select_many(
+            KB_TABLE, "id,content,is_active", limit=2000, is_active=True
+        )
+        for row in rows:
+            if rule["needle"] not in (row.get("content") or ""):
+                continue
+            if dry_run:
+                logger.info("WOULD RETIRE row %s (%s)", row["id"][:8], rule["reason"])
+            else:
+                await db.update(KB_TABLE, {"is_active": False}, id=row["id"])
+                logger.info("RETIRED row %s (%s)", row["id"][:8], rule["reason"])
+            retired += 1
+    return retired
 
 
 async def _apply_text_replacements(dry_run: bool) -> int:
@@ -3188,10 +3552,11 @@ async def main(dry_run: bool) -> None:
         updated += 1
 
     replaced = await _apply_text_replacements(dry_run)
+    retired = await _retire_superseded(dry_run)
 
     verb = "would write" if dry_run else "wrote"
     logger.info(
-        "Text replacements: %d row edit(s).", replaced,
+        "Text replacements: %d row edit(s); %d row(s) retired.", replaced, retired,
     )
     logger.info(
         "Done — %s %d row(s), skipped %d already present, %s %d row(s).",

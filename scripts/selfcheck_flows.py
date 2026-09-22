@@ -299,6 +299,18 @@ import app.graph.guards as gd
 import app.graph.prompts.templates as tpl
 from app.graph.nodes.intent_classifier import _named_service as _named_svc
 import app.graph.closure as cl
+# import ... as ic binds the NODE FUNCTION, not the module - the package
+# exports the callable under its own name. Same trap as response_generator
+# on 2026-09-22; importlib is what gets the module.
+# NOT `ic` - that is already the intent classifier, twenty lines up, and
+# rebinding it made six unrelated assertions raise AttributeError.
+icol = importlib.import_module("app.graph.nodes.info_collector")
+
+# The six agency fees of the 2026-09-22 schedule, written once. Every check
+# below reads this rather than repeating the figures, so a row that gains a
+# seventh fee fails by name instead of by nobody noticing.
+_FEE_FIGURES = (f"{D}1,688", f"{D}1,588", f"{D}1,288",
+                f"{D}1,428", f"{D}1,188", f"{D}1,168")
 import app.services.message as ms
 import app.services.handover as hs
 btr = importlib.import_module("app.graph.nodes.blocked_topic_responder")
@@ -1489,8 +1501,11 @@ rows = [
  # the branch added the same day as the guard.
  ("...and a deferred briefing is retried rather than recorded as given",
   "COST_DEFERRAL_REPLY.strip()" in _collector_src(), True),
+ # `new_hiring` left this set on 2026-09-22 when the agency gave its price,
+ # so only direct hire is checked here now. The rule is unchanged: a service
+ # we hold no figure for must be told not to invent one in its overview.
  ("a cost-withheld overview is told not to quote a price",
-  [k for k in ("new_hiring", "direct_hiring") if k not in _guards.COST_WITHHELD_SERVICES],
+  [k for k in ("direct_hiring",) if k not in _guards.COST_WITHHELD_SERVICES],
   []),
  # --- 2026-09-08: what direct hire shares with new hiring -----------------
  # The agency's own line: "No candidate sourcing, matching or interviews.
@@ -2301,10 +2316,16 @@ rows = [
   btr.asks_general_info("any update on my passport renewal?"), False),
  # The widening retry dropped the filter below the floor, which handed back
  # the WORK PERMIT fee ($695) inside a PASSPORT renewal ($450).
+ # Moved to guards on 2026-09-22, when response_generator needed the same test
+ # to decide whether a reply may put a figure on a nationality-priced service.
  ("a price question is recognised",
-  bool(rr._PRICE_QUESTION.search("what is cost")), True),
+  gd.asks_about_price("what is cost"), True),
  ("a timing question is not, so it keeps its widening retry",
-  bool(rr._PRICE_QUESTION.search("how much time it takes")), False),
+  gd.asks_about_price("how much time it takes"), False),
+ # ...and BOTH readers use the one definition, or the turn that refuses to
+ # widen off this service is not the turn that refuses to quote from it.
+ ("retrieval and the reply read the same price test",
+  rr.asks_about_price is gd.asks_about_price, True),
  # "okayyyyyyyyyyyyyyyyyyyyyyyyyyy" was answered with the handover line the
  # client had already been given twice.
  ("an elongated acknowledgement is an acknowledgement",
@@ -2352,26 +2373,63 @@ rows = [
   ["renewal", "passport_renewal", "home_leave"]),
  ("a service that withholds its fee still widens",
   rr._service_filter({"incoming_text": "how much does it cost",
-                      "service_type": "new_hiring"}), None),
+                      "service_type": "direct_hiring"}), None),
+ # ...and the six that state one do NOT widen, which is the agency's first
+ # rule of 2026-09-22 - "never answer a fee question using information from
+ # another service simply because the nationality or fee category is similar"
+ # - enforced by the retriever rather than by asking the model. The employer
+ # transfer key is aliased onto the candidate one, so the filter returns
+ # `transfer` for both and BOTH have to be in the set.
+ ("a service that states its own fee keeps the filter, all six",
+  [rr._service_filter({"incoming_text": "how much does it cost",
+                       "service_type": svc})
+   for svc in ("renewal", "passport_renewal", "home_leave",
+               "new_hiring", "transfer", "transfer_employer")],
+  ["renewal", "passport_renewal", "home_leave",
+   "new_hiring", "transfer", "transfer"]),
  ("the two cost sets are exact opposites",
   gd.FEE_STATED_SERVICES & gd.COST_WITHHELD_SERVICES, frozenset()),
  # --- the consolidated cost + timeline table, 2026-09-08 --------------
  # A fee is stated where the agency stated one and deferred where they did
  # not: "the service which do not have the timeline and cost that means we
  # dont have to open that live agent will handle that".
+ # 2026-09-08 left FIVE services blank and they were all withheld. The
+ # 2026-09-22 schedule fills in three of them - new hiring and both transfer
+ # keys, per nationality - so the rule is unchanged and the membership has
+ # moved. Direct hire and replacement are still blank and still withheld.
  ("a fee is withheld on every service the table left blank",
-  {"new_hiring", "direct_hiring", "replacement", "transfer", "transfer_employer"}
-  <= gd.COST_WITHHELD_SERVICES, True),
+  {"direct_hiring", "replacement"} <= gd.COST_WITHHELD_SERVICES, True),
  ("and quoted on every service it filled in",
-  {"renewal", "passport_renewal", "home_leave"} & gd.COST_WITHHELD_SERVICES, set()),
+  {"renewal", "passport_renewal", "home_leave",
+   "new_hiring", "transfer", "transfer_employer"} & gd.COST_WITHHELD_SERVICES,
+  set()),
  # An employer transfer runs under its OWN service key, so leaving it out
  # would have withheld nothing on the half that actually asks about cost.
+ # An employer transfer runs under its OWN service key, so leaving it out
+ # would do nothing on the half that actually asks about cost. That was true
+ # when the fee was withheld and it is true now that it is stated - the key
+ # simply moved sets, and both keys have to move together or the filter and
+ # the guard disagree about the same conversation.
  ("the employer half of a transfer is covered too",
-  "transfer_employer" in gd.COST_WITHHELD_SERVICES, True),
- ("replacement and transfer defer the fee to a person",
-  all(any("agent will confirm" in r["answer"] for r in lsn.ROWS
-          if r["service_type"] == svc and "cost" in r["question"].lower())
-      for svc in ("replacement", "transfer")), True),
+  {"transfer", "transfer_employer"} <= gd.FEE_STATED_SERVICES, True),
+ # `transfer` left this pair on 2026-09-22, when the agency gave its fee.
+ # Its deferral row is REWRITTEN rather than left beside the new ones - left
+ # alone it was top for "what is the all in cost of a transfer?" at 0.644 and
+ # said we could not quote a price we now hold.
+ ("replacement still defers the fee to a person",
+  any("agent will confirm" in r["answer"] for r in lsn.ROWS
+      if r["service_type"] == "replacement" and "cost" in r["question"].lower()),
+  True),
+ ("...and the transfer row now gives the three figures instead",
+  sorted(f for f in (f"{D}1,688", f"{D}1,588", f"{D}1,288")
+         if f in next(u["set"]["answer"] for u in lsn.UPDATES
+                      if u["where"]["question"] == "How much does a transfer cost?")),
+  [f"{D}1,288", f"{D}1,588", f"{D}1,688"]),
+ # ...and it is the EMPLOYER's price list, so a helper never retrieves it.
+ ("...and it is narrowed to the employer",
+  next(u["set"].get("contact_type") for u in lsn.UPDATES
+       if u["where"]["question"] == "How much does a transfer cost?"),
+  "employer"),
  # Three rows ANSWERED the question the table answers, with a different
  # number. Stacking them would put a flat contradiction in front of a model
  # that quotes either.
@@ -2534,6 +2592,131 @@ rows = [
    and any(w in r["answer"].lower()
            for w in ("agency fee", "placement fee", "you pay us",
                      "service fee", "deducted from your salary"))], []),
+
+ # --- the agency's fee schedule, 2026-09-22 ---------------------------
+ # Six service+nationality combinations, each with its own agency fee, its own
+ # replacement terms and its own third-party list. The agency's own first rule
+ # is that these never bleed into one another: "never answer a user's fee
+ # question using information from another service simply because the
+ # nationality or fee category is similar."
+ #
+ # The AGENCY FEES, which is the thing a client acts on. Derived from the rows
+ # rather than typed here twice - this reads what the loader will write.
+ ("every service and nationality has its own agency fee row",
+  sorted((r["service_type"], r["nationality"]) for r in lsn.ROWS
+         if r["section_heading"].startswith("Employer - fees for")),
+  [("new_hiring", "ID"), ("new_hiring", "MM"), ("new_hiring", "PH"),
+   ("transfer", "ID"), ("transfer", "MM"), ("transfer", "PH")]),
+ ("...and each states the figure the agency gave",
+  sorted((r["service_type"], r["nationality"],
+          next(f for f in _FEE_FIGURES if f in r["answer"]))
+         for r in lsn.ROWS
+         if r["section_heading"].startswith("Employer - fees for")),
+  [("new_hiring", "ID", f"{D}1,188"), ("new_hiring", "MM", f"{D}1,168"),
+   ("new_hiring", "PH", f"{D}1,428"), ("transfer", "ID", f"{D}1,588"),
+   ("transfer", "MM", f"{D}1,288"), ("transfer", "PH", f"{D}1,688")]),
+ # ...and none of them carries ANOTHER combination's fee. This is the check
+ # that matters: six figures in six rows, all retrievable together whenever
+ # the nationality is not yet settled, and a row that names two of them is a
+ # row the model can quote the wrong half of.
+ ("no agency-fee row names another combination's fee",
+  sorted(r["section_heading"] for r in lsn.ROWS
+         if r["section_heading"].startswith("Employer - fees for")
+         and sum(1 for f in _FEE_FIGURES if f in r["answer"]) != 1),
+  []),
+ # The REPLACEMENT fees. $288 is shared by four of the six legitimately, so
+ # the two that are unique are what this can test: a Filipino new hire is $238
+ # and a Myanmar new hire is $328, and neither may carry the other's.
+ ("the replacement fee is its own service's",
+  sorted((r["service_type"], r["nationality"],
+          next(f for f in (f"{D}238", f"{D}288", f"{D}328") if f in r["answer"]))
+         for r in lsn.ROWS
+         if r["section_heading"].startswith("Employer - replacement for")),
+  [("new_hiring", "ID", f"{D}288"), ("new_hiring", "MM", f"{D}328"),
+   ("new_hiring", "PH", f"{D}238"), ("transfer", "ID", f"{D}288"),
+   ("transfer", "MM", f"{D}288"), ("transfer", "PH", f"{D}288")]),
+ ("no replacement row names two different replacement fees",
+  sorted(r["section_heading"] for r in lsn.ROWS
+         if r["section_heading"].startswith("Employer - replacement for")
+         and sum(1 for f in (f"{D}238", f"{D}288", f"{D}328")
+                 if f in r["answer"]) != 1),
+  []),
+ # Rule 5: a fee marked "subject to change" says so. Exactly the two the
+ # schedule marks - the Indonesian and Myanmar new-hire documentation fees -
+ # and not the four it does not, because saying it everywhere is the same
+ # failure as saying it nowhere.
+ ("only the two documentation fees the agency flagged say subject to change",
+  sorted((r["service_type"], r["nationality"]) for r in lsn.ROWS
+         if r["section_heading"].startswith("Employer - replacement for")
+         and "subject to change" in r["answer"].lower()),
+  [("new_hiring", "ID"), ("new_hiring", "MM")]),
+ # Every combination says outright that the agency fee is NOT the whole bill.
+ # Their rule 10: do not present a total unless every component is defined.
+ ("every agency fee says what it excludes",
+  sorted(r["section_heading"] for r in lsn.ROWS
+         if r["section_heading"].startswith("Employer - fees for")
+         and "charged separately" not in r["answer"]),
+  []),
+ # The Myanmar transfer surcharge for an experienced worker or a caregiver is
+ # $80 where the other two are $60. One digit, and it is the kind of thing a
+ # copy-paste row gets wrong.
+ ("the Myanmar transfer surcharge is its own figure",
+  [(r["nationality"], f"{D}80" in r["answer"], f"{D}60" in r["answer"])
+   for r in lsn.ROWS
+   if r["section_heading"].startswith("Employer - third-party fees")
+   and r["service_type"] == "transfer"
+   and r["nationality"] == "MM"],
+  [("MM", True, False)]),
+ # Rule 7 of the brief, mechanically: the PH new hire is the only one whose
+ # recruitment fee is a month of salary, and it is the only one that says so.
+ ("only the Filipino new hire names a salary-based recruitment fee",
+  sorted(r["nationality"] for r in lsn.ROWS
+         if r["section_heading"].startswith("Employer - third-party fees")
+         and "one month of the helper" in r["answer"]),
+  ["PH"]),
+ # These are the EMPLOYER's fees. A helper pays Ming Hwee nothing
+ # (2026-09-10), and `transfer` is her own service key - so an employer fee
+ # row filed under it with contact_type 'all' would be served to her.
+ ("no fee row is readable by a helper",
+  sorted({r.get("contact_type", "all") for r in lsn.ROWS
+          if r["section_heading"].startswith("Employer - ")
+          and "fee" in r["section_heading"]}),
+  ["employer"]),
+ # --- the guards that make the retrieval half true --------------------
+ # fee_varies_by_nationality answers "is the nationality what stands in the
+ # way", which is a different question from "may we quote" and the reason
+ # both exist. A service priced flat must NOT be in it, or every renewal
+ # would start asking which country she is from before giving $695.
+ ("a flat-priced service is not nationality-priced",
+  [s for s in ("renewal", "direct_hiring", "replacement", "fee_enquiry")
+   if t.fee_varies_by_nationality(s)], []),
+ ("...and the six that are, are",
+  sorted(s for s in ("new_hiring", "transfer", "transfer_employer",
+                     "passport_renewal", "home_leave")
+         if t.fee_varies_by_nationality(s)),
+  ["home_leave", "new_hiring", "passport_renewal", "transfer",
+   "transfer_employer"]),
+ # We hold all three hiring fees, so the obstacle is only ever "which one" -
+ # unlike a Myanmar passport renewal, where we know the nationality and hold
+ # no figure. Both refuse to quote and they refuse differently.
+ ("a hiring fee is unknown only while the nationality is",
+  [t.fee_is_known_for("new_hiring", n) for n in (None, "PH", "ID", "MM")],
+  [False, True, True, True]),
+ ("...while a Myanmar passport renewal is unknown even though she is named",
+  t.fee_is_known_for("passport_renewal", "MM"), False),
+ # One reader for the nationality, or the filter narrows on a preference the
+ # fee guard cannot see - which is exactly what it did until 2026-09-22, when
+ # the collector read `nationality` alone and hiring asks
+ # `preferred_nationality`.
+ ("an employer's preference counts as the nationality in play",
+  [_lead.nationality_in_play(c) for c in
+   ({"preferred_nationality": "Filipino"}, {"nationality": "Indonesian"},
+    {"preferred_nationality": "no preference"}, {})],
+  ["PH", "ID", None, None]),
+ ("and all three callers read that one function",
+  (rr._nationality({"collected_info": {"preferred_nationality": "Myanmar"}}),
+   icol._known_nationality({"collected_info": {"preferred_nationality": "Myanmar"}})),
+  ("MM", "MM")),
 
  # --- the transfer retrieval alias, 2026-09-10 -------------------------
  # transfer_employer is not a service_type any KB row uses, so
@@ -3032,8 +3215,15 @@ rows = [
  ("the guard still fires on the figure that reached a client",
   q("The approximate total service fee and third-party costs are "
     f"{D}4,225, with a combined total of about {D}4,285."), True),
- ("and new hiring is a service that withholds it",
-  "new_hiring" in _WITHHELD, True),
+ # Until 2026-09-22 this read "new hiring is a service that withholds it",
+ # and the guard above is still exactly the one that caught $4,225/$4,285
+ # reaching a client on 2026-09-10. What changed is not the guard but which
+ # services it is asked about: the agency gave new hiring a price, so the
+ # service that still proves the guard is direct hire.
+ ("and direct hire is a service that withholds it",
+  "direct_hiring" in _WITHHELD, True),
+ ("...while new hiring now states its own",
+  "new_hiring" in _WITHHELD, False),
  # Not withheld, deliberately: passport renewal states its own $450 and
  # quoting it is the point of that flow.
  ("a service that states its own fee still states it",
@@ -3321,12 +3511,24 @@ rows = [
           and "more than 3 working days"
               not in _flat(str(u["set"].get("answer") or "")).lower()}),
   []),
- # ...and all three of them still say it, so the floor was not simply deleted.
- ("...and all three that carry it say more than",
-  len([u for u in lsn.UPDATES
-       if u["where"].get("service_type") == "passport_renewal"
-       and "more than 3 working days"
-           in _flat(str(u["set"].get("answer") or "")).lower()]), 3),
+ # ...and all three now carry the SPAN. They said "more than 3 working days"
+ # from 2026-09-19, when the agency gave a floor and no span and none was
+ # invented, until 2026-09-22, when they gave one: 2 weeks. Asserted over the
+ # three UPDATES that own those rows, because a fourth row reintroducing the
+ # floor is the way this comes back.
+ ("...and all three ID passport rows now carry the agency's span",
+  sorted({u["where"]["question"] for u in lsn.UPDATES
+          if u["where"].get("service_type") == "passport_renewal"
+          and "2 weeks" in _flat(str(u["set"].get("answer") or "")).lower()}),
+  ["How long does a passport renewal take for a helper?",
+   "How long does passport renewal take for an Indonesian helper?",
+   "What is the process for renewing an Indonesian helper's passport?"]),
+ # ...and none of them still states the superseded floor.
+ ("and none of them still states the 3-working-day floor",
+  [u["where"]["question"] for u in lsn.UPDATES
+   if u["where"].get("service_type") == "passport_renewal"
+   and "3 working days" in _flat(str(u["set"].get("answer") or "")).lower()],
+  []),
 
  # --- who the ROWS are written for, 2026-09-10 -------------------------
  # effective_contact_type puts a master record above one message, rightly.

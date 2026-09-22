@@ -1331,9 +1331,18 @@ CASES = [
       "history_text": "You: Would you prefer updates by email or WhatsApp?",
       "_stub_extraction": {},
       "_expect_prompt": "CLOSE IT ONCE"}),
-    # ...and the cost stays withheld in it, which is the 2026-09-04 rule and
-    # is enforced by quotes_hiring_package_cost whatever the prompt says.
-    ("info_collector", "...and the closing briefing still withholds the package price",
+    # ...and the cost is now IN it. This assertion said the opposite until
+    # 2026-09-22 and was right to: the 2026-09-04 rule was that a new hire's
+    # price never reaches anyone before a salesperson has spoken to them, and
+    # quotes_hiring_package_cost enforced it whatever the prompt said. The
+    # agency reversed it for this service by sending the fee schedule and
+    # asking that the bot answer with it. The state is unchanged; only what it
+    # expects has moved, so the diff is the reversal and nothing else.
+    #
+    # `preferred_nationality` is Indonesian in the state above, so the figure
+    # that may go out is $1,188 and the other two are somebody else's - which
+    # is the whole of the agency's rule 8.
+    ("info_collector", "...and the closing briefing now gives the package price",
      {"service_type": "new_hiring", "intent": "new_hiring",
       "incoming_text": "on whatsapp only",
       "collected_info": {
@@ -1353,8 +1362,36 @@ CASES = [
                              "start_timeline": 1, "update_channel": 1},
       "briefed_services": [],
       "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
-      "rag_context": "The total service fee and third-party costs are $4,225.",
+      "rag_context": "The agency fee for a new hire from Indonesia is $1,188.",
       "history_text": "You: Would you prefer updates by email or WhatsApp?",
+      "_stub_extraction": {},
+      "_stub_reply": "The agency fee for an Indonesian new hire is $1,188.",
+      "_expect_reply": "$1,188"}),
+    # ...while a service the schedule gives NO figure for still defers, which
+    # is what keeps the guard covered rather than merely switched off. Same
+    # shape, same node, same `_write(withhold_cost=)` call - `direct_hiring`
+    # is in COST_WITHHELD_SERVICES and briefs at the end off helper_availability.
+    ("info_collector", "...but a direct hire, which has no stated fee, still defers it",
+     {"service_type": "direct_hiring", "intent": "direct_hiring",
+      "incoming_text": "next month",
+      "collected_info": {
+          "full_name": "Thomas", "helper_name": "Lwin Lwin Nwe",
+          "helper_nationality": "Myanmar", "helper_transfer_case": "no",
+          "helper_availability": "next month", "helper_contact": "declined",
+          "update_channel": "WhatsApp"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1,
+                             "helper_nationality": 1, "helper_transfer_case": 1,
+                             "helper_availability": 1, "helper_contact": 1,
+                             "update_channel": 1},
+      "briefed_services": [],
+      "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
+      # The figure has to be GROUNDED or ungrounded_figures bins the stub
+      # first and the reply falls back to the bare closing line - which is a
+      # green-looking red that says nothing about the cost guard. Exactly the
+      # 2026-09-18 note: a state that expects a figure has to ground it.
+      "rag_context": ("A direct hire takes about 4 to 6 weeks from overseas. "
+                      "The total service fee and third-party costs are $4,225."),
+      "history_text": "You: When would she be available to start?",
       "_stub_extraction": {},
       "_stub_reply": "The total package is approximately $4,225.",
       "_expect_reply": "rather one of our agents"}),
@@ -1549,8 +1586,15 @@ CASES = [
     # reply that actually went out on 2026-09-10 with a hiring ticket parked -
     # every figure in it is genuinely in Form A, which is why every other guard
     # passed it.
+    # Re-pointed at `direct_hiring` on 2026-09-22. The reply below is the one
+    # that actually went out with a HIRING ticket parked, and `new_hiring` may
+    # now quote its own fee - so leaving this state on that service would have
+    # deleted the only cover this path has ever had rather than moving it. The
+    # defect it was written for is not about which service it was: it is that
+    # this node had no cost guard at all until 2026-09-10, and `direct_hiring`
+    # is withheld for the same reason `new_hiring` was.
     ("blocked_topic_responder", "employer, a parked reply that prices the hire",
-     {"intent": "fee_enquiry", "service_type": "new_hiring",
+     {"intent": "fee_enquiry", "service_type": "direct_hiring",
       "incoming_text": "Is there any fees I need to pay",
       "history_text": "client: hi\nbot: I've passed this to our team.",
       "_stub_reply": ("The approximate total service fee and third-party costs "
@@ -1558,8 +1602,8 @@ CASES = [
       # The deferral, not the figure and not the bare holding line: the client
       # is told WHY they are getting a person instead of a number.
       "_expect_reply": "would rather one of our agents",
-      "blocked_topics": {"new_hiring": {"ticket_id": 1,
-                                        "ticket_number": "CB-2026-0001"}}}),
+      "blocked_topics": {"direct_hiring": {"ticket_id": 1,
+                                           "ticket_number": "CB-2026-0001"}}}),
     ("blocked_topic_responder", "ordinary message, parked",
      {"intent": "new_hiring", "service_type": "new_hiring",
       "incoming_text": "ok noted thanks",
@@ -1747,6 +1791,105 @@ CASES = [
       "history_text": "You: What type of home are you in?",
       "_stub_extraction": {},
       "_forbid_prompt": "NAMING WHAT YOU HAVE UNDERSTOOD"}),
+
+    # --- a fee question on a nationality-priced service, 2026-09-22 ------
+    # The agency gave the fee schedule and asked that the bot answer from it.
+    # Six agency fees now sit in the knowledge base and three of them are
+    # retrievable on any hiring turn - measured, "how much is the agency fee
+    # for a new hire?" returns ID at 0.688 and PH and MM at 0.679, nine
+    # thousandths apart. Whichever the model reaches for it is right one time
+    # in three, and the client cannot tell which time it was.
+    #
+    # Run rather than predicated: fee_varies_by_nationality and
+    # nationality_in_play were both correct the whole time, and what decides
+    # the client's answer is whether anything APPENDS the note. That is the
+    # "imported and never called" hole, recorded five times in this file.
+    ("response_generator", "a hiring fee question with no nationality settled",
+     {"intent": "fee_enquiry", "service_type": "new_hiring",
+      "incoming_text": "how much is the agency fee for a new hire?",
+      "collected_info": {},
+      "history_text": "client: hi\nbot: Hello",
+      "_expect_prompt": "DEPENDS ON THE HELPER'S NATIONALITY"}),
+    # ...and once she is named it is an ordinary fee question again. Named via
+    # `preferred_nationality`, which is the field the EMPLOYER flow actually
+    # collects - the collector read `nationality` alone until 2026-09-22, so
+    # this state fails against the old reader and is what proves the fix.
+    ("response_generator", "...and not once the nationality is settled",
+     {"intent": "fee_enquiry", "service_type": "new_hiring",
+      "incoming_text": "how much is the agency fee for a new hire?",
+      "collected_info": {"preferred_nationality": "Indonesian"},
+      "history_text": "client: hi\nbot: Hello",
+      "_forbid_prompt": "DEPENDS ON THE HELPER'S NATIONALITY"}),
+    # A TIMING question is not a fee question and must not be told the answer
+    # depends on her nationality. This is the gate that keeps the 2026-09-03
+    # widening retry intact, read through the same predicate.
+    ("response_generator", "...and a timing question is not a fee question",
+     {"intent": "new_hiring", "service_type": "new_hiring",
+      "incoming_text": "how long does it take to hire a helper?",
+      "collected_info": {},
+      "history_text": "client: hi\nbot: Hello",
+      "_forbid_prompt": "DEPENDS ON THE HELPER'S NATIONALITY"}),
+    # The other half: we know who she is and hold no figure for her. Asking
+    # which nationality would be asking a question we have the answer to, so
+    # this gets the deferral note instead.
+    ("response_generator", "a Myanmar passport fee, which we do not hold",
+     {"intent": "fee_enquiry", "service_type": "passport_renewal",
+      "incoming_text": "how much is the passport renewal?",
+      "collected_info": {"nationality": "Myanmar"},
+      "history_text": "client: hi\nbot: Hello",
+      "_expect_prompt": "do NOT have a fee on record"}),
+    ("response_generator", "...while a Filipino one is simply answered",
+     {"intent": "fee_enquiry", "service_type": "passport_renewal",
+      "incoming_text": "how much is the passport renewal?",
+      "collected_info": {"nationality": "Filipino"},
+      "history_text": "client: hi\nbot: Hello",
+      "_forbid_prompt": "do NOT have a fee on record"}),
+    # ...and a service priced flat is never asked about a nationality at all.
+    ("response_generator", "...and a work permit renewal is priced flat",
+     {"intent": "fee_enquiry", "service_type": "renewal",
+      "incoming_text": "what is the fee for work permit renewal?",
+      "collected_info": {},
+      "history_text": "client: hi\nbot: Hello",
+      "_forbid_prompt": "DEPENDS ON THE HELPER'S NATIONALITY"}),
+    # And the reply half: a transfer fee that IS established goes out as the
+    # figure rather than the deferral, which is the guard change this commit
+    # is about. `new_hiring` and both transfer keys left
+    # COST_WITHHELD_SERVICES, so quotes_hiring_package_cost no longer swaps
+    # this for COST_DEFERRAL_REPLY.
+    ("response_generator", "an established transfer fee is given, not deferred",
+     {"intent": "fee_enquiry", "service_type": "transfer_employer",
+      "incoming_text": "how much does an Indonesian transfer helper cost?",
+      "collected_info": {"preferred_nationality": "Indonesian"},
+      "history_text": "client: hi\nbot: Hello",
+      "rag_context": "The agency fee for a transfer helper from Indonesia is "
+                     "$1,588. Insurance, MOM processing and lodging are extra.",
+      "_stub_reply": "The agency fee for an Indonesian transfer helper is $1,588.",
+      "_expect_reply": "$1,588"}),
+    # ...while a direct hire, which the schedule leaves blank, still defers.
+    # The do-not-add-them-up note. Asserted on the PROMPT, because the reply
+    # half is already covered by the live run and what this proves is that
+    # anything appends it at all - the fault that came back GREEN on the first
+    # injection pass.
+    ("response_generator", "a fee turn is told not to add the fees together",
+     {"intent": "fee_enquiry", "service_type": "new_hiring",
+      "incoming_text": "what are the fees for an Indonesian new hire?",
+      "collected_info": {"preferred_nationality": "Indonesian"},
+      "history_text": "client: hi\nbot: Hello",
+      "_expect_prompt": "FEES ARE SEPARATE AMOUNTS, NOT A SUM"}),
+    ("response_generator", "...and an ordinary turn is not",
+     {"intent": "new_hiring", "service_type": "new_hiring",
+      "incoming_text": "she should be good with children",
+      "collected_info": {"preferred_nationality": "Indonesian"},
+      "history_text": "client: hi\nbot: Hello",
+      "_forbid_prompt": "FEES ARE SEPARATE AMOUNTS, NOT A SUM"}),
+    ("response_generator", "...while a direct hire still defers its price",
+     {"intent": "fee_enquiry", "service_type": "direct_hiring",
+      "incoming_text": "how much does a direct hire cost?",
+      "collected_info": {},
+      "history_text": "client: hi\nbot: Hello",
+      "rag_context": "The total service fee and third-party costs are $4,225.",
+      "_stub_reply": "The total service fee and third-party costs are $4,225.",
+      "_expect_reply": "rather one of our agents"}),
 ]
 
 
