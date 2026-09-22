@@ -253,6 +253,9 @@ because the lead is opened early and the ticket is created much later.
 | A price we hold for two nationalities is not the third's price | `ticket.FEE_BY_NATIONALITY` + `fee_is_known_for()` | **$450** was quoted for a **Myanmar** helper. It is in the records (as PH/ID's price), so `ungrounded_figures` passed it. |
 | The passport briefing is timeline, then cost, then documents | `SERVICE_BRIEFING_NOTE` | Shirley, 2026-09-09: "nationality → timeline → requirements/documents". It never explains the embassy, the appointment or the runner — that is our processing. |
 | Passport renewal does not ask where she is, nor about the work permit | `SERVICE_FIELDS["passport_renewal"]` | Both called out at the 2026-09-09 meeting: location is irrelevant, and WP renewal is "a completely separate process". |
+| A greeting is greeted back, and an announced question is told to go ahead | `guards.greeting_only` + `response_generator.greeting_back` | `has_no_request` covers two shapes and both got the string written for the second: *"Hi"* was answered *"Sure, go ahead. What would you like to know?"* Go-ahead answers a request to ask; to a greeting it presupposes the intent. The name comes from our RECORDS, and nothing of their file is read back - a greeting is not the place to prove we remember them. |
+| ...and the PROMPT is what had to change, not just the canned string | `system.build_system_prompt` (the stage line) | Most greeting turns are answered by the model, and rule 7 plus the stage line both said *"do NOT greet again"* on every turn with history - right when they asked something, wrong when their whole message IS the greeting. One definition in `guards`, read by the node that picks the reply and by the prompt that tells the model whether it may greet at all (§9.8). |
+| ...and a client who greets twice is still only greeting | `guards.without_greeting` | *"hello, good morning"* left *"good morning"* after one strip, which matches no announcement, so it read as a real request. Stripped in a loop now. |
 | Nobody is asked WHICH RELATIVE referred them | `_REFERRED_BY_STAFF` (was `_WAS_REFERRED`) | Live: *"no , family member"* -> *"Who in your family referred you to Ming Hwee?"*. The gate opened on any referral at all, and the name was useless to us either way - a friend's or a relative's is somebody we hold no record of. OUR OWN STAFF is the case that survives, because that name is on our own payroll and the referral is credited to them. |
 | ...and the excludes are what the mixed phrasing needs | the same gate | *"my friend who works near your office"* matches `your office` and is still a FRIEND's name. `excludes` is checked first, which is the shape the class docstring is written about. |
 | A reason is written in the register of the office | `_WHY_WE_ASK` + the register rule in `_field_guidance` | *"so there are no surprises later"* went out live and the agency objected: *"sounds too casual"*. `additional_notes`' reason ended *"rather than discovered later"*, and that trailing clause is what the model compressed. A reason names what we DO with the answer; `helper_religion` had the same *"rather than X later"* tail and nobody had reported it - the sweep found it, which is why the rule is derived over the table. |
@@ -1166,6 +1169,55 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-22** - **"Hi" was answered "Sure, go ahead. What would you like to
+  know?"** The agency, testing on a thread whose last exchange was an insurance
+  application months earlier: *"I think this is very weird. The reply from hi
+  results to this? Clients won't be able to clear chats in future when it goes
+  live ... Can it greet user and ask about user intent?"*
+  (A) **Two different messages, one string.** `has_no_request` covers a
+  GREETING and a question ANNOUNCED but not asked - *"can I ask you
+  something?"* - and both were answered with `PROMPT_FOR_QUESTION`, which was
+  written for the second. *"Go ahead"* answers a request to ask; said to *"Hi"*
+  it skips the greeting and presupposes the intent. `greeting_only` tells them
+  apart and the greeting gets its own reply.
+  (B) **The name is from our RECORDS, and nothing else of their file is.** The
+  WhatsApp profile label is not a name (2026-09-17) and this string bypasses
+  the model, so nothing downstream could have caught it here. No dates, no
+  counts, no *"your last enquiry"* - `RETURNING_NOTE`'s rule: a greeting is not
+  the place to prove we remember them.
+  (C) **And the canned string was the smaller half.** Measured live: most
+  greeting turns never reach that branch at all, because the model writes the
+  reply - and the PROMPT told it not to greet. Rule 7 and the stage line both
+  say *"do NOT greet again"* for any turn with history, which is right when the
+  client asked something and wrong when their whole message IS the greeting. So
+  not greeting back was the INSTRUCTED behaviour, not a slip. The stage line now
+  has a third branch that says so, and says outright not to assume from earlier
+  messages what they want this time - which is the agency's own *"not blur the
+  two regardless of what's in the conversation history"*.
+  (D) **One definition, two readers** (§9.8). `greeting_only` lives in
+  `guards.py` because the node that picks the reply and the prompt that decides
+  whether the model may greet have to agree about the same sentence - the two
+  disagreeing is the whole defect one level up.
+  (E) **A client who greets twice was not greeting.** *"hello, good morning"*
+  left *"good morning"* after a single strip, which matches no announcement, so
+  it fell through as a real request. Stripped in a loop now - the same one-word
+  gap this file records for `_GENERAL_INFO` four times.
+  (F) **Why neither suite caught it: this path had no cover at all.** No
+  assertion anywhere named `PROMPT_FOR_QUESTION` or `has_no_request`, and
+  `e2e_services.py` opens every walk with the service sentence, never a bare
+  *"Hi"* - the same blind spot recorded on 2026-09-17. It now has six states
+  that RUN the node, plus `_forbid_reply` in the harness, because here the
+  defect is a WRONG canned string rather than a missing one and the only
+  assertion that bites is that *"go ahead"* is absent from this turn.
+  (G) **Verified live, the reported turn and five controls.** *"Hi"* with a
+  name on file -> *"Hi Ratna, what can I help you with?"*; with no name ->
+  *"Hi! How can I help you?"*; *"hello, good morning"* -> *"Good evening,
+  Ratna. How can I help you?"* First contact still introduces Claire, *"can i
+  ask you something"* still gets *"Sure, what would you like to ask?"*, and a
+  real request is still answered on the spot. Seven faults injected, seven red.
+  `selfcheck_flows.py` is **648 assertions**; `smoke_nodes.py` is **165
+  states**.
 
 - **2026-09-22** - **"Who in your family referred you to Ming Hwee?"** The
   agency, testing new hiring: *"this sounds a bit too weird and personal,

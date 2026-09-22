@@ -302,6 +302,7 @@ import app.graph.closure as cl
 import app.services.message as ms
 import app.services.handover as hs
 btr = importlib.import_module("app.graph.nodes.blocked_topic_responder")
+rg = importlib.import_module("app.graph.nodes.response_generator")
 wp = importlib.import_module("app.whapi.parser")
 wc = importlib.import_module("app.whapi.client")
 import re as _re
@@ -1711,6 +1712,42 @@ rows = [
   "returning client - placed with us before"),
  ("a first-timer still is",
   ico._known_fields({"prior_hires": 0}).get("referral_source"), None),
+ # --- a greeting is greeted back, 2026-09-22 ----------------------------
+ # Live: a client whose thread already held an insurance application wrote
+ # "Hi" and got "Sure, go ahead. What would you like to know?" The agency: "I
+ # think this is very weird. The reply from hi results to this? ... Can it
+ # greet user and ask about user intent?" `has_no_request` covers two shapes -
+ # a greeting, and a question ANNOUNCED but not asked - and both were answered
+ # with the string written for the second. Clients cannot clear their chat
+ # history once this is live, so every returning client meets this turn.
+ ("a greeting and an announced question are told apart",
+  [rg.greeting_only(s) for s in
+   ("Hi", "hello", "Hey there", "good evening", "hi hi",
+    "hello, good morning",            # greeted twice - one strip left "good morning"
+    "can i ask you something", "i have a question", "are you there",
+    "Hi, can I ask a question?", "hello i have a question",
+    "Hi I want to hire a helper")],
+  [True] * 6 + [False] * 6),
+ ("...and both are still recognised as nothing asked",
+  [rg.has_no_request(s) for s in
+   ("Hi", "hello, good morning", "can i ask you something",
+    "Hi I want to hire a helper")],
+  [True, True, True, False]),
+ ("a greeting is greeted back, never told to go ahead",
+  ("go ahead" in rg.greeting_back("Ratna Choukade").lower(),
+   rg.greeting_back("Ratna Choukade").lower().startswith("hi ratna")),
+  (False, True)),
+ # The name is the one from our FILE. The WhatsApp profile label is not a name
+ # (2026-09-17), and this string bypasses the model, so nothing else can catch
+ # it here.
+ ("...and with no name on file it greets without one",
+  rg.greeting_back(""), "Hi, good to hear from you. How can I help you today?"),
+ # A returning client has already had the introduction; a new one has not.
+ ("the introduction stays on the first message only",
+  ("I'm Claire" in rg.FIRST_CONTACT_PROMPT,
+   "I'm Claire" in rg.greeting_back("Ratna"),
+   "I'm Claire" in rg.PROMPT_FOR_QUESTION),
+  (True, False, False)),
  # --- and nobody is asked WHICH RELATIVE referred them, 2026-09-22 -------
  # Live: "no , family member" -> "Who in your family referred you to Ming
  # Hwee?" The agency: "this sounds a bit too weird and personal, asking

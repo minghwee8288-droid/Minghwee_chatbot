@@ -936,3 +936,46 @@ def strip_handover_talk(reply: str) -> str:
         return cleaned
     logger.warning("Removed handover announcement from reply: %r -> %r", text, cleaned)
     return cleaned
+
+
+# --- Is this message ONLY a greeting? ----------------------------------------
+#
+# Lives here, not in the node that first needed it, because two different
+# places have to agree about it: `response_generator`, which picks the reply,
+# and `system.build_system_prompt`, which tells the model whether it may greet
+# at all. They disagreed - the prompt said "the conversation is already going,
+# do NOT greet again" on every turn with history, which is right when the
+# client asked something and wrong when the client's whole message IS "Hi".
+# §9.8's rule: one definition, two readers, never a second copy.
+#
+# Beyond this length it is a real message whatever the wording.
+_NO_REQUEST_MAX_WORDS = 8
+
+_GREETING = re.compile(
+    r"^\W*(hi+|hey+|hello+|yo|halo|helo|greetings|"
+    r"good\s+(morning|afternoon|evening|day))\b(\s+there)?[\s,.!\-]*",
+    re.IGNORECASE,
+)
+
+
+def without_greeting(body: str) -> str:
+    """What is left once every leading greeting is taken off.
+
+    Stripped in a LOOP, not once: "hello, good morning" left "good morning"
+    behind, which matches no announcement, so a client who greeted us twice
+    fell through as though they had asked something.
+    """
+    rest = (body or "").strip()
+    while True:
+        stripped = _GREETING.sub("", rest, count=1).strip()
+        if stripped == rest:
+            return rest
+        rest = stripped
+
+
+def greeting_only(text: str) -> bool:
+    """A greeting and nothing else - nothing asked, no question announced."""
+    body = (text or "").strip()
+    if not body or len(body.split()) > _NO_REQUEST_MAX_WORDS:
+        return False
+    return bool(_GREETING.match(body)) and not without_greeting(body)

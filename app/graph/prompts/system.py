@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.graph.guards import greeting_only
 from app.graph.prompts.style import STYLE_BLOCK
 from app.services.ticket import service_types_label
 
@@ -404,12 +405,38 @@ def build_system_prompt(
     """Assemble Parts A-D for a single turn."""
     state = state or {}
     first_message = not (state.get("history_text") or "").strip()
-    stage = (
-        "This is the client's first message. Open with your greeting, once."
-        if first_message
-        else "The conversation is already going. Do NOT greet again, do NOT thank them "
-        "again, and do NOT add a closing line — reply as if you are mid-chat."
-    )
+    if first_message:
+        stage = "This is the client's first message. Open with your greeting, once."
+    elif greeting_only(state.get("incoming_text") or ""):
+        # THE CLIENT HAS GREETED US AND ASKED NOTHING, and this is a thread with
+        # a past. Reported 2026-09-22: a client whose last exchange with us was
+        # an insurance application wrote "Hi" and was answered "Sure, go ahead.
+        # What would you like to know?" The agency: "I think this is very weird
+        # ... Can it greet user and ask about user intent?"
+        #
+        # The branch below is why. Rule 7 and this line both say "do NOT greet
+        # again" for any turn with history - correct when they asked something,
+        # and wrong when their whole message IS the greeting. Not greeting back
+        # there is rude, and skipping to business presupposes what they want
+        # from messages that may be months old. Clients cannot clear their chat
+        # history once this is live, so this turn is the one every returning
+        # client meets first.
+        stage = (
+            "The client has GREETED you and asked for nothing else. Greet them "
+            "back - this is the one turn in a running conversation where rule 7 "
+            "does not apply - use their name if our records give you one, and "
+            "ask what you can help with. Do NOT assume from earlier messages "
+            "what they want this time, do NOT carry on a topic they have not "
+            "raised, and do NOT tell them to go ahead as though they had "
+            "already announced a question. One short greeting and one open "
+            "question, nothing else."
+        )
+    else:
+        stage = (
+            "The conversation is already going. Do NOT greet again, do NOT thank "
+            "them again, and do NOT add a closing line — reply as if you are "
+            "mid-chat."
+        )
 
     sections = [
         IDENTITY,

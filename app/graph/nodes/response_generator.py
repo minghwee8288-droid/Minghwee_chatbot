@@ -9,10 +9,12 @@ from typing import Any
 from app.config import settings
 from app.graph.guards import (
     COST_DEFERRAL_REPLY,
+    _NO_REQUEST_MAX_WORDS,
     COST_WITHHELD_SERVICES,
     asks_again,
     asks_for_process,
     clamp_reply,
+    greeting_only,
     holding_reply,
     is_degenerate,
     last_bot_line,
@@ -25,6 +27,7 @@ from app.graph.guards import (
     strip_meta_commentary,
     strip_repeated_opener,
     ungrounded_figures,
+    without_greeting,
 )
 from app.graph.llm import complete
 from app.graph.prompts.system import IDENTITY, build_system_prompt
@@ -54,6 +57,35 @@ logger = logging.getLogger(__name__)
 # The "I'll check" line is no longer a constant — it is drawn per turn from
 # guards.HOLDING_REPLIES so the same wording does not go out twice in a row.
 PROMPT_FOR_QUESTION = "Sure, go ahead. What would you like to know?"
+
+# ...and the same invitation for a GREETING, which is a different message.
+#
+# `has_no_request` covers two shapes - "Hi" and "can I ask you something?" -
+# and until 2026-09-22 both got the string above. Live: a client whose last
+# exchange with us was an insurance application months earlier wrote "Hi" and
+# was answered "Sure, go ahead. What would you like to know?" The agency: "I
+# think this is very weird. The reply from hi results to this? ... Can it greet
+# user and ask about user intent?"
+#
+# "Go ahead" answers a request to ask, which is what _ANNOUNCEMENT matches. To
+# a greeting it presupposes the intent and skips the greeting - and clients
+# cannot clear their chat history once this is live, so a thread carries its
+# whole past forever and this is the shape every returning client meets first.
+#
+# The name comes from our RECORDS and never from the WhatsApp profile, which is
+# the 2026-09-17 rule; the first name alone is the friendlier address, which is
+# the 2026-09-10 one. Nothing here reads their file back at them - no dates, no
+# counts, no "your last enquiry" (`RETURNING_NOTE`'s rule) - because a greeting
+# is not the place to prove we remember them.
+GREETING_BACK = "Hi{name}, good to hear from you. How can I help you today?"
+
+
+def greeting_back(record_name: str | None) -> str:
+    """The greeting, with their own name when our records hold one."""
+    first = (record_name or "").strip().split()
+    # "Hi Ratna, good to hear from you" - the comma belongs to the sentence,
+    # not to the name, or it arrives as "Hi, Ratna, good to hear from you".
+    return GREETING_BACK.format(name=(" " + first[0]) if first else "")
 
 # The same invitation for the FIRST message of a conversation, which needs the
 # introduction rule 1 requires. Live, 2026-09-03: "Hey" was answered "Sure, go
@@ -87,11 +119,6 @@ CHITCHAT_INTENTS = NO_RETRIEVAL_EXPECTED
 # This is a blocklist, not a keyword whitelist: the whitelist it replaced did
 # not contain "provide", so "please provide your introduction" was treated as
 # nothing-asked and answered with a canned "Sure, go ahead."
-_GREETING = re.compile(
-    r"^\W*(hi+|hey+|hello+|yo|halo|helo|greetings|"
-    r"good\s+(morning|afternoon|evening|day))\b(\s+there)?[\s,.!\-]*",
-    re.IGNORECASE,
-)
 _ANNOUNCEMENT = re.compile(
     r"^\W*("
     r"(i\s+)?(have|had|got)\s+(a|one|some)\s+(question|enquiry|inquiry|doubt)|"
@@ -102,16 +129,12 @@ _ANNOUNCEMENT = re.compile(
     r")[\s\W]*$",
     re.IGNORECASE,
 )
-# Beyond this length it is a real message whatever the wording.
-_NO_REQUEST_MAX_WORDS = 8
-
-
 def has_no_request(text: str) -> bool:
     """Whether the client has greeted or announced a question without asking it."""
     body = (text or "").strip()
     if not body or len(body.split()) > _NO_REQUEST_MAX_WORDS:
         return False
-    rest = _GREETING.sub("", body, count=1).strip()
+    rest = without_greeting(body)
     if not rest:  # nothing but a greeting
         return True
     return bool(_ANNOUNCEMENT.match(rest))
@@ -344,10 +367,16 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
             state.get("conversation_id"),
         )
         first_contact = not (state.get("history_text") or "").strip()
-        return {
-            "reply": FIRST_CONTACT_PROMPT if first_contact else PROMPT_FOR_QUESTION,
-            "needs_handover": False,
-        }
+        incoming = state.get("incoming_text", "")
+        if first_contact:
+            # Rule 1's introduction, which a returning client has already had.
+            reply = FIRST_CONTACT_PROMPT
+        elif greeting_only(incoming):
+            reply = greeting_back(state.get("record_name"))
+        else:
+            # They announced a question rather than asking one.
+            reply = PROMPT_FOR_QUESTION
+        return {"reply": reply, "needs_handover": False}
 
     # Refuse to send a figure that is not in the records, whatever the model says.
     #

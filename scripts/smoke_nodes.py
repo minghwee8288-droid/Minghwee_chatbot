@@ -1046,6 +1046,53 @@ CASES = [
       "customer_name": "Vaidik", "record_name": "Ratna Choukade",
       "contact_type": "employer", "history_text": "",
       "_forbid_prompt": "Vaidik"}),
+    # A greeting from a RETURNING client - the 2026-09-22 report. Run rather
+    # than asserted on the predicate, because `greeting_only` was correct from
+    # the moment it was written and the defect was which string the call site
+    # picked. The stub carries the handover token, which is what the live model
+    # returned on that turn and what sends it down the nothing-asked branch.
+    ("response_generator", "a returning client who says Hi is greeted back",
+     {"intent": "greeting", "service_type": None, "incoming_text": "Hi",
+      "customer_name": "Vaidik", "record_name": "Ratna Choukade",
+      "contact_type": "employer",
+      "history_text": "Client: i want insurance\nYou: Thanks, passed on.",
+      "_stub_reply": "[[NEEDS_HUMAN]]",
+      "_expect_reply": "Hi Ratna, good to hear from you",
+      "_forbid_reply": "go ahead"}),
+    ("response_generator", "...and is not introduced to Claire a second time",
+     {"intent": "greeting", "service_type": None, "incoming_text": "Hi",
+      "customer_name": "Vaidik", "record_name": "Ratna Choukade",
+      "contact_type": "employer",
+      "history_text": "Client: i want insurance\nYou: Thanks, passed on.",
+      "_stub_reply": "[[NEEDS_HUMAN]]",
+      "_forbid_reply": "I'm Claire"}),
+    ("response_generator", "...while an ANNOUNCED question still gets go ahead",
+     {"intent": "greeting", "service_type": None,
+      "incoming_text": "can i ask you something",
+      "record_name": "Ratna Choukade", "contact_type": "employer",
+      "history_text": "Client: i want insurance\nYou: Thanks, passed on.",
+      "_stub_reply": "[[NEEDS_HUMAN]]",
+      "_expect_reply": "Sure, go ahead"}),
+    ("response_generator", "...and a first-time greeting still introduces her",
+     {"intent": "greeting", "service_type": None, "incoming_text": "Hi",
+      "record_name": "", "contact_type": "unknown", "history_text": "",
+      "_stub_reply": "[[NEEDS_HUMAN]]",
+      "_expect_reply": "I'm Claire, Ming Hwee's AI assistant"}),
+    # ...and the half the canned reply cannot cover: most greeting turns get a
+    # reply the MODEL writes, so the instruction has to say the same thing. The
+    # prompt said "do NOT greet again" on every turn with history, which is
+    # what made not-greeting-back the instructed behaviour rather than a slip.
+    ("response_generator", "the prompt lets the model greet a greeting back",
+     {"intent": "greeting", "service_type": None, "incoming_text": "Hi",
+      "record_name": "Ratna Choukade", "contact_type": "employer",
+      "history_text": "Client: i want insurance\nYou: Thanks, passed on.",
+      "_expect_prompt": "The client has GREETED you and asked for nothing else"}),
+    ("response_generator", "...and still forbids it mid-conversation",
+     {"intent": "renewal", "service_type": "renewal",
+      "incoming_text": "how long does the renewal take",
+      "record_name": "Ratna Choukade", "contact_type": "employer",
+      "history_text": "Client: i want insurance\nYou: Thanks, passed on.",
+      "_forbid_prompt": "The client has GREETED you"}),
     # The collector end of the same rule, which used to be the only end.
     ("info_collector", "a hiring intake gets no name we do not hold",
      {"intent": "new_hiring", "service_type": "new_hiring",
@@ -2192,6 +2239,12 @@ async def main() -> int:
         # branch that declines a job seeker we cannot place: the assertion that
         # it does NOT hand her to a human was, on its first attempt, a string
         # search of the source that matched the import line instead.
+        # ...and what it must NOT contain. Added 2026-09-22 for the
+        # greeting fix, where the defect was a WRONG canned string rather
+        # than a missing one: "Sure, go ahead" is a perfectly good reply
+        # to an announced question and the wrong one to "Hi", so the only
+        # assertion that bites is that it is absent from this turn.
+        forbid = state.pop("_forbid_reply", None)
         expect_state = state.pop("_expect_state", None)
         # A substring that must appear in the system prompt the model was
         # handed - for a fix that lives in the INSTRUCTION, not the reply.
@@ -2217,6 +2270,11 @@ async def main() -> int:
                     got = out.get("reply") or out.get("reply_text") or ""
                     ok = expect.lower() in got.lower()
                     detail = f"expected {expect!r} in {got[:80]!r}"
+                if ok and forbid:
+                    got = out.get("reply") or out.get("reply_text") or ""
+                    ok = forbid.lower() not in got.lower()
+                    detail = f"reply omits {forbid!r} -> " + (
+                        "as expected" if ok else f"PRESENT in {got[:80]!r}")
                 if ok and expect_state:
                     wrong = {k: out.get(k) for k, v in expect_state.items()
                              if out.get(k) != v}
