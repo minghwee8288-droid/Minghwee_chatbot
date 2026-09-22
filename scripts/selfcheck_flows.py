@@ -1744,6 +1744,25 @@ rows = [
  # Explaining why we want a budget made the model volunteer a salary range.
  ("budget deliberately does not explain itself",
   "budget" in ico._WHY_WE_ASK, False),
+ # --- and the reason is written in the office's register, 2026-09-22 -----
+ # The agency, reading it live: "the phrase 'no surprises' sounds weird, can
+ # rephrase it better as it sounds too casual ... e.g. so we can set the
+ # expectations for the helper / so we can lay out clear ground rules".
+ # `additional_notes` ended "rather than discovered later" and the model
+ # compressed that to "so there are no surprises later". A reason names what
+ # we DO with the answer; the trailing "later" shape is what invited the
+ # throwaway line, and this conversation ends in a Service Agreement.
+ ("a reason says what we do with the answer, not what it saves them from",
+  [k for k, v in ico._WHY_WE_ASK.items()
+   if v.rstrip().endswith("later") or "discovered later" in v], []),
+ ("...and the office's register is named in the instruction that builds it",
+  "KEEP IT IN THE REGISTER OF THE OFFICE" in _flat(ico._field_guidance(
+      "new_hiring", {}, next(f for f in t.SERVICE_FIELDS["new_hiring"]
+                             if f.key == "additional_notes"))), True),
+ ("...and the casual phrasing the agency objected to is named there too",
+  "no surprises later" in _flat(ico._field_guidance(
+      "new_hiring", {}, next(f for f in t.SERVICE_FIELDS["new_hiring"]
+                             if f.key == "additional_notes"))), True),
  ("and explaining is never an excuse to quote a figure",
   "NOT an invitation to give examples" in ico._field_guidance(
       "new_hiring", {}, next(f for f in t.SERVICE_FIELDS["new_hiring"]

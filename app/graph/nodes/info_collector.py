@@ -1746,9 +1746,15 @@ _WHY_WE_ASK: dict[str, str] = {
     # 2026-09-09 complaint that created this table. Both entries are the SAME
     # reason said to two different listeners, and both survive being asked
     # "why?" - which is the test the 2026-09-17 purpose-note defect set.
+    # The tail was "rather than becoming something either of you has to work
+    # around later" until 2026-09-22 - the same "rather than X later" shape
+    # that `additional_notes` was compressed into "so there are no surprises
+    # later". Nobody reported this one; the sweep below found it, which is the
+    # point of deriving the rule over the table rather than fixing the field
+    # that was reported. It now ends the way the helper's own half does.
     "helper_religion": "so her faith and your household's practices fit "
-                       "together from day one, rather than becoming something "
-                       "either of you has to work around later",
+                       "together from day one, and anything she does not eat "
+                       "or handle is agreed before she starts",
     "religion": "so we place you with a household whose practices you are "
                 "comfortable with, and so anything you do not eat or handle is "
                 "agreed before you accept the job",
@@ -1757,8 +1763,17 @@ _WHY_WE_ASK: dict[str, str] = {
             "about, and a mismatch here goes wrong quickly",
     "rest_day": "so we can set the expectation with the helper before she "
                 "accepts, which is where most rest-day disagreements start",
-    "additional_notes": "so anything that matters to them is agreed with the "
-                        "helper up front rather than discovered later",
+    # Reworded 2026-09-22. The agency, on reading it live: "the phrase 'no
+    # surprises' sounds weird, can rephrase it better as it sounds too casual
+    # ... e.g. so we can set the expectations for the helper / so we can lay
+    # out clear ground rules". The old reason ended "rather than discovered
+    # later", and the model compressed that into "so there are no surprises
+    # later" - a throwaway line in a conversation that ends in a Service
+    # Agreement. It now names what we DO with the answer, which is the register
+    # `rest_day` above already had, and the register rule in _field_guidance
+    # forbids the compression outright.
+    "additional_notes": "so your house rules are set out clearly with the "
+                        "helper and agreed before she starts",
 }
 
 
@@ -2196,6 +2211,14 @@ def _field_guidance(
             "own, and never the same phrasing you used the last time you explained "
             "yourself. Do not do this on the plain questions; it is for this one "
             "because it would otherwise feel intrusive or arbitrary.\n\n"
+            "KEEP IT IN THE REGISTER OF THE OFFICE. This conversation ends in "
+            "a Service Agreement, so put the reason ABOVE in your own words "
+            "and stay inside it - do not reach for a stock clause, and do not "
+            "borrow a reason belonging to a different question. Do NOT "
+            "compress it into a throwaway line: 'so there are no surprises "
+            "later', 'so nothing catches you out' and anything of that shape "
+            "read as casual, and the agency objected to that exact phrasing "
+            "on 2026-09-22.\n\n"
             "Explaining yourself is NOT an invitation to give examples. Quote no "
             "figure, no range and no salary while you do it. Live, 2026-09-09: the "
             "reason for the budget question ('so we shortlist helpers whose asking "

@@ -253,6 +253,8 @@ because the lead is opened early and the ticket is created much later.
 | A price we hold for two nationalities is not the third's price | `ticket.FEE_BY_NATIONALITY` + `fee_is_known_for()` | **$450** was quoted for a **Myanmar** helper. It is in the records (as PH/ID's price), so `ungrounded_figures` passed it. |
 | The passport briefing is timeline, then cost, then documents | `SERVICE_BRIEFING_NOTE` | Shirley, 2026-09-09: "nationality → timeline → requirements/documents". It never explains the embassy, the appointment or the runner — that is our processing. |
 | Passport renewal does not ask where she is, nor about the work permit | `SERVICE_FIELDS["passport_renewal"]` | Both called out at the 2026-09-09 meeting: location is irrelevant, and WP renewal is "a completely separate process". |
+| A reason is written in the register of the office | `_WHY_WE_ASK` + the register rule in `_field_guidance` | *"so there are no surprises later"* went out live and the agency objected: *"sounds too casual"*. `additional_notes`' reason ended *"rather than discovered later"*, and that trailing clause is what the model compressed. A reason names what we DO with the answer; `helper_religion` had the same *"rather than X later"* tail and nobody had reported it - the sweep found it, which is why the rule is derived over the table. |
+| ...and the rule may not hand the model a clause to reuse | the same rule, examples REMOVED | Its first draft quoted two good reasons as examples, and both leaked: the PETS question came back *"...and agree the house rules before they start"* and religion came back asking about house rules too. §8's rule about naming a thing in the prompt, one register along - the fix states the shape and names only the phrasing to avoid. |
 | The intrusive questions say why they are asked | `info_collector._WHY_WE_ASK` | Pets, rest days, house rules. The plain ones (home type, household) stay plain — Thomas asked for exactly that split. |
 | A field's own options are grounded figures | `_write(grounded_options=)` | `budget`'s options ARE salary bands, `_field_guidance` tells the model to offer two or three, and `ungrounded_figures` then binned every budget reply. |
 | An auxiliary after a comma still makes a yes/no question | `info_collector._yes_no_question` | "Beyond the usual cleaning and cooking, **would** she need to…" — a bare "no" was being re-asked. |
@@ -1162,6 +1164,50 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-22** - **"so there are no surprises later" - the right reason in the
+  wrong register.** The agency, testing new hiring: *"the phrase 'no surprises'
+  sounds weird, can change it / phrase it better as it sounds too casual. e.g.
+  so we can set the expectations for the helper / so we can lay out clear
+  ground rules."*
+  (A) **The phrase is in no file.** `_WHY_WE_ASK` supplies the REASON and never
+  the wording - deliberately, since 2026-09-09: a fixed lead-in repeated four
+  times in one conversation is the formula `strip_repeated_opener` exists to
+  stop. So this is the model paraphrasing, and the thing it was paraphrasing
+  invited it: `additional_notes` read *"...agreed with the helper up front
+  rather than discovered later"*, and *"rather than discovered later"*
+  compresses to *"so there are no surprises later"* in one step. It now names
+  what we DO with the answer - *"so your house rules are set out clearly with
+  the helper and agreed before she starts"* - which is the register `rest_day`
+  has had since the table was written.
+  (B) **And the rule is derived over the table, not applied to the field that
+  was reported.** The new sweep - no reason ends on what it saves them from -
+  went red on `helper_religion`, whose tail was *"rather than becoming
+  something either of you has to work around later"*. Same shape, nobody had
+  reported it, and it now ends the way the HELPER's own half of that pairing
+  already did.
+  (C) **The register is named in the instruction too, because the reason alone
+  is not enough.** A reason is put in the model's own words by construction, so
+  a well-written one can still arrive casual. The note says outright that this
+  conversation ends in a Service Agreement, and names the phrasing the agency
+  objected to.
+  (D) **Its first draft quoted two good reasons as examples and both leaked -
+  which the control found, not the measurement.** The PETS question came back
+  *"To help us put forward helpers who are comfortable with animals **and agree
+  the house rules before they start**..."* and religion came back asking about
+  house rules as well: the model was reusing the example clause wherever a
+  reason was due. That is §8's own lesson - the strongest signal for a phrase
+  is our own prompt printing it - arriving in a new register. The examples are
+  gone; the rule states the shape, says not to borrow another question's
+  reason, and names only the phrasing to avoid. After: pets is about animals,
+  rest days about rest days, religion about the household's practices.
+  (E) **Measured on the agency's own turn, 6 runs of 6**: no casual phrasing,
+  and the reason present in every one - *"are there any other requirements,
+  house rules or preferences to note, so we can set them out clearly and agree
+  them with the helper before she starts?"* Before the change the same turn
+  produced the sentence they objected to.
+  `selfcheck_flows.py` is **640 assertions**; `smoke_nodes.py` is **159
+  states**.
 
 - **2026-09-19** - **New hiring, tested end to end as an employer: 22 questions
   and then "a live agent will connect with you shortly".** The agency sent four
