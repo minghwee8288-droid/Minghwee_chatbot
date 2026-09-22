@@ -87,7 +87,10 @@ ANSWERS = {
     "start_timeline": "within the next two months",
     "additional_notes": "no smoking in the house please",
     "referral_source": "google",
-    "referrer_name": "no one referred me",
+    # Only reachable when referral_source names OUR STAFF (2026-09-22);
+    # with "google" scripted above the question is never put, and this is
+    # here so a walk that does reach it answers the question asked.
+    "referrer_name": "one of your staff at the office",
     "update_channel": "whatsapp is fine",
     "email": "vaidik@example.com",
     # helper-side

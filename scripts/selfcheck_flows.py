@@ -1711,6 +1711,37 @@ rows = [
   "returning client - placed with us before"),
  ("a first-timer still is",
   ico._known_fields({"prior_hires": 0}).get("referral_source"), None),
+ # --- and nobody is asked WHICH RELATIVE referred them, 2026-09-22 -------
+ # Live: "no , family member" -> "Who in your family referred you to Ming
+ # Hwee?" The agency: "this sounds a bit too weird and personal, asking
+ # specifically which member of the client's family recommended". The gate
+ # opened on any referral at all. A friend's or a relative's name is somebody
+ # we hold no record of and can do nothing with; our own staff is the one case
+ # where the name is on our own payroll. Derived over every flow that asks it,
+ # so a flow added tomorrow cannot reopen the question.
+ ("a friend or family referral is never asked to name the person",
+  sorted({fl_name for fl_name, fl in t.SERVICE_FIELDS.items() for f in fl
+          if f.key == "referrer_name" and f.gate
+          and any(f.gate.state({"referral_source": v}) == "open"
+                  for v in ("friend or family referral", "family member",
+                            "a friend told me", "my relative", "my neighbour",
+                            "word of mouth", "a colleague at work",
+                            # The one the excludes are actually for: a name
+                            # that reaches OUR office through a friend is
+                            # still a friend's name, not a staff referral.
+                            "my friend who works near your office"))}), []),
+ ("...and a STAFF referral still is, because that name is on our payroll",
+  sorted({fl_name for fl_name, fl in t.SERVICE_FIELDS.items() for f in fl
+          if f.key == "referrer_name" and f.gate
+          and all(f.gate.state({"referral_source": v}) == "open"
+                  for v in ("staff referral", "one of your staff",
+                            "someone from Ming Hwee"))}),
+  ["new_hiring", "transfer_employer"]),
+ ("...and both the question and the ticket line say whose name it is",
+  sorted({(f.question, f.label) for fl in t.SERVICE_FIELDS.values() for f in fl
+          if f.key == "referrer_name"
+          and "staff" in f.question.lower() and "staff" in f.label.lower()}),
+  [("Which of our staff referred you?", "which of our staff referred them")]),
  # --- a broadcast is not an agent, 2026-09-08 -------------------------
  # The agency's number-migration notice went to ~50 clients, landed in the
  # bot's own threads, and the agent detector read it as a human taking over.

@@ -470,10 +470,21 @@ _RENEWING_POLICY = Gate(
     excludes=("new", "first", "buying", "just checking", "not sure"),
 )
 
-_WAS_REFERRED = Gate(
+# Who referred them is worth asking ONLY where the name means something to
+# this office. Until 2026-09-22 this opened on any referral at all, so a client
+# who answered "friend or family referral" was asked which member of their
+# family it was - the agency, on reading it live: "this sounds a bit too weird
+# and personal, asking specifically which member of the client's family
+# recommended". They are right, and the name was useless to us either way: a
+# friend's or a relative's name is somebody we hold no record of and can do
+# nothing with. OUR OWN STAFF is the case that survives, because that name is
+# on our own payroll and the referral is credited to them.
+_REFERRED_BY_STAFF = Gate(
     "referral_source",
-    ("referral", "referred", "refer", "friend", "family", "relative", "staff",
-     "colleague", "word of mouth", "recommend"),
+    ("staff", "your team", "one of your", "employee", "agent", "consultant",
+     "someone from ming hwee", "from ming hwee", "your office"),
+    excludes=("friend", "family", "relative", "word of mouth", "neighbour",
+              "neighbor", "colleague"),
 )
 
 
@@ -980,12 +991,16 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         ),
         Field(
             "referrer_name",
-            "who referred them",
-            "Who was it that referred you?",
+            # The label and the question both say STAFF now, so neither the
+            # ticket nor the spoken question can drift back to asking after a
+            # relative. Live before the gate narrowed, off the plain wording:
+            # "Who in your family referred you to Ming Hwee?"
+            "which of our staff referred them",
+            "Which of our staff referred you?",
             max_asks=1,
             optional=True,
             group="how they found us",
-            gate=_WAS_REFERRED,
+            gate=_REFERRED_BY_STAFF,
         ),
         _UPDATE_CHANNEL,
         _EMAIL,
@@ -2726,7 +2741,7 @@ _DETAIL_LABELS = {
     "current_helper_exit": "Current helper going",
     "replacement_preferences": "Wants in the replacement",
     "referral_source": "Heard about us via",
-    "referrer_name": "Referred by",
+    "referrer_name": "Referred by our staff member",
     "start_timeline": "Start date",
     "timeline": "Needed by",
     "budget": "Budget",

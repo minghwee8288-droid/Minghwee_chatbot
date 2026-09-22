@@ -253,6 +253,8 @@ because the lead is opened early and the ticket is created much later.
 | A price we hold for two nationalities is not the third's price | `ticket.FEE_BY_NATIONALITY` + `fee_is_known_for()` | **$450** was quoted for a **Myanmar** helper. It is in the records (as PH/ID's price), so `ungrounded_figures` passed it. |
 | The passport briefing is timeline, then cost, then documents | `SERVICE_BRIEFING_NOTE` | Shirley, 2026-09-09: "nationality → timeline → requirements/documents". It never explains the embassy, the appointment or the runner — that is our processing. |
 | Passport renewal does not ask where she is, nor about the work permit | `SERVICE_FIELDS["passport_renewal"]` | Both called out at the 2026-09-09 meeting: location is irrelevant, and WP renewal is "a completely separate process". |
+| Nobody is asked WHICH RELATIVE referred them | `_REFERRED_BY_STAFF` (was `_WAS_REFERRED`) | Live: *"no , family member"* -> *"Who in your family referred you to Ming Hwee?"*. The gate opened on any referral at all, and the name was useless to us either way - a friend's or a relative's is somebody we hold no record of. OUR OWN STAFF is the case that survives, because that name is on our own payroll and the referral is credited to them. |
+| ...and the excludes are what the mixed phrasing needs | the same gate | *"my friend who works near your office"* matches `your office` and is still a FRIEND's name. `excludes` is checked first, which is the shape the class docstring is written about. |
 | A reason is written in the register of the office | `_WHY_WE_ASK` + the register rule in `_field_guidance` | *"so there are no surprises later"* went out live and the agency objected: *"sounds too casual"*. `additional_notes`' reason ended *"rather than discovered later"*, and that trailing clause is what the model compressed. A reason names what we DO with the answer; `helper_religion` had the same *"rather than X later"* tail and nobody had reported it - the sweep found it, which is why the rule is derived over the table. |
 | ...and the rule may not hand the model a clause to reuse | the same rule, examples REMOVED | Its first draft quoted two good reasons as examples, and both leaked: the PETS question came back *"...and agree the house rules before they start"* and religion came back asking about house rules too. §8's rule about naming a thing in the prompt, one register along - the fix states the shape and names only the phrasing to avoid. |
 | The intrusive questions say why they are asked | `info_collector._WHY_WE_ASK` | Pets, rest days, house rules. The plain ones (home type, household) stay plain — Thomas asked for exactly that split. |
@@ -1164,6 +1166,40 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-22** - **"Who in your family referred you to Ming Hwee?"** The
+  agency, testing new hiring: *"this sounds a bit too weird and personal,
+  asking specifically which member of the client's family recommended"*.
+  (A) **The gate opened on any referral at all.** `_WAS_REFERRED` matched
+  `friend`, `family`, `relative`, `word of mouth` and `recommend` alongside
+  `staff`, so answering the how-did-you-hear question with *"family member"*
+  queued a follow-up asking which relative it was. The question's own wording
+  was neutral - *"Who was it that referred you?"* - and the model did the
+  natural thing with the answer in front of it.
+  (B) **And the name was useless to us either way.** A friend's or a relative's
+  name is somebody we hold no record of and can do nothing with. OUR OWN STAFF
+  is the one case where the name means something: it is on our own payroll and
+  the referral is credited to them. So the gate narrowed to that rather than
+  the field being deleted, and the question and the ticket line both say
+  `staff` now - a neutral wording is what let it drift in the first place.
+  (C) **The excludes are what the mixed phrasing needs.** *"my friend who works
+  near your office"* matches `your office` and is still a FRIEND's name;
+  `excludes` is checked first, which is the shape `Gate`'s own docstring is
+  written about (*"no, I don't have pets"* containing "have"). 16 phrasings
+  measured, 9 closed and 6 open, an empty answer still undecided.
+  (D) **Proved on the collection rather than on the gate**, because a gate that
+  answers correctly and a question that is never put are two different claims.
+  `applicable_fields` with *"family member"* leaves `update_channel`; with
+  *"staff referral"* it leaves `referrer_name` then `update_channel`. Live: the
+  reported turn goes straight to the channel question, and a client who says
+  *"one of your staff told me about you"* gets *"may I know which Ming Hwee
+  staff member referred you?"*
+  (E) **Derived over every flow that asks it**, so `transfer_employer` - which
+  reuses the same `Field` through `_hiring_field` - is covered by the same
+  check and a flow added tomorrow cannot reopen the question. Five faults
+  injected, five red.
+  `selfcheck_flows.py` is **643 assertions**; `smoke_nodes.py` is **159
+  states**.
 
 - **2026-09-22** - **"so there are no surprises later" - the right reason in the
   wrong register.** The agency, testing new hiring: *"the phrase 'no surprises'
