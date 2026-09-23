@@ -405,6 +405,8 @@ because the lead is opened early and the ticket is created much later.
 | The household question does not ask again about the children it has just been told about | `info_collector._care_details_already_told` | "i have 4 childrens" -> "how many people live in your household, and who are they, such as adults, elderly parents or children?" -> "AS I TOLD THEN WHY ASKED ME AGAIN". Derived from the fields gated on `requirement`, and it NAMES the rule it overrides - the general "ask for everything the question asks for" beat it otherwise (2026-09-07). |
 | The cooking question asks IF she will cook, not only which kind | `cooking`'s question | Reworded and deliberately NOT gated on `requirement`: a gate there makes `_gates_are_exhaustive` true for that field - measured - which switches `_undecidable_gate_keys` on and reinstates the 2026-09-08 blank-and-re-ask defect. |
 | A withheld price is said as what WE will do, never as a gap in our files | `SERVICE_BRIEFING_NOTE` item 2 | "The transfer fee is not stated in our records" went out live: it tells the client about our filing and reads as though we do not know our own prices. |
+| ...and a deferred fee is "based on your requirements", never "for your situation" | `SERVICE_BRIEFING_NOTE` item 2, `FEE_HANDOVER_INSTRUCTION`, prompt rule 5 | The agency, 2026-09-23: *"sounds ominous/abit attacked"*. It was the briefing's own example sentence, copied verbatim - so the example is what changed, and the self-check asserts no fee instruction carries the old phrase to copy. |
+| A question already answered is not asked again, even cut down | `guards.reasks_previous` + `info_collector` (`closed_note`, `previous_answered`) | Live, conversation 1687: the house rule was filed, the collector was asking how they heard about us, and the model sent *"Any other house rules or preferences I should note?"* - 1 run in 26 on the live state. `near_duplicate` compares whole messages and missed it. The retry that fires on it is told the previous question was ANSWERED; it used to say "NOT answered" in every case, which instructs the very re-ask. |
 | A passport that runs out before the renewal could finish is said out loud | `info_collector._expires_before_we_finish` + `EXPIRING_SOON_NOTE` | Live: *"in 5 days"* answered with *"It takes approximately 6 to 8 weeks"*, the two figures one line apart and nothing connecting them — 2 runs out of 2. `passport_expiry` had been collected since the flow was written and put on the ticket; **nothing ever read it.** Coarse on purpose and fails towards SILENCE: "next March", "when the contract ends" and a formatted date all return None, because guessing at a date and then calling somebody's passport urgent is worse than the omission. 60 days, which covers the slowest route we hold — a per-nationality table would be a second copy of lead times that live in the knowledge base (§9.8). |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -963,6 +965,20 @@ Ordered by what will hurt first.
     of optional/conditional fees before presenting them as mandatory"*, which
     is the instruction this follows.
 
+27. **The new-hire closing briefing still defers a fee we now hold.** Found
+    2026-09-23 while verifying the "your situation" wording on conversation
+    1687, a Filipino new hire: re-run at HEAD with fresh retrieval, the
+    closing message says *"Our agent will confirm the exact fee"* in 3 runs
+    of 3, where the 2026-09-22 schedule gives **$1,428**. An ordinary fee
+    QUESTION on the same service is answered with the figure (verified
+    2026-09-22, EX5/EX6), so this is the briefing path alone. The likely cause
+    is recorded rather than acted on: `BRIEFING_QUERY_BY_SERVICE["new_hiring"]`
+    deliberately drops "how much does it cost" (2026-09-19 C), written when
+    the cost was withheld, so the fee row may simply not be in the briefing's
+    retrieved set. Not a wrong figure and not a guard failure - an answer we
+    hold, not given. Left for its own change because it moves the briefing's
+    retrieval, which the timing rows depend on.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
@@ -1206,6 +1222,52 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-23** - **The house-rules question asked twice, and a fee "for
+  your situation".** Two items from the agency's new-hiring test,
+  conversation 1687.
+  (A) **"bot seems to glitch and asked if i have any preferences or house
+  rules twice".** Read from the live checkpoint rather than guessed: the
+  collector DID file the answer (*"no phone use after 10pm; place phone
+  outside in living room before sleeping"*) and had moved on to
+  `referral_source` - the counts show it was asking how they heard about us.
+  The model wrote *"Any other house rules or preferences I should note?"*
+  instead. Not a routing defect and not the deleted-message one (no protocol
+  event on that turn). Measured on the exact live state: **1 run in 26** - an
+  open "anything else?" invites another "anything else?".
+  (B) **Nothing could catch it.** `near_duplicate` compares whole messages,
+  and a SHORTER re-ask scores well under 0.8 while every one of its words
+  came from the message before. `guards.reasks_previous` tests containment
+  instead, and only fires where the previous question is closed - the field
+  now being asked has never been asked, which is the only way the queue moves
+  on. A genuine re-ask of the same field (unfinished answer, undecidable
+  gate) keeps its count and is untouched.
+  (C) **And the retry it triggers was worded to cause it.** The rewrite-once
+  instruction said *"You just sent this and it was NOT answered"* in every
+  case, including when the collector had moved to a new field - read
+  literally, it tells the model to ask the answered question again. It now
+  says which is true. If the retry re-asks too, the field's own written
+  question goes out. Plus a `closed_note` on the instruction itself, so the
+  first attempt is told as well.
+  (D) **"'fee for your situation' sounds weird ... ominous/abit attacked".**
+  Not the model's phrase: it is the example sentence in `SERVICE_BRIEFING_NOTE`
+  item 2, copied verbatim. Now *"based on your requirements"*, as they
+  suggested, and the same word is gone from `FEE_HANDOVER_INSTRUCTION` and
+  prompt rule 5, which put it beside a price in the same way. The note names
+  the word to avoid without quoting the phrase (§8). Live-state runs, 3 of 3:
+  *"Our agent will confirm the exact fee based on your requirements."*
+  (E) **Verified.** 10 of 10 on the live 03:54 state ask the referral
+  question; with the exact live bad reply injected as the model's first
+  answer, the guard catches it and the retry asks the referral question, 5 of
+  5. Five faults injected, five red. **Found and NOT changed: §9.27** - at
+  HEAD the same briefing still defers a Filipino new hire's fee we hold
+  ($1,428), so deploying the 2026-09-22 code will not by itself change that
+  line of the screenshot.
+  **Noticed in passing, not touched:** `requirement_note` in `info_collector`
+  is built with `chr(92)` escapes, so it opens with the literal characters
+  `\n\n` rather than line breaks - harmless to the model, and a relic of a
+  patch script.
+  `selfcheck_flows.py` is **678 assertions**; `smoke_nodes.py` is 185 states.
 
 - **2026-09-22** - **The agency's consolidated fee schedule: six agency fees
   per service and nationality, and the 2026-09-04 rule reversed for two of the

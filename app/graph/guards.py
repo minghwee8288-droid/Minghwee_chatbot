@@ -535,6 +535,29 @@ def near_duplicate(reply: str, previous: str, threshold: float = 0.8) -> bool:
     return SequenceMatcher(None, a, b).ratio() >= threshold
 
 
+def reasks_previous(reply: str, previous: str, threshold: float = 0.8) -> bool:
+    """Whether a reply is our previous question again, cut down.
+
+    `near_duplicate` compares whole messages, so a SHORTER re-ask slips under
+    it. Live, 2026-09-23, conversation 1687: "Are there any other house rules
+    or preferences I should note, so these can be clearly agreed with the
+    helper before she starts?" was answered with the house rule, and the next
+    message was "Any other house rules or preferences I should note?" - a
+    ratio well under 0.8, and every one of its words taken from the message
+    before it. The client read it as a glitch, and it was one: that question
+    had been answered and the collector had moved on to the next.
+
+    Containment rather than similarity: what share of the reply's words were
+    already in the previous message. Four content words at least, so a bare
+    "Got it, thanks." cannot trip it on two words it happens to share.
+    """
+    words = [w for w in normalize_text_local(reply).split() if len(w) >= 3]
+    if len(words) < 4:
+        return False
+    before = set(normalize_text_local(previous).split())
+    return sum(w in before for w in words) / len(words) >= threshold
+
+
 def normalize_text_local(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", " ", (text or "").lower()).strip()
 

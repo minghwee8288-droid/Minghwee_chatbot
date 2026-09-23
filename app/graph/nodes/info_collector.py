@@ -22,6 +22,7 @@ from app.graph.guards import (
     leaks_internal_reasoning,
     looks_like_document,
     near_duplicate,
+    reasks_previous,
     recent_bot_lines,
     same_opening,
     speaks_of_us_as_a_third_party,
@@ -3483,6 +3484,29 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     if missing:
         next_field = missing[0]
         previous = last_bot_line(state.get("history_text", ""))
+        # The question our last message put is CLOSED when the field we ask now
+        # has never been asked: the previous one was answered (or given up on),
+        # which is the only way the queue moves on. A re-ask of the SAME field -
+        # an unfinished answer, an undecidable gate - has a count already and is
+        # deliberately left out.
+        #
+        # Live, 2026-09-23, conversation 1687: "Are there any other house rules
+        # or preferences I should note...?" -> "no using phones after 10pm..."
+        # -> "Any other house rules or preferences I should note?". The rule was
+        # filed and the collector was asking how they heard about us; the model
+        # asked the open-ended question again instead, and the client called it
+        # a glitch. 1 run in 26 on the live state - an "anything else?" invites
+        # another "anything else?" - so it is said here AND checked in _write.
+        previous_answered = bool(previous) and not asked.get(next_field.key)
+        closed_note = (
+            f'\n\nYour last message asked: "{previous}" The client has answered '
+            "it and that question is now CLOSED. Do not ask it again in any "
+            'form - not reworded, not shortened, and not as "any other...?" or '
+            '"anything else?". Acknowledge their answer briefly if it needs '
+            "it, then ask only the question below."
+            if previous_answered
+            else ""
+        )
         instruction = (
             COLLECTOR_INSTRUCTION.format(
                 service_label=label,
@@ -3502,6 +3526,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             + record_name_note
             + workload_note
             + requirement_note
+            + closed_note
             + follow_up_notes.get(next_field.key, "")
             + answer_first
         )
@@ -3534,6 +3559,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             # two ever disagree the model is told to offer a figure and then
             # binned by ungrounded_figures for offering it (2026-09-09 D).
             grounded_options=_effective_options(next_field, collected),
+            previous_answered=previous_answered,
         )
         counts[next_field.key] = 1
         logger.info(
@@ -3693,6 +3719,7 @@ async def _write(
     withhold_cost: bool = False,
     stepped: bool = False,
     grounded_options: tuple[str, ...] = (),
+    previous_answered: bool = False,
 ) -> str:
     system_prompt = build_system_prompt(
         prompt_state,
@@ -3796,15 +3823,31 @@ async def _write(
     # in slower motion. One rewrite attempt, told explicitly what it just said.
     repeated = previous and near_duplicate(reply, previous)
     echoed_opener = previous and same_opening(reply, previous)
-    if repeated or echoed_opener:
+    # A cut-down copy of a question that has already been ANSWERED - see
+    # guards.reasks_previous. Only where the previous question is closed: on a
+    # genuine re-ask of the same field, overlapping it is the point.
+    reasked = bool(previous) and previous_answered and reasks_previous(reply, previous)
+    if repeated or echoed_opener or reasked:
         logger.info(
             "Collector %s — rewriting once",
-            "repeated its previous message" if repeated else "reused its opening words",
+            "re-asked a question already answered" if reasked
+            else "repeated its previous message" if repeated
+            else "reused its opening words",
+        )
+        # The old wording said the previous message "was NOT answered" in every
+        # case, which is false whenever the collector has moved on to a new
+        # field - and read literally it instructs the very re-ask above.
+        what_happened = (
+            "The client has ANSWERED it, so that question is closed. Do not ask "
+            "it again in any form. Acknowledge their answer briefly if it needs "
+            "it, then ask the question you were given above."
+            if previous_answered
+            else "It was NOT answered. Acknowledge what the client actually told "
+            "you, then ask for the missing detail a different way."
         )
         retry_instruction = (
-            f'{instruction}\n\nYou just sent this and it was NOT answered:\n"{previous}"\n'
-            "Do not send it again. Acknowledge what the client actually told you, "
-            "then ask for the missing detail a different way.\n"
+            f'{instruction}\n\nYou just sent this:\n"{previous}"\n'
+            f"Do not send it again. {what_happened}\n"
             "Do not begin with the same words you began that message with — vary how "
             "you open, or open with nothing at all and just ask."
         )
@@ -3823,8 +3866,16 @@ async def _write(
             and not is_degenerate(retry)
             and not near_duplicate(retry, previous)
             and not same_opening(retry, previous)
+            and not (previous_answered and reasks_previous(retry, previous))
         ):
             reply = retry
+        elif reasked:
+            # Both attempts asked the closed question again. The field's own
+            # written question is plainer, and it is the right question.
+            logger.warning(
+                "Collector re-asked an answered question twice - using the plain question"
+            )
+            return fallback or FALLBACK_QUESTION
 
     # ...and the client's own name standing alone in front of the question. The
     # prompt forbids it and mostly gets obeyed; this catches the rest. See

@@ -308,11 +308,11 @@ their nationality preference and care type.
 
 If the "Our records" section above contains figures that answer this — a fee, a range, \
 a salary band, a levy amount — give them the approximate figure from those records, say \
-plainly that it is a guide and that you will confirm the exact amount for their \
-situation, and stop. That is what they asked for and we have it written down.
+plainly that it is a guide and that you will confirm the exact amount based on their \
+requirements, and stop. That is what they asked for and we have it written down.
 
 If the records do NOT contain the figures, do not guess and do not quote a number from \
-anywhere else. Tell them a live agent will work out the exact costs for their situation \
+anywhere else. Tell them a live agent will work out the exact costs based on their requirements \
 and connect with them shortly, then offer to help with anything else meanwhile.
 
 Either way: no invented numbers, never name the agent, and never promise a time."""
@@ -1116,11 +1116,14 @@ message missing any of them is not the message the agency asked for:
   2. WHAT IT COSTS. Never leave this out. Where we hold no price for her, say
      our agent will confirm it - that is the cost section, and it is not
      permission to skip it. Say it as what WE will do ("our agent will
-     confirm the exact fee for your situation") and never as what our records
-     do or do not contain. "The transfer fee is not stated in our records"
-     went out live on 2026-09-18: it tells the client about our filing, which
-     is not their business, and it reads as though we do not know our own
-     prices. The same rule the opening overview has had since 2026-09-17.
+     confirm the exact fee based on your requirements") and never as what our
+     records do or do not contain. "The transfer fee is not stated in our
+     records" went out live on 2026-09-18: it tells the client about our
+     filing, which is not their business, and it reads as though we do not
+     know our own prices. The same rule the opening overview has had since
+     2026-09-17. Never tie the fee to their "situation": the agency,
+     2026-09-23, said it sounds ominous, a bit attacked. Say it is based on
+     their requirements, or on the helper.
   3. WHAT DOCUMENTS you need from them. Say what the list IS before you write
      it - one short sentence of your own, such as "Here is what we will need
      from you:" - and then the numbered list, one line per document.

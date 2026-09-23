@@ -3802,7 +3802,7 @@ rows = [
  # consultant will confirm the exact amount" - true, and it tells the client
  # about our filing and reads as though we do not know our own prices.
  ("a withheld cost never remarks on our own records",
-  "never as what our records" in tpl.SERVICE_BRIEFING_NOTE, True),
+  "never as what our records" in _flat(tpl.SERVICE_BRIEFING_NOTE), True),
  ("...and the cost section is still required",
   "Never leave this out" in tpl.SERVICE_BRIEFING_NOTE, True),
 
@@ -4495,6 +4495,46 @@ rows = [
   _guards.strip_handover_talk(
       "I have passed this to our team and a live agent will connect with you shortly."),
   "I have passed this to our team and a live agent will connect with you shortly."),
+ # --- A question already answered is not asked again, cut down (2026-09-23) --
+ # Live, conversation 1687: the house rule was filed and the collector had
+ # moved on, and the client got the same question back in fewer words - a
+ # ratio near_duplicate cannot see.
+ ("a shortened re-ask of the previous question is recognised",
+  _guards.reasks_previous(
+      "Any other house rules or preferences I should note?",
+      "Are there any other house rules or preferences I should note, so these "
+      "can be clearly agreed with the helper before she starts?"), True),
+ ("...the next question with an acknowledgement is not",
+  _guards.reasks_previous(
+      "I'll note the phone rule. How did you hear about Ming Hwee, such as "
+      "through Google, a friend or family member, or social media?",
+      "Are there any other house rules or preferences I should note, so these "
+      "can be clearly agreed with the helper before she starts?"), False),
+ ("...nor a short acknowledgement sharing two words",
+  _guards.reasks_previous("Got it, thanks.", "Got it, thanks for that."), False),
+ ("...nor a follow-up on the same subject",
+  _guards.reasks_previous("What kind of pets, and how many?",
+                          "Do you have any pets at home?"), False),
+ # Checked by RUNNING it in smoke_nodes; these are the wiring, so a guard that
+ # exists and is never consulted cannot stay green (the 2026-09-10 hole).
+ ("the collector tells the model an answered question is closed",
+  "+ closed_note" in _collector_src()
+  and "previous_answered=previous_answered" in _collector_src(), True),
+ ("...and its retry no longer insists the answered question was NOT answered",
+  "reasks_previous(retry, previous)" in _collector_src()
+  and "You just sent this and it was NOT answered" not in _collector_src(), True),
+ # --- A deferred fee is never "for your situation" (2026-09-23) ------------
+ # The agency: "sounds ominous/a bit attacked". It came from the closing
+ # briefing's own example sentence, so the example is what has to change.
+ ("no fee instruction hands the model 'for your situation' to copy",
+  [name for name in ("SERVICE_BRIEFING_NOTE", "FEE_HANDOVER_INSTRUCTION")
+   for phrase in ("fee for your situation", "for their situation")
+   if phrase in _flat(getattr(importlib.import_module(
+       "app.graph.prompts.templates"), name, ""))], []),
+ ("...and the briefing's example says it is based on their requirements",
+  "confirm the exact fee based on your requirements" in _flat(getattr(
+      importlib.import_module("app.graph.prompts.templates"),
+      "SERVICE_BRIEFING_NOTE", "")), True),
 ]
 bad = 0
 for label, got, want in rows:
