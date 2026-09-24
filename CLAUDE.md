@@ -1027,6 +1027,46 @@ Ordered by what will hurt first.
     The 2026-09-22 entry records 10 of 10 verified live, so either the state
     those runs used differs from a fresh number's or something since has moved
     them; not investigated here.
+31. **One `BOT_ALLOWED_NUMBERS` entry on the server looks malformed.** Seen in
+    the startup log 2026-09-24: an entry of `+971` followed by only seven
+    digits (ends `…9155`). It is too short for a UAE mobile and is most likely
+    an Indian number (`+91 97…`) that lost a digit - so that tester is
+    probably NOT allowlisted, and the bot stays silent for them. The digits are
+    deliberately not written out here: this repo is public. Confirm the
+    intended number with whoever asked for it and correct it in the server
+    `.env`, then `docker compose up -d` and check the "Safety gate" log line.
+32. **`POST /admin/preview` answers 422, not 404, when switched off and sent no
+    body.** Seen on the production deploy of 2026-09-24. FastAPI validates the
+    `PreviewRequest` body BEFORE the handler runs, so `_check_key` - the line
+    that returns 404 while `ADMIN_PREVIEW_SECRET` is empty - is never reached.
+    Nothing executes; it only confirms the route exists and shows its schema.
+    A valid body returns 404 as intended (verified on the server). Fix, before
+    anyone sets the secret on production: (a) `include_router(admin_router)`
+    only when the secret is set, so the route does not exist at all and leaves
+    `/openapi.json`; (b) when it does exist, move the key check into a route
+    dependency (`dependencies=[Depends(...)]`), which FastAPI runs before body
+    validation, so a missing or wrong key is 404/401 and never 422; (c) offline
+    checks in `selfcheck_kb_prep.py` for all three: no secret + no body -> 404,
+    secret + no key + no body -> 401, secret + key + bad body -> 422.
+33. **The API docs are public wherever the app is.** `FastAPI(...)` in
+    `main.py` leaves `/docs`, `/redoc` and `/openapi.json` on, so they list
+    every route, `/admin/preview` and the webhook path pattern included.
+    Pre-existing. Turn all three off outside development (`docs_url=None`,
+    `redoc_url=None`, `openapi_url=None`).
+34. **What the server exposes has not been checked.** Whapi must reach
+    `/webhook/`, so part of the app is necessarily public. To confirm: on the
+    server `sudo ss -ltnp`, `sudo ufw status verbose` and
+    `sudo nginx -T | grep -nE 'server_name|listen|location|proxy_pass'`; from
+    outside, `curl -X POST` `/admin/preview` against the public hostname and
+    against `<server-ip>:8000`. Want: port 8000 unreachable from outside, and
+    nginx forwarding only `/webhook/` and `/health`.
+35. **The server's `docker-compose.yml` differs from the repo.** On
+    `/home/deploy/Minghwee_chatbot` it carries a local change (found
+    2026-09-24): port 8000 bound to `127.0.0.1` only, and Docker log rotation
+    added. Both are right and should be the repo's version - commit that
+    server change to the repo later. Until then the repo's file publishes 8000
+    on every interface, and a `git checkout -- docker-compose.yml` or a fresh
+    clone on a new box would silently undo it.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -1266,6 +1306,17 @@ lead, **or delete the lead row and that thread's checkpoint together**. Deleting
 alone is what broke conversation 36: the checkpoint kept pointing at the dead row and
 every ticket insert failed the foreign key, silently, ten times in twenty minutes.
 
+**Verify a data migration against EVERY column, not the ones you expect to change.**
+Export the table read-only before the migration, export it again after, and diff
+every column of every row; the only differences allowed are the ones the migration
+is meant to make. On 2026-09-24 the KB tagging migration was verified on the test
+copy against a chosen list of seven content columns, reported "no other column
+touched", and then on production also moved `updated_at` on all 401 rows through a
+`BEFORE UPDATE` trigger nobody had listed. A subset check can only find what you
+already thought of; triggers, defaults and generated columns are exactly what you
+did not. Compare values, not strings: the REST export and a psycopg export format
+the same timestamp and numeric differently.
+
 **Commit the files you changed, not `git add -A`.** This repo is edited from an IDE and
 from scripts at the same time, so the working tree routinely holds changes the commit in
 front of you did not author. On 2026-09-10 a `git add -A` swept an unrelated one-line
@@ -1315,8 +1366,17 @@ Append here, newest first. One entry per behavioural change.
   must change something, or "identical" could mean blind. Fault injected into
   the live table: 5 + 1 + 1 checks red with the switch on, green once restored.
   (D) **Ownership.** Every row now carries `metadata.managed_by`, merged into
-  the existing metadata (verified row by row against an export: 401 rows, 0
-  mismatches, no other column touched). The loader skips and reports a `ui`
+  the existing metadata (verified row by row against an export: 401 rows,
+  `metadata` = original + the tag on every one). **The tag also moved
+  `updated_at` on all 401 rows**: `cb_kb_updated_set_updated_at_trigger` sets
+  it to `now()` on any UPDATE, so on production every row now reads
+  2026-09-24 12:44:53 UTC. The test copy verification compared seven content
+  columns and never looked at `updated_at`, so the first report said "no other
+  column touched" - true of what was checked, not of the row. Nothing reads the
+  KB's `updated_at`; the original values are kept in
+  `kb_export_PRODUCTION_2026-09-24.json`, taken read-only before the migration
+  and stored outside the repo. Every other column, embeddings included, is
+  identical to that export. The loader skips and reports a `ui`
   row on all four write paths; live, it found a `ui` test row through a
   TEXT_REPLACEMENTS needle and left it byte-identical, where `main`'s loader
   would have rewritten its salary text.
