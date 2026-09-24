@@ -70,9 +70,11 @@ def _digit_forms(text: str) -> set[str]:
 # bearing one: it is what a bare "how much do you charge?" resolves to when no
 # service has been established, and their rule 12 is that an ambiguous fee
 # question is answered only once the service and the nationality are known.
-COST_WITHHELD_SERVICES = frozenset({
-    "direct_hiring", "fee_enquiry", "replacement",
-})
+#
+# 2026-09-24: the set now lives in cb_kb_rules (price_policy = 'withheld') so
+# the KB Admin UI can change it, read through kb_rules.cost_withheld_services().
+# The code default there is exactly {direct_hiring, fee_enquiry, replacement},
+# and fee_enquiry is locked in the table - it cannot be edited to 'stated'.
 
 # The other half of the agency's 2026-09-08 cost table: the services whose fee
 # they DID give us, and which therefore quote it. The two sets are exact
@@ -97,10 +99,11 @@ COST_WITHHELD_SERVICES = frozenset({
 # employer's key is what _subject_service returns and the candidate's key is
 # what _aliased() rewrites it to, and the no-widening test reads the aliased
 # value.
-FEE_STATED_SERVICES = frozenset({
-    "renewal", "passport_renewal", "home_leave",
-    "new_hiring", "transfer", "transfer_employer",
-})
+#
+# 2026-09-24: the set now lives in cb_kb_rules (price_policy = 'stated'), read
+# through kb_rules.fee_stated_services(). The code default is exactly {renewal,
+# passport_renewal, home_leave, new_hiring, transfer, transfer_employer}, and a
+# constraint trigger keeps transfer and transfer_employer equal in the table.
 
 
 # A figure presented as the cost of the engagement, rather than a figure that
@@ -155,7 +158,7 @@ def asks_about_price(text: str) -> bool:
 def quotes_hiring_package_cost(reply: str) -> bool:
     """Whether the reply puts a price on the hire itself.
 
-    Only meaningful for COST_WITHHELD_SERVICES — the caller decides. Salary
+    Only meaningful for kb_rules.cost_withheld_services() — the caller decides. Salary
     figures, the levy and the security bond are deliberately NOT caught: they
     are not what the client meant by "the cost", and withholding them would
     make the bot evasive about facts a client is entitled to.

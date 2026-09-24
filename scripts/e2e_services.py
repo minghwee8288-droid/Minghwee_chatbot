@@ -311,12 +311,13 @@ def grade(result: dict) -> list[tuple[str, bool, str]]:
 
     # --- money ------------------------------------------------------------
     import app.graph.guards as guards
+    from app.services import kb_rules
     quotes = bool(re.search(r"\$\s?\d", joined))
-    if service in guards.COST_WITHHELD_SERVICES:
+    if service in kb_rules.cost_withheld_services():
         add("does NOT quote a package price (COST_WITHHELD_SERVICES)",
             not guards.quotes_hiring_package_cost(joined),
             "quoted a figure" if quotes else "no figure")
-    if service in guards.FEE_STATED_SERVICES:
+    if service in kb_rules.fee_stated_services():
         add("may state its own fee (FEE_STATED_SERVICES)", True,
             "quoted a figure" if quotes else "no figure quoted this run")
 

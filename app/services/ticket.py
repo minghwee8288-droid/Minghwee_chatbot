@@ -15,6 +15,7 @@ from typing import Any
 
 from app.config import settings
 from app.db.supabase import db
+from app.services import kb_rules
 
 logger = logging.getLogger(__name__)
 
@@ -2070,25 +2071,22 @@ SERVICE_FIELDS[CANDIDATE_HIRING] += [
 #
 # home_leave is here for the same reason: $400 (PH) and $250 (ID) were given,
 # Myanmar was not.
-FEE_BY_NATIONALITY: dict[str, frozenset[str]] = {
-    "passport_renewal": frozenset({"PH", "ID"}),
-    "home_leave": frozenset({"PH", "ID"}),
-    # 2026-09-22. Unlike the two above, we hold a price for all THREE
-    # nationalities here - so this entry is not about a missing price, it is
-    # about which of the three is hers. The agency fee for a new hire is
-    # $1,428 / $1,188 / $1,168 and for a transfer $1,688 / $1,588 / $1,288, and
-    # all three sit in the same retrieved set on a turn where the nationality
-    # is not yet established. A briefing that picks one is right a third of the
-    # time. Their rule 12: identify the service AND the nationality before
-    # giving a fee.
-    #
-    # It bites hardest on "no preference", which is a real and common answer to
-    # the hiring flow's own nationality question and is exactly the case where
-    # there is no single agency fee to give.
-    "new_hiring": frozenset({"PH", "ID", "MM"}),
-    "transfer": frozenset({"PH", "ID", "MM"}),
-    "transfer_employer": frozenset({"PH", "ID", "MM"}),
-}
+# 2026-09-24: the mapping now lives in cb_kb_rules (price_nationality), read
+# through kb_rules.fee_by_nationality(). Code default: passport_renewal and
+# home_leave -> PH, ID; new_hiring, transfer, transfer_employer -> PH, ID, MM.
+# The note that sat beside the new_hiring entry, kept (section 0.3):
+# 2026-09-22. Unlike the two above, we hold a price for all THREE
+# nationalities here - so this entry is not about a missing price, it is
+# about which of the three is hers. The agency fee for a new hire is
+# $1,428 / $1,188 / $1,168 and for a transfer $1,688 / $1,588 / $1,288, and
+# all three sit in the same retrieved set on a turn where the nationality
+# is not yet established. A briefing that picks one is right a third of the
+# time. Their rule 12: identify the service AND the nationality before
+# giving a fee.
+#
+# It bites hardest on "no preference", which is a real and common answer to
+# the hiring flow's own nationality question and is exactly the case where
+# there is no single agency fee to give.
 
 
 def fee_varies_by_nationality(service_type: str | None) -> bool:
@@ -2102,7 +2100,7 @@ def fee_varies_by_nationality(service_type: str | None) -> bool:
     between. Both must refuse to quote, and they refuse differently - the first
     says our agent will confirm, the second asks which nationality.
     """
-    return (service_type or "") in FEE_BY_NATIONALITY
+    return (service_type or "") in kb_rules.fee_by_nationality()
 
 
 def fee_is_known_for(service_type: str | None, nationality_code: str | None) -> bool:
@@ -2111,7 +2109,7 @@ def fee_is_known_for(service_type: str | None, nationality_code: str | None) -> 
     True when the service is not nationality-priced at all, so the ordinary
     rules apply and nothing extra is said.
     """
-    known = FEE_BY_NATIONALITY.get(service_type or "")
+    known = kb_rules.fee_by_nationality().get(service_type or "")
     if known is None:
         return True
     return bool(nationality_code) and nationality_code in known

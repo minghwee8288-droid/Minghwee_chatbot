@@ -38,6 +38,36 @@ from app.services.rag import KB_TABLE, embed_query  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(levelname)-8s %(message)s")
 logger = logging.getLogger("load_service_notes")
 
+# --- Ownership (2026-09-24, KB Admin UI preparation) -------------------------
+# Every row carries metadata.managed_by: 'loader' for rows this script (or the
+# original bulk import) owns, 'ui' for rows the KB Admin UI created or took
+# over. This script NEVER touches a 'ui' row - not to insert over it, correct
+# it, text-replace it or retire it. It reports each one and moves on.
+#
+# Without this, the first run after the UI goes live would silently undo the
+# client's own edits: UPDATES, TEXT_REPLACEMENTS and RETIRED all find their
+# targets by searching, and a search does not know who wrote the row.
+#
+# Every write path below goes through _ui_owned(); selfcheck_kb_prep.py
+# asserts that, and runs the skip against a real 'ui' row.
+OWNER_KEY = "managed_by"
+LOADER_OWNER = "loader"
+UI_OWNER = "ui"
+_ui_skipped: list[str] = []
+
+
+def _ui_owned(row: dict[str, Any] | None) -> bool:
+    """Whether the KB Admin UI owns this row - in which case hands off."""
+    metadata = (row or {}).get("metadata")
+    return isinstance(metadata, dict) and metadata.get(OWNER_KEY) == UI_OWNER
+
+
+def _skip_ui(row: dict[str, Any], what: str) -> None:
+    label = " ".join((row.get("question") or row.get("content") or "")[:70].split())
+    logger.warning("SKIP  (owned by the KB Admin UI) %s row %s: %s",
+                   what, str(row.get("id"))[:8], label)
+    _ui_skipped.append(str(row.get("id")))
+
 # Must not match rag._INTERNAL_SOURCES (MHOS / for Vendor / Blueprint /
 # Hiring Pipelines Brief / version control) or every row is dropped from
 # retrieval without an error.
@@ -3370,10 +3400,13 @@ async def _retire_superseded(dry_run: bool) -> int:
     retired = 0
     for rule in RETIRED:
         rows = await db.select_many(
-            KB_TABLE, "id,content,is_active", limit=2000, is_active=True
+            KB_TABLE, "id,content,is_active,metadata", limit=2000, is_active=True
         )
         for row in rows:
             if rule["needle"] not in (row.get("content") or ""):
+                continue
+            if _ui_owned(row):
+                _skip_ui(row, "RETIRE")
                 continue
             if dry_run:
                 logger.info("WOULD RETIRE row %s (%s)", row["id"][:8], rule["reason"])
@@ -3396,7 +3429,9 @@ async def _apply_text_replacements(dry_run: bool) -> int:
         old, new = rule["old"], rule["new"]
         # Fetched fresh per rule, so an earlier rule's edit is visible to a
         # later one rather than being clobbered by a stale copy.
-        rows = await db.select_many(KB_TABLE, "id,question,answer,content", limit=2000)
+        rows = await db.select_many(
+            KB_TABLE, "id,question,answer,content,metadata", limit=2000
+        )
         for row in rows:
             payload = {
                 col: row[col].replace(old, new)
@@ -3404,6 +3439,9 @@ async def _apply_text_replacements(dry_run: bool) -> int:
                 if row.get(col) and old in row[col]
             }
             if not payload:
+                continue
+            if _ui_owned(row):
+                _skip_ui(row, "REPLACE")
                 continue
             if dry_run:
                 logger.info("WOULD REPLACE %r -> %r in row %s", old, new, row["id"][:8])
@@ -3455,7 +3493,8 @@ async def main(dry_run: bool) -> None:
     written = skipped = 0
     for row in ROWS:
         already = await db.select_one(
-            KB_TABLE, "id", question=row["question"], service_type=row["service_type"]
+            KB_TABLE, "id,question,metadata",
+            question=row["question"], service_type=row["service_type"],
         )
         # A row this script later RELOCATES is no longer where ROWS says it is,
         # and the skip check keys on question + service_type. Live, 2026-09-08:
@@ -3465,10 +3504,14 @@ async def main(dry_run: bool) -> None:
         # was MOVED to as well, or "idempotent" holds for exactly one run.
         if not already and row["question"] in _RELOCATED:
             already = await db.select_one(
-                KB_TABLE, "id",
+                KB_TABLE, "id,question,metadata",
                 question=row["question"],
                 service_type=_RELOCATED[row["question"]],
             )
+        if already and _ui_owned(already):
+            _skip_ui(already, "INSERT")
+            skipped += 1
+            continue
         if already:
             logger.info("SKIP  (already present) %s", row["question"])
             skipped += 1
@@ -3490,6 +3533,7 @@ async def main(dry_run: bool) -> None:
             "source_document": SOURCE_DOCUMENT,
             "section_heading": row["section_heading"],
             "is_active": True,
+            "metadata": {OWNER_KEY: LOADER_OWNER},
         }
         # Only send columns the table actually has.
         payload = {k: v for k, v in payload.items() if k in columns}
@@ -3516,7 +3560,14 @@ async def main(dry_run: bool) -> None:
     updated = 0
     for row in UPDATES:
         where, changes = row["where"], row["set"]
-        existing = await db.select_one(KB_TABLE, "id,question,answer,service_type", **where)
+        # Fetch every column the entry sets, or the "already correct" test
+        # below compares against a column that was never read. Found
+        # 2026-09-24: the 2026-09-22 transfer-cost entry sets contact_type and
+        # section_heading, neither was selected, both read as blank, and so a
+        # row that was already correct was rewritten and re-embedded on every
+        # run - the script stopped being idempotent without anyone seeing it.
+        columns = {"id", "question", "answer", "service_type", "metadata", *changes}
+        existing = await db.select_one(KB_TABLE, ",".join(sorted(columns)), **where)
 
         if not existing and "service_type" in changes:
             # Already moved on an earlier run. Look for it where it now lives
@@ -3527,6 +3578,9 @@ async def main(dry_run: bool) -> None:
                 continue
         if not existing:
             logger.warning("UPDATE target missing: %s", where["question"])
+            continue
+        if _ui_owned(existing):
+            _skip_ui(existing, "UPDATE")
             continue
         if all((existing.get(k) or "") == v for k, v in changes.items()):
             logger.info("SKIP  (already correct) %s", where["question"])
@@ -3558,6 +3612,7 @@ async def main(dry_run: bool) -> None:
     logger.info(
         "Text replacements: %d row edit(s); %d row(s) retired.", replaced, retired,
     )
+    logger.info("UI-owned rows skipped: %d", len(_ui_skipped))
     logger.info(
         "Done — %s %d row(s), skipped %d already present, %s %d row(s).",
         verb, written, skipped,
@@ -3577,4 +3632,19 @@ if __name__ == "__main__":
         action="store_true",
         help="show what would be written without touching the database",
     )
-    asyncio.run(main(parser.parse_args().dry_run))
+    parser.add_argument(
+        "--expect-ref",
+        help="the Supabase project ref this run is allowed to write to "
+             "(required unless --dry-run); the run stops if it is connected "
+             "to any other project",
+    )
+    args = parser.parse_args()
+    from scripts.target_guard import require_ref, rest_ref
+
+    if args.dry_run:
+        print(f"[target] dry run against SUPABASE_URL ref = {rest_ref()}", flush=True)
+    else:
+        if not args.expect_ref:
+            parser.error("--expect-ref <project ref> is required unless --dry-run")
+        require_ref(args.expect_ref)
+    asyncio.run(main(args.dry_run))

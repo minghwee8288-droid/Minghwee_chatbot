@@ -2109,7 +2109,7 @@ async def _lid_checks() -> list[tuple[str, bool]]:
                                        "id": f"claim-{status}"}))[0]
         with patch.object(_wh.conversation_service, "get_by_phone",
                           new=AsyncMock(return_value=row)),                patch.object(_wh, "may_engage",
-                          new=AsyncMock(return_value=(True, "no recent agent activity"))),                patch.object(_wh, "maybe_return_to_bot", new=AsyncMock(return_value=row)),                patch.object(_wh.conversation_service, "get_or_create", new=_get_or_create),                patch.object(_wh.message_service, "store_incoming", new=AsyncMock()),                patch.object(_wh, "_schedule_read_receipt", new=lambda *a, **k: None),                patch.object(_wh, "identify_contact", new=AsyncMock(return_value=row)),                patch.object(_wh.debouncer, "add", new=AsyncMock()),                patch.object(_wh, "emergency_override", new=AsyncMock(return_value=False)),                patch.object(_wh, "acknowledge_direct_address", new=AsyncMock()):
+                          new=AsyncMock(return_value=(True, "no recent agent activity"))),                patch.object(_wh, "maybe_return_to_bot", new=AsyncMock(return_value=row)),                patch.object(_wh.conversation_service, "get_or_create", new=_get_or_create),                patch.object(_wh.message_service, "store_incoming", new=AsyncMock()),                patch.object(_wh.conversation_service, "touch_inbound", new=AsyncMock()),                patch.object(_wh, "_schedule_read_receipt", new=lambda *a, **k: None),                patch.object(_wh, "identify_contact", new=AsyncMock(return_value=row)),                patch.object(_wh.debouncer, "add", new=AsyncMock()),                patch.object(_wh, "emergency_override", new=AsyncMock(return_value=False)),                patch.object(_wh, "acknowledge_direct_address", new=AsyncMock()):
             await _wh.handle_inbound(msg)
         results.append((f"bot_status {status!r}: the row is "
                         f"{'claimed' if should_claim else 'left to the human'}",
@@ -2477,102 +2477,176 @@ async def _lid_checks() -> list[tuple[str, bool]]:
     return results
 
 
+async def _run_case(node, label, overrides):
+    """Run one state. Returns (ok, detail, fingerprint).
+
+    The fingerprint is everything a rule change could move - the reply, the
+    system prompt the model was handed, and the state the node returned - so
+    two passes over the same state under two rule sets can be compared whole.
+    """
+    global _LAST_SYSTEM_PROMPT
+    _LAST_SYSTEM_PROMPT = ""
+    state = {**BASE, **overrides}
+    # A state may name the reply the model would have written, so a guard
+    # that only fires on particular WORDS can be executed rather than only
+    # unit-tested. Added 2026-09-10 for the hiring-cost guard, which had
+    # never run on this path at all.
+    stub = state.pop("_stub_reply", None)
+    # What the reply must CONTAIN. Optional, and most states do not use it -
+    # this file's first job is execution cover. But a state that exists to
+    # prove a guard fires proves nothing while the only test is that a dict
+    # came back: on 2026-09-10 the hiring-cost guard was disabled outright
+    # (`if False:`) and every check in both scripts stayed green, because
+    # selfcheck asserts the module IMPORTS the guard and this one asserted
+    # only the shape of the return. Imported and never called is precisely
+    # the state that guard was in for two days.
+    expect = state.pop("_expect_reply", None)
+    # ...and what the returned STATE must say. A reply-writing branch also
+    # decides whether the turn hands over and whether the collection is
+    # finished, and neither shows up in the text. Added 2026-09-11 for the
+    # branch that declines a job seeker we cannot place: the assertion that
+    # it does NOT hand her to a human was, on its first attempt, a string
+    # search of the source that matched the import line instead.
+    # ...and what it must NOT contain. Added 2026-09-22 for the
+    # greeting fix, where the defect was a WRONG canned string rather
+    # than a missing one: "Sure, go ahead" is a perfectly good reply
+    # to an announced question and the wrong one to "Hi", so the only
+    # assertion that bites is that it is absent from this turn.
+    forbid = state.pop("_forbid_reply", None)
+    expect_state = state.pop("_expect_state", None)
+    # A substring that must appear in the system prompt the model was
+    # handed - for a fix that lives in the INSTRUCTION, not the reply.
+    expect_prompt = state.pop("_expect_prompt", None)
+    forbid_prompt = state.pop("_forbid_prompt", None)
+    # What the extractor handed back, and what must survive the filters.
+    # `_expect_not_collected` is the important half: a field the client
+    # never spoke to must not be filed as though they had, because a
+    # filled field is never asked and the ticket then states it as fact.
+    global _EXTRACTION
+    _EXTRACTION = state.pop("_stub_extraction", None) or {}
+    not_collected = state.pop("_expect_not_collected", None)
+    collected = state.pop("_expect_collected", None)
+    with patch("app.graph.llm.complete",
+               new=AsyncMock(return_value=stub or STEPPED_REPLY)), \
+         patch("app.graph.llm.complete_json", new=AsyncMock(return_value={})):
+        try:
+            out = await RUNNERS[node](state, stub)
+        except Exception as exc:  # noqa: BLE001 - reporting is the whole job
+            return False, f"{type(exc).__name__}: {exc}", ("EXC", type(exc).__name__, str(exc))
+    ok = isinstance(out, dict)
+    detail = sorted(out)[:4] if ok else out
+    got_reply = (out.get("reply") or out.get("reply_text") or "") if ok else ""
+    fingerprint = (
+        got_reply,
+        _LAST_SYSTEM_PROMPT,
+        repr(sorted((k, repr(v)) for k, v in out.items())) if ok else repr(out),
+    )
+    if ok and expect:
+        ok = expect.lower() in got_reply.lower()
+        detail = f"expected {expect!r} in {got_reply[:80]!r}"
+    if ok and forbid:
+        ok = forbid.lower() not in got_reply.lower()
+        detail = f"reply omits {forbid!r} -> " + (
+            "as expected" if ok else f"PRESENT in {got_reply[:80]!r}")
+    if ok and expect_state:
+        wrong = {k: out.get(k) for k, v in expect_state.items()
+                 if out.get(k) != v}
+        ok = not wrong
+        detail = f"state {expect_state} -> " + ("as expected" if ok
+                                                else f"got {wrong}")
+    if ok and expect_prompt:
+        ok = expect_prompt.lower() in _LAST_SYSTEM_PROMPT.lower()
+        detail = f"prompt carries {expect_prompt!r} -> " + (
+            "as expected" if ok else "MISSING")
+    if ok and forbid_prompt:
+        ok = forbid_prompt.lower() not in _LAST_SYSTEM_PROMPT.lower()
+        detail = f"prompt omits {forbid_prompt!r} -> " + (
+            "as expected" if ok else "PRESENT")
+    if ok and not_collected:
+        got = out.get("collected_info") or {}
+        leaked = [k for k in not_collected if k in got]
+        ok = not leaked
+        detail = (f"{not_collected} not filed -> "
+                  + ("as expected" if ok
+                     else f"LEAKED {[(k, got[k]) for k in leaked]}"))
+    if ok and collected:
+        got = out.get("collected_info") or {}
+        wrong = {k: got.get(k) for k, v in collected.items()
+                 if got.get(k) != v}
+        ok = not wrong
+        detail = f"{collected} filed -> " + ("as expected" if ok
+                                            else f"got {wrong}")
+    return ok, detail, fingerprint
+
+
+# --- 2026-09-24: the rules moved from code into cb_kb_rules ---------------
+# The same states, run under the code defaults (what RULES_FROM_DB=false
+# means) and under the rules as they are in the TABLE (what =true means),
+# must produce identical replies, prompts and returned state. Every state,
+# not only the fee ones: the cost guard, the fee notes, the salary floor and
+# the retrieval filter all sit on paths that are not labelled "fee".
+#
+# And a third pass with ONE rule deliberately wrong must change something.
+# Without it, "identical" could just as well mean the comparison is blind -
+# the lesson this file has recorded five times, that a green check proves
+# nothing until the fault it exists to catch has been shown to turn it red.
+async def _rules_for_on_pass():
+    from app.services import kb_rules
+    if kb_rules.enabled():
+        await kb_rules.refresh(force=True)
+        if kb_rules.source() != "db":
+            raise SystemExit("RULES_FROM_DB is on but cb_kb_rules could not be loaded")
+        return kb_rules.rules(), "cb_kb_rules (live table)"
+    from scripts.kb_seed import seed_rows
+    return kb_rules.parse_rows(seed_rows()), "kb_rules_002_seed.sql (offline)"
+
+
+async def _pass(rules):
+    from app.services import kb_rules
+    results = []
+    with kb_rules.use(rules):
+        for node, label, overrides in CASES:
+            results.append(await _run_case(node, label, overrides))
+    return results
+
+
 async def main() -> int:
+    from dataclasses import replace
+
+    from app.services import kb_rules
+
     failures = 0
     for label, ok in await _lid_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  webhook  {label:44}")
         failures += not ok
-    for node, label, overrides in CASES:
-        state = {**BASE, **overrides}
-        # A state may name the reply the model would have written, so a guard
-        # that only fires on particular WORDS can be executed rather than only
-        # unit-tested. Added 2026-09-10 for the hiring-cost guard, which had
-        # never run on this path at all.
-        stub = state.pop("_stub_reply", None)
-        # What the reply must CONTAIN. Optional, and most states do not use it -
-        # this file's first job is execution cover. But a state that exists to
-        # prove a guard fires proves nothing while the only test is that a dict
-        # came back: on 2026-09-10 the hiring-cost guard was disabled outright
-        # (`if False:`) and every check in both scripts stayed green, because
-        # selfcheck asserts the module IMPORTS the guard and this one asserted
-        # only the shape of the return. Imported and never called is precisely
-        # the state that guard was in for two days.
-        expect = state.pop("_expect_reply", None)
-        # ...and what the returned STATE must say. A reply-writing branch also
-        # decides whether the turn hands over and whether the collection is
-        # finished, and neither shows up in the text. Added 2026-09-11 for the
-        # branch that declines a job seeker we cannot place: the assertion that
-        # it does NOT hand her to a human was, on its first attempt, a string
-        # search of the source that matched the import line instead.
-        # ...and what it must NOT contain. Added 2026-09-22 for the
-        # greeting fix, where the defect was a WRONG canned string rather
-        # than a missing one: "Sure, go ahead" is a perfectly good reply
-        # to an announced question and the wrong one to "Hi", so the only
-        # assertion that bites is that it is absent from this turn.
-        forbid = state.pop("_forbid_reply", None)
-        expect_state = state.pop("_expect_state", None)
-        # A substring that must appear in the system prompt the model was
-        # handed - for a fix that lives in the INSTRUCTION, not the reply.
-        expect_prompt = state.pop("_expect_prompt", None)
-        forbid_prompt = state.pop("_forbid_prompt", None)
-        # What the extractor handed back, and what must survive the filters.
-        # `_expect_not_collected` is the important half: a field the client
-        # never spoke to must not be filed as though they had, because a
-        # filled field is never asked and the ticket then states it as fact.
-        global _EXTRACTION
-        _EXTRACTION = state.pop("_stub_extraction", None) or {}
-        not_collected = state.pop("_expect_not_collected", None)
-        collected = state.pop("_expect_collected", None)
-        full = f"{node}  {label}"
-        with patch("app.graph.llm.complete",
-                   new=AsyncMock(return_value=stub or STEPPED_REPLY)), \
-             patch("app.graph.llm.complete_json", new=AsyncMock(return_value={})):
-            try:
-                out = await RUNNERS[node](state, stub)
-                ok = isinstance(out, dict)
-                detail = sorted(out)[:4] if ok else out
-                if ok and expect:
-                    got = out.get("reply") or out.get("reply_text") or ""
-                    ok = expect.lower() in got.lower()
-                    detail = f"expected {expect!r} in {got[:80]!r}"
-                if ok and forbid:
-                    got = out.get("reply") or out.get("reply_text") or ""
-                    ok = forbid.lower() not in got.lower()
-                    detail = f"reply omits {forbid!r} -> " + (
-                        "as expected" if ok else f"PRESENT in {got[:80]!r}")
-                if ok and expect_state:
-                    wrong = {k: out.get(k) for k, v in expect_state.items()
-                             if out.get(k) != v}
-                    ok = not wrong
-                    detail = f"state {expect_state} -> " + ("as expected" if ok
-                                                            else f"got {wrong}")
-                if ok and expect_prompt:
-                    ok = expect_prompt.lower() in _LAST_SYSTEM_PROMPT.lower()
-                    detail = f"prompt carries {expect_prompt!r} -> " + (
-                        "as expected" if ok else "MISSING")
-                if ok and forbid_prompt:
-                    ok = forbid_prompt.lower() not in _LAST_SYSTEM_PROMPT.lower()
-                    detail = f"prompt omits {forbid_prompt!r} -> " + (
-                        "as expected" if ok else "PRESENT")
-                if ok and not_collected:
-                    got = out.get("collected_info") or {}
-                    leaked = [k for k in not_collected if k in got]
-                    ok = not leaked
-                    detail = (f"{not_collected} not filed -> "
-                              + ("as expected" if ok
-                                 else f"LEAKED {[(k, got[k]) for k in leaked]}"))
-                if ok and collected:
-                    got = out.get("collected_info") or {}
-                    wrong = {k: got.get(k) for k, v in collected.items()
-                             if got.get(k) != v}
-                    ok = not wrong
-                    detail = f"{collected} filed -> " + ("as expected" if ok
-                                                        else f"got {wrong}")
-                print(f"  {'PASS' if ok else 'FAIL'}  {full:44} -> {detail}")
-                failures += not ok
-            except Exception as exc:  # noqa: BLE001 - reporting is the whole job
-                print(f"  FAIL  {full:44} -> {type(exc).__name__}: {exc}")
-                failures += 1
+
+    off = await _pass(kb_rules.DEFAULTS)
+    for (node, label, _), (ok, detail, _) in zip(CASES, off):
+        print(f"  {'PASS' if ok else 'FAIL'}  {node + '  ' + label:44} -> {detail}")
+        failures += not ok
+
+    on_rules, where = await _rules_for_on_pass()
+    on = await _pass(on_rules)
+    diffs = [f"{node}  {label}" for (node, label, _), a, b in zip(CASES, off, on)
+             if a[2] != b[2]]
+    ok = not diffs
+    print(f"\n  {'PASS' if ok else 'FAIL'}  rules  {len(CASES)} states identical with "
+          f"the switch off and on ({where})"
+          + ("" if ok else f" - {len(diffs)} differ: {diffs[:5]}"))
+    failures += not ok
+
+    fault = replace(
+        on_rules,
+        fee_stated=on_rules.fee_stated | {"direct_hiring"},
+        cost_withheld=on_rules.cost_withheld - {"direct_hiring"},
+    )
+    changed = [f"{node}  {label}" for (node, label, _), a, b
+               in zip(CASES, off, await _pass(fault)) if a[2] != b[2]]
+    ok = bool(changed)
+    print(f"  {'PASS' if ok else 'FAIL'}  rules  a wrong rule (direct_hiring stated) is "
+          f"SEEN by the comparison: {len(changed)} state(s) changed {changed[:3]}")
+    failures += not ok
+
     print("\nALL PASS" if not failures else f"\n{failures} FAILED")
     return 1 if failures else 0
 

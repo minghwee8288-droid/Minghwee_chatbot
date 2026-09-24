@@ -27,6 +27,7 @@ from app.graph.state import (
     ConversationState,
     effective_contact_type,
 )
+from app.services import kb_rules
 from app.services import ticket as ticket_service
 
 logger = logging.getLogger(__name__)
@@ -385,6 +386,10 @@ _TURN_RESET: dict[str, Any] = {
 
 async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Run one conversation turn and return the resulting state."""
+    # The pricing rules are read synchronously by the nodes, so they are
+    # refreshed here, before the turn, and never inside it. A no-op with
+    # RULES_FROM_DB off, and at most one read a minute with it on.
+    await kb_rules.refresh()
     graph = get_graph()
     state_input = {**_TURN_RESET, **payload}
     config = {"configurable": {"thread_id": thread_id}}

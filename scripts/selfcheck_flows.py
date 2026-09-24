@@ -3,6 +3,12 @@
 Reads nothing and writes nothing — pure in-process checks of the field
 lists, the gates and the guards. Safe to run against production.
 
+The one exception is RULES_FROM_DB=true: then the pricing rules are loaded ONCE
+from cb_kb_rules before anything else, and every rule assertion below runs
+against the table's values instead of the code defaults. That is the point -
+the same assertions prove the table says what the code used to. A table that
+cannot be loaded fails the run rather than silently checking the defaults.
+
     docker compose exec chatbot python /app/scripts/selfcheck_flows.py
 """
 
@@ -17,11 +23,22 @@ import importlib
 import re
 
 import app.services.ticket as t
+from app.services import kb_rules as _kbr
+
+if _kbr.enabled():
+    import asyncio as _asyncio
+    _asyncio.run(_kbr.refresh(force=True))
+    if _kbr.source() != "db":
+        print("FAIL  RULES_FROM_DB is on but cb_kb_rules could not be loaded "
+              "(see the kb_rules error above)")
+        sys.exit(1)
+    print("[rules] RULES_FROM_DB=true - checking the cb_kb_rules values")
+else:
+    print("[rules] RULES_FROM_DB=false - checking the code defaults")
 import app.services.lead as _lead
 from app.graph.guards import quotes_hiring_package_cost as q
 import app.graph.guards as _guards
 from app.graph.guards import (
-    COST_WITHHELD_SERVICES as _WITHHELD,
     asks_for_documents as _docs_q,
     asks_for_process as _proc_q,
 )
@@ -1293,7 +1310,7 @@ rows = [
    if ico._effective_options(_budget_field, {"preferred_nationality": n})
    != _budget_field.options], []),
  ("...and the floor table names exactly one country, on purpose",
-  sorted(ico._SALARY_FLOOR_BY_NATIONALITY), ["PH"]),
+  sorted(_kbr.rules().salary_floor), ["PH"]),
  # Only `budget` is filtered. A filter that reached any field with digits in
  # its options would quietly edit the languages list or the home types.
  ("no other field's options are touched",
@@ -1495,7 +1512,7 @@ rows = [
  # name. The same "wired into two paths and never the third" shape as
  # blocked_topic_responder on 2026-09-10.
  ("the closing briefing is cost-guarded, not just cost-instructed",
-  _collector_src().count("withhold_cost=service_type in COST_WITHHELD_SERVICES"), 2),
+  _collector_src().count("withhold_cost=service_type in kb_rules.cost_withheld_services()"), 2),
  # ...and a briefing swapped for the deferral is LOST, not delivered. Marked
  # given it would never be retried, which is the 2026-09-08 defect arriving in
  # the branch added the same day as the guard.
@@ -1505,7 +1522,7 @@ rows = [
  # so only direct hire is checked here now. The rule is unchanged: a service
  # we hold no figure for must be told not to invent one in its overview.
  ("a cost-withheld overview is told not to quote a price",
-  [k for k in ("direct_hiring",) if k not in _guards.COST_WITHHELD_SERVICES],
+  [k for k in ("direct_hiring",) if k not in _kbr.cost_withheld_services()],
   []),
  # --- 2026-09-08: what direct hire shares with new hiring -----------------
  # The agency's own line: "No candidate sourcing, matching or interviews.
@@ -1968,7 +1985,7 @@ rows = [
  ("and none for Myanmar, so none may be quoted",
   t.fee_is_known_for("passport_renewal", "MM"), False),
  ("home leave is priced the same two ways",
-  t.FEE_BY_NATIONALITY["home_leave"], frozenset({"PH", "ID"})),
+  _kbr.fee_by_nationality()["home_leave"], frozenset({"PH", "ID"})),
  ("a service with one price for everyone is unaffected",
   t.fee_is_known_for("renewal", None), True),
  # --- the name is asked, not taken off WhatsApp, 2026-09-08 -----------
@@ -2388,7 +2405,7 @@ rows = [
   ["renewal", "passport_renewal", "home_leave",
    "new_hiring", "transfer", "transfer"]),
  ("the two cost sets are exact opposites",
-  gd.FEE_STATED_SERVICES & gd.COST_WITHHELD_SERVICES, frozenset()),
+  _kbr.fee_stated_services() & _kbr.cost_withheld_services(), frozenset()),
  # --- the consolidated cost + timeline table, 2026-09-08 --------------
  # A fee is stated where the agency stated one and deferred where they did
  # not: "the service which do not have the timeline and cost that means we
@@ -2398,10 +2415,10 @@ rows = [
  # keys, per nationality - so the rule is unchanged and the membership has
  # moved. Direct hire and replacement are still blank and still withheld.
  ("a fee is withheld on every service the table left blank",
-  {"direct_hiring", "replacement"} <= gd.COST_WITHHELD_SERVICES, True),
+  {"direct_hiring", "replacement"} <= _kbr.cost_withheld_services(), True),
  ("and quoted on every service it filled in",
   {"renewal", "passport_renewal", "home_leave",
-   "new_hiring", "transfer", "transfer_employer"} & gd.COST_WITHHELD_SERVICES,
+   "new_hiring", "transfer", "transfer_employer"} & _kbr.cost_withheld_services(),
   set()),
  # An employer transfer runs under its OWN service key, so leaving it out
  # would have withheld nothing on the half that actually asks about cost.
@@ -2411,7 +2428,7 @@ rows = [
  # simply moved sets, and both keys have to move together or the filter and
  # the guard disagree about the same conversation.
  ("the employer half of a transfer is covered too",
-  {"transfer", "transfer_employer"} <= gd.FEE_STATED_SERVICES, True),
+  {"transfer", "transfer_employer"} <= _kbr.fee_stated_services(), True),
  # `transfer` left this pair on 2026-09-22, when the agency gave its fee.
  # Its deferral row is REWRITTEN rather than left beside the new ones - left
  # alone it was top for "what is the all in cost of a transfer?" at 0.644 and
@@ -3221,13 +3238,13 @@ rows = [
  # services it is asked about: the agency gave new hiring a price, so the
  # service that still proves the guard is direct hire.
  ("and direct hire is a service that withholds it",
-  "direct_hiring" in _WITHHELD, True),
+  "direct_hiring" in _kbr.cost_withheld_services(), True),
  ("...while new hiring now states its own",
-  "new_hiring" in _WITHHELD, False),
+  "new_hiring" in _kbr.cost_withheld_services(), False),
  # Not withheld, deliberately: passport renewal states its own $450 and
  # quoting it is the point of that flow.
  ("a service that states its own fee still states it",
-  "passport_renewal" in _WITHHELD, False),
+  "passport_renewal" in _kbr.cost_withheld_services(), False),
 
  # --- what a HELPER pays us, answered by the agency 2026-09-10 ---------
  # This was an open item in section 9 ("What a HELPER pays us, if anything")
@@ -3866,7 +3883,7 @@ rows = [
  # swap the whole briefing for the deferral line and the client would lose
  # the process and the documents with it.
  ("...and its cost section is a deferral, not a package price",
-  "direct_hiring" in _guards.COST_WITHHELD_SERVICES, True),
+  "direct_hiring" in _kbr.cost_withheld_services(), True),
 
  # --- a question about WHEN is not answered by a sentence about WHERE ---
  # Live 2026-09-18, reproduced 3 runs of 3. Asked whether she was in

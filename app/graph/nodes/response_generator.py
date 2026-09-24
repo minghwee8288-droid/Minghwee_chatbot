@@ -10,7 +10,6 @@ from app.config import settings
 from app.graph.guards import (
     COST_DEFERRAL_REPLY,
     _NO_REQUEST_MAX_WORDS,
-    COST_WITHHELD_SERVICES,
     asks_about_price,
     asks_again,
     asks_for_process,
@@ -31,6 +30,7 @@ from app.graph.guards import (
     without_greeting,
 )
 from app.graph.llm import complete
+from app.services import kb_rules
 from app.graph.prompts.system import IDENTITY, build_system_prompt
 from app.graph.prompts.templates import (
     AGENCY_INFO_INSTRUCTION,
@@ -364,7 +364,7 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
             reply[:200],
         )
         reply = ""
-    elif state.get("service_type") in COST_WITHHELD_SERVICES and quotes_hiring_package_cost(
+    elif state.get("service_type") in kb_rules.cost_withheld_services() and quotes_hiring_package_cost(
         reply
     ):
         # Grounded, and still not to be sent. The knowledge base holds the

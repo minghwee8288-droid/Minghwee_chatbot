@@ -20,7 +20,6 @@ from typing import Any
 
 from app.graph.guards import (
     COST_DEFERRAL_REPLY,
-    COST_WITHHELD_SERVICES,
     asks_again,
     asks_for_documents,
     asks_for_process,
@@ -43,6 +42,7 @@ from app.graph.closure import is_closing, is_pure_acknowledgement
 # service in their own words". intent_classifier owns it; this node only reads it.
 from app.graph.nodes.intent_classifier import _CHASING_STATUS, _named_service
 from app.graph.llm import complete
+from app.services import kb_rules
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
     BLOCKED_TOPIC_ANSWER_INSTRUCTION,
@@ -642,7 +642,7 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
     # First in the chain so the client gets the deferral - which says WHY - in
     # place of the bare holding line, and deliberately identical to the two
     # existing call sites rather than a cleverer test of its own (§9.8).
-    if state.get("service_type") in COST_WITHHELD_SERVICES and quotes_hiring_package_cost(
+    if state.get("service_type") in kb_rules.cost_withheld_services() and quotes_hiring_package_cost(
         reply
     ):
         logger.info(

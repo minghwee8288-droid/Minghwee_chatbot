@@ -7,7 +7,8 @@ import re
 from typing import Any
 
 from app.config import settings
-from app.graph.guards import FEE_STATED_SERVICES, asks_about_price, last_bot_line
+from app.graph.guards import asks_about_price, last_bot_line
+from app.services import kb_rules
 from app.graph.nodes.info_collector import briefs_on_this_turn
 from app.graph.state import (
     AGENCY_INFO_INTENT,
@@ -492,7 +493,7 @@ def _service_filter(state: ConversationState) -> str | None:
     # the conversation is filtered correctly and the SAME question repeated
     # after the handover is not - which is what produced an answer in one
     # session and a holding line in the next.
-    if _subject_service(state) in FEE_STATED_SERVICES:
+    if _subject_service(state) in kb_rules.fee_stated_services():
         return _aliased(_subject_service(state))
 
     if _MONEY_TALK.search(state.get("incoming_text") or ""):
@@ -591,7 +592,7 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
     fee_question = state.get("intent") == "fee_enquiry" or asks_about_price(
         state.get("incoming_text") or ""
     )
-    if service in FEE_STATED_SERVICES and fee_question:
+    if service in kb_rules.fee_stated_services() and fee_question:
         logger.info(
             "Retrieval under service=%s scored %.3f but it is a price question on a "
             "service that states its own fee - not widening, so another service's "

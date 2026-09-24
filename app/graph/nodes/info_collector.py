@@ -12,7 +12,6 @@ from typing import Any
 
 from app.graph.guards import (
     COST_DEFERRAL_REPLY,
-    COST_WITHHELD_SERVICES,
     asks_for_documents,
     asks_for_process,
     clamp_reply,
@@ -33,6 +32,7 @@ from app.graph.guards import (
     ungrounded_figures,
 )
 from app.graph.llm import complete, complete_json
+from app.services import kb_rules
 from app.graph.nodes.intent_classifier import _named_service
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
@@ -1986,7 +1986,9 @@ RETURNING_NOTE = (
 # STARTS, and the agency was explicit that it is not a fixed figure ("with the
 # final salary depending on the helper's years of experience and profile"). A
 # band anchored on 670 would read as a price for something that is negotiated.
-_SALARY_FLOOR_BY_NATIONALITY: dict[str, int] = {"PH": 650}
+#
+# 2026-09-24: the floor now lives in cb_kb_rules (salary_floor), read through
+# kb_rules.salary_floor(). Code default: {"PH": 650} and nothing else.
 
 _BAND_DIGITS = re.compile(r"(\d{3,4})")
 
@@ -2046,7 +2048,7 @@ def _effective_options(
     code = lead_service.nationality_code(
         str(collected.get("nationality") or "")
     ) or lead_service.nationality_code(str(collected.get("preferred_nationality") or ""))
-    floor = _SALARY_FLOOR_BY_NATIONALITY.get(code or "")
+    floor = kb_rules.salary_floor(code)
     if not floor:
         return options
 
@@ -2962,7 +2964,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "nationality, and is then asked for the nationality, has been given "
             "nothing and made to read a sentence for it."
         )
-        if service_type in COST_WITHHELD_SERVICES:
+        if service_type in kb_rules.cost_withheld_services():
             # The agency's 2026-09-17 flow puts Cost/Fee immediately after
             # Process & Timeline. On these two services their 2026-09-04
             # instruction forbids it outright - a new hire's price never
@@ -3554,7 +3556,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             if (answer_first or first_contact or small_ticket_note or purpose_note
                 or nationality_note or location_note or record_name_note)
             else 2,
-            withhold_cost=service_type in COST_WITHHELD_SERVICES,
+            withhold_cost=service_type in kb_rules.cost_withheld_services(),
             # The SAME filtered tuple the question was built from. If these
             # two ever disagree the model is told to offer a figure and then
             # binned by ungrounded_figures for offering it (2026-09-09 D).
@@ -3640,7 +3642,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         # were relying on the prompt alone for the rule the agency gave by name
         # on 2026-09-04. The same "wired into two paths and never the third"
         # shape as `blocked_topic_responder` on 2026-09-10.
-        withhold_cost=service_type in COST_WITHHELD_SERVICES,
+        withhold_cost=service_type in kb_rules.cost_withheld_services(),
     )
 
     # A briefing that was generated and then discarded by a guard leaves the

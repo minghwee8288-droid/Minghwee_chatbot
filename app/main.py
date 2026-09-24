@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
+from app.api.admin import router as admin_router
 from app.api.health import router as health_router
 from app.api.webhook import debouncer
 from app.api.webhook import router as webhook_router
@@ -87,6 +88,7 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(webhook_router)
+app.include_router(admin_router)
 
 
 @app.get("/")

@@ -76,7 +76,13 @@ app/
       system.py      IDENTITY + RULES + clock + assembly (build_system_prompt)
       style.py       voice guide harvested from real agent transcripts
       templates.py   (504) per-node task instructions, extraction, assault verify
+  readonly.py        read-only mode for one request (POST /admin/preview): every DB
+                     write and every RPC but the KB search refused, Whapi refused
+  api/admin.py       POST /admin/preview — the real graph on a test question, writes
+                     nothing; 404 unless ADMIN_PREVIEW_SECRET is set
   services/
+    kb_rules.py      pricing/contact rules: code DEFAULTS, or cb_kb_rules when
+                     RULES_FROM_DB=true (validated whole, last-good fallback)
     ticket.py        (1581) THE BIG ONE — field schema DSL, merge policy, ticket CRUD
     lead.py          (567) lead creation/update, numbering, phone matching
     rag.py           (495) embeddings + pgvector search + filtering
@@ -88,6 +94,10 @@ app/
     transcription.py voice notes -> text
   db/supabase.py     service-role client (bypasses RLS), read retries, insert_numbered
 scripts/             preflight, retrieval check, reset, simulate, SQL migrations
+  sql/               kb_rules_001_create, kb_rules_002_seed, kb_owner_001_tag_loader —
+                     applied ONLY via apply_sql.py --expect-ref <project ref>
+  target_guard.py    every writing script calls require_ref(): prints the ref and
+                     exits unless SUPABASE_URL (and the DB URL) name that project
 portal-ui/           React + Vite ticket dashboard (separate deliverable)
 reset-ui/            Next.js "clear a conversation" page (separate deliverable, own
                      Vercel project). Standalone: imports nothing from app/, calls no
@@ -408,6 +418,9 @@ because the lead is opened early and the ticket is created much later.
 | ...and a deferred fee is "based on your requirements", never "for your situation" | `SERVICE_BRIEFING_NOTE` item 2, `FEE_HANDOVER_INSTRUCTION`, prompt rule 5 | The agency, 2026-09-23: *"sounds ominous/abit attacked"*. It was the briefing's own example sentence, copied verbatim - so the example is what changed, and the self-check asserts no fee instruction carries the old phrase to copy. |
 | A question already answered is not asked again, even cut down | `guards.reasks_previous` + `info_collector` (`closed_note`, `previous_answered`) | Live, conversation 1687: the house rule was filed, the collector was asking how they heard about us, and the model sent *"Any other house rules or preferences I should note?"* - 1 run in 26 on the live state. `near_duplicate` compares whole messages and missed it. The retry that fires on it is told the previous question was ANSWERED; it used to say "NOT answered" in every case, which instructs the very re-ask. |
 | A passport that runs out before the renewal could finish is said out loud | `info_collector._expires_before_we_finish` + `EXPIRING_SOON_NOTE` | Live: *"in 5 days"* answered with *"It takes approximately 6 to 8 weeks"*, the two figures one line apart and nothing connecting them — 2 runs out of 2. `passport_expiry` had been collected since the flow was written and put on the ticket; **nothing ever read it.** Coarse on purpose and fails towards SILENCE: "next March", "when the contract ends" and a formatted date all return None, because guessing at a date and then calling somebody's passport urgent is worse than the omission. 60 days, which covers the slowest route we hold — a per-nationality table would be a second copy of lead times that live in the knowledge base (§9.8). |
+| The pricing rules have ONE reader, and a bad table can never widen or empty them | `app/services/kb_rules.py` + `cb_kb_rules` | `FEE_STATED_SERVICES`, `COST_WITHHELD_SERVICES`, `FEE_BY_NATIONALITY` and the salary floor moved out of four files into one table, so the KB Admin UI can change a price policy without a deploy. Callers read a validated in-memory snapshot and never the database. An empty, half-read or invalid table is REFUSED whole and the last good set stays in force, else the code defaults — "withhold everything" would also switch off the retrieval filter that keeps $695 out of a $450 passport renewal. `fee_enquiry` is withheld and locked in the table itself; `transfer`/`transfer_employer` are one switch, enforced by a commit-time trigger. |
+| The loader never overwrites the KB Admin UI | `load_service_notes._ui_owned` + `metadata.managed_by` | Every row is `loader` or `ui`. All four write paths (ROWS, UPDATES, TEXT_REPLACEMENTS, RETIRED) skip and report a `ui` row — without it the first loader run after the UI went live would silently undo the client's edits, because three of the four find their targets by searching. Proved by RUNNING the loader against a stub DB holding one, in `selfcheck_kb_prep.py`. |
+| A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -563,6 +576,17 @@ Easy to get wrong:
 - `RAG_SOFT_FLOOR` (0.40) is the real retrieval knob. `RAG_CONFIDENCE_FLOOR` is **dead
   config, read by nothing** — kept only so existing `.env` files still parse.
 - `TENANT_ID` must be set or lead and ticket numbering break.
+- `APP_ENV_FILE` — which env file settings load (default `.env`). Set it to a whole
+  file, never override a few variables: with the file fixed at `.env`, any key a test
+  file forgot is filled in from production's. `.env.test` points at the restored test
+  copy (`cupwomqvevxravkppuxt`) with WhatsApp blanked.
+- `RULES_FROM_DB` (default **false**) — read the pricing rules from `cb_kb_rules`
+  instead of `kb_rules.DEFAULTS`. Off is byte-for-byte the old behaviour. Switch on only
+  after `selfcheck_kb_prep.py`'s DRIFT check passes against that database. Refreshed
+  before each turn, at most once a minute; a failed or invalid read keeps the last
+  good set, else the defaults — never "quote everything" or "withhold everything".
+- `ADMIN_PREVIEW_SECRET` — header `X-Admin-Preview-Key` for `POST /admin/preview`.
+  Empty means the route answers 404.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -979,6 +1003,31 @@ Ordered by what will hurt first.
     hold, not given. Left for its own change because it moves the briefing's
     retrieval, which the timing rows depend on.
 
+28. **A Myanmar passport renewal is quoted $450 about one run in ten, on the
+    first message.** Measured 2026-09-24 on `main` against the restored test
+    copy: *"How much is passport renewal for my Myanmar helper?"*, 10 live runs,
+    one reply *"For a Myanmar helper, the passport renewal fee is approximately
+    $450"* - the 2026-09-08 defect. On this path the Myanmar protection
+    (`fee_is_known_for` + `FEE_NOT_HELD_FOR_NATIONALITY_NOTE`) is a PROMPT
+    instruction, and `ungrounded_figures` cannot catch the figure because $450
+    is genuinely in the retrieved records. It needs a mechanical guard of the
+    `quotes_hiring_package_cost` shape - a stated fee on a service+nationality
+    `fee_is_known_for` rejects - and that is its own change.
+29. **An ambiguous "how much is the fee?" is answered with a transfer's
+    third-party costs about one run in ten.** Same measurement: 1 of 10 on
+    `main` quoted insurance $590, MOM $70 and lodging $120 for "a transfer
+    helper" to a client who named no service - against the agency's rule 12.
+    `fee_enquiry` is withheld, but `quotes_hiring_package_cost` only fires on a
+    total/package framing, and "insurance is approximately $590" is not one.
+30. **Three of the agency's six 2026-09-22 worked examples do not quote their
+    fee at HEAD.** Probed 2026-09-24, 2 runs each, employer contact, no record
+    name: EX1 (Indonesian transfer, $1,588) and EX5 (Filipino transfer, $1,688)
+    go into the transfer intake and ask a question instead; EX6 (*"What are the
+    fees for Indonesian new hire?"*) is classified `fee_enquiry` and deferred.
+    The 2026-09-22 entry records 10 of 10 verified live, so either the state
+    those runs used differs from a fresh number's or something since has moved
+    them; not investigated here.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
@@ -1127,6 +1176,15 @@ python scripts/selfcheck_flows.py      # behavioural assertions; also runs IN th
                                        #   docker compose exec chatbot python /app/scripts/selfcheck_flows.py
                                        # Note the `/.` — see "the second copy" below.
                                        # Verifies BEHAVIOUR, not grep counts — see the note below.
+python scripts/selfcheck_kb_prep.py --offline   # rules table, fallbacks, loader
+                                       #   ownership, preview guard. No DB.
+python scripts/selfcheck_kb_prep.py --expect-ref <ref> [--preview]
+                                       #   + DRIFT (table == code defaults) and a
+                                       #   preview that must write nothing. Read-only.
+python scripts/load_service_notes.py --expect-ref <ref>   # the loader now REQUIRES
+                                       #   the ref it may write to (not for --dry-run)
+                                       #   and never touches a row tagged managed_by=ui
+python scripts/apply_sql.py --expect-ref <ref> scripts/sql/<file>.sql
 python scripts/preflight.py            # go-live gate: KB, agents, branch, portal bridge
 python scripts/check_retrieval.py      # retrieval calibration; tunes RAG_SOFT_FLOOR
 python scripts/e2e_services.py         # walks all 7 services end to end against the
@@ -1222,6 +1280,74 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-24** - **KB Admin UI preparation: the pricing rules move into a
+  table, the loader learns ownership, and a preview that writes nothing.** No
+  client-visible change: `RULES_FROM_DB` ships OFF, and built and tested on a
+  restored copy of the database (`minghwee-kb-test`, `cupwomqvevxravkppuxt`)
+  only. Branch `kb-admin-prep`.
+  (A) **`cb_kb_rules`** - one table, 17 rows, replacing
+  `guards.FEE_STATED_SERVICES` / `COST_WITHHELD_SERVICES`,
+  `ticket.FEE_BY_NATIONALITY` and `info_collector._SALARY_FLOOR_BY_NATIONALITY`
+  (and carrying the WhatsApp number and office address, which no code reads).
+  NOT inside `cb_knowledge_base_updated`: a rule row there would be retrievable
+  once embedded and `is_active` would mean two things. The database refuses
+  what the code would regret - checked on the copy: fee_enquiry set to stated or
+  unlocked, transfer changed without transfer_employer (a commit-time trigger),
+  insurance given a price, an unknown nationality, a S$6,500 floor, a duplicate.
+  RLS on with no policies, so the portal's key cannot see it.
+  (B) **`kb_rules.py`** is the one reader. Callers are synchronous functions on
+  the hot path, so they read a snapshot and never the database; `run_turn`
+  refreshes it before the turn, at most once a minute. A snapshot is validated
+  WHOLE - an empty, half-read or invalid table is refused and the last good set
+  stays, else the code defaults - because "withhold everything" would also
+  switch off the retrieval filter that keeps $695 out of a $450 passport
+  renewal. Proved live: table readable -> table; database lost -> last good;
+  never read -> defaults.
+  (C) **Equivalence, proved rather than argued.** A record/replay harness ran
+  19 probes (the agency's six fee examples, Myanmar passport, direct hire,
+  passport-vs-permit, ambiguous fee, the Filipino budget and salary, seven
+  controls) on `main`, recorded all 74 model and embedding calls, and replayed
+  them on the branch with the clock frozen: **every prompt byte-identical and
+  every reply identical, switch on and switch off.** `smoke_nodes.py` now runs
+  all 144 node states under the defaults and under the table and requires them
+  identical - and runs a third pass with direct hire wrongly 'stated', which
+  must change something, or "identical" could mean blind. Fault injected into
+  the live table: 5 + 1 + 1 checks red with the switch on, green once restored.
+  (D) **Ownership.** Every row now carries `metadata.managed_by`, merged into
+  the existing metadata (verified row by row against an export: 401 rows, 0
+  mismatches, no other column touched). The loader skips and reports a `ui`
+  row on all four write paths; live, it found a `ui` test row through a
+  TEXT_REPLACEMENTS needle and left it byte-identical, where `main`'s loader
+  would have rewritten its salary text.
+  (E) **The loader was not idempotent, and had not been since 2026-09-22.** The
+  transfer-cost UPDATES entry sets `contact_type` and `section_heading`, the
+  "already correct" test compared them, and the SELECT never fetched them - so
+  a correct row was rewritten and re-embedded on every run. It fetches what it
+  compares now; two consecutive runs change 0 rows (fingerprint of all 401
+  rows, embeddings included, identical). The loader also REQUIRES
+  `--expect-ref <project ref>` unless `--dry-run`.
+  (F) **`smoke_nodes.py` had been writing to production.** Since 2026-09-14 its
+  "claim" check left `touch_inbound` real, so every run sent `UPDATE
+  wp_chat_conversations SET status='open' WHERE id=4432` to whatever `.env`
+  named. Stubbed; the suite now passes with no database configured at all.
+  (G) **`POST /admin/preview`** runs the real graph under `app/readonly.py`:
+  every non-GET query and every RPC but the KB search is refused at
+  `Database.execute`/`Database.rpc` and listed; Whapi refuses to connect.
+  Proved by counting rows in 12 tables around in-process and HTTP previews -
+  unchanged; the early lead insert was intercepted and reported. Known and
+  accepted: a turn that would create a ticket gets an empty insert result, so
+  its reply is the one the bot sends when that insert fails.
+  (H) **`APP_ENV_FILE`** so a whole env file can be swapped; with it fixed at
+  `.env`, a key the test file forgot would have been filled from production.
+  And a blank `BOT_ALLOWED_NUMBERS` turns the gate OFF, not on - the test file
+  uses a value with no valid number, which is the fail-closed path.
+  **Found and NOT changed**, all measured on `main`: §9.28 (Myanmar $450, ~1 in
+  10), §9.29 (ambiguous fee, ~1 in 10), §9.30 (three of the agency's six fee
+  examples not quoted at HEAD).
+  `selfcheck_flows.py` is 678 assertions (unchanged, now read from the table
+  when switched on); `smoke_nodes.py` is 187 checks; `selfcheck_kb_prep.py` is
+  26 offline + 4 live (+4 with `--preview`).
 
 - **2026-09-23** - **The house-rules question asked twice, and a fee "for
   your situation".** Two items from the agency's new-hiring test,

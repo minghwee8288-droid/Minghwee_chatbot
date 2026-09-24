@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from app import readonly
 from app.config import settings
 from app.utils import digits_only, normalize_phone
 
@@ -61,6 +62,13 @@ class WhapiClient:
         self._last_sweep: float = 0.0
 
     async def _get_client(self) -> httpx.AsyncClient:
+        # Every Whapi request - send, read receipt, lookup - comes through here.
+        # A read-only request (POST /admin/preview) must never reach WhatsApp.
+        if readonly.active():
+            readonly.record("WHAPI", self._base_url)
+            raise readonly.ReadOnlyViolation(
+                "read-only request tried to contact WhatsApp (Whapi)"
+            )
         if self._client is None or self._client.is_closed:
             async with self._lock:
                 if self._client is None or self._client.is_closed:

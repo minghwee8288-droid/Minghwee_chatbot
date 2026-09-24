@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # APP_ENV_FILE points a run at a different env file - `.env.test` for the
+    # restored test copy of the database. Unset, it is `.env` exactly as before.
+    # It has to be a whole FILE rather than a few overriding variables: with
+    # env_file fixed at `.env`, any key the test file forgot would be filled in
+    # from production's, and the production file is the one holding the
+    # production database URL.
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=os.getenv("APP_ENV_FILE", ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -272,6 +279,16 @@ class Settings(BaseSettings):
     # Leave true so the bot does not double-count unread badges; set false when
     # running the bot on a channel the portal is not connected to.
     portal_manages_conversation_meta: bool = True
+
+    # --- KB Admin UI preparation ---
+    # Read the pricing/contact rules from cb_kb_rules instead of the code
+    # defaults in app/services/kb_rules.py. OFF means byte-for-byte today's
+    # behaviour. Switch on only after selfcheck_kb_prep.py's drift check passes
+    # against the database this points at.
+    rules_from_db: bool = False
+    # Secret for POST /admin/preview (X-Admin-Preview-Key header). Empty means
+    # the endpoint does not exist - it answers 404, the same as any unknown path.
+    admin_preview_secret: str = ""
 
     @property
     def is_production(self) -> bool:

@@ -9,11 +9,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from functools import lru_cache
+from types import SimpleNamespace
 from typing import Any, Callable, TypeVar
 
 import httpx
 from supabase import Client, create_client
 
+from app import readonly
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -91,6 +93,14 @@ class Database:
         straight through to the raise.
         """
         is_read = str(getattr(query, "http_method", "")).upper() in {"GET", "HEAD"}
+        if not is_read and readonly.active():
+            # POST /admin/preview: see app/readonly.py. An empty result is what
+            # every caller already handles when a write returns nothing.
+            readonly.record(
+                str(getattr(query, "http_method", "?")).upper(),
+                str(getattr(query, "path", "?")),
+            )
+            return SimpleNamespace(data=[], count=None)
         attempts = _READ_RETRIES + 1 if is_read else 1
         for attempt in range(1, attempts + 1):
             try:
@@ -179,6 +189,9 @@ class Database:
         return result.data or []
 
     async def rpc(self, function_name: str, params: dict | None = None) -> Any:
+        if readonly.active() and function_name not in readonly.READ_RPCS:
+            readonly.record("RPC", function_name)
+            return None
         result = await run_sync(lambda: self.client.rpc(function_name, params or {}).execute())
         return result.data
 
