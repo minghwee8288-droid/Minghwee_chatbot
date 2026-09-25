@@ -1060,13 +1060,13 @@ Ordered by what will hurt first.
     outside, `curl -X POST` `/admin/preview` against the public hostname and
     against `<server-ip>:8000`. Want: port 8000 unreachable from outside, and
     nginx forwarding only `/webhook/` and `/health`.
-35. **The server's `docker-compose.yml` differs from the repo.** On
-    `/home/deploy/Minghwee_chatbot` it carries a local change (found
-    2026-09-24): port 8000 bound to `127.0.0.1` only, and Docker log rotation
-    added. Both are right and should be the repo's version - commit that
-    server change to the repo later. Until then the repo's file publishes 8000
-    on every interface, and a `git checkout -- docker-compose.yml` or a fresh
-    clone on a new box would silently undo it.
+35. ~~**The server's `docker-compose.yml` differs from the repo.**~~
+    **RESOLVED 2026-09-25**: the repo's `docker-compose.yml` now carries the
+    server's change, so a `git checkout` or a fresh clone keeps it. Found
+    2026-09-24 on `/home/deploy/Minghwee_chatbot`: port 8000 bound to
+    `127.0.0.1` only (`"127.0.0.1:8000:8000"`), and Docker log rotation
+    (`json-file`, `max-size` 10m, `max-file` 5). Until then the repo's file
+    published 8000 on every interface.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
