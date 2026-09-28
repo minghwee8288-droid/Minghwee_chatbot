@@ -27,19 +27,34 @@ graph (the 90s repeat guard, splitting, sending) is not run, because it is
 about delivery rather than content.
 
 Protected by its own secret (ADMIN_PREVIEW_SECRET, header X-Admin-Preview-Key),
-compared in constant time. With no secret configured the route answers 404,
-the same as a path that does not exist.
+compared in constant time. The order is the protection (§9.32):
+
+1. No secret configured: main.py never registers this router, so the path
+   does not exist - 404, whatever the body, and absent from the schema.
+2. The key is checked in a route DEPENDENCY, and the body is NOT a declared
+   parameter. FastAPI decodes a declared body before it runs dependencies, so
+   with `body: PreviewRequest` a bodiless or malformed POST answered 422 to
+   anyone and confirmed the route existed. Here the body is read and
+   validated by hand, after the key: no key or a wrong key is always 401, and
+   422 is only ever seen by somebody holding the secret.
+3. Previews run the real model inside the live bot's single process, so they
+   are rate-limited (ADMIN_PREVIEW_PER_MINUTE) and never run two at once. A
+   limit is answered 429 rather than queued, so a flood cannot hold open
+   connections against the webhook.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
+import time
 import uuid
+from collections import deque
 from typing import Any, Literal
 
-from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel, Field, ValidationError
 
 from app import readonly
 from app.config import settings
@@ -52,6 +67,12 @@ router = APIRouter()
 MAX_TURNS = 10
 MAX_MESSAGE_CHARS = 2000
 MAX_SOURCES = 5
+# Ten 2000-character messages plus context fit comfortably; anything larger
+# is not a preview and is refused before it is parsed.
+MAX_BODY_BYTES = 32_000
+
+_recent: deque[float] = deque()
+_running = asyncio.Lock()
 
 
 class PreviewRequest(BaseModel):
@@ -71,12 +92,47 @@ _CONTEXT_KEYS = frozenset({
 })
 
 
-def _check_key(given: str | None) -> None:
+def require_preview_key(x_admin_preview_key: str | None = Header(default=None)) -> None:
     secret = settings.admin_preview_secret
+    # Defence in depth: main.py does not register the route without a secret.
     if not secret:
         raise HTTPException(status_code=404, detail="Not Found")
-    if not given or not hmac.compare_digest(given.encode(), secret.encode()):
+    given = x_admin_preview_key or ""
+    if not hmac.compare_digest(given.encode(), secret.encode()):
         raise HTTPException(status_code=401, detail="bad or missing X-Admin-Preview-Key")
+
+
+def _take_rate_slot() -> None:
+    """Sliding one-minute window. In-process, which is exact here: the bot
+    runs one worker and one replica (CLAUDE.md §3)."""
+    now = time.monotonic()
+    while _recent and now - _recent[0] > 60:
+        _recent.popleft()
+    if len(_recent) >= max(settings.admin_preview_per_minute, 0):
+        raise HTTPException(status_code=429, detail="preview rate limit reached, try again shortly")
+    _recent.append(now)
+
+
+def _parse(raw: bytes) -> PreviewRequest:
+    if len(raw) > MAX_BODY_BYTES:
+        raise HTTPException(status_code=413, detail=f"body over {MAX_BODY_BYTES} bytes")
+    try:
+        body = PreviewRequest.model_validate_json(raw or b"")
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=exc.errors(include_url=False, include_context=False, include_input=False),
+        ) from exc
+    for text in body.messages:
+        if not text.strip() or len(text) > MAX_MESSAGE_CHARS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"each message must be 1-{MAX_MESSAGE_CHARS} characters",
+            )
+    unknown = set(body.context) - _CONTEXT_KEYS
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"unknown context keys: {sorted(unknown)}")
+    return body
 
 
 def _sources(matches: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -92,22 +148,27 @@ def _sources(matches: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     return out
 
 
-@router.post("/admin/preview")
-async def preview(
-    body: PreviewRequest,
-    x_admin_preview_key: str | None = Header(default=None),
-) -> dict[str, Any]:
-    _check_key(x_admin_preview_key)
-    for text in body.messages:
-        if not text.strip() or len(text) > MAX_MESSAGE_CHARS:
-            raise HTTPException(
-                status_code=422,
-                detail=f"each message must be 1-{MAX_MESSAGE_CHARS} characters",
-            )
-    unknown = set(body.context) - _CONTEXT_KEYS
-    if unknown:
-        raise HTTPException(status_code=422, detail=f"unknown context keys: {sorted(unknown)}")
+@router.post("/admin/preview", dependencies=[Depends(require_preview_key)])
+async def preview(request: Request) -> dict[str, Any]:
+    # Reached only with a valid key (the dependency runs first, and there is
+    # no declared body for FastAPI to validate ahead of it).
+    _take_rate_slot()
+    body = _parse(await request.body())
+    if _running.locked():
+        raise HTTPException(status_code=429, detail="a preview is already running")
+    async with _running:
+        # Lengths only: a test question is not logged, and the key never is.
+        logger.info("preview: %d turn(s), %d chars", len(body.messages),
+                    sum(len(m) for m in body.messages))
+        return await run_preview(body)
 
+
+async def run_preview(body: PreviewRequest) -> dict[str, Any]:
+    """The preview itself: the real graph on one throwaway thread, read-only.
+
+    Separate from the route so selfcheck_kb_prep.py --preview can call it
+    directly, and so the route's own checks can be tested with it stubbed.
+    """
     # Imported here: the graph pulls in every node, and the app must still
     # start (and /admin/preview still 404) with the graph unbuilt.
     from langgraph.checkpoint.memory import MemorySaver

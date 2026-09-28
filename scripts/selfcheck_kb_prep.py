@@ -274,6 +274,101 @@ def preview_offline() -> None:
           readonly.READ_RPCS == {rag.KB_MATCH_FUNCTION})
 
 
+async def preview_http_offline() -> None:
+    """The route's gatekeeping, over real HTTP against create_app(), with the
+    graph stubbed out (§9.32/§9.33). No network, no database, no model: the
+    lifespan is not run, and run_preview is replaced."""
+    import httpx
+
+    from app import main
+    from app.api import admin
+    from app.config import settings
+
+    secret = "offline-test-secret-" + "x" * 24
+    good = {"messages": ["how much is a passport renewal?"]}
+    stub = AsyncMock(return_value={"turns": [], "refused_writes": [], "rules_source": "t"})
+
+    async def call(path="/admin/preview", *, secret_set: bool, docs=False, key=None,
+                   body=None, raw=None, method="POST"):
+        with patch.object(settings, "admin_preview_secret", secret if secret_set else ""), \
+             patch.object(settings, "enable_api_docs", docs), \
+             patch.object(admin, "run_preview", stub):
+            app = main.create_app()
+            headers = {"X-Admin-Preview-Key": key} if key is not None else {}
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                         base_url="http://t") as client:
+                if method == "GET":
+                    return await client.get(path)
+                if raw is not None:
+                    return await client.post(path, content=raw, headers={
+                        **headers, "content-type": "application/json"})
+                if body is not None:
+                    return await client.post(path, json=body, headers=headers)
+                return await client.post(path, headers=headers)
+
+    def reset_limits() -> None:
+        admin._recent.clear()
+
+    reset_limits()
+    cases = [
+        ("no secret + no body -> 404", dict(secret_set=False), 404),
+        ("no secret + valid body + a key -> 404", dict(secret_set=False, key=secret, body=good), 404),
+        ("secret + no key + no body -> 401 (never 422)", dict(secret_set=True), 401),
+        ("secret + no key + malformed JSON -> 401 (never 422)",
+         dict(secret_set=True, raw=b"{not json"), 401),
+        ("secret + wrong key + valid body -> 401", dict(secret_set=True, key="nope", body=good), 401),
+        ("secret + empty key -> 401", dict(secret_set=True, key="", body=good), 401),
+        ("secret + key + no body -> 422", dict(secret_set=True, key=secret), 422),
+        ("secret + key + malformed JSON -> 422", dict(secret_set=True, key=secret, raw=b"{no"), 422),
+        ("secret + key + bad body (no messages) -> 422",
+         dict(secret_set=True, key=secret, body={"messages": []}), 422),
+        ("secret + key + unknown context key -> 422",
+         dict(secret_set=True, key=secret, body={**good, "context": {"conversation_id": 1}}), 422),
+        ("secret + key + oversized body -> 413",
+         dict(secret_set=True, key=secret, raw=b'{"messages":["' + b"a" * 40_000 + b'"]}'), 413),
+        ("secret + key + valid body -> 200", dict(secret_set=True, key=secret, body=good), 200),
+    ]
+    for label, kwargs, want in cases:
+        reset_limits()
+        r = await call(**kwargs)
+        check(f"preview: {label}", r.status_code == want, f"got {r.status_code}")
+    check("...and the graph ran only for the requests holding the key with a valid body",
+          stub.await_count == 1, f"run_preview awaited {stub.await_count}x")
+
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        r = await call(path, secret_set=True, method="GET")
+        check(f"{path} is 404 by default (ENABLE_API_DOCS off)", r.status_code == 404,
+              f"got {r.status_code}")
+        r = await call(path, secret_set=True, docs=True, method="GET")
+        check(f"{path} is 200 only when ENABLE_API_DOCS=true", r.status_code == 200,
+              f"got {r.status_code}")
+    r = await call("/openapi.json", secret_set=False, docs=True, method="GET")
+    check("with no secret the preview route is absent from the schema itself",
+          r.status_code == 200 and "/admin/preview" not in r.text)
+
+    reset_limits()
+    with patch.object(settings, "admin_preview_per_minute", 3):
+        codes = [(await call(secret_set=True, key=secret, body=good)).status_code for _ in range(4)]
+    check("preview: the 4th request in a minute over a limit of 3 -> 429",
+          codes == [200, 200, 200, 429], f"got {codes}")
+
+    reset_limits()
+    await admin._running.acquire()
+    try:
+        # Bounded: without the busy check the request queues on the lock this
+        # test is holding, and an unbounded wait would hang the self-check
+        # instead of failing it.
+        r = await asyncio.wait_for(call(secret_set=True, key=secret, body=good), 5)
+        got = r.status_code
+    except asyncio.TimeoutError:
+        got = "queued (timed out waiting)"
+    finally:
+        admin._running.release()
+    check("preview: a second preview while one runs -> 429, not queued",
+          got == 429, f"got {got}")
+    reset_limits()
+
+
 # --- live, read-only --------------------------------------------------------
 
 async def _count(table: str) -> int | None:
@@ -331,9 +426,7 @@ async def live(preview: bool) -> None:
 
     from fastapi import HTTPException
 
-    from app.api.admin import PreviewRequest
-    from app.api.admin import preview as preview_handler
-    from app.config import settings
+    from app.api.admin import PreviewRequest, run_preview
 
     rest_tables = ["cb_tickets", "cb_handovers", "leads", "leads_candidate",
                    "wp_chat_conversations", "wp_chat_messages", KB_TABLE, "cb_kb_rules"]
@@ -341,9 +434,8 @@ async def live(preview: bool) -> None:
                  "cb_round_robin_state"]
     before = {t: await _count(t) for t in rest_tables} | _pg_counts(pg_tables)
 
-    if not settings.admin_preview_secret:
-        check("preview: ADMIN_PREVIEW_SECRET is set for this run", False)
-        return
+    # run_preview is called directly - the secret guards the HTTP route, which
+    # preview_http_offline covers - so this run needs no ADMIN_PREVIEW_SECRET.
     bodies = [
         PreviewRequest(messages=["how much is a passport renewal for a filipino helper?"]),
         # opens a hiring intake: the collector tries to open a lead early
@@ -353,7 +445,7 @@ async def live(preview: bool) -> None:
     refused_any: list[dict[str, str]] = []
     for body in bodies:
         try:
-            out = await preview_handler(body, settings.admin_preview_secret)
+            out = await run_preview(body)
         except HTTPException as exc:
             check(f"preview answered: {body.messages[0]!r}", False, str(exc.detail))
             continue
@@ -383,6 +475,7 @@ async def amain() -> int:
     await loader_offline()
     print("PREP 3 - preview (offline)")
     preview_offline()
+    await preview_http_offline()
 
     if not args.offline:
         if not args.expect_ref:

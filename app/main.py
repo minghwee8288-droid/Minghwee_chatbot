@@ -71,26 +71,44 @@ async def lifespan(_app: FastAPI):
     await close_graph()
 
 
-app = FastAPI(
-    title="Ming Hwee WhatsApp Chatbot",
-    description="WhatsApp assistant for Ming Hwee Employment Agency (MOM Licence 12C6072)",
-    version=__version__,
-    lifespan=lifespan,
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(health_router)
-app.include_router(webhook_router)
-app.include_router(admin_router)
-
-
-@app.get("/")
 async def root() -> dict[str, str]:
     return {"service": "minghwee-chatbot", "version": __version__}
+
+
+def create_app() -> FastAPI:
+    """Build the app from the current settings.
+
+    A function rather than module-level code so selfcheck_kb_prep.py can build
+    it with the preview secret set and unset and check what each exposes.
+    """
+    docs = settings.enable_api_docs
+    application = FastAPI(
+        title="Ming Hwee WhatsApp Chatbot",
+        description="WhatsApp assistant for Ming Hwee Employment Agency (MOM Licence 12C6072)",
+        version=__version__,
+        lifespan=lifespan,
+        # Off unless ENABLE_API_DOCS=true: they list every route (§9.33).
+        docs_url="/docs" if docs else None,
+        redoc_url="/redoc" if docs else None,
+        openapi_url="/openapi.json" if docs else None,
+    )
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    application.include_router(health_router)
+    application.include_router(webhook_router)
+    # With no secret the preview route does not exist at all: 404 whatever the
+    # body, and nothing in the schema. Checking the key inside the handler was
+    # not enough - FastAPI validated the body first, so a bodiless POST
+    # answered 422 and confirmed the route was there (§9.32).
+    if settings.admin_preview_secret:
+        application.include_router(admin_router)
+    application.add_api_route("/", root, methods=["GET"])
+    return application
+
+
+app = create_app()

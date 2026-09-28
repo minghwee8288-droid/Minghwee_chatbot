@@ -287,8 +287,17 @@ class Settings(BaseSettings):
     # against the database this points at.
     rules_from_db: bool = False
     # Secret for POST /admin/preview (X-Admin-Preview-Key header). Empty means
-    # the endpoint does not exist - it answers 404, the same as any unknown path.
+    # the route is never registered - it answers 404 and is absent from the
+    # API schema, whatever body is sent (§9.32).
     admin_preview_secret: str = ""
+    # Previews run the real model inside the live bot's one process, so they
+    # are capped: this many per minute, and never two at once.
+    admin_preview_per_minute: int = 10
+    # /docs, /redoc and /openapi.json. Opt-in rather than keyed on
+    # ENVIRONMENT, because ENVIRONMENT defaults to "development" and
+    # .env.example sets it so - a server that never changed it would publish
+    # every route, the webhook path pattern included (§9.33).
+    enable_api_docs: bool = False
 
     @property
     def is_production(self) -> bool:
