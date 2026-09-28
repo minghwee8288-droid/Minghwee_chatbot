@@ -1,5 +1,6 @@
 import Link from 'next/link';
-import { Pill, Shell } from '@/components/Shell';
+import { Shell } from '@/components/Shell';
+import { ActivePill, ENTRY_TYPES, MAINTAINED_BY, PageHeader } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
 import { FILTERS, PAGE_SIZE, filterOptions, rows, type FilterKey } from '@/lib/queries';
 
@@ -10,8 +11,14 @@ const LABELS: Record<FilterKey, string> = {
   service_type: 'Service',
   contact_type: 'Audience',
   nationality: 'Nationality',
-  chunk_type: 'Type',
-  managed_by: 'Managed by',
+  chunk_type: 'Entry type',
+  managed_by: 'Maintained by',
+};
+
+/** What each dropdown shows for a value. The value sent is always the raw one. */
+const OPTION_NAMES: Partial<Record<FilterKey, Record<string, string>>> = {
+  chunk_type: ENTRY_TYPES,
+  managed_by: MAINTAINED_BY,
 };
 
 function one(v: string | string[] | undefined): string {
@@ -37,92 +44,180 @@ export default async function RowsPage({ searchParams }: { searchParams: Params 
   const total = list[0]?.total_count ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  const link = (p: number) => {
+  const query = (p: number | null) => {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(filters)) if (v) qs.set(k, v);
     if (active !== 'all') qs.set('active', active);
     if (search) qs.set('q', search);
-    qs.set('page', String(p));
-    return `/rows?${qs.toString()}`;
+    if (p !== null) qs.set('page', String(p));
+    return qs.toString();
   };
+  const link = (p: number) => `/rows?${query(p)}`;
+  const here = query(page);
+  const filtered = Object.keys(filters).length > 0 || active !== 'all' || Boolean(search);
+  const entries = (n: number) => `${n.toLocaleString('en-SG')} ${n === 1 ? 'entry' : 'entries'}`;
 
   return (
     <Shell viewer={viewer} active="/rows">
-      <h1 className="mb-3 text-xl font-semibold">Rows</h1>
-      <form method="get" className="mb-4 grid gap-2 rounded-lg border border-slate-200 bg-white p-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-        <label className="flex flex-col gap-1 sm:col-span-2 lg:col-span-4">
-          <span className="text-xs text-slate-500">Search question, answer, content and heading</span>
-          <input name="q" defaultValue={search} className="rounded-md border border-slate-300 px-2 py-1.5" />
-        </label>
-        {(Object.keys(FILTERS) as FilterKey[]).map((key) => (
-          <label key={key} className="flex flex-col gap-1">
-            <span className="text-xs text-slate-500">{LABELS[key]}</span>
-            <select name={key} defaultValue={filters[key] ?? ''} className="rounded-md border border-slate-300 px-2 py-1.5">
-              <option value="">All</option>
-              {options[key].map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
+      <PageHeader
+        title="Browse entries"
+        sub={filtered ? `${entries(total)} match your filters` : `${entries(total)} in the knowledge base`}
+      />
+
+      <form method="get" className="card card-pad" aria-label="Filter entries">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[260px] flex-[2_1_300px]">
+            <label htmlFor="f-q" className="field-label mb-1.5 block">
+              Search
+            </label>
+            <input
+              id="f-q"
+              name="q"
+              type="search"
+              defaultValue={search}
+              placeholder="Search the text…"
+              className="input"
+            />
+          </div>
+          {(Object.keys(FILTERS) as FilterKey[]).map((key) => (
+            <div key={key} className="min-w-[140px] flex-[1_1_150px]">
+              <label htmlFor={`f-${key}`} className="field-label mb-1.5 block">
+                {LABELS[key]}
+              </label>
+              <select id={`f-${key}`} name={key} defaultValue={filters[key] ?? ''} className="select">
+                <option value="">All</option>
+                {options[key].map((v) => (
+                  <option key={v} value={v}>
+                    {OPTION_NAMES[key]?.[v] ?? v}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ))}
+          <div className="min-w-[120px] flex-[1_1_130px]">
+            <label htmlFor="f-active" className="field-label mb-1.5 block">
+              Status
+            </label>
+            <select id="f-active" name="active" defaultValue={active} className="select">
+              <option value="all">All</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
             </select>
-          </label>
-        ))}
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-slate-500">Status</span>
-          <select name="active" defaultValue={active} className="rounded-md border border-slate-300 px-2 py-1.5">
-            <option value="all">All</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-          </select>
-        </label>
-        <div className="flex items-end gap-2">
-          <button className="rounded-md bg-brand px-3 py-1.5 text-white">Apply</button>
-          <Link href="/rows" className="rounded-md border border-slate-300 px-3 py-1.5">
-            Clear
-          </Link>
+          </div>
+          <div className="flex gap-2">
+            <button type="submit" className="btn btn-primary">
+              Apply
+            </button>
+            {filtered ? (
+              <Link href="/rows" className="btn btn-secondary">
+                Clear
+              </Link>
+            ) : null}
+          </div>
         </div>
       </form>
 
-      <p className="mb-2 text-sm text-slate-500">
-        {total} matching row{total === 1 ? '' : 's'}
-        {total > PAGE_SIZE ? ` · page ${page} of ${pages}` : ''}
-      </p>
-
-      <ul className="space-y-2">
-        {list.map((r) => (
-          <li key={r.id} className="rounded-lg border border-slate-200 bg-white p-3">
-            <div className="flex flex-wrap items-start gap-2">
-              <Link href={`/rows/${r.id}`} className="font-medium text-brand underline-offset-2 hover:underline">
-                {r.question || r.section_heading || '(untitled chunk)'}
-              </Link>
-              {!r.is_active ? <Pill tone="amber">inactive</Pill> : null}
-            </div>
-            <p className="mt-1 line-clamp-2 text-sm text-slate-600">{r.snippet}</p>
-            <div className="mt-2 flex flex-wrap gap-1">
-              <Pill>{r.service_type}</Pill>
-              <Pill>{r.contact_type}</Pill>
-              <Pill>{r.nationality}</Pill>
-              <Pill>{r.chunk_type}</Pill>
-              <Pill>{r.source_document ?? '—'}</Pill>
-            </div>
-          </li>
-        ))}
-      </ul>
-
-      {pages > 1 ? (
-        <div className="mt-4 flex gap-2 text-sm">
-          {page > 1 ? (
-            <Link href={link(page - 1)} className="rounded-md border border-slate-300 px-3 py-1.5">
-              ← Previous
+      {list.length === 0 ? (
+        <div className="card card-pad text-center">
+          <p className="font-medium">No entries match these filters.</p>
+          <p className="mt-1 text-[13px] text-muted">
+            Try a shorter search or fewer filters, or{' '}
+            <Link href="/rows" className="link">
+              clear all filters
             </Link>
-          ) : null}
-          {page < pages ? (
-            <Link href={link(page + 1)} className="rounded-md border border-slate-300 px-3 py-1.5">
-              Next →
-            </Link>
-          ) : null}
+            .
+          </p>
         </div>
-      ) : null}
+      ) : (
+        <div className="card tbl-wrap">
+          <table className="tbl" style={{ tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: 58 }} />
+              <col />
+              <col style={{ width: 200 }} />
+              <col style={{ width: 140 }} />
+              <col style={{ width: 100 }} />
+              <col style={{ width: 96 }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th scope="col">#</th>
+                <th scope="col">Entry</th>
+                <th scope="col">Document</th>
+                <th scope="col">Service</th>
+                <th scope="col">Audience</th>
+                <th scope="col">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((r, i) => {
+                const heading = r.question || r.section_heading;
+                return (
+                  <tr key={r.id}>
+                    <td className="mono text-[12px] text-faint">{(page - 1) * PAGE_SIZE + i + 1}</td>
+                    <td className="truncate-cell">
+                      <Link href={`/rows/${r.id}${here ? `?${here}` : ''}`} className="block">
+                        <span className="link block truncate font-semibold" title={heading ?? undefined}>
+                          {heading || 'Untitled passage'}
+                        </span>
+                        {r.snippet ? (
+                          <span className="mt-0.5 line-clamp-2 text-[12px] leading-[1.5] text-muted">{r.snippet}</span>
+                        ) : null}
+                      </Link>
+                    </td>
+                    <td className="truncate-cell">
+                      <span className="block truncate text-muted" title={r.source_document ?? undefined}>
+                        {r.source_document || '—'}
+                      </span>
+                    </td>
+                    <td className="truncate-cell">
+                      <span className="mono block truncate text-[12px]" title={r.service_type}>
+                        {r.service_type}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="mono text-[12px]">{r.contact_type}</span>
+                    </td>
+                    <td>
+                      <ActivePill active={r.is_active} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          <nav
+            className="flex items-center justify-between gap-3 border-t px-4 py-3"
+            style={{ borderColor: 'var(--divider)' }}
+            aria-label="Pages"
+          >
+            <p className="text-[13px] text-muted">
+              Page <span className="mono">{page}</span> of <span className="mono">{pages}</span> · {entries(total)}
+            </p>
+            <div className="flex gap-2">
+              {page > 1 ? (
+                <Link href={link(page - 1)} className="btn btn-secondary">
+                  ← Previous
+                </Link>
+              ) : (
+                <span className="btn btn-disabled" aria-disabled="true">
+                  ← Previous
+                </span>
+              )}
+              {page < pages ? (
+                <Link href={link(page + 1)} className="btn btn-secondary">
+                  Next →
+                </Link>
+              ) : (
+                <span className="btn btn-disabled" aria-disabled="true">
+                  Next →
+                </span>
+              )}
+            </div>
+          </nav>
+        </div>
+      )}
     </Shell>
   );
 }

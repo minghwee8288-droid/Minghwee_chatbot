@@ -3,48 +3,54 @@
 import { useFormState, useFormStatus } from 'react-dom';
 import { login, type LoginState } from './actions';
 
+export type Notice = { text: string; tone: 'info' | 'error' };
+
 function Submit() {
   const { pending } = useFormStatus();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="w-full rounded-md bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-    >
+    <button type="submit" disabled={pending} className="btn btn-primary w-full">
       {pending ? 'Signing in…' : 'Sign in'}
     </button>
   );
 }
 
-export function LoginForm({ notice }: { notice: string }) {
+export function LoginForm({ notice }: { notice?: Notice }) {
   const [state, action] = useFormState<LoginState, FormData>(login, { error: '' });
-  const message = state.error || notice;
+  // A failed sign-in always shows the same generic message (from actions.ts),
+  // whether or not the email exists.
+  const shown: Notice | undefined = state.error ? { text: state.error, tone: 'error' } : notice;
   return (
     <form action={action} className="space-y-4">
-      <label className="block text-sm">
-        <span className="text-slate-600">Email</span>
+      <div>
+        <label htmlFor="email" className="field-label mb-1.5 block">
+          Email
+        </label>
+        <input id="email" name="email" type="email" autoComplete="username" required className="input h-10" />
+      </div>
+      <div>
+        <label htmlFor="password" className="field-label mb-1.5 block">
+          Password
+        </label>
         <input
-          name="email"
-          type="email"
-          autoComplete="username"
-          required
-          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2"
-        />
-      </label>
-      <label className="block text-sm">
-        <span className="text-slate-600">Password</span>
-        <input
+          id="password"
           name="password"
           type="password"
           autoComplete="current-password"
           required
-          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2"
+          className="input h-10"
         />
-      </label>
-      {message ? (
-        <p role="alert" className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          {message}
-        </p>
+      </div>
+      {shown ? (
+        shown.tone === 'error' ? (
+          <div role="alert" className="notice notice-red">
+            {shown.text}
+          </div>
+        ) : (
+          <div role="status" className="notice notice-amber">
+            <span className="notice-dot" aria-hidden="true" />
+            <span>{shown.text}</span>
+          </div>
+        )
       ) : null}
       <Submit />
     </form>

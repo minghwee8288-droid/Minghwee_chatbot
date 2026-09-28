@@ -1,67 +1,177 @@
-import { Pill, Shell } from '@/components/Shell';
+import { Shell } from '@/components/Shell';
+import { AmberNotice, PageHeader, Pill, formatDate } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
-import { rules } from '@/lib/queries';
+import { rules, type Rule } from '@/lib/queries';
 
-const EXPLAIN: Record<string, string> = {
-  price_policy: 'Whether the bot may quote this service’s fee (stated) or must defer to an agent (withheld).',
-  price_nationality: 'The nationalities we hold a fee for, on a service priced per nationality.',
-  salary_floor: 'Minimum monthly salary (SGD) a helper of this nationality can be placed at.',
-  contact: 'Contact details the agency publishes.',
+type Group = {
+  title: string;
+  explain: string;
+  subjectLabel: string;
+  valueLabel: string;
+  /** What the rule is about: a service, a nationality or a contact item. */
+  subject: (r: Rule) => React.ReactNode;
+  value: (r: Rule) => React.ReactNode;
 };
 
-function show(value: unknown): string {
-  return typeof value === 'string' ? value : JSON.stringify(value);
+const CONTACT_ITEMS: Record<string, string> = {
+  office_address: 'Office address',
+  whatsapp_number: 'WhatsApp number',
+};
+
+const NATIONALITIES: Record<string, string> = { PH: 'Philippines', ID: 'Indonesia', MM: 'Myanmar' };
+
+/** Any rule value as plain text - never as JSON. */
+function plain(value: unknown): string {
+  if (value === null || value === undefined) return '—';
+  if (Array.isArray(value)) return value.map(plain).join(' · ');
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([k, v]) => `${k}: ${plain(v)}`)
+      .join(' · ');
+  }
+  return String(value);
+}
+
+const Mono = ({ children }: { children: React.ReactNode }) => <span className="mono font-semibold">{children}</span>;
+const Code = ({ children }: { children: React.ReactNode }) => <span className="mono text-[12px]">{children}</span>;
+
+const POLICY: Record<string, string> = {
+  stated: 'The chatbot quotes the fee',
+  withheld: 'The chatbot passes fee questions to an agent',
+};
+
+const GROUPS: Record<string, Group> = {
+  price_policy: {
+    title: 'Pricing policy',
+    explain: 'Whether the chatbot may quote the fee for each service, or must leave it to an agent.',
+    subjectLabel: 'Service',
+    valueLabel: 'Policy',
+    subject: (r) => <Code>{r.service_type}</Code>,
+    value: (r) => (
+      <>
+        <Mono>{plain(r.value)}</Mono>
+        {typeof r.value === 'string' && POLICY[r.value] ? (
+          <span className="ml-2 text-[12px] text-muted">{POLICY[r.value]}</span>
+        ) : null}
+      </>
+    ),
+  },
+  price_nationality: {
+    title: 'Fees by nationality',
+    explain: 'For services priced by nationality, the nationalities we hold a fee for.',
+    subjectLabel: 'Service',
+    valueLabel: 'Nationalities with a fee',
+    subject: (r) => <Code>{r.service_type}</Code>,
+    value: (r) => (
+      <span title={Array.isArray(r.value) ? r.value.map((c) => NATIONALITIES[String(c)] ?? String(c)).join(', ') : undefined}>
+        <Mono>{plain(r.value)}</Mono>
+      </span>
+    ),
+  },
+  salary_floor: {
+    title: 'Minimum salary',
+    explain: 'The lowest monthly salary a helper of each nationality can be placed at.',
+    subjectLabel: 'Nationality',
+    valueLabel: 'Minimum monthly salary',
+    subject: (r) => (
+      <>
+        <Code>{r.nationality}</Code>
+        {NATIONALITIES[r.nationality] ? <span className="ml-2 text-muted">{NATIONALITIES[r.nationality]}</span> : null}
+      </>
+    ),
+    value: (r) => <Mono>{typeof r.value === 'number' ? `S$${r.value.toLocaleString('en-SG')}` : plain(r.value)}</Mono>,
+  },
+  contact: {
+    title: 'Contact details',
+    explain: 'The contact details the agency publishes.',
+    subjectLabel: 'Item',
+    valueLabel: 'Value',
+    subject: (r) => (CONTACT_ITEMS[r.service_type] ? <span>{CONTACT_ITEMS[r.service_type]}</span> : <Code>{r.service_type}</Code>),
+    value: (r) => <Mono>{plain(r.value)}</Mono>,
+  },
+};
+
+const ORDER = ['price_policy', 'price_nationality', 'salary_floor', 'contact'];
+
+function fallback(type: string): Group {
+  return {
+    title: type,
+    explain: '',
+    subjectLabel: 'Applies to',
+    valueLabel: 'Value',
+    subject: (r) => (
+      <>
+        <Code>{r.service_type}</Code>
+        {r.nationality !== 'all' ? <Code> · {r.nationality}</Code> : null}
+      </>
+    ),
+    value: (r) => <Mono>{plain(r.value)}</Mono>,
+  };
 }
 
 export default async function RulesPage() {
   const viewer = await requireViewer();
   const list = await rules();
-  const groups = [...new Set(list.map((r) => r.rule_type))];
+  const locked = list.filter((r) => r.locked).length;
+  const types = [...new Set(list.map((r) => r.rule_type))].sort(
+    (a, b) => (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b),
+  );
+
   return (
     <Shell viewer={viewer} active="/rules">
-      <h1 className="mb-1 text-xl font-semibold">Rules</h1>
-      <p className="mb-4 text-sm text-slate-500">
-        The pricing and contact rules the bot reads (cb_kb_rules). {list.length} rules. Locked rules
-        are developer-only and could never be changed from here.
-      </p>
-      <div className="space-y-6">
-        {groups.map((g) => (
-          <section key={g}>
-            <h2 className="font-medium">{g}</h2>
-            <p className="mb-2 text-xs text-slate-500">{EXPLAIN[g] ?? ''}</p>
-            <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-                  <tr>
-                    <th className="px-3 py-2">Service</th>
-                    <th className="px-3 py-2">Nationality</th>
-                    <th className="px-3 py-2">Value</th>
-                    <th className="px-3 py-2">Locked</th>
-                    <th className="px-3 py-2">Last changed</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {list
-                    .filter((r) => r.rule_type === g)
-                    .map((r) => (
-                      <tr key={r.id} className={`border-t border-slate-100 ${r.locked ? 'bg-slate-50' : ''}`}>
-                        <td className="px-3 py-2">{r.service_type}</td>
-                        <td className="px-3 py-2">{r.nationality}</td>
-                        <td className="px-3 py-2 font-mono text-xs">{show(r.value)}</td>
-                        <td className="px-3 py-2">
-                          {r.locked ? <Pill tone="red">🔒 locked</Pill> : <span className="text-slate-400">—</span>}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-xs text-slate-500">
-                          {r.updated_at.slice(0, 16)} · {r.updated_by}
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
+      <PageHeader title="Pricing rules" sub={`${list.length} ${list.length === 1 ? 'rule' : 'rules'} · ${locked} locked`} />
+
+      {locked > 0 ? (
+        <AmberNotice title="Some rules are locked">
+          Locked rules control fee amounts the chatbot is allowed to quote. They can&apos;t be changed here. Contact the
+          Growwstacks team to change them.
+        </AmberNotice>
+      ) : null}
+
+      {types.map((type) => {
+        const g = GROUPS[type] ?? fallback(type);
+        const items = list.filter((r) => r.rule_type === type);
+        return (
+          <section key={type} className="card tbl-wrap" aria-labelledby={`g-${type}`}>
+            <div className="card-head">
+              <h2 id={`g-${type}`} className="text-[13px] font-semibold">
+                {g.title}
+              </h2>
+              <span className="mono text-[12px] text-muted">
+                {items.length} {items.length === 1 ? 'rule' : 'rules'}
+              </span>
             </div>
+            {g.explain ? <p className="px-4 pb-1 pt-3 text-[12px] text-muted">{g.explain}</p> : null}
+            <table className="tbl" style={{ tableLayout: 'fixed' }}>
+              <colgroup>
+                <col style={{ width: '26%' }} />
+                <col />
+                <col style={{ width: 110 }} />
+                <col style={{ width: 190 }} />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col">{g.subjectLabel}</th>
+                  <th scope="col">{g.valueLabel}</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Last changed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((r) => (
+                  <tr key={r.id}>
+                    <td className="break-words">{g.subject(r)}</td>
+                    <td className="break-words">{g.value(r)}</td>
+                    <td>{r.locked ? <Pill tone="lock">Locked</Pill> : <span className="text-faint">—</span>}</td>
+                    <td className="mono whitespace-nowrap text-[12px] text-muted">{formatDate(r.updated_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </section>
-        ))}
-      </div>
+        );
+      })}
     </Shell>
   );
 }

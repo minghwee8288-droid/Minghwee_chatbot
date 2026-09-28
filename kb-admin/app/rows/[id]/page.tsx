@@ -1,61 +1,118 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Pill, Shell } from '@/components/Shell';
+import { Shell } from '@/components/Shell';
+import { ActivePill, ENTRY_TYPES, MAINTAINED_BY, formatDate } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
-import { row } from '@/lib/queries';
+import { FILTERS, row } from '@/lib/queries';
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+type Params = Record<string, string | string[] | undefined>;
+
+/** The list's filters, carried through so "Back to entries" returns to the same view. */
+const KEPT = [...Object.keys(FILTERS), 'active', 'q', 'page'];
+
+function backQuery(searchParams: Params): string {
+  const qs = new URLSearchParams();
+  for (const key of KEPT) {
+    const v = searchParams[key];
+    const value = Array.isArray(v) ? v[0] : v;
+    if (value) qs.set(key, value.slice(0, 200));
+  }
+  return qs.toString();
+}
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="grid gap-1 border-t border-slate-100 py-2 sm:grid-cols-[10rem_1fr]">
-      <dt className="text-xs uppercase text-slate-500">{label}</dt>
-      <dd className="min-w-0 text-sm">{children}</dd>
+    <div className="border-t px-5 py-4 first:border-t-0" style={{ borderColor: 'var(--divider)' }}>
+      <h2 className="field-label mb-1.5">{label}</h2>
+      <div className="min-w-0 text-[14px]">{children}</div>
     </div>
   );
 }
 
-function Text({ value }: { value: string | null }) {
-  return value ? (
-    <p className="whitespace-pre-wrap break-words">{value}</p>
-  ) : (
-    <span className="text-slate-400">—</span>
-  );
+function Long({ value }: { value: string }) {
+  return <p className="whitespace-pre-wrap break-words leading-[1.6]">{value}</p>;
 }
 
-export default async function RowPage({ params }: { params: { id: string } }) {
+function Code({ value }: { value: string }) {
+  return <span className="mono text-[13px]">{value}</span>;
+}
+
+export default async function RowPage({ params, searchParams }: { params: { id: string }; searchParams: Params }) {
   const viewer = await requireViewer();
   const r = await row(params.id);
   if (!r) notFound();
+
+  const back = backQuery(searchParams);
+  const heading = r.question || r.section_heading || 'Untitled passage';
+  const text = r.answer || r.content || '';
+  // Shown only when the stored passage says more than the answer: on most
+  // question-and-answer entries it is just the question followed by the answer.
+  const passage = r.answer && r.content && !r.content.includes(r.answer.trim()) ? r.content : '';
+  const managedRaw = typeof r.metadata?.managed_by === 'string' ? r.metadata.managed_by : '(none)';
+
   return (
     <Shell viewer={viewer} active="/rows">
-      <Link href="/rows" className="text-sm text-brand">
-        ← All rows
-      </Link>
-      <h1 className="mb-3 mt-2 text-xl font-semibold">{r.question || r.section_heading || '(untitled chunk)'}</h1>
-      <div className="mb-4 flex flex-wrap gap-1">
-        {r.is_active ? <Pill tone="green">active</Pill> : <Pill tone="amber">inactive</Pill>}
-        <Pill>{r.service_type}</Pill>
-        <Pill>{r.contact_type}</Pill>
-        <Pill>{r.nationality}</Pill>
-        <Pill>{r.chunk_type}</Pill>
+      <div>
+        <Link href={`/rows${back ? `?${back}` : ''}`} className="link text-[13px]">
+          ← Back to entries
+        </Link>
+        <h1 className="page-title mt-3">{heading}</h1>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-muted">
+          <ActivePill active={r.is_active} />
+          <span>{r.source_document || 'Untitled document'}</span>
+        </div>
       </div>
-      <dl className="rounded-lg border border-slate-200 bg-white px-4 py-2">
-        <Field label="Question"><Text value={r.question} /></Field>
-        <Field label="Answer"><Text value={r.answer} /></Field>
-        <Field label="Content"><Text value={r.content} /></Field>
-        <Field label="Section heading"><Text value={r.section_heading} /></Field>
-        <Field label="Source document"><Text value={r.source_document} /></Field>
-        <Field label="Service">{r.service_type}</Field>
-        <Field label="Audience">{r.contact_type}</Field>
-        <Field label="Nationality">{r.nationality}</Field>
-        <Field label="Type">{r.chunk_type}</Field>
-        <Field label="Namespace">{r.namespace}</Field>
-        <Field label="Metadata">
-          <pre className="overflow-x-auto rounded bg-slate-50 p-2 text-xs">{JSON.stringify(r.metadata, null, 2)}</pre>
-        </Field>
-        <Field label="Created">{r.created_at}</Field>
-        <Field label="Last changed">{r.updated_at}</Field>
-        <Field label="Row id"><span className="font-mono text-xs">{r.id}</span></Field>
-      </dl>
+
+      <div className="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-5">
+        <article className="card">
+          <Section label="Question / heading">
+            <p className="font-semibold leading-[1.6]">{r.question || r.section_heading || '—'}</p>
+            {r.question && r.section_heading ? (
+              <p className="mt-1 text-[13px] text-muted">Section: {r.section_heading}</p>
+            ) : null}
+          </Section>
+          <Section label="Answer text">
+            {text ? <Long value={text} /> : <span className="text-muted">No text on this entry.</span>}
+          </Section>
+          {passage ? (
+            <Section label="Full passage">
+              <Long value={passage} />
+            </Section>
+          ) : null}
+        </article>
+
+        <aside className="card" aria-label="Details">
+          <Section label="Document">
+            <p className="break-words">{r.source_document || '—'}</p>
+          </Section>
+          <Section label="Service">
+            <Code value={r.service_type} />
+          </Section>
+          <Section label="Audience">
+            <Code value={r.contact_type} />
+          </Section>
+          <Section label="Nationality">
+            <Code value={r.nationality} />
+          </Section>
+          <Section label="Status">
+            <ActivePill active={r.is_active} />
+            <p className="mt-1.5 text-[12px] text-muted">
+              {r.is_active ? 'The chatbot can use this entry.' : 'The chatbot does not use this entry.'}
+            </p>
+          </Section>
+          <Section label="Entry type">{ENTRY_TYPES[r.chunk_type] ?? <Code value={r.chunk_type} />}</Section>
+          <Section label="Maintained by">{MAINTAINED_BY[managedRaw] ?? <Code value={managedRaw} />}</Section>
+          <Section label="Last updated">
+            <span className="mono text-[13px]">{formatDate(r.updated_at)}</span>
+          </Section>
+          <Section label="Added">
+            <span className="mono text-[13px]">{formatDate(r.created_at)}</span>
+          </Section>
+          <Section label="Reference">
+            <span className="mono break-all text-[12px] text-muted">{r.id}</span>
+          </Section>
+        </aside>
+      </div>
     </Shell>
   );
 }
