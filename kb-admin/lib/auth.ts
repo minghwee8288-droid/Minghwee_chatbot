@@ -1,7 +1,7 @@
 import 'server-only';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { decideAccess } from './access';
+import { decideAccess, denialPath } from './access';
 import { env } from './env';
 import { membership } from './queries';
 import { ACCESS_COOKIE, userFromToken } from './session';
@@ -39,9 +39,10 @@ export async function checkRequest(): Promise<AuthResult> {
   return { ok: true, viewer: { userId: user.id, email: user.email, role: decision.role } };
 }
 
-/** For pages: the viewer, or a redirect to the sign-in page. */
+/** For pages: the viewer, or a redirect to the sign-in page (via
+ *  /login/switched-off, which clears the cookies, when access is switched off). */
 export async function requireViewer(): Promise<Viewer> {
   const result = await checkRequest();
-  if (!result.ok) redirect(`/login?e=${result.reason}`);
+  if (!result.ok) redirect(denialPath(result.reason));
   return result.viewer;
 }

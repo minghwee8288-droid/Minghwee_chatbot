@@ -86,6 +86,38 @@ const apis = code.filter((f) => /^app\/api\/.*route\.ts$/.test(rel(f)));
 for (const a of apis) check(`${rel(a)} checks the session`, readFileSync(a, 'utf8').includes('checkRequest('));
 check('found pages and API routes to check', pages.length >= 6 && apis.length >= 1, `${pages.length} pages, ${apis.length} api`);
 
+console.log('sessions:');
+const src = (p) => (existsSync(join(ROOT, p)) ? readFileSync(join(ROOT, p), 'utf8') : '');
+const authTs = src('lib/auth.ts');
+check('requireViewer redirects through denialPath()', /redirect\(\s*denialPath\(\s*result\.reason\s*\)\s*\)/.test(authTs));
+check('requireViewer has no other redirect', (authTs.match(/redirect\(/g) ?? []).length === 1);
+const offRoute = src('app/login/switched-off/route.ts');
+check('app/login/switched-off/route.ts exists and exports GET', /export\s+(?:async\s+)?function\s+GET\b/.test(offRoute));
+const clearedList = (offRoute.match(/for \(const name of \[([^\]]*)\]\)/)?.[1] ?? '').split(',').map((s) => s.trim()).sort().join(',');
+check('the switched-off route clears all three session cookies',
+  clearedList === 'ACCESS_COOKIE,DEADLINE_COOKIE,REFRESH_COOKIE' && /cookies\.set\(\s*name,\s*'',\s*cookieOptions\(0\)\s*\)/.test(offRoute),
+  clearedList || 'no cookie loop found');
+check('the switched-off route lands on /login?e=inactive', offRoute.includes("'/login?e=inactive'"));
+check('the switched-off route reads nothing and calls nothing', !/fetch\(|select\(|signOut\(|from '@\/lib\/(db|queries|auth)'/.test(offRoute));
+check('middleware skips /login/... (so the route runs without a session)', /\(\?!login\|/.test(src('middleware.ts')));
+const sessionTs = src('lib/session.ts');
+check('sign-out stays at local scope', sessionTs.includes('/auth/v1/logout?scope=local') && !/scope=global/.test(sessionTs));
+const actionsTs = src('app/login/actions.ts');
+check('a refused fresh sign-in still gets the one generic message', /return \{ error: GENERIC \}/.test(actionsTs) && !/switched off/i.test(actionsTs));
+
+console.log('fonts:');
+const layout = src('app/layout.tsx');
+check('layout uses next/font/local', /from 'next\/font\/local'/.test(layout));
+check('nothing imports next/font/google', !code.some((f) => /next\/font\/google/.test(readFileSync(f, 'utf8'))));
+check('no source file names a Google Fonts host', !code.some((f) => /fonts\.(googleapis|gstatic)\.com/.test(readFileSync(f, 'utf8'))));
+const fontPaths = [...layout.matchAll(/path:\s*'(\.\/fonts\/[^']+)'/g)].map((m) => m[1]);
+check('layout names the six font files', fontPaths.length === 6, fontPaths.length + ' file(s)');
+const missingFonts = fontPaths.filter((p) => !existsSync(join(ROOT, 'app', p)));
+check('every font file the layout names exists', fontPaths.length > 0 && missingFonts.length === 0, missingFonts.join(', '));
+check('every font file is woff2',
+  fontPaths.length > 0 && fontPaths.every((p) => existsSync(join(ROOT, 'app', p)) && readFileSync(join(ROOT, 'app', p)).subarray(0, 4).toString('latin1') === 'wOF2'));
+check('app/fonts/OFL.txt carries the SIL Open Font License 1.1', /SIL OPEN FONT LICENSE Version 1\.1/.test(src('app/fonts/OFL.txt')));
+
 console.log('secrets:');
 const envLocal = join(ROOT, '.env.local');
 let tracked = '';
@@ -117,7 +149,7 @@ if (existsSync(envLocal)) {
 
 console.log('behaviour:');
 const { validateConfig } = await import(pathToFileURL(join(ROOT, 'lib/config.ts')).href);
-const { decideAccess, isSingleRead, secondsLeft } = await import(pathToFileURL(join(ROOT, 'lib/access.ts')).href);
+const { decideAccess, denialPath, isSingleRead, secondsLeft } = await import(pathToFileURL(join(ROOT, 'lib/access.ts')).href);
 
 const REF = 'abcdefghijklmnopqrst';
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -164,6 +196,11 @@ check('no membership row -> denied', decideAccess(undefined).ok === false);
 check('inactive row -> denied', decideAccess({ role: 'viewer', active: false }).ok === false);
 check('unknown role -> denied', decideAccess({ role: 'admin', active: true }).ok === false);
 check('active viewer -> allowed', decideAccess({ role: 'viewer', active: true }).ok === true);
+
+check('switched off -> via /login/switched-off (clears the cookies)', denialPath('inactive') === '/login/switched-off');
+check('no access -> straight to /login?e=no-access', denialPath('no-access') === '/login?e=no-access');
+check('bad session -> straight to /login?e=bad-session', denialPath('bad-session') === '/login?e=bad-session');
+check('no session -> straight to /login?e=no-session', denialPath('no-session') === '/login?e=no-session');
 
 check('a single SELECT is a read', isSingleRead('select 1'));
 check('a WITH ... SELECT is a read', isSingleRead('with x as (select 1) select * from x'));

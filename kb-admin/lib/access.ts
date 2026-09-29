@@ -22,6 +22,15 @@ export function decideAccess(membership: Membership): AccessDecision {
   return { ok: true, role: 'viewer' };
 }
 
+/** Where a page sends a refused request. A switched-off account goes through
+ *  /login/switched-off, which clears the session cookies (a page cannot set
+ *  cookies while redirecting) and then shows the same notice as ?e=inactive. */
+export const SWITCHED_OFF_PATH = '/login/switched-off';
+
+export function denialPath(reason: string): string {
+  return reason === 'inactive' ? SWITCHED_OFF_PATH : `/login?e=${reason}`;
+}
+
 /** kb-admin runs single read statements only; anything else is refused. */
 export function isSingleRead(query: string): boolean {
   const q = query.trim().replace(/;\s*$/, '');
