@@ -290,7 +290,7 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
     if _fee_turn and state.get("rag_matches"):
         instruction += FEE_ANSWER_NOTE
     if _fee_turn and ticket_service.fee_varies_by_nationality(_service):
-        _nat = nationality_in_play(state.get("collected_info"))
+        _nat = nationality_in_play(state.get("collected_info"), state.get("incoming_text"))
         if not _nat:
             instruction += FEE_NEEDS_NATIONALITY_NOTE
             logger.info(

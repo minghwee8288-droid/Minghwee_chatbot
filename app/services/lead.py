@@ -80,7 +80,24 @@ def nationality_code(value: str | None) -> str | None:
     return None
 
 
-def nationality_in_play(collected: dict | None) -> str | None:
+# The same three countries, read from a free-text MESSAGE rather than from an
+# answer to the nationality question. Word-bounded on purpose: the patterns
+# above are written for a one-word answer, and on a sentence "indo" matches
+# inside "window" and "any"/"open" read as "no preference".
+_NATIONALITY_NAMED = (
+    (re.compile(r"\b(?:philippines?|philippine|filipinos?|filipinas?|pinoy|pinay)\b", re.I), "PH"),
+    (re.compile(r"\b(?:indonesian?s?|indo)\b", re.I), "ID"),
+    (re.compile(r"\b(?:myanmar|burmese|burma)\b", re.I), "MM"),
+)
+
+
+def nationality_named_in(message: str | None) -> str | None:
+    """The one nationality this message names, if it names exactly one."""
+    found = {code for pattern, code in _NATIONALITY_NAMED if pattern.search(message or "")}
+    return found.pop() if len(found) == 1 else None
+
+
+def nationality_in_play(collected: dict | None, message: str | None = None) -> str | None:
     """The PH/ID/MM code this conversation is about, if we know it yet.
 
     Two fields, because the two sides of the desk answer different questions:
@@ -99,7 +116,18 @@ def nationality_in_play(collected: dict | None) -> str | None:
     them had already diverged: the collector's read `nationality` alone, so on
     a hiring turn the retrieval filter narrowed on a preference the fee guard
     could not see. Section 9.8.
+
+    A nationality NAMED in this turn's message wins over both, for this turn.
+    Live 2026-09-29, conversation 36: a Myanmar home leave was on file, and
+    "How about philippines transfer helper cost" was searched with the Myanmar
+    filter - which excluded the $1,688 Filipino row the client was asking
+    about - and answered "the approximate fee is not listed in our records".
+    What they asked about is the subject of the question, whatever an earlier
+    enquiry settled.
     """
+    named = nationality_named_in(message)
+    if named:
+        return named
     collected = collected or {}
     code = nationality_code(
         str(collected.get("nationality") or "")

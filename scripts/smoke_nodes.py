@@ -476,7 +476,7 @@ CASES = [
       "collected_info": {"full_name": "sanjay"}, "asked_field_counts": {"full_name": 1},
       "_stub_extraction": {"transfer_direction": "transfer"},
       "_expect_collected": {"transfer_direction": "taking on a transfer helper"},
-      "_forbid_prompt": "release your current helper",
+      "_forbid_prompt": "releasing your current helper",
       "_expect_prompt": "What would you mainly need help with"}),
     # ...and the other direction, which is the half a take-on-only fix would
     # have broken silently: "transfer MY helper" is a release, and the
@@ -487,7 +487,7 @@ CASES = [
       "history_text": "",
       "collected_info": {"full_name": "sanjay"}, "asked_field_counts": {"full_name": 1},
       "_stub_extraction": {"transfer_direction": "transfer"},
-      "_expect_collected": {"transfer_direction": "releasing my current helper"},
+      "_expect_collected": {"transfer_direction": "releasing your current helper"},
       "_forbid_prompt": "take on a transfer helper",
       "_expect_prompt": "May I know the helper's name?"}),
     # ...and a message that decides nothing still gets the question. The rule
@@ -498,7 +498,7 @@ CASES = [
       "incoming_text": "sanjay dutt", "history_text": "bot: may I know your name?",
       "collected_info": {"full_name": "sanjay"}, "asked_field_counts": {"full_name": 1},
       "_stub_extraction": {},
-      "_expect_prompt": "release your current helper"}),
+      "_expect_prompt": "releasing your current helper"}),
 
     # ...and the turn AFTER it, which is where replaying the live transcript
     # found the hole: the extractor returns the same undecidable "transfer" on
@@ -515,7 +515,7 @@ CASES = [
       "_stub_extraction": {"full_name": "sanjay dutt",
                            "transfer_direction": "transfer"},
       "_expect_collected": {"transfer_direction": "taking on a transfer helper"},
-      "_forbid_prompt": "release your current helper"}),
+      "_forbid_prompt": "releasing your current helper"}),
 
     # --- the household question, 2026-09-18 --------------------------------
     # "i have 12 peoples in my family 8 are adults and 4 are childrens AS I
@@ -1609,6 +1609,76 @@ CASES = [
       "incoming_text": "ok noted thanks",
       "history_text": "client: hi\nbot: I've passed this to our team.",
       "blocked_topics": {"new_hiring": {"ticket_id": 1, "ticket_number": "CB-2026-0001"}}}),
+
+    # --- 2026-09-29: "Hi" the morning after a handover ---------------------
+    # Conversation 36: the classifier stuck the parked direct-hire topic back
+    # onto a bare greeting, and the reply was "I'm here! This one is with a
+    # live agent ... is there anything else I can help you with?" - to a
+    # client who had asked nothing that day. The wave emoji is part of the
+    # state because it is what defeated greeting_only on the live turn.
+    ("blocked_topic_responder", "a greeting on a parked topic is greeted back",
+     {"intent": "direct_hiring", "service_type": "direct_hiring",
+      "incoming_text": "Hi \U0001f44b", "record_name": "Geraldine",
+      "history_text": "Client: How much is the cost\nYou: Our agent will confirm it.",
+      "blocked_topics": {"direct_hiring": {"ticket_id": 1,
+                                           "ticket_number": "CB-2026-0018"}},
+      "_expect_reply": "Hi Geraldine, good to hear from you"}),
+    ("blocked_topic_responder", "...and is not told something is with a live agent",
+     {"intent": "direct_hiring", "service_type": "direct_hiring",
+      "incoming_text": "Hi \U0001f44b", "record_name": "Geraldine",
+      "history_text": "Client: How much is the cost\nYou: Our agent will confirm it.",
+      "blocked_topics": {"direct_hiring": {"ticket_id": 1,
+                                           "ticket_number": "CB-2026-0018"}},
+      "_forbid_reply": "live agent"}),
+
+    # --- 2026-09-29: a helper who has run away ------------------------------
+    # Conversation 1687: forced to dispute_assault by the keyword "run away"
+    # and answered with the 999 script. The model's own verdict is stubbed as
+    # dispute_assault too, because that is the worst case the override has to
+    # beat.
+    ("intent_classifier", "a runaway helper is a missing-helper report, not an assault",
+     {"incoming_text": "hi i need help as my helper has run away and is nowhere to be found",
+      "intent": None, "service_type": None, "history_text": "",
+      "_stub_intent": {"intent": "dispute_assault", "service_type": "dispute_assault",
+                       "contact_type": None, "confidence": 0.9},
+      "_expect_state": {"intent": "missing_helper", "service_type": "missing_helper"}}),
+    # ...and the client's own answer to "have you made a police report?" is
+    # not an assault either - "police report" used to force one.
+    ("intent_classifier", "...and 'I made a police report' keeps the flow",
+     {"incoming_text": "yes i already made a police report this morning",
+      "intent": "missing_helper", "service_type": "missing_helper",
+      "history_text": "You: Have you made a police report yet?",
+      "_stub_intent": {"intent": "other", "service_type": None,
+                       "contact_type": "employer", "confidence": 0.9},
+      "_expect_state": {"service_type": "missing_helper"}}),
+    # The control that must not be traded away: a helper describing violence
+    # still gets the safety response, with no model involved.
+    ("intent_classifier", "...while a helper who has been hit still gets the safety path",
+     {"incoming_text": "my employer hit me and i want to run away",
+      "intent": None, "service_type": None, "history_text": "",
+      "_stub_intent": {"intent": "other", "service_type": None,
+                       "contact_type": None, "confidence": 0.9},
+      "_expect_state": {"intent": "dispute_assault"}}),
+    # The opening turn says what to do NOW, from the records, before asking -
+    # and the reporting deadline in it survives strip_handover_talk, which
+    # deleted it as a "promised time" on the first replay.
+    ("info_collector", "a missing-helper report gives the first steps before asking",
+     {"service_type": "missing_helper", "intent": "missing_helper",
+      "incoming_text": "my helper has run away and is not answering my calls",
+      "history_text": "",
+      "rag_context": ("Our records:\nWhat if my helper goes missing? Report to the police "
+                      "and MOM within 24 hours, then contact Ming Hwee immediately."),
+      "_stub_reply": ("Hi, I'm Claire, Ming Hwee's AI assistant. Please report it to the "
+                      "police and MOM within 24 hours, and we will guide you through it. "
+                      "May I know your helper's name?"),
+      "_expect_prompt": "THEIR HELPER HAS RUN AWAY",
+      "_expect_reply": "within 24 hours"}),
+    ("info_collector", "...and only on the opening turn",
+     {"service_type": "missing_helper", "intent": "missing_helper",
+      "incoming_text": "Siti", "collected_info": {"helper_name": "Siti"},
+      "asked_field_counts": {"helper_name": 1},
+      "history_text": "Client: my helper has run away\nYou: May I know your helper's name?",
+      "_forbid_prompt": "THEIR HELPER HAS RUN AWAY"}),
 
     # --- 2026-09-18: a money question that names a service -----------------
     # The agency's transcript, 23:05. "what is the fees for work permit

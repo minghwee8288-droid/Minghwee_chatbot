@@ -417,6 +417,14 @@ because the lead is opened early and the ticket is created much later.
 | A withheld price is said as what WE will do, never as a gap in our files | `SERVICE_BRIEFING_NOTE` item 2 | "The transfer fee is not stated in our records" went out live: it tells the client about our filing and reads as though we do not know our own prices. |
 | ...and a deferred fee is "based on your requirements", never "for your situation" | `SERVICE_BRIEFING_NOTE` item 2, `FEE_HANDOVER_INSTRUCTION`, prompt rule 5 | The agency, 2026-09-23: *"sounds ominous/abit attacked"*. It was the briefing's own example sentence, copied verbatim - so the example is what changed, and the self-check asserts no fee instruction carries the old phrase to copy. |
 | A question already answered is not asked again, even cut down | `guards.reasks_previous` + `info_collector` (`closed_note`, `previous_answered`) | Live, conversation 1687: the house rule was filed, the collector was asking how they heard about us, and the model sent *"Any other house rules or preferences I should note?"* - 1 run in 26 on the live state. `near_duplicate` compares whole messages and missed it. The retry that fires on it is told the previous question was ANSWERED; it used to say "NOT answered" in every case, which instructs the very re-ask. |
+| A helper who has run away is a missing-helper report, never the 999 script | `intent_classifier._MISSING_HELPER` + `ticket.MISSING_HELPER` + `info_collector.MISSING_HELPER_NOTE` | "run away" and "police report" were in `ASSAULT_PATTERNS`, which force-escalates WITHOUT verification, so *"my helper has run away"* got *"call the police on 999 if anyone is in immediate danger"* (conversation 1687). Both now sit in the LLM-verified `HARM_SIGNALS`; a helper describing violence still hits the keyword net. The flow gives the first steps from the records, then asks the four things an agent needs; high priority, filed under `dispute_salary` with the true key in `captured_info`. |
+| A reporting deadline is not a promised callback time | `guards._REPORTING_DEADLINE` in `strip_handover_talk` | *"report it to the police and MOM within 24 hours"* was deleted as a promised time, leaving the runaway report with nothing but a name question. A sentence about a report to the police or MOM keeps its time unless it also promises contact or names a colleague. |
+| A greeting is greeted back even with a topic parked | `blocked_topic_responder` (`greeting_only` first) | *"Hi 👋"* the morning after a handover got *"This one is with a live agent ... anything else?"* - "which one?", said the agency. `greeting_only` also now ignores an emoji left after the greeting; *"hello??"* still gets the are-you-there reply. |
+| Retrieval reads the shelf of the flow the collector will run | `rag_retriever._retrieval_audience` (via `resolve_service`) | The classifier hands retrieval the BARE `transfer`, a candidate key, so every employer transfer question searched the HELPER's rows and the $1,688 row (0.821 on the right shelf) never came back - §9.30's EX1/EX5 and the "packages fee" screenshot. An employer-only flow also reads the employer's rows while the contact is still unknown. |
+| A nationality named in the message is the one the turn is about | `lead.nationality_named_in` + `nationality_in_play(collected, message)` | Word-bounded and only when exactly one is named. A Myanmar home leave on file filtered out the Filipino fee row the client was asking about. |
+| A price question is searched as a price however it was labelled | `rag_retriever._search_query` (`asks_about_price`) + "package" in `_PRICE_QUESTION` | *"transfer package and policy"* classified `transfer`, was tagged "(transfer)" alone, and came back with the helper's journey rows. |
+| The transfer question offers all three ways in | `SERVICE_FIELDS["transfer_employer"]["transfer_direction"]` | Taking one on, releasing theirs, returning her to us - each written into the question word for word so `_field_guidance` names them all. Live, a two-option question was paraphrased into two versions of "release". |
+| The client is never told what our records lack, nor how to treat their helper | prompt rules 3a / 3b | *"not listed in our records"* went out on three different paths; *"please speak with her calmly and avoid any threats or punishment"* accused a client of nothing they had said. |
 | A passport that runs out before the renewal could finish is said out loud | `info_collector._expires_before_we_finish` + `EXPIRING_SOON_NOTE` | Live: *"in 5 days"* answered with *"It takes approximately 6 to 8 weeks"*, the two figures one line apart and nothing connecting them — 2 runs out of 2. `passport_expiry` had been collected since the flow was written and put on the ticket; **nothing ever read it.** Coarse on purpose and fails towards SILENCE: "next March", "when the contract ends" and a formatted date all return None, because guessing at a date and then calling somebody's passport urgent is worse than the omission. 60 days, which covers the slowest route we hold — a per-nationality table would be a second copy of lead times that live in the knowledge base (§9.8). |
 | The pricing rules have ONE reader, and a bad table can never widen or empty them | `app/services/kb_rules.py` + `cb_kb_rules` | `FEE_STATED_SERVICES`, `COST_WITHHELD_SERVICES`, `FEE_BY_NATIONALITY` and the salary floor moved out of four files into one table, so the KB Admin UI can change a price policy without a deploy. Callers read a validated in-memory snapshot and never the database. An empty, half-read or invalid table is REFUSED whole and the last good set stays in force, else the code defaults — "withhold everything" would also switch off the retrieval filter that keeps $695 out of a $450 passport renewal. `fee_enquiry` is withheld and locked in the table itself; `transfer`/`transfer_employer` are one switch, enforced by a commit-time trigger. |
 | The loader never overwrites the KB Admin UI | `load_service_notes._ui_owned` + `metadata.managed_by` | Every row is `loader` or `ui`. All four write paths (ROWS, UPDATES, TEXT_REPLACEMENTS, RETIRED) skip and report a `ui` row — without it the first loader run after the UI went live would silently undo the client's edits, because three of the four find their targets by searching. Proved by RUNNING the loader against a stub DB holding one, in `selfcheck_kb_prep.py`. |
@@ -1027,6 +1035,19 @@ Ordered by what will hurt first.
     The 2026-09-22 entry records 10 of 10 verified live, so either the state
     those runs used differs from a fresh number's or something since has moved
     them; not investigated here.
+    **EX1 and EX5 FIXED 2026-09-29** - see the change log: retrieval searched
+    the HELPER's rows for every employer transfer question. Both now quote
+    their fee. EX6 was not re-probed and is still open.
+36. **A price question naming a DIFFERENT service, asked while another
+    collection is live and unparked, stays on the live one.** Seen replaying
+    conversation 36 on 2026-09-29: mid home-leave intake, *"How about
+    philippines transfer helper cost"* was held on `home_leave` by the
+    soft-service stickiness rule in `intent_classifier`, so the transfer fee
+    was not quoted. Live, the home-leave topic was already parked, the rule
+    did not apply, and the money rule moved the turn to `transfer` - which is
+    the case fixed that day. Not changed: making the sticky rule yield to a
+    named service switches `service_type` mid-collection, and what that does
+    to the live collection has not been measured.
 31. **One `BOT_ALLOWED_NUMBERS` entry on the server looks malformed.** Seen in
     the startup log 2026-09-24: an entry of `+971` followed by only seven
     digits (ends `…9155`). It is too short for a UAE mobile and is most likely
@@ -1331,6 +1352,87 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-29** - **Nine points from the agency's testing (Thomas and the
+  agency's own staff), across screenshots from conversations 36, 1687 and a
+  reset number.** Every one read from the live checkpoint or reproduced through
+  the real graph before it was touched; the KB changes are loaded.
+  (A) **A helper who has run away got the 999 script.** *"my helper has run
+  away and is nowhere to be found ... i have called her 10 times"* ->
+  *"please make sure everyone is safe right now, and call the police on 999 if
+  anyone is in immediate danger"*, with no introduction. Not the model:
+  `run away` and `police report` were in `ASSAULT_PATTERNS`, the one net that
+  escalates WITHOUT a second opinion. Both moved to the verified
+  `HARM_SIGNALS`. The report is now its own flow, `missing_helper`: the first
+  steps from the records (police and MOM within 24 hours, we guide them), then
+  the agency's own questions - her name, when last seen, anything different
+  before she left, a police report yet. High priority, filed under
+  `dispute_salary`. The client's answer *"yes I made a police report"* would
+  have force-escalated too; it now stays in the flow.
+  (B) **...and the guard then deleted the steps.** `strip_handover_talk` read
+  *"within 24 hours"* as a promised callback and cut the sentence, leaving
+  *"May I know your helper's name?"* - found on the first replay, not by
+  reading. A police/MOM reporting sentence keeps its time now.
+  (C) **"Hi 👋" the morning after a handover** -> *"I'm here! This one is
+  with a live agent ... anything else?"*. The classifier glued the parked
+  direct-hire topic onto a greeting; `blocked_topic_responder` answered it as
+  a ping. Greeted back now, with the record name. The wave emoji had also
+  defeated `greeting_only`.
+  (D) **The transfer fee was never retrieved for an employer - the root of
+  three separate complaints and of §9.30.** Traced by wrapping `rag.search`
+  inside the graph: the classifier hands retrieval the bare `transfer`, which
+  is a CANDIDATE key until the collector resolves it to `transfer_employer`,
+  so `_retrieval_audience` searched the helper's shelf - *"If You Want to
+  Stop Working"*, *"Your Placement Loan"* - and the $1,688 row, 0.821 on the
+  right shelf, never came back. It resolves first now, as the collector does.
+  An existing assertion pinned the defect ("a helper's own transfer" with an
+  EMPLOYER contact expected the candidate shelf) and was corrected, not
+  deleted. Three smaller causes stacked on it: "package" was not a price
+  word; a price question labelled `transfer` was tagged "(transfer)" rather
+  than "(cost of transfer)"; and in conversation 36 a Myanmar home leave on
+  file filtered out the FILIPINO row the client named - a nationality named in
+  the message now wins for that turn (strictly: "window" contains "indo").
+  (E) **The transfer question offered two versions of "release".** *"Is the
+  helper currently working for you, or are you helping her find a new
+  employer?"* is the model's paraphrase of a two-option question. Thomas asked
+  for a three-way check - take one on, release theirs, return her to us - and
+  each option is now in the question word for word, which is what makes
+  `_field_guidance` name them all. Returning opens the releasing branch.
+  (F) **The take-on employer was asked for the current employer's release.**
+  Agency: *"can exclude the 4th point"*. Off the take-on half of the row;
+  the releasing half still asks the person who gives it.
+  (G) **Minimum income S$2,000 -> S$2,500** (the agency's figure). A new row,
+  and six imported rows corrected, one of them in its HEADING -
+  `TEXT_REPLACEMENTS` now reaches `section_heading`.
+  (H) **"$60 if your household qualifies" said to a PR.** Agency: *"PR levy
+  $300, no $60 levy for concession"*. A row saying so; a Singapore Citizen
+  household is still offered the $60 rate (verified as a control).
+  (I) **Pregnancy: "how do i inform MOM" -> "I'll check with the team".** The
+  records said we guide them through the MOM report and nothing answered HOW,
+  so the model gave up. A row now does, from that row's own facts. And
+  *"please speak with her calmly and avoid any threats or punishment"* is
+  forbidden (rule 3b): unasked, it accuses the client.
+  (J) **"not listed in our records"** reached clients on three paths (the
+  collector, the parked answer, the fee-not-held note). Rule 3a: say what our
+  agent will do. The Myanmar home-leave fee and timing are still genuinely
+  missing - that is content only the agency can send (§9 waiting list).
+  (K) **Pets:** the reason now reads the agency's way, *"match her with a
+  suitable house"*; live it had come out *"match her with someone comfortable
+  in your home"*.
+  **Verified:** 12 screenshot scenarios replayed through the real graph
+  (read-only preview path), twice for the main ones; EX1 -> $1,588, EX5 ->
+  $1,688, *"packages fee"* -> all three; the documents question lists the
+  take-on documents; runaway 2 of 2 give the steps then ask the four
+  questions; income S$2,500; PR $300 without the concession. Fifteen faults
+  injected, fifteen red - after one came back GREEN: deleting the third
+  transfer option passed, because the checks only tested that the options
+  PRESENT were named and opened a branch. The loader was run twice (second
+  run: 0 rows).
+  **Found and NOT changed:** §9.36 (a price question naming another service
+  mid-collection stays on the live one); the name *"May"* for a home-leave
+  helper was re-asked in replay (read as a month), not seen live.
+  `selfcheck_flows.py` is **709 assertions**; `smoke_nodes.py` is **194
+  states**.
 
 - **2026-09-24** - **KB Admin UI preparation: the pricing rules move into a
   table, the loader learns ownership, and a preview that writes nothing.** No

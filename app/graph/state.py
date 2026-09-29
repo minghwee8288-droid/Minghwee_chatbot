@@ -38,6 +38,10 @@ SERVICE_INTENTS = {
     "home_leave",
     "passport_renewal",
     "insurance",
+    # A helper who has run away or gone missing (2026-09-29). Not a sale and
+    # not in the ticket CHECK constraint - it is filed under dispute_salary by
+    # TICKET_SERVICE_FALLBACK, with the true key kept in captured_info.
+    "missing_helper",
 }
 
 ENQUIRY_INTENTS = {"fee_enquiry", "salary_enquiry"}

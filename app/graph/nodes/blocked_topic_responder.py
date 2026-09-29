@@ -23,6 +23,7 @@ from app.graph.guards import (
     asks_again,
     asks_for_documents,
     asks_for_process,
+    greeting_only,
     quotes_hiring_package_cost,
     clamp_reply,
     is_degenerate,
@@ -41,6 +42,8 @@ from app.graph.closure import is_closing, is_pure_acknowledgement
 # Shared, not duplicated (§9.8): the one detector for "the client named a concrete
 # service in their own words". intent_classifier owns it; this node only reads it.
 from app.graph.nodes.intent_classifier import _CHASING_STATUS, _named_service
+# The same greeting the answering path sends, so the two cannot drift apart.
+from app.graph.nodes.response_generator import greeting_back
 from app.graph.llm import complete
 from app.services import kb_rules
 from app.graph.prompts.system import build_system_prompt
@@ -455,6 +458,25 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
     # never is.
     answering = _answerable(state)
     reassure = answering or _should_reassure(state, ticket, message)
+
+    # A greeting is greeted back, even with a topic parked. Live 2026-09-29,
+    # conversation 36: "Hi 👋" the morning after a direct-hire handover was
+    # stuck back onto that topic by the classifier and answered "I'm here! This
+    # one is with a live agent and they'll connect with you shortly. In the
+    # meantime, is there anything else I can help you with?" The agency: "isn't
+    # it odd to say 'this one is with a live agent'? Which one is it referring
+    # to? ... why is bot not greeting the client? ... No earlier request sent
+    # earlier today. Why is it asking 'anything else I can help you with?'" A
+    # greeting names no topic, so it is neither a chase nor a question about
+    # the parked one - it is the start of whatever they want next. Not logged
+    # on the ticket either, for the same reason. "are you there" and "hello??"
+    # still get STILL_HERE_REPLY below: those ARE about whether anyone is on it.
+    if greeting_only(message):
+        logger.info(
+            "Conversation %s: greeting on a thread with topic %r parked - greeting back",
+            state.get("conversation_id"), topic_key,
+        )
+        return {"reply": greeting_back(state.get("record_name")), "needs_handover": False}
 
     if ticket.get("id") and message:
         await ticket_service.add_follow_up(ticket["id"], message)

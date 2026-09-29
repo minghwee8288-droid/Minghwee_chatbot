@@ -1727,6 +1727,21 @@ ROWS: list[dict[str, Any]] = [
 ]
 
 
+# What the employer provides for a transfer. One string, read by the ROWS entry
+# below and by the UPDATES entry that corrected the live row, so a fresh load
+# and a corrected one cannot disagree.
+_TRANSFER_DOCS_FROM_EMPLOYER = (
+    "It depends which side of the transfer you are on. If you are taking the "
+    "helper on, we need a copy of your NRIC or IC and proof of income - either "
+    "your Income Tax Assessment or a Declaration of Monthly Income. If you are "
+    "a foreign employer that is your Employment Pass or S Pass together with "
+    "your passport, or a company letter together with your tenancy agreement. "
+    "We also need her current Work Permit number and its expiry date. If you "
+    "are the one releasing her, your written release or consent to the "
+    "transfer and her Work Permit details are what we need from you."
+)
+
+
 # --- 2026-09-10: the transfer document checklist ---------------------------
 #
 # Transfer was the ONLY service with no document rows at all. Every other one
@@ -1777,17 +1792,9 @@ ROWS += [
         "nationality": "all",
         "section_heading": "Transfer - documents from the employer",
         "question": "What documents do I need to provide for a transfer?",
-        "answer": (
-            "It depends which side of the transfer you are on. If you are taking the "
-            "helper on, we need a copy of your NRIC or IC and proof of income - either "
-            "your Income Tax Assessment or a Declaration of Monthly Income. If you are "
-            "a foreign employer that is your Employment Pass or S Pass together with "
-            "your passport, or a company letter together with your tenancy agreement. "
-            "We also need her current Work Permit number and its expiry date, and the "
-            "release or written agreement from her current employer. If you are the "
-            "one releasing her, that release and her Work Permit details are what we "
-            "need from you."
-        ),
+        # The current employer's release is no longer on the TAKING-ON list -
+        # see the UPDATES entry for this row (2026-09-29).
+        "answer": _TRANSFER_DOCS_FROM_EMPLOYER,
     },
     {
         "service_type": "general",
@@ -2468,7 +2475,92 @@ ROWS += [
     },
 ]
 
+# --- 2026-09-29: three answers the agency gave while testing ----------------
+#
+# Each of these was a question the bot either answered wrongly or handed to a
+# person, and each is a figure or a step only the agency can give.
+ROWS += [
+    {
+        # "Bots error min income is $2500 per month" - the agency, 2026-09-28,
+        # on "The income benchmark is approximately S$2,000 per month". MOM does
+        # not publish a fixed figure, which is why the imported guides carried
+        # the commonly quoted S$2,000; the agency works to S$2,500, and theirs is
+        # the figure a client is told. The imported rows are corrected to it in
+        # TEXT_REPLACEMENTS below, so the two cannot be quoted side by side.
+        "service_type": "general",
+        "contact_type": "employer",
+        "nationality": "all",
+        "section_heading": "Employer - minimum income to hire a helper",
+        "question": "What is the minimum income needed to hire a helper?",
+        "answer": (
+            "The minimum income we work to is S$2,500 a month for a Singapore "
+            "Citizen or PR employer. MOM does not publish a fixed figure and looks "
+            "at whether you can meet her salary, the levy, insurance and her living "
+            "costs. If your own income is below that, a family member living with "
+            "you may be able to combine their income with yours, and our agent can "
+            "go through that with you."
+        ),
+    },
+    {
+        # "Bots error, PR levy $300. No $60 levy for concession." - the agency,
+        # 2026-09-28, on "The normal levy is $300 per month for the first
+        # helper, or $60 per month if your household qualifies for the
+        # concessionary rate", said to a PR. Every levy row states the two
+        # rates side by side and none says who the concession is NOT for, so
+        # the model offered it to a PR. This row says so, in the agency's terms.
+        "service_type": "fee_enquiry",
+        "contact_type": "employer",
+        "nationality": "all",
+        "section_heading": "Employer - the levy for a PR employer",
+        "question": (
+            "How much is the levy for a PR employer, and does the $60 "
+            "concessionary rate apply?"
+        ),
+        "answer": (
+            "A Singapore Permanent Resident can hire a helper. The levy for a PR "
+            "employer is $300 a month, and the $60 concessionary rate does not "
+            "apply to a PR employer."
+        ),
+    },
+    {
+        # Live 2026-09-29: "my helper has just told me that she is pregnant" was
+        # answered correctly from "What if my helper becomes pregnant?" - and the
+        # very next message, "how do i inform MOM", got "I'll check with the team
+        # and come back to you shortly". That row says Ming Hwee guides the
+        # employer through the MOM reporting; nothing said so in answer to HOW,
+        # so the model found no answer and gave up. The agency: "bot easily gives
+        # up ... needs to be educated and has knowledge for situations like
+        # these on the steps to proceed". Nothing here goes beyond that row.
+        "service_type": "general",
+        "contact_type": "employer",
+        "nationality": "all",
+        "section_heading": "Employer - informing MOM that the helper is pregnant",
+        "question": "How do I inform MOM that my helper is pregnant?",
+        "answer": (
+            "You do not have to work out the MOM report on your own - Ming Hwee "
+            "guides you through it, together with ending her employment, her "
+            "repatriation and a replacement helper if you want one. Let us have her "
+            "name and our agent will take you through each step."
+        ),
+    },
+]
+
+
 UPDATES: list[dict[str, Any]] = [
+    {
+        # "Last part info bots can void this info, as Er looking for Transfer
+        # helper" / "okay, can exclude the 4th point" - the agency, 2026-09-28,
+        # on the closing briefing of a take-on transfer, which listed "Her
+        # current employer's written release or agreement to the transfer" as
+        # something the NEW employer must provide. That release passes between
+        # the current employer and us; the releasing half of this row still
+        # asks for it from the person who gives it.
+        "where": {"question": "What documents do I need to provide for a transfer?",
+                  "service_type": "general"},
+        "reason": "the agency asked for the current employer's release to be "
+                  "left off the taking-on employer's document list",
+        "set": {"answer": _TRANSFER_DOCS_FROM_EMPLOYER},
+    },
     {
         "where": {"question": "How long does a direct hire take?",
                   "service_type": "direct_hiring"},
@@ -3332,6 +3424,46 @@ TEXT_REPLACEMENTS: list[dict[str, str]] = [
         "reason": "it competes with the agency fee the 2026-09-22 schedule "
                   "states per nationality ($1,428 / $1,188 / $1,168).",
     },
+    # --- 2026-09-29: the employer's minimum income is S$2,500 ---------------
+    #
+    # "Bots error min income is $2500 per month" - the agency, on a reply that
+    # quoted the imported guides' S$2,000. Five imported rows carried that
+    # figure, in five different phrasings, and one of them in its HEADING -
+    # which is why replacements now reach section_heading too. The two FAQ
+    # copies that said "there is no published minimum income" are brought into
+    # line as well: true of MOM, and read beside S$2,500 it sounds like a
+    # contradiction.
+    {
+        "old": "~S$2,000/month income benchmark (for SC/PR)",
+        "new": "S$2,500/month income benchmark (for SC/PR)",
+        "reason": "the agency's minimum income is S$2,500 a month.",
+    },
+    {
+        "old": "a sustainable household income of approximately S$2,000 per month",
+        "new": "a sustainable household income of approximately S$2,500 per month",
+        "reason": "the agency's minimum income is S$2,500 a month.",
+    },
+    {
+        "old": "Requirement: ~S$2,000/month (SC/PR)",
+        "new": "Requirement: S$2,500/month (SC/PR)",
+        "reason": "the agency's minimum income is S$2,500 a month.",
+    },
+    {
+        "old": "Situation: Income below S$2,000",
+        "new": "Situation: Income below S$2,500",
+        "reason": "the agency's minimum income is S$2,500 a month.",
+    },
+    {
+        "old": "whose individual income is below the S$2,000 benchmark",
+        "new": "whose individual income is below the S$2,500 benchmark",
+        "reason": "the agency's minimum income is S$2,500 a month (a heading).",
+    },
+    {
+        "old": "There is no published minimum income, but MOM assesses",
+        "new": "MOM publishes no fixed minimum income - the figure we work to is "
+               "S$2,500 a month - and MOM assesses",
+        "reason": "the agency's minimum income is S$2,500 a month.",
+    },
 ]
 
 # A replacement is a blunt instrument pointed at live client-facing text, so the
@@ -3430,12 +3562,15 @@ async def _apply_text_replacements(dry_run: bool) -> int:
         # Fetched fresh per rule, so an earlier rule's edit is visible to a
         # later one rather than being clobbered by a stale copy.
         rows = await db.select_many(
-            KB_TABLE, "id,question,answer,content,metadata", limit=2000
+            KB_TABLE, "id,question,answer,content,section_heading,metadata", limit=2000
         )
         for row in rows:
+            # section_heading since 2026-09-29: a heading is read by the model
+            # as part of the record (rag._format_match cites it), and one
+            # imported heading carried the S$2,000 income figure.
             payload = {
                 col: row[col].replace(old, new)
-                for col in ("question", "answer", "content")
+                for col in ("question", "answer", "content", "section_heading")
                 if row.get(col) and old in row[col]
             }
             if not payload:

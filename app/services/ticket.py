@@ -168,6 +168,7 @@ SERVICE_LABELS = {
     "fee_enquiry": "our fees",
     "salary_enquiry": "helper salary",
     "dispute_salary": "a salary or leave issue",
+    "missing_helper": "a helper who has gone missing",
     "candidate_registration": "registering a helper for placement",
     # Not services, but they reach service_label() as topic keys — a ticket
     # raised for an unanswerable question, and the "Also asked about" line on a
@@ -272,6 +273,11 @@ def nationality_state(value: Any) -> str:
 INSURANCE = "insurance"
 
 TRANSFER_EMPLOYER = "transfer_employer"
+
+# A helper who has run away, gone missing or not come back (2026-09-29). Its
+# own service rather than a dispute_assault: see the note on _MISSING_HELPER in
+# intent_classifier for the live conversation that made the difference.
+MISSING_HELPER = "missing_helper"
 
 # What the classifier calls a helper offering herself for placement. It is an
 # intent name, not a flow — resolve_service() maps it onto CANDIDATE_HIRING.
@@ -454,13 +460,15 @@ _TAKING_ON_TRANSFER = Gate(
     ("taking on", "take on", "looking for", "looking to hire", "hire", "find",
      "want a transfer", "need a transfer", "new helper", "transfer helper", "take over"),
     excludes=("releas", "let her go", "let go", "my current", "transfer out",
-              "send her", "my helper", "existing helper", "my own"),
+              "send her", "my helper", "existing helper", "my own", "return her",
+              "returning"),
 )
 
 _RELEASING_HELPER = Gate(
     "transfer_direction",
     ("releas", "let her go", "let go", "my current", "transfer out", "send her",
-     "my helper", "existing helper", "my own", "move her"),
+     "my helper", "existing helper", "my own", "move her", "return her",
+     "returning", "send her back"),
     excludes=("taking on", "take on", "looking for", "looking to hire",
               "want a transfer helper", "need a transfer helper"),
 )
@@ -1356,16 +1364,33 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             max_asks=2,
             group="who they are",
         ),
+        # THREE ways in, named in the question so _field_guidance reads them all
+        # out. Live 2026-09-28, "Hi May I know your transfer package and
+        # policy?" was answered "Is the helper currently working for you, or
+        # are you helping her find a new employer?" - the model's paraphrase of
+        # a two-option question, and both of its halves are the RELEASE. Thomas:
+        # "It missed the most common third scenario: a prospective employer
+        # simply looking to engage/hire a transfer helper ... The bot needs a
+        # proper three-way intent check upfront." The third is his too: an
+        # employer ending the arrangement "would typically just return her to
+        # the agency", and as the guarantor may still ask about the process.
+        # Returning her opens the same branch as releasing her - the agent
+        # needs her name and the reason either way. Each option is written
+        # into the question word for word, which is what puts _field_guidance
+        # on its "name them all" branch rather than "drop two in as examples".
         Field(
             "transfer_direction",
             "what they need",
-            "Are you looking to take on a transfer helper already in Singapore, or "
-            "to release your current helper to another employer?",
+            "Are you taking on a transfer helper already in Singapore, releasing "
+            "your current helper to another employer, or returning your current "
+            "helper to us?",
             max_asks=2,
             options=(
                 "taking on a transfer helper",
-                "releasing my current helper",
+                "releasing your current helper",
+                "returning your current helper",
             ),
+            multiple_answers=False,
         ),
         # --- Releasing their own helper: these are about HER ---
         Field(
@@ -1615,6 +1640,42 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             max_asks=2,
         ),
     ],
+    # A helper who has run away or not come back. Added 2026-09-29, from the
+    # agency's own test: "Bot should be responding with questions like behaviour
+    # of the helper before the day she went out and left, have client filed a
+    # police report, etc. Instead of just saying call 999 if someone is in
+    # danger and live agent will come back shortly." These are the things an
+    # agent asks first, so asking them here is what shortens the wait rather
+    # than adding to it. The first turn also tells the client what to do now
+    # (info_collector.MISSING_HELPER_NOTE); the ticket goes out HIGH priority,
+    # because the police and MOM report is due within 24 hours.
+    #
+    # Four questions, deliberately: past four a flow owes the client a reason
+    # for the run (_COLLECTION_PURPOSE), and a worried employer should not be
+    # given a preamble before the first question.
+    MISSING_HELPER: [
+        Field("helper_name", "helper's name", "May I know your helper's name?"),
+        Field(
+            "last_contact",
+            "when she was last seen or heard from",
+            "When did you last see her or hear from her?",
+            max_asks=2,
+        ),
+        Field(
+            "before_leaving",
+            "anything unusual before she left",
+            "Did anything happen, or did you notice anything different about "
+            "her, in the days before she left?",
+            max_asks=1,
+            optional=True,
+        ),
+        Field(
+            "police_report",
+            "whether a police report has been made",
+            "Have you made a police report yet?",
+            max_asks=2,
+        ),
+    ],
     # §13 — immediate escalation, nothing collected.
     "dispute_assault": [],
     # §18 — the bot cannot open the file, so there is nothing to ask.
@@ -1622,7 +1683,7 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
 }
 
 # Services that open at the top priority level rather than the default one.
-HIGH_PRIORITY_SERVICES = {"dispute_assault"}
+HIGH_PRIORITY_SERVICES = {"dispute_assault", MISSING_HELPER}
 
 # Mirrors cb_tkt_service_check. The chatbot recognises two kinds of enquiry the
 # portal's schema predates — a candidate offering herself for placement, and a
@@ -1662,6 +1723,9 @@ TICKET_SERVICE_FALLBACK = {
     CANDIDATE_HIRING: "new_hiring",
     TRANSFER_EMPLOYER: "transfer",
     INSURANCE: "renewal",
+    # The nearest permitted bucket: a problem with the helper they already
+    # employ, filed apart from any sale (ALWAYS_SEPARATE, like the disputes).
+    MISSING_HELPER: "dispute_salary",
     CANDIDATE_REGISTRATION: "new_hiring",
     "media_received": "transfer",
     "general_question": "transfer",
@@ -2708,6 +2772,7 @@ SERVICE_SUMMARIES = {
     "fee_enquiry": "is asking about our agency fees",
     "salary_enquiry": "is asking about helper salary",
     "dispute_salary": "has raised a salary or leave issue",
+    "missing_helper": "has reported that their helper has run away or gone missing",
     "dispute_assault": "has reported a safety incident",
     "media_received": "sent an attachment for us to look at",
     "case_enquiry": "is asking about their existing case",
@@ -3010,7 +3075,7 @@ async def merge_into(ticket_id: str, *, service_type: str | None) -> None:
 # Topics that always get their own ticket and never absorb another. A safety
 # report or a formal complaint folded into a hiring enquiry is a complaint
 # nobody sees; both directions of that merge are barred here.
-ALWAYS_SEPARATE = {"dispute_assault", "dispute_salary"}
+ALWAYS_SEPARATE = {"dispute_assault", "dispute_salary", MISSING_HELPER}
 
 # Which distinct piece of work each service belongs to.
 #

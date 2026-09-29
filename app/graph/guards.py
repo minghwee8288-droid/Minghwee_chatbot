@@ -143,7 +143,7 @@ COST_DEFERRAL_REPLY = (
 # Two copies of it would be section 9.8 in the one place it costs a client a
 # wrong price.
 _PRICE_QUESTION = re.compile(
-    r"\bcosts?\b|\bprices?\b|\bfees?\b|\bcharges?\b"
+    r"\bcosts?\b|\bprices?\b|\bfees?\b|\bcharges?\b|\bpackages?\b"
     r"|\bhow\s+much\s+(?:is|are|does|do|would|will|for|to)\b"
     r"|\bhow\s+much\s*[?.!]*\s*$",
     re.IGNORECASE,
@@ -957,6 +957,17 @@ _CONTACT_PROMISE = re.compile(
 )
 
 
+# A deadline the CLIENT has to meet, stated by a regulator, is not a callback
+# time we are promising. Live 2026-09-29, replaying the runaway report: "please
+# report it to the police and MOM within 24 hours" was deleted as though it
+# were "a live agent will call you within 2 hours", and the employer was told
+# nothing but "May I know your helper's name?" - the exact reply the agency had
+# just objected to as giving up. The contact promise and the named colleague
+# are still caught in the same sentence.
+_REPORTING_DEADLINE = re.compile(r"\breport\w*\b[^.?!]*\b(?:police|MOM)\b"
+                                 r"|\b(?:police|MOM)\b[^.?!]*\breport", re.IGNORECASE)
+
+
 def strip_handover_talk(reply: str) -> str:
     """Remove sentences promising a named colleague or a specific time.
 
@@ -999,6 +1010,10 @@ def strip_handover_talk(reply: str) -> str:
                 offends = bool(_HANDOVER_NAME.search(sentence)) or (
                     mentions_handover(sentence)
                     and bool(_CONTACT_PROMISE.search(sentence))
+                )
+            elif _REPORTING_DEADLINE.search(sentence):
+                offends = bool(_HANDOVER_NAME.search(sentence)) or bool(
+                    _CONTACT_PROMISE.search(sentence)
                 )
             else:
                 offends = mentions_handover(sentence)
@@ -1056,8 +1071,14 @@ def without_greeting(body: str) -> str:
 
 
 def greeting_only(text: str) -> bool:
-    """A greeting and nothing else - nothing asked, no question announced."""
+    """A greeting and nothing else - nothing asked, no question announced.
+
+    What is left may be an emoji and still be nothing: "Hi 👋" is how people
+    greet on WhatsApp, and live on 2026-09-29 it read as a request because the
+    wave survived the strip. A question mark is NOT nothing - "hello??" is
+    somebody asking whether anyone is there, which has its own reply.
+    """
     body = (text or "").strip()
     if not body or len(body.split()) > _NO_REQUEST_MAX_WORDS:
         return False
-    return bool(_GREETING.match(body)) and not without_greeting(body)
+    return bool(_GREETING.match(body)) and not re.search(r"[\w?]", without_greeting(body))

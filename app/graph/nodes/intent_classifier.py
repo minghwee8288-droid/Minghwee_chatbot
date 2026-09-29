@@ -33,8 +33,39 @@ logger = logging.getLogger(__name__)
 ASSAULT_PATTERNS = re.compile(
     r"\b(assault|abuse[ds]?|abusive|molest|rape|beat(en|ing)?|hit me|hit her|hitting|"
     r"slap(ped|ping)?|punch(ed|ing)?|kick(ed|ing)?|choke|strangl|threaten(ed|ing)?|"
-    r"violent|violence|harass(ed|ment)?|not safe|unsafe|injur(y|ed)|bleeding|"
-    r"police report|run(?:ning)? away)\b",
+    r"violent|violence|harass(ed|ment)?|not safe|unsafe|injur(y|ed)|bleeding)\b",
+    re.IGNORECASE,
+)
+# "run away" and "police report" were in the list above until 2026-09-29, and
+# they are the two phrases an EMPLOYER uses about a helper who has gone
+# missing - which is not a harm report and must not get the 999 script. Live,
+# conversation 1687: "my helper has run away and is nowhere to be found ... i
+# have called her 10 times" was force-classified dispute_assault with no
+# verification and answered "please make sure everyone is safe right now, and
+# call the police on 999 if anyone is in immediate danger". The agency: "bot is
+# misreading the situation ... Bot should be responding with questions like
+# behaviour of the helper before the day she went out and left, have client
+# filed a police report". Worse, "police report" would have escalated the
+# client's own ANSWER to that question. Both moved to HARM_SIGNALS below,
+# which is verified by a second LLM check, so a helper writing that she wants
+# to run away from an abusive home is still caught - by the model, which is
+# told safety comes first, and out of hours by the verified net.
+
+# An employer telling us their helper has run away, gone missing or not come
+# back. Its own flow (ticket.MISSING_HELPER): the first steps from our records,
+# then the questions an agent needs before they can act. The subject has to be
+# the HELPER - "my helper / maid ... ran away" or "she did not come back" - so
+# a helper writing "I ran away from my employer" does not match and stays with
+# the model and the harm check.
+_MISSING_HELPER = re.compile(
+    r"\b(?:helper|maid|fdw|mdw|domestic\s+(?:helper|worker))\b[^.?!]{0,60}?"
+    r"\b(?:ran|run|running|runs|gone|went)\s+away\b"
+    r"|\b(?:helper|maid|fdw|mdw)\b[^.?!]{0,40}?\b(?:is|has\s+gone|went|gone|been)\s+missing\b"
+    r"|\bmissing\s+(?:helper|maid)\b"
+    r"|\b(?:helper|maid|fdw|mdw)\b[^.?!]{0,40}?\babscond"
+    r"|\b(?:helper|maid|fdw|mdw|she)\b[^.?!]{0,40}?"
+    r"\b(?:did\s*n.?t|didnt|has\s*n.?t|hasnt|never|not)\s+(?:come|came|return(?:ed)?)\s+"
+    r"(?:back|home)\b",
     re.IGNORECASE,
 )
 
@@ -166,6 +197,10 @@ _INTENT_ALIASES: tuple[tuple[re.Pattern[str], str], ...] = (
 # this can override an ambiguous classification without mistaking an ordinary
 # collection answer for a new request.
 _NAMED_SERVICE = (
+    # First, and a situation rather than a word: a helper who has run away is
+    # named as surely as "transfer" is, and it is what keeps the stickiness
+    # rules below from pulling the report back into whatever flow was running.
+    (_MISSING_HELPER, ticket_service.MISSING_HELPER),
     (re.compile(r"\btransfer\b", re.I), "transfer"),
     # Before renewal: "renew my insurance" names both, and the one the client
     # actually asked for is the insurance.
@@ -275,6 +310,7 @@ HARM_SIGNALS = re.compile(
     r"no\s+food|not\s+enough\s+food|starv(e|ed|ing)|no\s+sleep|"
     r"shout(ing|ed)?|scream(ing|ed)?|yell(ing|ed)?|"
     r"bruis(e|ed|es)|blood|wound|suicide|kill|"
+    r"run(?:ning)?\s+away|ran\s+away|"
     r"police)\b",
     re.IGNORECASE,
 )
@@ -305,6 +341,7 @@ _CONTACT_TYPES = {"employer", "candidate", "supplier", "partner"}
 # decide, fall back to employer (most inbound is), and let resolve_service()
 # split the flow — an employer's "transfer" is really a hiring enquiry.
 _CONTACT_BY_INTENT = {
+    ticket_service.MISSING_HELPER: "employer",
     "direct_hiring": "employer",
     "replacement": "employer",
     "renewal": "employer",
@@ -463,11 +500,26 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
 
     service_type = _normalise_service(intent, result.get("service_type"))
 
+    # A helper who has run away or gone missing. Checked ahead of everything
+    # below and deliberately NOT held back by a collection in progress: it is
+    # urgent (the police and MOM report is due within 24 hours) and it is never
+    # an answer to one of our questions. It also wins over a dispute_assault
+    # the model reached on its own - the keyword net above has already caught
+    # every message that names violence, and the 999 script is exactly what the
+    # agency objected to for a runaway (2026-09-29).
+    if _MISSING_HELPER.search(message):
+        if intent != ticket_service.MISSING_HELPER:
+            logger.info(
+                "Conversation %s: missing-helper keywords override intent %r -> %s",
+                state.get("conversation_id"), intent, ticket_service.MISSING_HELPER,
+            )
+        intent = service_type = ticket_service.MISSING_HELPER
+
     # --- Deterministic overrides. The model gets these two wrong repeatedly and
     # each has a visible consequence the client complains about. Neither fires
     # while a DIFFERENT service is mid-collection: that stays put, and a genuine
     # switch off a parked topic is handled by the named-service correction below.
-    if (
+    elif (
         _TRANSFER_PATTERN.search(message)
         and intent != "dispute_assault"
         and active_service not in SERVICE_INTENTS

@@ -18,9 +18,14 @@ from app.graph.state import (
 from app.services import contact as contact_service
 from app.services import rag
 from app.services import ticket as ticket_service
-from app.services.lead import nationality_code, nationality_in_play
+from app.services.lead import EMPLOYER_LEAD_SERVICES, nationality_code, nationality_in_play
 
 logger = logging.getLogger(__name__)
+
+# Flows only an employer runs - see _retrieval_audience.
+_EMPLOYER_ONLY_FLOWS = (EMPLOYER_LEAD_SERVICES - {"fee_enquiry", "salary_enquiry"}) | {
+    ticket_service.MISSING_HELPER
+}
 
 
 # Below this a message is too short to embed meaningfully on its own: "how
@@ -362,7 +367,15 @@ def _search_query(state: ConversationState) -> str:
     # row is top every time. Renewal, transfer, replacement and direct hire all
     # improve too; home leave and replacement move by less than 0.02 and keep
     # the same top row.
-    if intent == "fee_enquiry" and topic:
+    # ...and a price question the classifier labelled with the SERVICE counts
+    # too. Live 2026-09-28: "Hi May I know your transfer package and policy?"
+    # and "may I know your packages fee?" both classified `transfer`, so they
+    # were tagged "(transfer)" alone and retrieval came back with the helper's
+    # own "If You Want to Stop Working - Transfer" and "Your Placement Loan"
+    # rows - and not the $1,688 / $1,588 / $1,288 row the client was asking
+    # about. The bot said it would "confirm the exact transfer package fee with
+    # our team", a price we hold.
+    if (intent == "fee_enquiry" or asks_about_price(message)) and topic:
         readable_topic = f"cost of {readable_topic}"
     if not message:
         return readable_topic
@@ -472,8 +485,29 @@ def _retrieval_audience(state: ConversationState) -> str:
     untouched - this decides which ROWS are searched and nothing else.
     """
     contact = effective_contact_type(state)
-    if state.get("service_type") in ticket_service.CANDIDATE_SERVICES:
+    # RESOLVED first, exactly as info_collector resolves it, because the
+    # classifier hands retrieval the bare `transfer` - which is a candidate
+    # service key and which an EMPLOYER's transfer only leaves later, in the
+    # collector. Read raw, every employer transfer question searched the
+    # HELPER's shelf. Measured 2026-09-29: "How much does Philippines transfer
+    # helper cost?" from an employer went out with contact_type='candidate',
+    # topped at 0.463 by "What are the steps to transfer..." and the helper's
+    # own rows, while the $1,688 row it asks for scores 0.821 on the employer's
+    # shelf. That is the whole of CLAUDE.md 9.30 for the two transfer examples,
+    # and it is why a take-on client asking "what documents do I need" was
+    # told an agent would confirm the list.
+    resolved = ticket_service.resolve_service(state.get("service_type"), contact)
+    if resolved in ticket_service.CANDIDATE_SERVICES:
         return "candidate"
+    # The same argument from the employer's side. A flow only an employer can
+    # be in - resolve_service has already decided that - reads the employer's
+    # shelf even while the contact type is still unknown. Live 2026-09-28, a
+    # new number asking an employer's transfer the price was searched with no
+    # audience at all, and the top rows were written TO A HELPER ("If You Want
+    # to Stop Working - Transfer", "Your Placement Loan"). The two money
+    # enquiries are left out: a helper can ask what she will earn.
+    if contact in (None, "", "unknown") and resolved in _EMPLOYER_ONLY_FLOWS:
+        return "employer"
     return contact
 
 
@@ -533,7 +567,7 @@ def _nationality(state: ConversationState) -> str | None:
     employer) narrow the same way. 'none' is what nationality_code() returns
     for "no preference", which is not a filter — it is the absence of one.
     """
-    return nationality_in_play(state.get("collected_info"))
+    return nationality_in_play(state.get("collected_info"), state.get("incoming_text"))
 
 
 async def rag_retriever(state: ConversationState) -> dict[str, Any]:

@@ -380,6 +380,11 @@ _CASE_B = {"case_id": "2", "case_number": "CS-2026-0002", "case_type": "Home lea
 import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location("lsn", str(Path(__file__).resolve().parent / "load_service_notes.py"))
 lsn = _ilu.module_from_spec(_spec); _spec.loader.exec_module(lsn)
+# import_module, not `import ... as`: app.graph.nodes exports the node
+# FUNCTION under the module's own name, which is what `as` would bind.
+_icm = importlib.import_module("app.graph.nodes.intent_classifier")
+_ragm = importlib.import_module("app.graph.nodes.rag_retriever")
+import app.services.lead as _leadm
 # Every word of the office rows, so a fact can be asserted present without
 # naming which of the six rows carries it.
 
@@ -3002,9 +3007,11 @@ rows = [
  # Catholic, Hindu, Buddhist, another faith, OR MORE THAN ONE". That clause is
  # `_field_guidance` doing as it is told, and it is right for `languages` and
  # `requirement` and wrong for a person's own faith.
- ("her religion is the one field a single answer has to fit",
+ # ...and, since 2026-09-29, which side of a transfer the employer is on:
+ # taking one on, releasing theirs, or returning her to us are exclusive.
+ ("her religion and the transfer direction are the fields a single answer has to fit",
   sorted(f.key for svc in t.SERVICE_FIELDS for f in t.SERVICE_FIELDS[svc]
-         if not f.multiple_answers), ["religion"]),
+         if not f.multiple_answers), ["religion", "transfer_direction"]),
  # Checked through the guidance the model is HANDED, not on the flag, and both
  # halves separately: the "more than one" invitation goes, the "something not
  # on the list" invitation stays. Dropping both would be
@@ -3558,10 +3565,21 @@ rows = [
   rr._retrieval_audience({"service_type": "candidate_new_hiring",
                           "contact_type": "employer",
                           "matched_employer_id": "e1"}), "candidate"),
- ("a helper's own transfer too",
+ # Corrected 2026-09-29. This asserted "candidate" for a bare `transfer` from a
+ # number on file as an EMPLOYER - but resolve_service sends that same person
+ # down transfer_employer, so retrieval read the helper's shelf while the
+ # conversation ran the employer's flow, and every employer transfer question
+ # lost its fee and document rows (9.30). The tripwire was holding the defect
+ # in place. A helper asking for herself resolves to `transfer` and still
+ # reads her own shelf - that is the next row and the one above.
+ ("a bare transfer from an employer reads the employer's shelf",
   rr._retrieval_audience({"service_type": "transfer",
                           "contact_type": "employer",
-                          "matched_employer_id": "e1"}), "candidate"),
+                          "matched_employer_id": "e1"}), "employer"),
+ ("...and a helper's own transfer still reads hers",
+  rr._retrieval_audience({"service_type": "transfer",
+                          "contact_type": "candidate",
+                          "matched_candidate_id": "c1"}), "candidate"),
  ("and an employer flow is untouched",
   rr._retrieval_audience({"service_type": "new_hiring",
                           "contact_type": "employer",
@@ -3898,8 +3916,9 @@ rows = [
  ("every field that asks when is covered, on every service",
   sorted({f.key for fs in t.SERVICE_FIELDS.values() for f in fs
           if ico._ASKS_WHEN.search(f.question)}),
-  ["availability", "helper_availability", "leave_dates", "passport_expiry",
-   "permit_expiry", "policy_expiry", "start_timeline", "timeline"]),
+  ["availability", "helper_availability", "last_contact", "leave_dates",
+   "passport_expiry", "permit_expiry", "policy_expiry", "start_timeline",
+   "timeline"]),
  # The test is an ECHO of another answer, not "does this state a time": the
  # live value genuinely contains one - "right now" - and it is attached to
  # the country rather than to her availability.
@@ -4090,10 +4109,12 @@ rows = [
  # The values written are the field's OWN options, so the gates recognise
  # them. A value outside that pair opens neither gate, which is the exact
  # deadlock (section 9.12) this exists to end.
+ # Among the options rather than equal to them since 2026-09-29, when the
+ # question became three-way: returning her to us is only reached by asking.
  ("the values it writes are the ones the gates know",
-  sorted((ico._TAKING_ON_VALUE, ico._RELEASING_VALUE)),
-  sorted(next(f for f in t.SERVICE_FIELDS[t.TRANSFER_EMPLOYER]
-              if f.key == "transfer_direction").options)),
+  {ico._TAKING_ON_VALUE, ico._RELEASING_VALUE}
+  <= set(next(f for f in t.SERVICE_FIELDS[t.TRANSFER_EMPLOYER]
+              if f.key == "transfer_direction").options), True),
  ("...and each opens exactly one branch",
   [len(t.applicable_fields(t.TRANSFER_EMPLOYER, {"transfer_direction": v}))
    for v in (ico._TAKING_ON_VALUE, ico._RELEASING_VALUE)],
@@ -4552,6 +4573,134 @@ rows = [
   "confirm the exact fee based on your requirements" in _flat(getattr(
       importlib.import_module("app.graph.prompts.templates"),
       "SERVICE_BRIEFING_NOTE", "")), True),
+
+ # --- 2026-09-29: a runaway helper is not an assault ----------------------
+ # Conversation 1687: "my helper has run away" hit the unverified keyword net
+ # and got the 999 script. The phrases an EMPLOYER uses about a missing helper
+ # no longer force an escalation, and they still reach the VERIFIED net.
+ ("an employer's runaway report does not force the safety escalation",
+  [s for s in ("hi i need help as my helper has run away and is nowhere to be found",
+               "yes i made a police report this morning")
+   if _icm.ASSAULT_PATTERNS.search(s)], []),
+ ("...but a helper's 'run away' still reaches the verified out-of-hours net",
+  _icm.matches_assault_keywords("i want to run away from this house"), True),
+ ("...and violence is still forced, with no model involved",
+  bool(_icm.ASSAULT_PATTERNS.search("my employer hit me and i want to run away")),
+  True),
+ ("the missing-helper pattern reads the employer's phrasings",
+  [s for s in ("my helper has run away", "our maid ran away last night",
+               "my helper is missing since yesterday",
+               "she did not come back after her off day",
+               "helper didnt come back home", "i think my maid absconded")
+   if not _icm._MISSING_HELPER.search(s)], []),
+ ("...and not the helper's own",
+  [s for s in ("i ran away from my employer", "i want to run away",
+               "can my helper go home for leave", "my helper is from indonesia")
+   if _icm._MISSING_HELPER.search(s)], []),
+ ("the missing-helper flow asks what the agency listed, in their order",
+  [f.key for f in t.SERVICE_FIELDS.get(t.MISSING_HELPER, [])],
+  ["helper_name", "last_contact", "before_leaving", "police_report"]),
+ ("...is filed urgent, on its own ticket, under a type the table allows",
+  (t.MISSING_HELPER in t.HIGH_PRIORITY_SERVICES,
+   t.MISSING_HELPER in t.ALWAYS_SEPARATE,
+   t.TICKET_SERVICE_FALLBACK.get(t.MISSING_HELPER) in t.TICKET_SERVICE_TYPES),
+  (True, True, True)),
+ ("...and its opening turn forbids the 999 script",
+  "call 999" in _flat(ico.MISSING_HELPER_NOTE), True),
+ # The reporting deadline is not a callback we promised; a callback still is.
+ ("a police/MOM reporting deadline survives the handover guard",
+  gd.strip_handover_talk("Please report it to the police and MOM within 24 hours. "
+                         "May I know her name?"),
+  "Please report it to the police and MOM within 24 hours. May I know her name?"),
+ ("...while a promised callback time in the same shape is still cut",
+  "within 2 hours" in gd.strip_handover_talk(
+      "Report it to MOM and a live agent will contact you within 2 hours."), False),
+
+ # --- 2026-09-29: a greeting is a greeting, emoji and all -----------------
+ ("'Hi' with a wave is only a greeting",
+  (gd.greeting_only("Hi \U0001f44b"), gd.greeting_only("Hello \U0001f60a\U0001f60a")),
+  (True, True)),
+ ("...while 'hello??' and 'hi, any update?' are not",
+  (gd.greeting_only("hello??"), gd.greeting_only("Hi, any update?")), (False, False)),
+
+ # --- 2026-09-29: the transfer price, asked any way -----------------------
+ ("'package' is a price word",
+  gd.asks_about_price("may I know your transfer package and policy"), True),
+ ("a nationality named in the message is read strictly",
+  [_leadm.nationality_named_in(m) for m in ("How about philippines transfer helper cost",
+                         "window cleaning is needed", "any preference is fine",
+                         "indonesian or myanmar, which is cheaper?")],
+  ["PH", None, None, None]),
+ ("...and wins over one an earlier enquiry settled",
+  _leadm.nationality_in_play({"nationality": "Myanmar"},
+                                        "How about philippines transfer helper cost"),
+  "PH"),
+ ("a price question labelled with the SERVICE is still searched as a price",
+  "cost of" in _ragm._search_query({
+      "incoming_text": "I am looking for transfer helper, may I know your packages fee?",
+      "intent": "transfer", "service_type": "transfer_employer", "history_text": ""}),
+  True),
+ ("an employer-only flow reads the employer's rows while the contact is unknown",
+  (_ragm._retrieval_audience({"service_type": "transfer_employer",
+                              "contact_type": "unknown"}),
+   _ragm._retrieval_audience({"service_type": "salary_enquiry",
+                              "contact_type": "unknown"})),
+  ("employer", "unknown")),
+ # The classifier hands retrieval the BARE `transfer`, a candidate key, and an
+ # employer's transfer only becomes transfer_employer later in the collector.
+ # Read raw, every employer transfer question searched the helper's rows
+ # (CLAUDE.md 9.30: the $1,688 row scored 0.821 on the right shelf and was
+ # never returned). A helper asking for herself keeps her own shelf.
+ ("a bare 'transfer' is searched on the shelf of whoever is asking",
+  tuple(_ragm._retrieval_audience({"service_type": "transfer", "contact_type": c})
+        for c in ("employer", "unknown", "candidate")),
+  ("employer", "employer", "candidate")),
+ ("the transfer question offers all three ways in, word for word",
+  [o for o in next(f for f in t.SERVICE_FIELDS[t.TRANSFER_EMPLOYER]
+                   if f.key == "transfer_direction").options
+   if o not in next(f for f in t.SERVICE_FIELDS[t.TRANSFER_EMPLOYER]
+                    if f.key == "transfer_direction").question],
+  []),
+ ("...and the three are take on, release and return",
+  [any(w in o for o in next(f for f in t.SERVICE_FIELDS[t.TRANSFER_EMPLOYER]
+                            if f.key == "transfer_direction").options)
+   for w in ("taking on", "releasing", "returning")], [True, True, True]),
+ ("...and every one of them opens a branch",
+  [o for o in next(f for f in t.SERVICE_FIELDS[t.TRANSFER_EMPLOYER]
+                   if f.key == "transfer_direction").options
+   if not t.applicable_fields(t.TRANSFER_EMPLOYER, {"transfer_direction": o})[2:]],
+  []),
+ ("...and returning her opens the releasing branch",
+  [f.key for f in t.applicable_fields(
+      t.TRANSFER_EMPLOYER, {"transfer_direction": "returning your current helper"})]
+  == [f.key for f in t.applicable_fields(
+      t.TRANSFER_EMPLOYER, {"transfer_direction": ico._RELEASING_VALUE})], True),
+ ("the taking-on employer is not asked for the current employer's release",
+  "release" in lsn._TRANSFER_DOCS_FROM_EMPLOYER.split("If you are the one releasing")[0],
+  False),
+
+ # --- 2026-09-29: what the bot may say about itself and the client --------
+ ("the prompt forbids describing our files to a client",
+  "not listed in our records" in _flat(RULES), True),
+ ("...and advice on how to treat the helper that nobody asked for",
+  "avoid threats or punishment" in _flat(RULES), True),
+ ("the pets reason is the agency's own wording",
+  "match her with a suitable house" in ico._WHY_WE_ASK["pets"], True),
+
+ # --- 2026-09-29: three answers the agency gave ---------------------------
+ ("the minimum income row says S$2,500",
+  [r["answer"] for r in lsn.ROWS
+   if r["question"] == "What is the minimum income needed to hire a helper?"
+   and "S$2,500" in r["answer"]] != [], True),
+ ("...and every income replacement installs S$2,500",
+  [r["new"] for r in lsn.TEXT_REPLACEMENTS
+   if "income" in r["reason"] and "S$2,500" not in r["new"]], []),
+ ("the PR levy row says the concession does not apply",
+  [r for r in lsn.ROWS if "PR employer" in r["question"]
+   and "does not apply" in r["answer"] and "$300" in r["answer"]] != [], True),
+ ("'how do I inform MOM' has an answer for a pregnant helper",
+  [r for r in lsn.ROWS
+   if r["question"] == "How do I inform MOM that my helper is pregnant?"] != [], True),
 ]
 bad = 0
 for label, got, want in rows:

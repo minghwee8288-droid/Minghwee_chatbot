@@ -194,6 +194,29 @@ COLLECTOR_INTRO_NOTE = (
 )
 
 
+# The opening turn of a missing-helper report: what to do NOW, then the first
+# question. Live 2026-09-29, conversation 1687: the only thing the employer was
+# told was to call 999 "if anyone is in immediate danger" and that an agent
+# would be in touch - the agency's words, "bot is misreading the situation".
+# The steps come from the records (report to the police and MOM within 24
+# hours, contact us), never from the model's own idea of what an employer
+# should do, and nothing is said about why she left.
+MISSING_HELPER_NOTE = (
+    f"{chr(10)}{chr(10)}THEIR HELPER HAS RUN AWAY OR GONE MISSING. Before your "
+    "question, in one or two short sentences, show you understand this is "
+    "worrying and tell them what to do now, taken ONLY from the records above - "
+    "the report to the police and to MOM, the time limit on it, and that we will "
+    "guide them through it. Then ask your question.\n"
+    "- Do NOT tell them to call 999 or talk about anyone being in danger: nobody "
+    "has said anyone is hurt, and that script is what the agency called misreading "
+    "the situation.\n"
+    "- Do NOT guess why she left, say nothing about her character, and do not "
+    "suggest the client did anything to cause it.\n"
+    "- Do NOT say a live agent will connect with them: we are collecting what the "
+    "agent needs first, and the handover is announced when it happens."
+)
+
+
 # The REASON for a run of questions, never the wording of it.
 #
 # Not one of these may describe the client's own situation. The agency,
@@ -728,7 +751,9 @@ def _known_nationality(state: ConversationState) -> str | None:
     briefing would have deferred a fee we hold. Section 9.8, one definition
     read by two callers, found by using the second one.
     """
-    return lead_service.nationality_in_play(state.get("collected_info"))
+    return lead_service.nationality_in_play(
+        state.get("collected_info"), state.get("incoming_text")
+    )
 
 
 def _is_first_contact(state: ConversationState) -> bool:
@@ -882,12 +907,13 @@ _TAKES_ON_A_TRANSFER = re.compile(
     re.IGNORECASE,
 )
 
-# The field's own two options, so the value we write is one the gates already
-# recognise. Asserted against `Field.options` in selfcheck_flows.py rather than
-# trusted: a value outside that pair opens neither gate, which is the exact
-# deadlock this function exists to end.
+# Two of the field's own options, so the value we write is one the gates
+# already recognise. Asserted against `Field.options` in selfcheck_flows.py
+# rather than trusted: a value outside them opens neither gate, which is the
+# exact deadlock this function exists to end. The third option (returning her
+# to us, 2026-09-29) is only ever reached by asking.
 _TAKING_ON_VALUE = "taking on a transfer helper"
-_RELEASING_VALUE = "releasing my current helper"
+_RELEASING_VALUE = "releasing your current helper"
 
 
 def _direction_is_decided(service_type: str, collected: dict[str, Any]) -> bool:
@@ -1768,9 +1794,13 @@ _WHY_WE_ASK: dict[str, str] = {
     "religion": "so we place you with a household whose practices you are "
                 "comfortable with, and so anything you do not eat or handle is "
                 "agreed before you accept the job",
-    "pets": "so we only put forward helpers who are genuinely comfortable "
-            "around animals - it is one of the things every helper is asked "
-            "about, and a mismatch here goes wrong quickly",
+    # Reworded 2026-09-29. The old reason ("so we only put forward helpers who
+    # are genuinely comfortable around animals") came out live as "To match her
+    # with someone comfortable in your home", which the agency said "sounds
+    # wrong, preferably change it to 'match her with a suitable house'". The
+    # reason is now written the way they asked for it to be said.
+    "pets": "so we can match her with a suitable house - one with animals she "
+            "is comfortable around, since every helper is asked about pets",
     "rest_day": "so we can set the expectation with the helper before she "
                 "accepts, which is where most rest-day disagreements start",
     # Reworded 2026-09-22. The agency, on reading it live: "the phrase 'no
@@ -3187,6 +3217,12 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             "- Say it once. Do not raise it again later in this conversation."
         )
 
+    missing_note = (
+        MISSING_HELPER_NOTE
+        if service_type == ticket_service.MISSING_HELPER and not any(asked.values())
+        else ""
+    )
+
     # They stated a requirement rather than answering; say so before asking the
     # next thing. Not conditional on the extractor having found a home for it —
     # the failure this fixes is conversational, and a client whose requirement
@@ -3524,6 +3560,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             + location_note
             + helper_passport_note
             + purpose_note
+            + missing_note
             + returning_note
             + record_name_note
             + workload_note
@@ -3551,10 +3588,11 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             # Four only where all three are genuinely required: the
             # introduction, the answer to what they asked, and our question.
             max_sentences=4
-            if (first_contact and answer_first)
+            if (first_contact and (answer_first or missing_note))
             else 3
             if (answer_first or first_contact or small_ticket_note or purpose_note
-                or nationality_note or location_note or record_name_note)
+                or nationality_note or location_note or record_name_note
+                or missing_note)
             else 2,
             withhold_cost=service_type in kb_rules.cost_withheld_services(),
             # The SAME filtered tuple the question was built from. If these
