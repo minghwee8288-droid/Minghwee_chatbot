@@ -41,25 +41,60 @@ export function ActivePill({ active }: { active: boolean }) {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** "2026-09-24 12:44:53.59+00" -> "24 Sep 2026, 12:44 UTC". Anything else is shown as given. */
+const SGT = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Singapore',
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+/**
+ * A database timestamp in Singapore time: "2026-09-24 12:44:53.59+00" ->
+ * "24 Sep 2026, 8:44 pm SGT". Anything that is not a timestamp is shown as given.
+ */
 export function formatDate(value: string | null | undefined): string {
   if (!value) return '—';
-  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
-  if (!m) return value;
-  const zone = /(\+00(:?00)?|Z)$/.test(value) ? ' UTC' : '';
-  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1] ?? m[2]} ${m[1]}, ${m[4]}:${m[5]}${zone}`;
+  const iso = value
+    .trim()
+    .replace(' ', 'T')
+    .replace(/([+-]\d{2})$/, '$1:00');
+  const when = new Date(iso);
+  if (!/^\d{4}-\d{2}-\d{2}/.test(value) || Number.isNaN(when.getTime())) return value;
+  const part: Record<string, number> = {};
+  for (const p of SGT.formatToParts(when)) if (p.type !== 'literal') part[p.type] = Number(p.value);
+  const hour12 = part.hour % 12 || 12;
+  const minute = String(part.minute).padStart(2, '0');
+  return `${part.day} ${MONTHS[part.month - 1]} ${part.year}, ${hour12}:${minute} ${part.hour < 12 ? 'am' : 'pm'} SGT`;
 }
 
-/** Plain-English names for the entry types; unknown values fall back to the raw code. */
-export const ENTRY_TYPES: Record<string, string> = {
-  qa_pair: 'Question and answer',
-  document_chunk: 'Document passage',
-  table_unit: 'Table',
-};
+/**
+ * Entry text for a one-line preview: markdown marks (** * # | and a leading "- ")
+ * removed, then cut at a whole word with "…". The full text is untouched elsewhere.
+ */
+export function previewText(text: string | null | undefined, max = 180, alreadyCut = false): string {
+  if (!text) return '';
+  const lines = text.split(/\r?\n/).map((line) =>
+    line
+      .replace(/^\s*#{1,6}\s+/, '')
+      .replace(/^\s*[-*•]\s+/, '')
+      .replace(/\*+/g, '')
+      .replace(/\|/g, ' ')
+      .replace(/(^|\s):?-{3,}:?(?=\s|$)/g, ' '),
+  );
+  const flat = lines.join(' ').replace(/\s+/g, ' ').trim();
+  if (flat.length <= max && !alreadyCut) return flat;
+  const head = flat.slice(0, max + 1);
+  const space = head.lastIndexOf(' ');
+  const cut = (space > max * 0.6 ? head.slice(0, space) : flat.slice(0, max)).replace(/[\s.,;:·–—-]+$/, '');
+  return `${cut}…`;
+}
 
-/** Who maintains an entry; unknown values fall back to the raw code. */
-export const MAINTAINED_BY: Record<string, string> = {
-  loader: 'Imported by the loader',
-  ui: 'KB Admin',
-  '(none)': 'Not set',
-};
+/** The pricing policy for a service, as a pill. Unknown values are shown as given. */
+export function PolicyPill({ value }: { value: string }) {
+  if (value === 'stated') return <Pill tone="good">Quotes the fee</Pill>;
+  if (value === 'withheld') return <Pill tone="off">Passes to agent</Pill>;
+  return <span className="mono font-semibold">{value}</span>;
+}

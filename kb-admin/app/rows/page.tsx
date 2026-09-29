@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Shell } from '@/components/Shell';
-import { ActivePill, ENTRY_TYPES, MAINTAINED_BY, PageHeader } from '@/components/ui';
+import { label, type LabelKind } from '@/components/labels';
+import { ActivePill, PageHeader, previewText } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
 import { FILTERS, PAGE_SIZE, filterOptions, rows, type FilterKey } from '@/lib/queries';
 
@@ -15,11 +16,22 @@ const LABELS: Record<FilterKey, string> = {
   managed_by: 'Maintained by',
 };
 
-/** What each dropdown shows for a value. The value sent is always the raw one. */
-const OPTION_NAMES: Partial<Record<FilterKey, Record<string, string>>> = {
-  chunk_type: ENTRY_TYPES,
-  managed_by: MAINTAINED_BY,
+/** Which label set each dropdown reads. The value sent is always the raw code. */
+const OPTION_KIND: Partial<Record<FilterKey, LabelKind>> = {
+  service_type: 'service',
+  contact_type: 'audience',
+  nationality: 'nationality',
+  chunk_type: 'entryType',
+  managed_by: 'maintainedBy',
 };
+
+function optionName(key: FilterKey, value: string): string {
+  const kind = OPTION_KIND[key];
+  return kind ? label(kind, value) : value;
+}
+
+/** The preview the query returns is cut at this many characters (lib/queries.ts). */
+const SNIPPET_CHARS = 220;
 
 function one(v: string | string[] | undefined): string {
   return (Array.isArray(v) ? v[0] : v) ?? '';
@@ -88,7 +100,7 @@ export default async function RowsPage({ searchParams }: { searchParams: Params 
                 <option value="">All</option>
                 {options[key].map((v) => (
                   <option key={v} value={v}>
-                    {OPTION_NAMES[key]?.[v] ?? v}
+                    {optionName(key, v)}
                   </option>
                 ))}
               </select>
@@ -152,6 +164,7 @@ export default async function RowsPage({ searchParams }: { searchParams: Params 
             <tbody>
               {list.map((r, i) => {
                 const heading = r.question || r.section_heading;
+                const preview = previewText(r.snippet, 180, r.snippet.length >= SNIPPET_CHARS);
                 return (
                   <tr key={r.id}>
                     <td className="mono text-[12px] text-muted">{(page - 1) * PAGE_SIZE + i + 1}</td>
@@ -160,8 +173,8 @@ export default async function RowsPage({ searchParams }: { searchParams: Params 
                         <span className="link block truncate font-semibold" title={heading ?? undefined}>
                           {heading || 'Untitled passage'}
                         </span>
-                        {r.snippet ? (
-                          <span className="mt-0.5 line-clamp-2 text-[12px] leading-[1.5] text-muted">{r.snippet}</span>
+                        {preview ? (
+                          <span className="mt-0.5 line-clamp-2 text-[12px] leading-[1.5] text-muted">{preview}</span>
                         ) : null}
                       </Link>
                     </td>
@@ -171,12 +184,12 @@ export default async function RowsPage({ searchParams }: { searchParams: Params 
                       </span>
                     </td>
                     <td className="truncate-cell">
-                      <span className="mono block truncate text-[12px]" title={r.service_type}>
-                        {r.service_type}
+                      <span className="block truncate" title={r.service_type}>
+                        {label('service', r.service_type)}
                       </span>
                     </td>
                     <td>
-                      <span className="mono text-[12px]">{r.contact_type}</span>
+                      <span title={r.contact_type}>{label('audience', r.contact_type)}</span>
                     </td>
                     <td>
                       <ActivePill active={r.is_active} />

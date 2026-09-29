@@ -76,7 +76,7 @@ export default async function DocumentsPage() {
                     </td>
                     <td className="num mono">{d.total}</td>
                     <td className="num mono">{d.active}</td>
-                    <td className="num mono" style={d.inactive ? { color: 'var(--amber-dot)' } : { color: 'var(--muted)' }}>
+                    <td className="num mono" style={{ color: d.inactive ? 'var(--amber-dot)' : 'var(--faint)' }}>
                       {d.inactive}
                     </td>
                     <td>

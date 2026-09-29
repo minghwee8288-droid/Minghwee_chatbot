@@ -18,7 +18,7 @@ export default function LoginPage({ searchParams }: { searchParams: { e?: string
             style={{ background: 'var(--side-bg)' }}
             aria-hidden="true"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F7F6F3" strokeWidth="1.8">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--side-text)' }} strokeWidth="1.8">
               <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5z" />
               <path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z" />
             </svg>

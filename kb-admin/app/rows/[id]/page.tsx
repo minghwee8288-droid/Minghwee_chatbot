@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Shell } from '@/components/Shell';
-import { ActivePill, ENTRY_TYPES, MAINTAINED_BY, formatDate } from '@/components/ui';
+import { label } from '@/components/labels';
+import { ActivePill, formatDate } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
 import { FILTERS, row } from '@/lib/queries';
 
@@ -100,8 +101,12 @@ export default async function RowPage({ params, searchParams }: { params: { id: 
               {r.is_active ? 'The chatbot can use this entry.' : 'The chatbot does not use this entry.'}
             </p>
           </Section>
-          <Section label="Entry type">{ENTRY_TYPES[r.chunk_type] ?? <Code value={r.chunk_type} />}</Section>
-          <Section label="Maintained by">{MAINTAINED_BY[managedRaw] ?? <Code value={managedRaw} />}</Section>
+          <Section label="Entry type">
+            {label('entryType', r.chunk_type) !== r.chunk_type ? label('entryType', r.chunk_type) : <Code value={r.chunk_type} />}
+          </Section>
+          <Section label="Maintained by">
+            {label('maintainedBy', managedRaw) !== managedRaw ? label('maintainedBy', managedRaw) : <Code value={managedRaw} />}
+          </Section>
           <Section label="Last updated">
             <span className="mono text-[13px]">{formatDate(r.updated_at)}</span>
           </Section>

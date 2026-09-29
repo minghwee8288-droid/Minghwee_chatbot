@@ -1,5 +1,6 @@
 import { Shell } from '@/components/Shell';
-import { AmberNotice, PageHeader, Pill, formatDate } from '@/components/ui';
+import { label } from '@/components/labels';
+import { AmberNotice, PageHeader, Pill, PolicyPill, formatDate } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
 import { rules, type Rule } from '@/lib/queries';
 
@@ -18,8 +19,6 @@ const CONTACT_ITEMS: Record<string, string> = {
   whatsapp_number: 'WhatsApp number',
 };
 
-const NATIONALITIES: Record<string, string> = { PH: 'Philippines', ID: 'Indonesia', MM: 'Myanmar' };
-
 /** Any rule value as plain text - never as JSON. */
 function plain(value: unknown): string {
   if (value === null || value === undefined) return '—';
@@ -35,6 +34,7 @@ function plain(value: unknown): string {
 
 const Mono = ({ children }: { children: React.ReactNode }) => <span className="mono font-semibold">{children}</span>;
 const Code = ({ children }: { children: React.ReactNode }) => <span className="mono text-[12px]">{children}</span>;
+const Service = ({ code }: { code: string }) => <span title={code}>{label('service', code)}</span>;
 
 const POLICY: Record<string, string> = {
   stated: 'The chatbot quotes the fee',
@@ -47,39 +47,36 @@ const GROUPS: Record<string, Group> = {
     explain: 'Whether the chatbot may quote the fee for each service, or must leave it to an agent.',
     subjectLabel: 'Service',
     valueLabel: 'Policy',
-    subject: (r) => <Code>{r.service_type}</Code>,
-    value: (r) => (
-      <>
+    subject: (r) => <Service code={r.service_type} />,
+    value: (r) =>
+      typeof r.value === 'string' ? (
+        <>
+          <PolicyPill value={r.value} />
+          {POLICY[r.value] ? <span className="ml-2 text-[12px] text-muted">{POLICY[r.value]}</span> : null}
+        </>
+      ) : (
         <Mono>{plain(r.value)}</Mono>
-        {typeof r.value === 'string' && POLICY[r.value] ? (
-          <span className="ml-2 text-[12px] text-muted">{POLICY[r.value]}</span>
-        ) : null}
-      </>
-    ),
+      ),
   },
   price_nationality: {
     title: 'Fees by nationality',
     explain: 'For services priced by nationality, the nationalities we hold a fee for.',
     subjectLabel: 'Service',
     valueLabel: 'Nationalities with a fee',
-    subject: (r) => <Code>{r.service_type}</Code>,
-    value: (r) => (
-      <span title={Array.isArray(r.value) ? r.value.map((c) => NATIONALITIES[String(c)] ?? String(c)).join(', ') : undefined}>
+    subject: (r) => <Service code={r.service_type} />,
+    value: (r) =>
+      Array.isArray(r.value) ? (
+        <span title={r.value.map(String).join(', ')}>{r.value.map((c) => label('nationality', String(c))).join(', ')}</span>
+      ) : (
         <Mono>{plain(r.value)}</Mono>
-      </span>
-    ),
+      ),
   },
   salary_floor: {
     title: 'Minimum salary',
     explain: 'The lowest monthly salary a helper of each nationality can be placed at.',
     subjectLabel: 'Nationality',
     valueLabel: 'Minimum monthly salary',
-    subject: (r) => (
-      <>
-        <Code>{r.nationality}</Code>
-        {NATIONALITIES[r.nationality] ? <span className="ml-2 text-muted">{NATIONALITIES[r.nationality]}</span> : null}
-      </>
-    ),
+    subject: (r) => <span title={r.nationality}>{label('nationality', r.nationality)}</span>,
     value: (r) => <Mono>{typeof r.value === 'number' ? `S$${r.value.toLocaleString('en-SG')}` : plain(r.value)}</Mono>,
   },
   contact: {
@@ -102,8 +99,8 @@ function fallback(type: string): Group {
     valueLabel: 'Value',
     subject: (r) => (
       <>
-        <Code>{r.service_type}</Code>
-        {r.nationality !== 'all' ? <Code> · {r.nationality}</Code> : null}
+        <Service code={r.service_type} />
+        {r.nationality !== 'all' ? <span className="text-muted"> · {label('nationality', r.nationality)}</span> : null}
       </>
     ),
     value: (r) => <Mono>{plain(r.value)}</Mono>,
@@ -148,7 +145,7 @@ export default async function RulesPage() {
                 <col style={{ width: '26%' }} />
                 <col />
                 <col style={{ width: 110 }} />
-                <col style={{ width: 190 }} />
+                <col style={{ width: 215 }} />
               </colgroup>
               <thead>
                 <tr>

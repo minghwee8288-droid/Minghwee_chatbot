@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { label } from '@/components/labels';
 
 type Source = { id: string; service_type: string; nationality: string; question: string; similarity: number };
 type Turn = {
@@ -68,9 +69,9 @@ function TurnResult({ turn }: { turn: Turn }) {
                   <Link href={`/rows/${s.id}`} className="link min-w-0 flex-1 truncate" title={s.question || undefined}>
                     {s.question || 'Untitled passage'}
                   </Link>
-                  <span className="mono flex-none text-[12px] text-muted">
-                    {s.service_type}
-                    {s.nationality && s.nationality !== 'all' ? ` · ${s.nationality}` : ''}
+                  <span className="flex-none text-[12px] text-muted">
+                    {label('service', s.service_type)}
+                    {s.nationality && s.nationality !== 'all' ? ` · ${label('nationality', s.nationality)}` : ''}
                   </span>
                 </li>
               );
@@ -162,7 +163,7 @@ export function TestForm() {
               Remove last
             </button>
           ) : null}
-          <div className="w-[190px]">
+          <div className="w-[190px] flex-none">
             <label htmlFor="audience" className="field-label mb-1.5 block">
               Asking as
             </label>

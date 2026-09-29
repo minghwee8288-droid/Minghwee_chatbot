@@ -14,6 +14,8 @@
   --faint: #8d8880;
 
   --card: #ffffff;
+  --control-bg: #ffffff;
+  --on-primary: #ffffff;
   --border: #e2dfd8;
   --th-bg: #f2f0eb;
   --divider: #efede7;
@@ -51,6 +53,7 @@
   --side-active: #2e2c27;
 
   --sidebar-width: 240px;
+  --page-max: 1360px;
 }
 
 html,
@@ -144,11 +147,21 @@ body {
   }
   .main {
     flex: 1;
+    min-width: 0;
     padding: 28px 32px;
+  }
+  /* The page column: the same width and edges on every page. */
+  .page {
     display: flex;
     flex-direction: column;
     gap: 18px;
+    width: 100%;
+    max-width: var(--page-max);
     min-width: 0;
+  }
+  .page > * {
+    min-width: 0;
+    max-width: 100%;
   }
 
   /* Headings ----------------------------------------------------------- */
@@ -248,7 +261,7 @@ body {
     width: 100%;
     border: 1px solid var(--input-border);
     border-radius: 8px;
-    background: #ffffff;
+    background: var(--control-bg);
     padding: 0 11px;
     font-size: 13px;
     color: var(--text);
@@ -276,7 +289,7 @@ body {
   }
   .btn-primary {
     background: var(--primary);
-    color: #ffffff;
+    color: var(--on-primary);
   }
   .btn-primary:hover:not(:disabled) {
     background: var(--primary-hover);
@@ -286,7 +299,7 @@ body {
     cursor: not-allowed;
   }
   .btn-secondary {
-    background: #ffffff;
+    background: var(--control-bg);
     border-color: var(--secondary-border);
     color: var(--text);
   }
@@ -294,7 +307,7 @@ body {
     background: var(--bg);
   }
   .btn-disabled {
-    background: #ffffff;
+    background: var(--control-bg);
     border-color: var(--divider);
     color: var(--faint);
     cursor: default;

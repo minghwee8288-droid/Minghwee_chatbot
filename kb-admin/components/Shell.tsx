@@ -63,7 +63,9 @@ export function Shell({
           </div>
         </div>
       </aside>
-      <main className="main">{children}</main>
+      <main className="main">
+        <div className="page">{children}</div>
+      </main>
     </div>
   );
 }
