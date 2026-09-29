@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Shell } from '@/components/Shell';
+import { documentLabel } from '@/components/labels';
 import { PageHeader, Pill } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
 import { documents, totals } from '@/lib/queries';
@@ -71,7 +72,7 @@ export default async function DocumentsPage() {
                         className="link block truncate font-medium"
                         title={name}
                       >
-                        {name}
+                        {d.source_document ? documentLabel(d.source_document) : name}
                       </Link>
                     </td>
                     <td className="num mono">{d.total}</td>

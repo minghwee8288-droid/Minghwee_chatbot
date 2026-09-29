@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Shell } from '@/components/Shell';
-import { label } from '@/components/labels';
+import { documentLabel, label } from '@/components/labels';
 import { ActivePill, formatDate } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
 import { FILTERS, row } from '@/lib/queries';
@@ -60,7 +60,9 @@ export default async function RowPage({ params, searchParams }: { params: { id: 
         <h1 className="page-title mt-3">{heading}</h1>
         <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-muted">
           <ActivePill active={r.is_active} />
-          <span>{r.source_document || 'Untitled document'}</span>
+          <span title={r.source_document ?? undefined}>
+            {r.source_document ? documentLabel(r.source_document) : 'Untitled document'}
+          </span>
         </div>
       </div>
 
@@ -84,7 +86,9 @@ export default async function RowPage({ params, searchParams }: { params: { id: 
 
         <aside className="card" aria-label="Details">
           <Section label="Document">
-            <p className="break-words">{r.source_document || '—'}</p>
+            <p className="break-words" title={r.source_document ?? undefined}>
+              {documentLabel(r.source_document)}
+            </p>
           </Section>
           <Section label="Service">
             <span title={r.service_type}>{label('service', r.service_type)}</span>
