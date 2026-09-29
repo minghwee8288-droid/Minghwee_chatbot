@@ -3,11 +3,14 @@
 A **read-only** viewer for the chatbot's knowledge base and pricing rules, for the
 agency's own staff. Phase 1: it can show, never change.
 
-- **Documents** - each source document with its row counts (active / inactive).
-- **Rows** - every knowledge-base row, with filters, text search and a detail page.
-- **Rules** - the pricing and contact rules the bot reads (`cb_kb_rules`), locked rules marked.
-- **Test a question** - runs the real bot on a question, read-only, and shows the reply
-  and the rows it used.
+- **Knowledge base** (`/documents`) - each source document with its entry counts (active /
+  inactive) and whether it is live.
+- **Browse entries** (`/rows`) - every knowledge-base entry, with filters, text search and a
+  detail page.
+- **Pricing rules** (`/rules`) - the pricing and contact rules the bot reads (`cb_kb_rules`),
+  locked rules marked.
+- **Test a question** (`/test`) - runs the real bot on a question (optionally with follow-ups
+  and a chosen audience), read-only, and shows the reply and the entries it used.
 
 Standalone Next.js app. It imports nothing from `app/`, and deploys (later) as its own
 Vercel project with Root Directory `kb-admin`.

@@ -154,7 +154,7 @@ export default async function RowsPage({ searchParams }: { searchParams: Params 
                 const heading = r.question || r.section_heading;
                 return (
                   <tr key={r.id}>
-                    <td className="mono text-[12px] text-faint">{(page - 1) * PAGE_SIZE + i + 1}</td>
+                    <td className="mono text-[12px] text-muted">{(page - 1) * PAGE_SIZE + i + 1}</td>
                     <td className="truncate-cell">
                       <Link href={`/rows/${r.id}${here ? `?${here}` : ''}`} className="block">
                         <span className="link block truncate font-semibold" title={heading ?? undefined}>
