@@ -38,6 +38,12 @@ function serviceLabel(code: string): string {
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : code;
 }
 
+/** "MOM_MDW_Eligibility_Hiring_Guide.docx" -> "MOM_MDW_Eligibility_Hiring_Guide". Show the full name on hover. */
+export function documentLabel(name: string | null | undefined): string {
+  if (!name) return '—';
+  return name.replace(/\.(docx?|md|pdf|txt)$/i, '') || name;
+}
+
 /** The readable name for a code. Anything unmapped (other than a service) shows the code itself. */
 export function label(kind: LabelKind, code: string | null | undefined): string {
   if (code === null || code === undefined || code === '') return '—';

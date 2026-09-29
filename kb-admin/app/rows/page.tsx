@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { Shell } from '@/components/Shell';
-import { label, type LabelKind } from '@/components/labels';
+import { documentLabel, label, type LabelKind } from '@/components/labels';
 import { ActivePill, PageHeader, previewText } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
 import { FILTERS, PAGE_SIZE, filterOptions, rows, type FilterKey } from '@/lib/queries';
@@ -25,9 +25,27 @@ const OPTION_KIND: Partial<Record<FilterKey, LabelKind>> = {
   managed_by: 'maintainedBy',
 };
 
+/** The first option in each dropdown: no filter on that column. */
+const ANY: Record<FilterKey, string> = {
+  source_document: 'Any document',
+  service_type: 'Any service',
+  contact_type: 'Any audience',
+  nationality: 'Any nationality',
+  chunk_type: 'Any entry type',
+  managed_by: 'Any source',
+};
+
 function optionName(key: FilterKey, value: string): string {
+  if (key === 'source_document') return documentLabel(value);
   const kind = OPTION_KIND[key];
   return kind ? label(kind, value) : value;
+}
+
+/** A dropdown's values, ordered by the words shown rather than by the stored code. */
+function sortedOptions(key: FilterKey, values: string[]): string[] {
+  return [...values].sort((a, b) =>
+    optionName(key, a).localeCompare(optionName(key, b), 'en', { sensitivity: 'base', numeric: true }),
+  );
 }
 
 /** The preview the query returns is cut at this many characters (lib/queries.ts). */
@@ -47,6 +65,9 @@ export default async function RowsPage({ searchParams }: { searchParams: Params 
     const value = one(searchParams[key]);
     if (value && options[key].includes(value)) filters[key] = value;
   }
+  // A filter with fewer than two values to choose between is not shown; it
+  // comes back by itself once a second value exists.
+  const shownFilters = (Object.keys(FILTERS) as FilterKey[]).filter((key) => options[key].length >= 2);
   const activeParam = one(searchParams.active);
   const active = activeParam === 'active' || activeParam === 'inactive' ? activeParam : 'all';
   const search = one(searchParams.q).slice(0, 200);
@@ -76,9 +97,9 @@ export default async function RowsPage({ searchParams }: { searchParams: Params 
         sub={filtered ? `${entries(total)} match your filters` : `${entries(total)} in the knowledge base`}
       />
 
-      <form method="get" className="card card-pad" aria-label="Filter entries">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-[260px] flex-[2_1_300px]">
+      <form method="get" className="card card-pad filter-card" aria-label="Filter entries">
+        <div className="filter-grid">
+          <div className="filter-search">
             <label htmlFor="f-q" className="field-label mb-1.5 block">
               Search
             </label>
@@ -91,40 +112,40 @@ export default async function RowsPage({ searchParams }: { searchParams: Params 
               className="input"
             />
           </div>
-          {(Object.keys(FILTERS) as FilterKey[]).map((key) => (
-            <div key={key} className="min-w-[140px] flex-[1_1_150px]">
+          {shownFilters.map((key) => (
+            <div key={key}>
               <label htmlFor={`f-${key}`} className="field-label mb-1.5 block">
                 {LABELS[key]}
               </label>
               <select id={`f-${key}`} name={key} defaultValue={filters[key] ?? ''} className="select">
-                <option value="">All</option>
-                {options[key].map((v) => (
-                  <option key={v} value={v}>
+                <option value="">{ANY[key]}</option>
+                {sortedOptions(key, options[key]).map((v) => (
+                  <option key={v} value={v} title={key === 'source_document' ? v : undefined}>
                     {optionName(key, v)}
                   </option>
                 ))}
               </select>
             </div>
           ))}
-          <div className="min-w-[120px] flex-[1_1_130px]">
+          <div>
             <label htmlFor="f-active" className="field-label mb-1.5 block">
               Status
             </label>
             <select id="f-active" name="active" defaultValue={active} className="select">
-              <option value="all">All</option>
+              <option value="all">Any status</option>
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
             </select>
           </div>
-          <div className="flex gap-2">
-            <button type="submit" className="btn btn-primary">
-              Apply
-            </button>
+          <div className="filter-actions">
             {filtered ? (
               <Link href="/rows" className="btn btn-secondary">
                 Clear
               </Link>
             ) : null}
+            <button type="submit" className="btn btn-primary">
+              Apply
+            </button>
           </div>
         </div>
       </form>
@@ -180,7 +201,7 @@ export default async function RowsPage({ searchParams }: { searchParams: Params 
                     </td>
                     <td className="truncate-cell">
                       <span className="block truncate text-muted" title={r.source_document ?? undefined}>
-                        {r.source_document || '—'}
+                        {documentLabel(r.source_document)}
                       </span>
                     </td>
                     <td className="truncate-cell">

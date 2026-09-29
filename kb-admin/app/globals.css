@@ -196,6 +196,37 @@ body {
     border-bottom: 1px solid var(--border);
     border-radius: 10px 10px 0 0;
   }
+
+  /* Filter grid: equal columns, search takes two, the buttons sit in the last
+     column. The column count follows the card's own width, not the window's. */
+  .filter-card {
+    container: filters / inline-size;
+  }
+  .filter-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px 12px;
+    align-items: end;
+  }
+  .filter-search {
+    grid-column: span 2;
+  }
+  .filter-actions {
+    grid-column: -2 / -1;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  @container filters (min-width: 600px) {
+    .filter-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+  @container filters (min-width: 880px) {
+    .filter-grid {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+  }
   .stat-label,
   .field-label {
     font-size: 11px;
