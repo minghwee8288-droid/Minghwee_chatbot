@@ -87,13 +87,13 @@ export default async function RowPage({ params, searchParams }: { params: { id: 
             <p className="break-words">{r.source_document || '—'}</p>
           </Section>
           <Section label="Service">
-            <Code value={r.service_type} />
+            <span title={r.service_type}>{label('service', r.service_type)}</span>
           </Section>
           <Section label="Audience">
-            <Code value={r.contact_type} />
+            <span title={r.contact_type}>{label('audience', r.contact_type)}</span>
           </Section>
           <Section label="Nationality">
-            <Code value={r.nationality} />
+            <span title={r.nationality}>{label('nationality', r.nationality)}</span>
           </Section>
           <Section label="Status">
             <ActivePill active={r.is_active} />
