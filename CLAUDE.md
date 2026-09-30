@@ -103,6 +103,13 @@ reset-ui/            Next.js "clear a conversation" page (separate deliverable, 
                      Vercel project). Standalone: imports nothing from app/, calls no
                      chatbot endpoint, talks to Supabase directly with the service-role
                      key from its own serverless functions. See reset-ui/README.md.
+kb-admin/            Next.js READ-ONLY knowledge-base viewer (Documents, Rows, Rules,
+                     Test a question). Standalone: imports nothing from app/. Reads as
+                     the kb_admin_reader database login inside BEGIN READ ONLY; signs
+                     in via Supabase Auth + an active cb_kb_admin_users row, checked on
+                     every request. Holds no service-role, LLM or embedding key. Test a
+                     question calls the bot's POST /admin/preview. Not deployed yet.
+                     See kb-admin/README.md; `npm run selfcheck` before any change.
 ```
 
 ---
@@ -1245,6 +1252,7 @@ docker compose logs chatbot | grep "Safety gate"
 # diagnostics (all read-only)
 python scripts/smoke_nodes.py          # RUNS each node with the LLM and DB stubbed. Run this FIRST.
 python scripts/selfcheck_reset_ui.py   # reset-ui/ still clears what reset_conversation.py clears
+(cd kb-admin && npm run selfcheck)     # kb-admin: no write path, auth on every route, no secret leaked
 python scripts/selfcheck_flows.py      # behavioural assertions; also runs IN the container:
                                        #   docker compose cp scripts/. chatbot:/app/scripts
                                        #   docker compose exec chatbot python /app/scripts/selfcheck_flows.py
@@ -1446,6 +1454,35 @@ Append here, newest first. One entry per behavioural change.
   helper was re-asked in replay (read as a month), not seen live.
   `selfcheck_flows.py` is **709 assertions**; `smoke_nodes.py` is **194
   states**.
+
+- **2026-09-28** - **kb-admin/: a read-only viewer for the knowledge base, built
+  and run locally only.** No bot behaviour changes; nothing deployed.
+  (A) **Standalone Next.js 14** beside `reset-ui/`, importing nothing from `app/`.
+  Pages: Documents, Rows (filters, search, detail), Rules (locked rules marked),
+  Test a question. All server-rendered per request.
+  (B) **It can only read, three times over.** The database login is
+  `kb_admin_reader` (SELECT on three tables, not the embeddings); every query
+  runs in `BEGIN READ ONLY`; `lib/db.ts` exports `select` and refuses anything
+  but one SELECT. `npm run selfcheck` fails on any write verb in the source.
+  (C) **Access is a Supabase Auth account PLUS an active `cb_kb_admin_users`
+  row (role `viewer`), checked server-side on every page and API call** - the
+  token is verified by Supabase Auth, never trusted from the cookie. kb-admin
+  cannot grant access; rows are added by a separate reviewed SQL change.
+  (D) **It refuses to start** (exits 1) unless every setting names the same
+  project and the key is the anon key - a service-role key is refused by name.
+  (E) **Test a question** forwards only the messages and the audience to
+  `POST /admin/preview`, adding the preview secret server-side. It never sends
+  `context`, which could carry client data. Locally the bot ran as a
+  preview-only process with no direct database connection (checkpointer off),
+  WhatsApp unreachable and the allowlist admitting nobody.
+  (F) **Verified**: selfcheck 44 checks, six faults injected and all six red;
+  the real query module run against the database as `kb_admin_reader`, 20
+  checks; 25 HTTP checks on the running app and bot (no session, forged and
+  expired sessions, cross-origin, sign-in refusal, key checks). Zero writes:
+  every statement recorded for the reader role was a read, every column of
+  every row of the three tables it can see unchanged, and the permission
+  snapshot unchanged. Signing in with a real account waits on the first
+  access row.
 
 - **2026-09-25** - **The preview route tells nobody without the key that it
   exists, and the API docs are off.** Bot-side hardening that must land before

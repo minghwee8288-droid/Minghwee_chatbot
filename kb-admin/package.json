@@ -1,0 +1,28 @@
+{
+  "name": "minghwee-kb-admin",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Read-only viewer for the chatbot's knowledge base and pricing rules. Standalone: imports nothing from app/, and holds no service-role, LLM or embedding key.",
+  "scripts": {
+    "dev": "next dev -p 5176 -H 127.0.0.1",
+    "build": "next build",
+    "start": "next start -p 5176 -H 127.0.0.1",
+    "selfcheck": "node --conditions=react-server scripts/selfcheck.mjs"
+  },
+  "dependencies": {
+    "next": "14.2.35",
+    "postgres": "3.4.9",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.4",
+    "typescript": "^5.5.3"
+  }
+}
