@@ -428,6 +428,7 @@ because the lead is opened early and the ticket is created much later.
 | A passport that runs out before the renewal could finish is said out loud | `info_collector._expires_before_we_finish` + `EXPIRING_SOON_NOTE` | Live: *"in 5 days"* answered with *"It takes approximately 6 to 8 weeks"*, the two figures one line apart and nothing connecting them — 2 runs out of 2. `passport_expiry` had been collected since the flow was written and put on the ticket; **nothing ever read it.** Coarse on purpose and fails towards SILENCE: "next March", "when the contract ends" and a formatted date all return None, because guessing at a date and then calling somebody's passport urgent is worse than the omission. 60 days, which covers the slowest route we hold — a per-nationality table would be a second copy of lead times that live in the knowledge base (§9.8). |
 | The pricing rules have ONE reader, and a bad table can never widen or empty them | `app/services/kb_rules.py` + `cb_kb_rules` | `FEE_STATED_SERVICES`, `COST_WITHHELD_SERVICES`, `FEE_BY_NATIONALITY` and the salary floor moved out of four files into one table, so the KB Admin UI can change a price policy without a deploy. Callers read a validated in-memory snapshot and never the database. An empty, half-read or invalid table is REFUSED whole and the last good set stays in force, else the code defaults — "withhold everything" would also switch off the retrieval filter that keeps $695 out of a $450 passport renewal. `fee_enquiry` is withheld and locked in the table itself; `transfer`/`transfer_employer` are one switch, enforced by a commit-time trigger. |
 | The loader never overwrites the KB Admin UI | `load_service_notes._ui_owned` + `metadata.managed_by` | Every row is `loader` or `ui`. All four write paths (ROWS, UPDATES, TEXT_REPLACEMENTS, RETIRED) skip and report a `ui` row — without it the first loader run after the UI went live would silently undo the client's edits, because three of the four find their targets by searching. Proved by RUNNING the loader against a stub DB holding one, in `selfcheck_kb_prep.py`. |
+| Nobody without the preview key learns anything from the preview route | `main.create_app` + `admin.require_preview_key` + `selfcheck_kb_prep.py` | No secret: the route is not registered (404, absent from the schema). With one, the key is a route dependency and the body is NOT a declared parameter - FastAPI decodes a declared body before dependencies, so malformed JSON answered 422 to anyone. 422 is now only ever seen by a key holder. Rate-limited, one at a time, 32 KB cap. Proved over HTTP, eight faults injected, eight red. |
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -594,7 +595,13 @@ Easy to get wrong:
   before each turn, at most once a minute; a failed or invalid read keeps the last
   good set, else the defaults — never "quote everything" or "withhold everything".
 - `ADMIN_PREVIEW_SECRET` — header `X-Admin-Preview-Key` for `POST /admin/preview`.
-  Empty means the route answers 404.
+  Empty means the route is **never registered**: 404 whatever the body, and absent
+  from the schema.
+- `ADMIN_PREVIEW_PER_MINUTE` (10) — previews run the real model in the live bot's
+  one process; over the limit is 429, and a second concurrent preview is 429 too.
+- `ENABLE_API_DOCS` (default **false**) — `/docs`, `/redoc`, `/openapi.json`.
+  Opt-in rather than keyed on `ENVIRONMENT`, because `ENVIRONMENT` defaults to
+  `development` and `.env.example` sets it so.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1069,7 +1076,13 @@ Ordered by what will hurt first.
     validation, so a missing or wrong key is 404/401 and never 422; (c) offline
     checks in `selfcheck_kb_prep.py` for all three: no secret + no body -> 404,
     secret + no key + no body -> 401, secret + key + bad body -> 422.
-33. **The API docs are public wherever the app is.** `FastAPI(...)` in
+    **FIXED IN CODE 2026-09-25, not yet deployed** - see the change log. One
+    correction to (b): a dependency alone was not enough. FastAPI decodes a
+    declared body before it runs dependencies, so malformed JSON still got 422
+    ahead of the key check; the body is now read by hand after it. Mark this
+    RESOLVED once the server answers 404 on `/admin/preview` with no secret.
+33. **FIXED IN CODE 2026-09-25, not yet deployed** (`ENABLE_API_DOCS`, off by
+    default). **The API docs are public wherever the app is.** `FastAPI(...)` in
     `main.py` leaves `/docs`, `/redoc` and `/openapi.json` on, so they list
     every route, `/admin/preview` and the webhook path pattern included.
     Pre-existing. Turn all three off outside development (`docs_url=None`,
@@ -1433,6 +1446,38 @@ Append here, newest first. One entry per behavioural change.
   helper was re-asked in replay (read as a month), not seen live.
   `selfcheck_flows.py` is **709 assertions**; `smoke_nodes.py` is **194
   states**.
+
+- **2026-09-25** - **The preview route tells nobody without the key that it
+  exists, and the API docs are off.** Bot-side hardening that must land before
+  `ADMIN_PREVIEW_SECRET` is ever set on production (§9.32, §9.33). No
+  behaviour change for clients, and none for the preview's own output.
+  (A) **No secret, no route.** `main.create_app()` registers the admin router
+  only when the secret is set, so a switched-off server answers 404 to every
+  body and the path is absent from the schema. `main.py` became a factory so
+  the self-check can build the app both ways.
+  (B) **The fix §9.32 prescribed was not sufficient, and the test is what
+  showed it.** Moving the key check into a route dependency still let
+  malformed JSON answer 422 before the key was looked at: FastAPI decodes a
+  DECLARED body ahead of dependencies. The body is no longer a declared
+  parameter; the route reads the bytes and validates them itself, after the
+  key. No or wrong key is always 401; 422 is only ever seen by a key holder.
+  The fault injection for this is "declare the body again" and it goes red on
+  exactly that case - the bodiless case alone stays green, which is why both
+  are asserted.
+  (C) **Previews are capped**, because they run the real model inside the live
+  bot's one process: `ADMIN_PREVIEW_PER_MINUTE` (10) and never two at once, both
+  answered 429 rather than queued, plus a 32 KB body cap (413). The test for
+  "never two at once" first HUNG under its own fault - the request queued on
+  the lock the test held - so it is bounded now and a timeout is a FAIL.
+  (D) **Docs are opt-in (`ENABLE_API_DOCS`), not keyed on `ENVIRONMENT`.**
+  `ENVIRONMENT` defaults to `development` and `.env.example` sets it so; keyed
+  on it, a server that never changed it would keep publishing every route.
+  (E) The live `--preview` check calls `run_preview` directly and no longer
+  needs the secret. The log line for a preview carries lengths, not the text.
+  **Verified:** `selfcheck_kb_prep.py --offline` 48 checks (was 26), run with an
+  EMPTY env file so no credentials were loaded; eight faults injected, eight
+  red; `smoke_nodes.py` and `selfcheck_flows.py` ALL PASS; with no secret the
+  app's routes are `/`, `/health`, `/health/ready` and the webhook, nothing else.
 
 - **2026-09-24** - **KB Admin UI preparation: the pricing rules move into a
   table, the loader learns ownership, and a preview that writes nothing.** No
