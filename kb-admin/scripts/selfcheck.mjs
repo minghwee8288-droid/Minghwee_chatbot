@@ -188,6 +188,35 @@ check('refuses a secret key', refuses({ SUPABASE_ANON_KEY: 'sb_secret_abcdef' })
 check('refuses a database user other than kb_admin_reader', refuses({ KB_ADMIN_DB_USER: `postgres.${REF}` }));
 check('refuses a non-pooler database host', refuses({ KB_ADMIN_DB_HOST: `db.${REF}.supabase.co` }));
 check('refuses a missing database password', refuses({ KB_ADMIN_DB_PASSWORD: '' }));
+{
+  // Dummy values only. The env var wins over the file (Vercel has no file);
+  // with the env var empty the file is read exactly as before.
+  const DUMMY_ENV = 'dummy-env-password-not-real';
+  const DUMMY_FILE = 'dummy-file-password-not-real';
+  const reads = [];
+  const fakeFile = (p) => {
+    reads.push(p);
+    return `${DUMMY_FILE}\n`;
+  };
+  const pw = (overrides) => {
+    try {
+      return validateConfig({ ...good, ...overrides }, fakeFile).db.password;
+    } catch (e) {
+      return `ERR:${e.message}`;
+    }
+  };
+  check('KB_ADMIN_DB_PASSWORD is used when set', pw({ KB_ADMIN_DB_PASSWORD: DUMMY_ENV, KB_ADMIN_DB_PASSWORD_FILE: '' }) === DUMMY_ENV);
+  reads.length = 0;
+  check('...and wins over KB_ADMIN_DB_PASSWORD_FILE without reading the file',
+    pw({ KB_ADMIN_DB_PASSWORD: DUMMY_ENV, KB_ADMIN_DB_PASSWORD_FILE: 'C:/dummy/path.pw' }) === DUMMY_ENV && reads.length === 0);
+  check('with it empty, KB_ADMIN_DB_PASSWORD_FILE is read as before',
+    pw({ KB_ADMIN_DB_PASSWORD: '', KB_ADMIN_DB_PASSWORD_FILE: 'C:/dummy/path.pw' }) === DUMMY_FILE);
+  const neither = pw({ KB_ADMIN_DB_PASSWORD: '', KB_ADMIN_DB_PASSWORD_FILE: '' });
+  check('with neither set, the error names both variables',
+    neither.startsWith('ERR:') && neither.includes('KB_ADMIN_DB_PASSWORD ') && neither.includes('KB_ADMIN_DB_PASSWORD_FILE'), neither);
+  const err = pw({ KB_ADMIN_DB_PASSWORD: '', KB_ADMIN_DB_PASSWORD_FILE: '' }) + pw({ KB_ADMIN_DB_PASSWORD_FILE: '', SUPABASE_URL: 'x' });
+  check('no error message ever carries the password', !err.includes(DUMMY_ENV) && !err.includes('x'.repeat(24)));
+}
 check('refuses a plain-http preview URL off localhost', refuses({ BOT_PREVIEW_URL: 'http://example.com' }));
 check('refuses a short preview secret', refuses({ ADMIN_PREVIEW_SECRET: 'short' }));
 check('refuses a malformed expected ref', refuses({ KB_ADMIN_EXPECTED_REF: 'x' }));

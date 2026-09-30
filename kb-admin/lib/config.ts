@@ -78,11 +78,16 @@ export function validateConfig(
     refuse(`KB_ADMIN_DB_USER must be kb_admin_reader.${ref}`);
   }
 
+  // KB_ADMIN_DB_PASSWORD first: Vercel has no filesystem to hold a password
+  // file, so there the value comes from the project's environment. Locally it
+  // is left empty and the file is read as before. The value is never logged.
+  const passwordValue = (source.KB_ADMIN_DB_PASSWORD ?? '').trim();
   const passwordFile = (source.KB_ADMIN_DB_PASSWORD_FILE ?? '').trim();
-  const password = passwordFile
-    ? readPasswordFile(passwordFile).trim()
-    : (source.KB_ADMIN_DB_PASSWORD ?? '').trim();
-  if (!password) refuse('no database password (KB_ADMIN_DB_PASSWORD_FILE or KB_ADMIN_DB_PASSWORD)');
+  if (!passwordValue && !passwordFile) {
+    refuse('no database password: set KB_ADMIN_DB_PASSWORD or KB_ADMIN_DB_PASSWORD_FILE');
+  }
+  const password = passwordValue || readPasswordFile(passwordFile).trim();
+  if (!password) refuse('the file named by KB_ADMIN_DB_PASSWORD_FILE is empty');
 
   const previewUrl = (source.BOT_PREVIEW_URL ?? '').trim().replace(/\/+$/, '');
   const previewSecret = (source.ADMIN_PREVIEW_SECRET ?? '').trim();
