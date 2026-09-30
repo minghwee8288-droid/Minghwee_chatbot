@@ -94,8 +94,12 @@ app/
     transcription.py voice notes -> text
   db/supabase.py     service-role client (bypasses RLS), read retries, insert_numbered
 scripts/             preflight, retrieval check, reset, simulate, SQL migrations
-  sql/               kb_rules_001_create, kb_rules_002_seed, kb_owner_001_tag_loader —
-                     applied ONLY via apply_sql.py --expect-ref <project ref>
+  sql/               kb_rules_001_create, kb_rules_002_seed, kb_owner_001_tag_loader,
+                     kb_admin_001..007 (kb-admin Phase 1 recorded + the Q&A editor;
+                     007 is checks only) — applied ONLY via
+                     apply_sql.py --expect-ref <project ref>
+  seed_kb_canary.py  writes (never applies) the SQL seeding cb_kb_canary with the bot's
+                     own embed_query; kb-admin must reproduce that vector to publish
   target_guard.py    every writing script calls require_ref(): prints the ref and
                      exits unless SUPABASE_URL (and the DB URL) name that project
 portal-ui/           React + Vite ticket dashboard (separate deliverable)
@@ -103,13 +107,29 @@ reset-ui/            Next.js "clear a conversation" page (separate deliverable, 
                      Vercel project). Standalone: imports nothing from app/, calls no
                      chatbot endpoint, talks to Supabase directly with the service-role
                      key from its own serverless functions. See reset-ui/README.md.
-kb-admin/            Next.js READ-ONLY knowledge-base viewer (Documents, Rows, Rules,
-                     Test a question). Standalone: imports nothing from app/. Reads as
-                     the kb_admin_reader database login inside BEGIN READ ONLY; signs
-                     in via Supabase Auth + an active cb_kb_admin_users row, checked on
-                     every request. Holds no service-role, LLM or embedding key. Test a
-                     question calls the bot's POST /admin/preview. Not deployed yet.
-                     See kb-admin/README.md; `npm run selfcheck` before any change.
+kb-admin/            Next.js knowledge-base tool (Documents, Rows, Rules, Test a
+                     question; Phase 2: edit Q&A entries). Standalone: imports nothing
+                     from app/. Signs in via Supabase Auth + an active cb_kb_admin_users
+                     row (viewer | editor | approver), checked on every request.
+                     READS as kb_admin_reader inside BEGIN READ ONLY. WRITES only as
+                     kb_admin_editor, which holds no table privilege and can only
+                     EXECUTE five SECURITY DEFINER functions - kb_admin_save_draft,
+                     kb_admin_publish, kb_admin_discard_draft, kb_admin_restore,
+                     kb_admin_toggle (scripts/sql/kb_admin_004) - which enforce roles,
+                     the 1200-char limit, no NRIC, approval, stale drafts and the
+                     embedding canary, and audit every write (cb_kb_audit, append-only;
+                     cb_kb_entry_versions holds drafts and history; the bot reads
+                     neither). A trigger audits any OTHER write to the live table as
+                     external_*. Editor env vars (kb-admin/.env.example):
+                     KB_ADMIN_DB_PASSWORD_EDITOR (or _FILE), KB_ADMIN_EMBEDDING_API_KEY,
+                     KB_ADMIN_EMBEDDING_BASE_URL - ALL absent = read-only, as on Vercel
+                     today. No service-role or LLM key. Test a question calls the bot's
+                     POST /admin/preview. See kb-admin/README.md; `npm run selfcheck`
+                     before any change; `npm run dev:test` runs it against TEST.
+                     RULES: the loader skips (and reports) every row tagged
+                     metadata.managed_by='ui', which a published edit sets - never
+                     "fix" that. The kb_admin rollback files are NEVER run without an
+                     explicit go-word from the user.
 ```
 
 ---
@@ -434,6 +454,7 @@ because the lead is opened early and the ticket is created much later.
 | The client is never told what our records lack, nor how to treat their helper | prompt rules 3a / 3b | *"not listed in our records"* went out on three different paths; *"please speak with her calmly and avoid any threats or punishment"* accused a client of nothing they had said. |
 | A passport that runs out before the renewal could finish is said out loud | `info_collector._expires_before_we_finish` + `EXPIRING_SOON_NOTE` | Live: *"in 5 days"* answered with *"It takes approximately 6 to 8 weeks"*, the two figures one line apart and nothing connecting them — 2 runs out of 2. `passport_expiry` had been collected since the flow was written and put on the ticket; **nothing ever read it.** Coarse on purpose and fails towards SILENCE: "next March", "when the contract ends" and a formatted date all return None, because guessing at a date and then calling somebody's passport urgent is worse than the omission. 60 days, which covers the slowest route we hold — a per-nationality table would be a second copy of lead times that live in the knowledge base (§9.8). |
 | The pricing rules have ONE reader, and a bad table can never widen or empty them | `app/services/kb_rules.py` + `cb_kb_rules` | `FEE_STATED_SERVICES`, `COST_WITHHELD_SERVICES`, `FEE_BY_NATIONALITY` and the salary floor moved out of four files into one table, so the KB Admin UI can change a price policy without a deploy. Callers read a validated in-memory snapshot and never the database. An empty, half-read or invalid table is REFUSED whole and the last good set stays in force, else the code defaults — "withhold everything" would also switch off the retrieval filter that keeps $695 out of a $450 passport renewal. `fee_enquiry` is withheld and locked in the table itself; `transfer`/`transfer_employer` are one switch, enforced by a commit-time trigger. |
+| kb-admin writes a Q&A entry only through five database functions | `scripts/sql/kb_admin_004` + `kb_admin_005` + `kb-admin/scripts/selfcheck.mjs` | `kb_admin_editor` has no table privilege; the functions (owned by NOLOGIN `kb_admin_fn_owner`) check the person's role, 1200 chars, NRIC, approval, stale drafts and the canary, and write `cb_kb_audit`. Their UPDATE policy is limited to `chunk_type = 'qa_pair'`. Proved on TEST in one rolled-back transaction, and `007` re-checks the grants wherever it runs. |
 | The loader never overwrites the KB Admin UI | `load_service_notes._ui_owned` + `metadata.managed_by` | Every row is `loader` or `ui`. All four write paths (ROWS, UPDATES, TEXT_REPLACEMENTS, RETIRED) skip and report a `ui` row — without it the first loader run after the UI went live would silently undo the client's edits, because three of the four find their targets by searching. Proved by RUNNING the loader against a stub DB holding one, in `selfcheck_kb_prep.py`. |
 | Nobody without the preview key learns anything from the preview route | `main.create_app` + `admin.require_preview_key` + `selfcheck_kb_prep.py` | No secret: the route is not registered (404, absent from the schema). With one, the key is a route dependency and the body is NOT a declared parameter - FastAPI decodes a declared body before dependencies, so malformed JSON answered 422 to anyone. 422 is now only ever seen by a key holder. Rate-limited, one at a time, 32 KB cap. Proved over HTTP, eight faults injected, eight red. |
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
@@ -1252,7 +1273,9 @@ docker compose logs chatbot | grep "Safety gate"
 # diagnostics (all read-only)
 python scripts/smoke_nodes.py          # RUNS each node with the LLM and DB stubbed. Run this FIRST.
 python scripts/selfcheck_reset_ui.py   # reset-ui/ still clears what reset_conversation.py clears
-(cd kb-admin && npm run selfcheck)     # kb-admin: no write path, auth on every route, no secret leaked
+(cd kb-admin && npm run selfcheck)     # kb-admin: writes only via the five functions, auth and role
+                                       #   on every route and action, no secret leaked
+(cd kb-admin && npm run dev:test)      # kb-admin on 5177 against TEST (.env.test.local)
 python scripts/selfcheck_flows.py      # behavioural assertions; also runs IN the container:
                                        #   docker compose cp scripts/. chatbot:/app/scripts
                                        #   docker compose exec chatbot python /app/scripts/selfcheck_flows.py
@@ -1373,6 +1396,46 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-09-30** - **kb-admin Phase 2: the agency can edit Q&A entries, and the
+  database is what stops them editing anything else.** No bot behaviour changes: the
+  bot still reads only `cb_knowledge_base_updated` through the same search function.
+  (A) **Database, `scripts/sql/kb_admin_001` - `007`.** 001 records the Phase 1
+  read-only setup, which had been made by hand and was described nowhere; applied to
+  production it changes nothing. 002 widens `cb_kb_admin_users.role` to viewer /
+  editor / approver. 003 adds `cb_kb_entry_versions` (drafts and history) and
+  `cb_kb_audit` (append-only by trigger, even for postgres). 004 adds the five
+  SECURITY DEFINER functions and their NOLOGIN owner. 005 adds the `kb_admin_editor`
+  login, created with an already-expired placeholder password. 006 adds a validated
+  1536-dimension CHECK, `cb_kb_canary`, and a trigger that audits every write to the
+  live table that did NOT come through the functions (`external_*`: the loader,
+  hand-run SQL). 007 checks all of it, read-only.
+  (B) **Which changes need an approver**: anything touching a number, the service,
+  the audience, the nationality or on/off. An editor's such change waits under
+  Pending approval.
+  (C) **The canary is why kb-admin cannot drift from the bot's embeddings.** The bot's
+  own `embed_query` embeds a fixed sentence once (`scripts/seed_kb_canary.py`).
+  kb-admin must reproduce that vector (cosine >= 0.999) before it may store one, and
+  takes the model name from the row. TEST and production seeded the identical vector
+  (sha256 `6dde444b7f02d832`).
+  (D) **Applied to production 2026-09-30.** Pre-check read-only first. Then an export
+  of every column of all 404 rows before and after: **0 differences**, `updated_at`
+  included (the 2026-09-24 lesson). The bot's search function returned its probe row
+  at similarity 1.0 in SQL and through `db.rpc`. Access rows: Mahin approver, Ratna
+  editor, Vaidik viewer (unchanged).
+  (E) **Vercel stays read-only until the editor env vars are set there.** With none
+  set the editor is off. With some set it is still off, and the start-up log names
+  what is missing.
+  (F) **A rollback file exists for each of 001-006**, dry-run on TEST in one
+  rolled-back transaction. 001's only verifies that Phase 1 is intact. 003's refuses
+  while history exists, and 002's while any editor/approver row exists. **They are
+  never run without an explicit go-word from the user.**
+  (G) **Found in local testing:** every server action ends in a same-route redirect,
+  after which Next 14 hands `useFormState` an `undefined` state, so switching an
+  entry off and back on crashed the page. All four forms now default it, and the
+  self-check fails on a form that does not.
+  (H) `apply_sql.py` no longer prints psycopg's connection error, which can quote
+  part of the URL, password included.
 
 - **2026-09-29** - **Nine points from the agency's testing (Thomas and the
   agency's own staff), across screenshots from conversations 36, 1687 and a

@@ -13,8 +13,10 @@ export async function register() {
       const cfg = env();
       console.info(
         `[kb-admin] project ${cfg.ref}, database ${cfg.db.user} on port ${cfg.db.port} (read-only), ` +
-          `preview ${cfg.previewSecret ? 'on' : 'off'}`,
+          `preview ${cfg.previewSecret ? 'on' : 'off'}, ` +
+          `editor ${cfg.editor ? `on (${cfg.editor.db.user}, embeddings via ${new URL(cfg.editor.embedding.baseUrl).host})` : 'off'}`,
       );
+      if (cfg.editorOffReason) console.warn(`[kb-admin] ${cfg.editorOffReason}; the site stays read-only`);
     } catch (error) {
       // Next.js would otherwise keep the process up and answer 500 to every
       // request. Exit instead, so a misconfigured server is plainly not running.

@@ -15,7 +15,9 @@ function Submit() {
 }
 
 export function LoginForm({ notice }: { notice?: Notice }) {
-  const [state, action] = useFormState<LoginState, FormData>(login, { error: '' });
+  const [raw, action] = useFormState<LoginState, FormData>(login, { error: '' });
+  // Undefined after a redirect (Next 14), like every other form here.
+  const state: LoginState = raw ?? { error: '' };
   // A failed sign-in always shows the same generic message (from actions.ts),
   // whether or not the email exists.
   const shown: Notice | undefined = state.error ? { text: state.error, tone: 'error' } : notice;

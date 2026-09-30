@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // scripts/dev-test.mjs builds into .next-test, so a TEST-project dev server
+  // never shares a cache with the normal one.
+  distDir: process.env.KB_ADMIN_DIST_DIR || '.next',
   reactStrictMode: true,
   poweredByHeader: false,
   experimental: {

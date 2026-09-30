@@ -2,14 +2,86 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Shell } from '@/components/Shell';
 import { documentLabel, label } from '@/components/labels';
-import { ActivePill, formatDate } from '@/components/ui';
+import { restoreVersion, toggleEntry } from '@/app/editor/actions';
+import { ReasonAction } from '@/components/ReasonAction';
+import { ActivePill, AmberNotice, Pill, formatDate, type Tone } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
-import { FILTERS, row } from '@/lib/queries';
+import { FILTERS, openDraft, row, versions, type Version } from '@/lib/queries';
 
 type Params = Record<string, string | string[] | undefined>;
 
 /** The list's filters, carried through so "Back to entries" returns to the same view. */
 const KEPT = [...Object.keys(FILTERS), 'active', 'q', 'page'];
+
+const STATUS_PILL: Record<Version['status'], { tone: Tone; text: string }> = {
+  published: { tone: 'good', text: 'Live' },
+  superseded: { tone: 'off', text: 'Replaced' },
+  draft: { tone: 'warn', text: 'Draft' },
+  discarded: { tone: 'off', text: 'Discarded' },
+};
+
+const FLASH: Record<string, string> = {
+  published: 'Published. The chatbot now reads the new version of this entry.',
+  discarded: 'The draft was discarded. Nothing the chatbot reads changed.',
+  on: 'Switched on. The chatbot can use this entry again.',
+  off: 'Switched off. The chatbot no longer uses this entry.',
+};
+
+function History({ list, canRestore, entryId }: { list: Version[]; canRestore: boolean; entryId: string }) {
+  if (!list.length) {
+    return (
+      <div className="card card-pad text-[13px] text-muted">
+        No history yet. The first edit saves the entry as it is now as version 1.
+      </div>
+    );
+  }
+  return (
+    <div className="card tbl-wrap">
+      <table className="tbl">
+        <thead>
+          <tr>
+            <th className="num">#</th>
+            <th>Who</th>
+            <th>When</th>
+            <th>Reason</th>
+            <th>Status</th>
+            <th aria-label="Actions" />
+          </tr>
+        </thead>
+        <tbody>
+          {list.map((v) => (
+            <tr key={v.id}>
+              <td className="num mono">{v.version_number}</td>
+              <td>{v.created_by_email ?? <span className="text-muted">Before the editor</span>}</td>
+              <td className="mono whitespace-nowrap text-[12px]">{formatDate(v.created_at)}</td>
+              <td className="max-w-[420px] break-words">{v.reason}</td>
+              <td>
+                <Pill tone={STATUS_PILL[v.status].tone}>{STATUS_PILL[v.status].text}</Pill>
+              </td>
+              <td className="whitespace-nowrap">
+                <Link href={`/drafts/${v.id}`} className="link text-[13px]">
+                  View
+                </Link>
+                {canRestore && v.status === 'superseded' ? (
+                  <div className="mt-2">
+                    <ReasonAction
+                      action={restoreVersion}
+                      hidden={{ entry_id: entryId, version_id: v.id }}
+                      openLabel={`Restore version ${v.version_number}`}
+                      submitLabel="Restore as a draft"
+                      busyLabel="Restoring…"
+                      help="This makes a new draft holding that version. Nothing goes live until the draft is published."
+                    />
+                  </div>
+                ) : null}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 function backQuery(searchParams: Params): string {
   const qs = new URLSearchParams();
@@ -50,6 +122,18 @@ export default async function RowPage({ params, searchParams }: { params: { id: 
   // question-and-answer entries it is just the question followed by the answer.
   const passage = r.answer && r.content && !r.content.includes(r.answer.trim()) ? r.content : '';
   const managedRaw = typeof r.metadata?.managed_by === 'string' ? r.metadata.managed_by : '(none)';
+  const editable = r.chunk_type === 'qa_pair';
+  const tab = searchParams.tab === 'history' && editable ? 'history' : 'details';
+  const [draft, history] = editable ? await Promise.all([openDraft(r.id), tab === 'history' ? versions(r.id) : Promise.resolve([])]) : [null, []];
+  const flashKey = ['published', 'discarded'].find((k) => searchParams[k]) ?? (typeof searchParams.switched === 'string' ? searchParams.switched : '');
+  const flash = FLASH[flashKey];
+  // The list's filters ride along, so "Back to entries" still returns to the same view.
+  const tabHref = (t: 'details' | 'history') => {
+    const qs = new URLSearchParams(back);
+    if (t === 'history') qs.set('tab', 'history');
+    const q = qs.toString();
+    return `/rows/${r.id}${q ? `?${q}` : ''}`;
+  };
 
   return (
     <Shell viewer={viewer} active="/rows">
@@ -64,7 +148,57 @@ export default async function RowPage({ params, searchParams }: { params: { id: 
             {r.source_document ? documentLabel(r.source_document) : 'Untitled document'}
           </span>
         </div>
+        {editable && viewer.canEdit ? (
+          <div className="mt-4 flex flex-wrap items-start gap-2">
+            {draft ? (
+              <Link href={`/drafts/${draft.id}`} className="btn btn-primary">
+                Review open draft
+              </Link>
+            ) : null}
+            {!draft || draft.created_by === viewer.userId ? (
+              <Link href={`/rows/${r.id}/edit`} className={`btn ${draft ? 'btn-secondary' : 'btn-primary'}`}>
+                {draft ? 'Continue editing' : 'Edit'}
+              </Link>
+            ) : null}
+            {viewer.canApprove ? (
+              <ReasonAction
+                key={r.is_active ? 'on' : 'off'}
+                action={toggleEntry}
+                hidden={{ entry_id: r.id, active: r.is_active ? 'off' : 'on' }}
+                openLabel={r.is_active ? 'Switch off' : 'Switch on'}
+                submitLabel={r.is_active ? 'Switch off now' : 'Switch on now'}
+                busyLabel="Switching…"
+                help={
+                  r.is_active
+                    ? 'The chatbot stops using this entry at once. You can switch it back on.'
+                    : 'The chatbot starts using this entry again at once.'
+                }
+              />
+            ) : null}
+          </div>
+        ) : null}
       </div>
+
+      {flash ? <AmberNotice title={flash} /> : null}
+      {draft ? (
+        <AmberNotice title="This entry has an open draft">
+          Started by {draft.created_by_email ?? 'a colleague'} on {formatDate(draft.created_at)}. The chatbot still reads the
+          live version below until the draft is published.
+        </AmberNotice>
+      ) : null}
+
+      {editable ? (
+        <nav className="tabs" aria-label="Entry views">
+          <Link href={tabHref('details')} className="tab" aria-current={tab === 'details' ? 'page' : undefined}>
+            Details
+          </Link>
+          <Link href={tabHref('history')} className="tab" aria-current={tab === 'history' ? 'page' : undefined}>
+            History
+          </Link>
+        </nav>
+      ) : null}
+
+      {tab === 'history' ? <History list={history} canRestore={viewer.canEdit} entryId={r.id} /> : (
 
       <div className="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-5">
         <article className="card">
@@ -122,6 +256,7 @@ export default async function RowPage({ params, searchParams }: { params: { id: 
           </Section>
         </aside>
       </div>
+      )}
     </Shell>
   );
 }

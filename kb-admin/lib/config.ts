@@ -10,6 +10,12 @@
  *   2. the kb_admin_reader database login, which can read the knowledge base,
  *      the rules and the access list, and nothing else;
  *   3. the bot's preview secret.
+ *
+ * And, only when the editor is switched on (see `editor` below):
+ *   4. the kb_admin_editor database login, which can call the five
+ *      kb_admin_* functions and nothing else;
+ *   5. an embedding API key, used only to embed an entry's new text.
+ * With neither set the editor is off and kb-admin stays read-only.
  */
 
 export type KbAdminConfig = {
@@ -19,7 +25,19 @@ export type KbAdminConfig = {
   db: { host: string; port: number; user: string; password: string };
   previewUrl: string;
   previewSecret: string;
+  /** null = the editor is off: no edit control is shown and nothing can write. */
+  editor: EditorConfig | null;
+  /** Set when the editor is off because its settings are incomplete (never a value). */
+  editorOffReason: string;
 };
+
+export type EditorConfig = {
+  db: { user: string; password: string };
+  embedding: { baseUrl: string; apiKey: string };
+};
+
+/** The two embedding endpoints the bot itself can use (app/services/rag.py). */
+export const EMBEDDING_BASE_URLS = ['https://api.openai.com/v1', 'https://openrouter.ai/api/v1'] as const;
 
 export type ConfigSource = Record<string, string | undefined>;
 
@@ -105,6 +123,8 @@ export function validateConfig(
     if (previewSecret.length < 32) refuse('ADMIN_PREVIEW_SECRET is shorter than 32 characters');
   }
 
+  const { editor, editorOffReason } = editorConfig(source, readPasswordFile, ref, password);
+
   return {
     ref,
     supabaseUrl,
@@ -112,5 +132,57 @@ export function validateConfig(
     db: { host, port, user, password },
     previewUrl,
     previewSecret,
+    editor,
+    editorOffReason,
+  };
+}
+
+/**
+ * The editor's settings. ALL absent: the editor is off (today's read-only
+ * site). SOME absent: off too, with a reason logged at start - never a
+ * half-working editor. Present but wrong (an unknown endpoint, a key for the
+ * other endpoint, the reader's own password): refuse to start.
+ *
+ * The editor login is not configurable: it is kb_admin_editor.<the same ref>,
+ * so it can never name a different project from the reader.
+ */
+function editorConfig(
+  source: ConfigSource,
+  readPasswordFile: (path: string) => string,
+  ref: string,
+  readerPassword: string,
+): { editor: EditorConfig | null; editorOffReason: string } {
+  const pwValue = (source.KB_ADMIN_DB_PASSWORD_EDITOR ?? '').trim();
+  const pwFile = (source.KB_ADMIN_DB_PASSWORD_EDITOR_FILE ?? '').trim();
+  const apiKey = (source.KB_ADMIN_EMBEDDING_API_KEY ?? '').trim();
+  const baseRaw = (source.KB_ADMIN_EMBEDDING_BASE_URL ?? '').trim().replace(/\/+$/, '');
+
+  const baseUrl = baseRaw || EMBEDDING_BASE_URLS[0];
+  if (!(EMBEDDING_BASE_URLS as readonly string[]).includes(baseUrl)) {
+    refuse(`KB_ADMIN_EMBEDDING_BASE_URL must be one of ${EMBEDDING_BASE_URLS.join(', ')} (or unset)`);
+  }
+  if (apiKey) {
+    const openRouterKey = apiKey.startsWith('sk-or-');
+    if (baseUrl.includes('openrouter.ai') && !openRouterKey) {
+      refuse('KB_ADMIN_EMBEDDING_API_KEY is not an OpenRouter key, but the base URL is OpenRouter');
+    }
+    if (baseUrl.includes('api.openai.com') && openRouterKey) {
+      refuse('KB_ADMIN_EMBEDDING_API_KEY is an OpenRouter key; set KB_ADMIN_EMBEDDING_BASE_URL=https://openrouter.ai/api/v1');
+    }
+  }
+
+  const missing: string[] = [];
+  if (!pwValue && !pwFile) missing.push('KB_ADMIN_DB_PASSWORD_EDITOR (or _FILE)');
+  if (!apiKey) missing.push('KB_ADMIN_EMBEDDING_API_KEY');
+  if (missing.length === 2) return { editor: null, editorOffReason: '' };
+  if (missing.length) return { editor: null, editorOffReason: `editor off: ${missing.join(', ')} not set` };
+
+  const password = pwValue || readPasswordFile(pwFile).trim();
+  if (!password) refuse('the file named by KB_ADMIN_DB_PASSWORD_EDITOR_FILE is empty');
+  if (password === readerPassword) refuse('the editor and reader database passwords are the same');
+
+  return {
+    editor: { db: { user: `kb_admin_editor.${ref}`, password }, embedding: { baseUrl, apiKey } },
+    editorOffReason: '',
   };
 }

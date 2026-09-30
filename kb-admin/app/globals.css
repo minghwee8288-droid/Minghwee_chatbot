@@ -300,6 +300,20 @@ body {
   .input::placeholder {
     color: var(--faint);
   }
+  .textarea {
+    width: 100%;
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    background: var(--control-bg);
+    padding: 9px 11px;
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--text);
+    resize: vertical;
+  }
+  .textarea::placeholder {
+    color: var(--faint);
+  }
   .input-lg {
     height: 48px;
     font-size: 15px;
@@ -413,6 +427,39 @@ body {
     border: 1px solid var(--red-line);
     background: var(--red-bg);
     color: var(--red-text);
+  }
+
+  /* Editor: tabs and the draft comparison ----------------------------- */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    padding: 8px 14px;
+    font-size: 13px;
+    color: var(--muted);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .tab:hover {
+    color: var(--text);
+  }
+  .tab[aria-current='page'] {
+    color: var(--text);
+    font-weight: 600;
+    border-bottom-color: var(--primary);
+  }
+  .diff-del {
+    background: var(--bad-bg);
+    color: var(--bad);
+    text-decoration: line-through;
+    border-radius: 3px;
+  }
+  .diff-ins {
+    background: var(--good-bg);
+    color: var(--good);
+    border-radius: 3px;
   }
 
   /* Score strip (Test a question) -------------------------------------- */

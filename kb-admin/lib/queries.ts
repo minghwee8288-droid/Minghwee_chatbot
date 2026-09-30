@@ -187,3 +187,122 @@ export async function membership(userId: string): Promise<{ role: string; active
     select role, active from public.cb_kb_admin_users where user_id = $1`, [userId]);
   return found;
 }
+
+// --- Editor (Phase 2): history, drafts, activity. Read as kb_admin_reader;
+// the embedding column of the versions table is not granted and never named.
+
+/** Services the editor may choose: the bot's retrieval vocabulary (every
+ *  service an active entry uses) - the same list the database accepts. */
+export async function editableServices(): Promise<string[]> {
+  const [found] = await select<{ services: string[] }>(`
+    select array(select distinct service_type from ${KB} where is_active order by 1) as services`);
+  return found?.services ?? [];
+}
+
+export type Version = {
+  id: string;
+  entry_id: string;
+  version_number: number;
+  question: string | null;
+  answer: string | null;
+  section_heading: string | null;
+  service: string;
+  audience: string;
+  nationality: string;
+  active: boolean;
+  model_name: string | null;
+  status: 'draft' | 'published' | 'superseded' | 'discarded';
+  based_on_version: number | null;
+  created_by: string | null;
+  created_by_email: string | null;
+  reason: string;
+  created_at: string;
+};
+
+const VERSION_COLUMNS = `id::text, entry_id::text, version_number, question, answer, section_heading,
+           service, audience, nationality, active, model_name, status, based_on_version,
+           created_by::text, created_by_email, reason, created_at::text`;
+
+export async function versions(entryId: string): Promise<Version[]> {
+  if (!UUID.test(entryId)) return [];
+  return select<Version>(`
+    select ${VERSION_COLUMNS}
+      from public.cb_kb_entry_versions
+     where entry_id = $1
+     order by version_number desc`, [entryId]);
+}
+
+export async function version(id: string): Promise<Version | null> {
+  if (!UUID.test(id)) return null;
+  const [found] = await select<Version>(`
+    select ${VERSION_COLUMNS} from public.cb_kb_entry_versions where id = $1`, [id]);
+  return found ?? null;
+}
+
+export async function openDraft(entryId: string): Promise<Version | null> {
+  if (!UUID.test(entryId)) return null;
+  const [found] = await select<Version>(`
+    select ${VERSION_COLUMNS} from public.cb_kb_entry_versions
+     where entry_id = $1 and status = 'draft'`, [entryId]);
+  return found ?? null;
+}
+
+export type PendingDraft = Version & {
+  live_question: string | null;
+  live_answer: string | null;
+  live_section_heading: string | null;
+  live_service: string;
+  live_audience: string;
+  live_nationality: string;
+  live_active: boolean;
+};
+
+/** Every open draft, oldest first, with the live entry beside it. */
+export async function openDrafts(): Promise<PendingDraft[]> {
+  return select<PendingDraft>(`
+    select v.id::text, v.entry_id::text, v.version_number, v.question, v.answer, v.section_heading,
+           v.service, v.audience, v.nationality, v.active, v.model_name, v.status, v.based_on_version,
+           v.created_by::text, v.created_by_email, v.reason, v.created_at::text,
+           k.question as live_question, k.answer as live_answer, k.section_heading as live_section_heading,
+           k.service_type as live_service, k.contact_type as live_audience,
+           k.nationality as live_nationality, k.is_active as live_active
+      from public.cb_kb_entry_versions v
+      join ${KB} k on k.id = v.entry_id
+     where v.status = 'draft'
+     order by v.created_at`);
+}
+
+export type CanaryRow = { sentence: string; embedding: string; model: string; created_at: string };
+
+export async function canary(): Promise<CanaryRow | null> {
+  const [found] = await select<CanaryRow>(`
+    select sentence, embedding::text as embedding, model, created_at::text
+      from public.cb_kb_canary where id = 1`);
+  return found ?? null;
+}
+
+export type AuditRow = {
+  id: string;
+  entry_id: string | null;
+  action: string;
+  actor_email: string | null;
+  actor_db_role: string;
+  reason: string;
+  self_approved: boolean;
+  created_at: string;
+  question: string | null;
+  old_values: Record<string, unknown> | null;
+  new_values: Record<string, unknown> | null;
+};
+
+/** The latest 100 audit rows, newest first, with the entry's current question. */
+export async function activity(): Promise<AuditRow[]> {
+  return select<AuditRow>(`
+    select a.id::text, a.entry_id::text, a.action, a.actor_email, a.actor_db_role, a.reason,
+           a.self_approved, a.created_at::text, k.question,
+           a.old_values, a.new_values
+      from public.cb_kb_audit a
+      left join ${KB} k on k.id = a.entry_id
+     order by a.created_at desc, a.id desc
+     limit 100`);
+}

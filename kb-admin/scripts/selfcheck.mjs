@@ -20,7 +20,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SELF = fileURLToPath(import.meta.url);
-const SKIP_DIRS = new Set(['node_modules', '.next', '.vercel', 'out']);
+const SKIP_DIRS = new Set(['node_modules', '.next', '.next-test', '.vercel', 'out']);
 const CODE = /\.(ts|tsx|js|mjs|cjs)$/;
 
 let failures = 0;
@@ -42,6 +42,7 @@ function walk(dir, out = []) {
 const files = walk(ROOT);
 const code = files.filter((f) => CODE.test(f) && f !== SELF && !f.endsWith('next-env.d.ts'));
 const rel = (f) => relative(ROOT, f).split(sep).join('/');
+const src = (p) => (existsSync(join(ROOT, p)) ? readFileSync(join(ROOT, p), 'utf8') : '');
 
 console.log('static:');
 // The five verbs the design names, as whole words, anywhere in the source.
@@ -76,9 +77,61 @@ for (const f of code) {
 check('no import reaches outside kb-admin/', escapes.length === 0, escapes.join(', '));
 
 const db = readFileSync(join(ROOT, 'lib/db.ts'), 'utf8');
-const exported = [...db.matchAll(/export\s+(?:async\s+)?(?:function|const|let|var|class)\s+(\w+)/g)].map((m) => m[1]);
+const exportsOf = (text) => [...text.matchAll(/export\s+(?:async\s+)?(?:function|const|let|var|class)\s+(\w+)/g)].map((m) => m[1]);
+const exported = exportsOf(db);
 check('lib/db.ts exports select and nothing else', exported.join(',') === 'select', exported.join(','));
 check("lib/db.ts runs every query in BEGIN READ ONLY", /\.begin\(\s*'read only'/.test(db));
+
+console.log('forms:');
+// Every action redirects on success, and after a redirect to the same route
+// Next 14 re-renders the mounted form with useFormState's state undefined.
+// Live 2026-09-30: switch off, then on -> "Cannot read properties of undefined
+// (reading 'error')". Each form must default the state before reading it.
+{
+  const forms = code.filter((f) => /useFormState(<[^>]*>)?\(/.test(readFileSync(f, 'utf8')));
+  check('found the forms that use useFormState', forms.length >= 4, String(forms.length));
+  for (const f of forms) {
+    const t = readFileSync(f, 'utf8');
+    const m = t.match(/const \[(\w+),\s*\w+\]\s*=\s*useFormState/);
+    const name = m?.[1];
+    const guarded = name && name !== 'state' && new RegExp(`=\\s*${name}\\s*\\?\\?`).test(t);
+    check(`${rel(f)} defaults an undefined form state`, Boolean(guarded), name ? `reads ${name}` : 'pattern not found');
+  }
+}
+
+console.log('writes (Phase 2 editor):');
+// The ONLY writes: one of five SECURITY DEFINER functions, called from one
+// module, as one exact statement each. Everything else stays refused above.
+const FIVE = ['kb_admin_discard_draft', 'kb_admin_publish', 'kb_admin_restore', 'kb_admin_save_draft', 'kb_admin_toggle'];
+const ROLE_NAMES = new Set(['kb_admin_reader', 'kb_admin_editor']);
+const named = new Map();
+for (const f of code) {
+  for (const m of readFileSync(f, 'utf8').matchAll(/\bkb_admin_\w+/g)) {
+    if (!ROLE_NAMES.has(m[0])) named.set(m[0], [...(named.get(m[0]) ?? []), rel(f)]);
+  }
+}
+const strays = [...named.keys()].filter((n) => !FIVE.includes(n));
+check('the only kb_admin_* functions named are the five', strays.length === 0, strays.map((n) => `${n} in ${named.get(n)[0]}`).join(', '));
+const writeTs = src('lib/write.ts');
+check('lib/write.ts exports callWrite and nothing else', exportsOf(writeTs).join(',') === 'callWrite', exportsOf(writeTs).join(','));
+check('lib/write.ts sends only writeStatement(fn), after isAllowedWrite()',
+  /const statement = writeStatement\(fn\);/.test(writeTs) && /if \(!isAllowedWrite\(statement\)/.test(writeTs) &&
+  (writeTs.match(/\.unsafe\(/g) ?? []).length === 1 && /\.unsafe\(statement, params\)/.test(writeTs) && !/\.begin\(|sql\(\)`/.test(writeTs));
+const pgUsers = code.filter((f) => /from 'postgres'/.test(readFileSync(f, 'utf8'))).map(rel).sort();
+check('only lib/db.ts and lib/write.ts open a database connection', pgUsers.join(',') === 'lib/db.ts,lib/write.ts', pgUsers.join(','));
+const writeUsers = code.filter((f) => /from '@\/lib\/write'|from '\.\.?\/.*write'/.test(readFileSync(f, 'utf8'))).map(rel);
+check('only app/editor/actions.ts calls lib/write.ts', writeUsers.join(',') === 'app/editor/actions.ts', writeUsers.join(','));
+const actionsSrc = src('app/editor/actions.ts');
+check("app/editor/actions.ts is a 'use server' module", /^'use server';/.test(actionsSrc));
+const actionFns = [...actionsSrc.matchAll(/export async function (\w+)\([^)]*\)[^{]*\{\s*\n\s*(.*)/g)];
+const unguarded = actionFns.filter((m) => m[2].trim() !== 'const auth = await actorForWrite();').map((m) => m[1]);
+check('every server action checks the session and role first (actorForWrite)', actionFns.length === 5 && unguarded.length === 0,
+  `${actionFns.length} action(s)${unguarded.length ? `; unguarded: ${unguarded.join(', ')}` : ''}`);
+const otherServer = code.filter((f) => /^'use server';/.test(readFileSync(f, 'utf8'))).map(rel).sort();
+check("no other 'use server' module than sign-in and the editor", otherServer.join(',') === 'app/editor/actions.ts,app/login/actions.ts', otherServer.join(','));
+const toggleSrc = actionsSrc.slice(actionsSrc.indexOf('export async function toggleEntry'));
+check('switching on/off also checks canApprove before calling the database',
+  toggleSrc.indexOf('actor.canApprove') > 0 && toggleSrc.indexOf('actor.canApprove') < toggleSrc.indexOf("callWrite('kb_admin_toggle'"));
 
 const pages = code.filter((f) => /^app\/.*page\.tsx$/.test(rel(f)) && rel(f) !== 'app/login/page.tsx');
 for (const p of pages) check(`${rel(p)} requires a viewer`, readFileSync(p, 'utf8').includes('requireViewer('));
@@ -87,7 +140,6 @@ for (const a of apis) check(`${rel(a)} checks the session`, readFileSync(a, 'utf
 check('found pages and API routes to check', pages.length >= 6 && apis.length >= 1, `${pages.length} pages, ${apis.length} api`);
 
 console.log('sessions:');
-const src = (p) => (existsSync(join(ROOT, p)) ? readFileSync(join(ROOT, p), 'utf8') : '');
 const authTs = src('lib/auth.ts');
 check('requireViewer redirects through denialPath()', /redirect\(\s*denialPath\(\s*result\.reason\s*\)\s*\)/.test(authTs));
 check('requireViewer has no other redirect', (authTs.match(/redirect\(/g) ?? []).length === 1);
@@ -119,37 +171,42 @@ check('every font file is woff2',
 check('app/fonts/OFL.txt carries the SIL Open Font License 1.1', /SIL OPEN FONT LICENSE Version 1\.1/.test(src('app/fonts/OFL.txt')));
 
 console.log('secrets:');
-const envLocal = join(ROOT, '.env.local');
 let tracked = '';
 try {
-  tracked = execFileSync('git', ['ls-files', '--', '.env.local', '.env'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  tracked = execFileSync('git', ['ls-files', '--', '.env.local', '.env', '.env.test.local'], { cwd: ROOT, encoding: 'utf8' }).trim();
 } catch {
   tracked = '(git unavailable)';
 }
-check('.env / .env.local are not tracked by git', tracked === '', tracked);
-if (existsSync(envLocal)) {
+check('.env / .env.local / .env.test.local are not tracked by git', tracked === '', tracked);
+const SECRET_KEYS = /^\s*(SUPABASE_ANON_KEY|ADMIN_PREVIEW_SECRET|KB_ADMIN_DB_PASSWORD|KB_ADMIN_DB_PASSWORD_FILE|KB_ADMIN_DB_PASSWORD_EDITOR|KB_ADMIN_DB_PASSWORD_EDITOR_FILE|KB_ADMIN_EMBEDDING_API_KEY)\s*=\s*(.*)$/;
+for (const envName of ['.env.local', '.env.test.local']) {
+  const envFile = join(ROOT, envName);
+  if (!existsSync(envFile)) {
+    console.log(`  (no ${envName} - its secret leak check skipped)`);
+    continue;
+  }
   const secrets = [];
-  for (const line of readFileSync(envLocal, 'utf8').split(/\r?\n/)) {
-    const m = line.match(/^\s*(SUPABASE_ANON_KEY|ADMIN_PREVIEW_SECRET|KB_ADMIN_DB_PASSWORD|KB_ADMIN_DB_PASSWORD_FILE)\s*=\s*(.*)$/);
+  for (const line of readFileSync(envFile, 'utf8').split(/\r?\n/)) {
+    const m = line.match(SECRET_KEYS);
     if (!m || !m[2].trim()) continue;
-    if (m[1] === 'KB_ADMIN_DB_PASSWORD_FILE') {
-      if (existsSync(m[2].trim())) secrets.push(['database password', readFileSync(m[2].trim(), 'utf8').trim()]);
+    if (m[1].endsWith('_FILE')) {
+      if (existsSync(m[2].trim())) secrets.push([`${m[1].replace(/_FILE$/, '')} (from its file)`, readFileSync(m[2].trim(), 'utf8').trim()]);
     } else secrets.push([m[1], m[2].trim()]);
   }
-  const others = files.filter((f) => f !== envLocal);
+  const others = files.filter((f) => f !== envFile && !/\.env(\.test)?\.local$/.test(f));
   for (const [name, value] of secrets) {
     if (value.length < 8) continue;
     const leaks = others.filter((f) => readFileSync(f, 'utf8').includes(value));
-    check(`${name} appears in no other kb-admin file`, leaks.length === 0, leaks.map(rel).join(', '));
+    check(`${envName}: ${name} appears in no other kb-admin file`, leaks.length === 0, leaks.map(rel).join(', '));
   }
-  check('checked the secrets held in .env.local', secrets.length >= 2, `${secrets.length} value(s), not shown`);
-} else {
-  console.log('  (no .env.local - secret leak check skipped)');
+  check(`checked the secrets held in ${envName}`, secrets.length >= 2, `${secrets.length} value(s), not shown`);
 }
 
 console.log('behaviour:');
 const { validateConfig } = await import(pathToFileURL(join(ROOT, 'lib/config.ts')).href);
-const { decideAccess, denialPath, isSingleRead, secondsLeft } = await import(pathToFileURL(join(ROOT, 'lib/access.ts')).href);
+const { decideAccess, denialPath, isSingleRead, secondsLeft, canEdit, canApprove, isAllowedWrite, writeStatement, WRITE_FUNCTIONS } =
+  await import(pathToFileURL(join(ROOT, 'lib/access.ts')).href);
+const E = await import(pathToFileURL(join(ROOT, 'lib/editing.ts')).href);
 
 const REF = 'abcdefghijklmnopqrst';
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -225,6 +282,11 @@ check('no membership row -> denied', decideAccess(undefined).ok === false);
 check('inactive row -> denied', decideAccess({ role: 'viewer', active: false }).ok === false);
 check('unknown role -> denied', decideAccess({ role: 'admin', active: true }).ok === false);
 check('active viewer -> allowed', decideAccess({ role: 'viewer', active: true }).ok === true);
+check('active editor and approver -> allowed, with their role',
+  decideAccess({ role: 'editor', active: true }).role === 'editor' && decideAccess({ role: 'approver', active: true }).role === 'approver');
+check('inactive approver -> denied', decideAccess({ role: 'approver', active: false }).ok === false);
+check('a viewer cannot edit; an editor can; only an approver approves',
+  !canEdit('viewer') && canEdit('editor') && canEdit('approver') && !canApprove('viewer') && !canApprove('editor') && canApprove('approver'));
 
 check('switched off -> via /login/switched-off (clears the cookies)', denialPath('inactive') === '/login/switched-off');
 check('no access -> straight to /login?e=no-access', denialPath('no-access') === '/login?e=no-access');
@@ -239,6 +301,109 @@ check('a statement not starting with SELECT/WITH is refused', !isSingleRead('tru
 const now = 1_000_000;
 check('token expiry read', secondsLeft(jwt({ exp: now + 300 }), now) === 300);
 check('garbage token reads as expired', secondsLeft('garbage', now) < 0);
+
+console.log('behaviour - writes:');
+check('exactly the five functions are allowed', Object.keys(WRITE_FUNCTIONS).sort().join(',') === FIVE.join(','), Object.keys(WRITE_FUNCTIONS).sort().join(','));
+check('each of the five statements is allowed', FIVE.every((fn) => isAllowedWrite(writeStatement(fn))));
+check('every statement binds every value ($n) and splices nothing',
+  FIVE.every((fn) => writeStatement(fn) === `select public.${fn}(${WRITE_FUNCTIONS[fn].map((t, i) => `$${i + 1}::${t}`).join(', ')}) as result`));
+// Built from pieces so this file itself names no write verb.
+const verb = (a, b) => a + b;
+const refusedWrites = [
+  'select public.kb_admin__discard($1::uuid) as result',
+  'select public.kb_admin__ensure_baseline($1::uuid) as result',
+  `${writeStatement('kb_admin_publish')}; select 1`,
+  `${writeStatement('kb_admin_toggle')} `,
+  writeStatement('kb_admin_toggle').toUpperCase(),
+  'select public.kb_admin_publish($1, $2, $3, $4, $5) as result',
+  'with x as (select 1) select public.kb_admin_toggle($1::uuid, $2::text, $3::uuid, $4::boolean, $5::text) as result',
+  `${verb('in', 'sert')} into public.cb_kb_audit default values`,
+  `${verb('up', 'date')} public.cb_knowledge_base_updated set is_active = false`,
+  `${verb('de', 'lete')} from public.cb_kb_entry_versions`,
+  'select 1',
+];
+check('anything else is refused (internal helpers, a second statement, raw writes, reads)', refusedWrites.every((w) => !isAllowedWrite(w)),
+  refusedWrites.filter((w) => isAllowedWrite(w)).join(' | '));
+// The code's five signatures are the five the database grants to kb_admin_editor.
+const grantFile = resolve(ROOT, '..', 'scripts', 'sql', 'kb_admin_005_editor_login.sql');
+if (existsSync(grantFile)) {
+  const granted = [...readFileSync(grantFile, 'utf8').matchAll(/public\.(kb_admin_\w+)\(([^)]*)\)/g)]
+    .map((m) => `${m[1]}(${m[2].replace(/\s+/g, '')})`).sort().join(' ');
+  const ours = FIVE.map((fn) => `${fn}(${WRITE_FUNCTIONS[fn].join(',')})`).sort().join(' ');
+  check('the five signatures match the kb_admin_editor grant (kb_admin_005)', granted === ours, granted);
+} else {
+  console.log('  (scripts/sql/kb_admin_005_editor_login.sql not found - grant comparison skipped)');
+}
+
+console.log('behaviour - editor settings:');
+const editorOn = { ...good, KB_ADMIN_DB_PASSWORD_EDITOR: 'e'.repeat(24), KB_ADMIN_EMBEDDING_API_KEY: 'sk-dummy-not-a-real-key' };
+const cfgOf = (o) => validateConfig(o, noFile);
+check("no editor settings -> editor off, no warning (today's read-only site)", cfgOf(good).editor === null && cfgOf(good).editorOffReason === '');
+{
+  const half = cfgOf({ ...good, KB_ADMIN_DB_PASSWORD_EDITOR: 'e'.repeat(24) });
+  check('half the editor settings -> still starts, editor off, reason names what is missing',
+    half.editor === null && half.editorOffReason.includes('KB_ADMIN_EMBEDDING_API_KEY') && !half.editorOffReason.includes('e'.repeat(24)));
+}
+{
+  const on = cfgOf(editorOn);
+  check('all editor settings -> editor on as kb_admin_editor.<the same ref>', on.editor?.db.user === `kb_admin_editor.${REF}`);
+  check('the embedding endpoint defaults to OpenAI', on.editor?.embedding.baseUrl === 'https://api.openai.com/v1');
+}
+check('refuses an unknown embedding endpoint', refuses({ ...editorOn, KB_ADMIN_EMBEDDING_BASE_URL: 'https://example.com/v1' }));
+check('refuses an OpenRouter key sent to OpenAI', refuses({ ...editorOn, KB_ADMIN_EMBEDDING_API_KEY: 'sk-or-v1-dummy' }));
+check('refuses a non-OpenRouter key sent to OpenRouter', refuses({ ...editorOn, KB_ADMIN_EMBEDDING_BASE_URL: 'https://openrouter.ai/api/v1' }));
+check('accepts an OpenRouter key with the OpenRouter endpoint',
+  !refuses({ ...editorOn, KB_ADMIN_EMBEDDING_BASE_URL: 'https://openrouter.ai/api/v1', KB_ADMIN_EMBEDDING_API_KEY: 'sk-or-v1-dummy' }));
+check("refuses the reader's password reused for the editor", refuses({ ...editorOn, KB_ADMIN_DB_PASSWORD_EDITOR: 'x'.repeat(24) }));
+check('the editor password can come from KB_ADMIN_DB_PASSWORD_EDITOR_FILE', (() => {
+  try {
+    const c = validateConfig({ ...editorOn, KB_ADMIN_DB_PASSWORD_EDITOR: '', KB_ADMIN_DB_PASSWORD_EDITOR_FILE: 'C:/dummy/editor.pw' }, () => 'f'.repeat(24));
+    return c.editor?.db.password === 'f'.repeat(24);
+  } catch {
+    return false;
+  }
+})());
+check('a mixed project still refuses with the editor on', refuses({ ...editorOn, SUPABASE_URL: 'https://zzzzzzzzzzzzzzzzzzzz.supabase.co' }));
+
+console.log('behaviour - editing rules:');
+const Q = 'Q?';
+check('length: 1149 ok, 1150 warns, 1200 warns, 1201 blocks',
+  E.lengthState(Q, 'a'.repeat(1149 - 3), 0).level === 'ok' && E.lengthState(Q, 'a'.repeat(1150 - 3), 0).level === 'warn' &&
+  E.lengthState(Q, 'a'.repeat(1200 - 3), 0).level === 'warn' && E.lengthState(Q, 'a'.repeat(1201 - 3), 0).level === 'block');
+check('length: an entry already over the limit may be shortened, never grown',
+  E.lengthState(Q, 'a'.repeat(1300), 1400).level !== 'block' && E.lengthState(Q, 'a'.repeat(1300), 1250).level === 'block');
+check('length counts characters as Postgres does (an emoji is one)', E.charCount('\u{1F600}') === 1);
+check('NRIC/FIN spotted, ordinary codes not', E.hasNric('her FIN is G1234567X') && !E.hasNric('S$650 for 24 months'));
+check('numbers: "$1,588" equals "$1588"; "300" -> "$300" is a change',
+  E.numbersIn('$1,588').join() === E.numbersIn('$1588').join() && E.numbersIn('300').join() !== E.numbersIn('$300').join());
+const base = { question: 'How much?', answer: 'The fee is $450.', section_heading: null, service: 'renewal', audience: 'all', nationality: 'all', active: true };
+check('Option C: wording only needs no approver', E.approvalReasons(base, { ...base, answer: 'The agency fee is $450.' }).length === 0);
+check('Option C: a number, the service, the audience, the nationality, on/off each need one',
+  E.approvalReasons(base, { ...base, answer: 'The fee is $495.' }).join() === 'numbers' &&
+  E.approvalReasons(base, { ...base, service: 'home_leave' }).join() === 'service' &&
+  E.approvalReasons(base, { ...base, audience: 'employer' }).join() === 'audience' &&
+  E.approvalReasons(base, { ...base, nationality: 'PH' }).join() === 'nationality' &&
+  E.approvalReasons(base, { ...base, active: false }).join() === 'on_off');
+const msgs = ['KB001', 'KB002', 'KB003', 'KB004', 'KB005', 'KB006'].map((c) => E.errorMessage(c, 'detail'));
+check('KB001-KB006 each have their own plain message', new Set(msgs).size === 6 && msgs.every((m) => m.length > 20 && !/KB00/.test(m)));
+check('KB004 says an approver is needed', /needs an approver/.test(E.errorMessage('KB004', '')));
+check('an unknown error never shows the database text', !E.errorMessage('42P01', 'relation secret_table does not exist').includes('secret_table'));
+{
+  const v = Array.from({ length: 1536 }, (_, i) => Math.sin(i + 1));
+  const b64 = Buffer.from(new Float32Array(v).buffer).toString('base64');
+  const back = E.decodeEmbedding(b64);
+  check('base64 float32 embeddings decode to 1536 numbers', back?.length === 1536 && Math.abs(back[7] - v[7]) < 1e-6);
+  check('the canary matches the same vector after float rounding', E.canaryMatches(back, E.parseVector(E.vectorLiteral(v))).ok);
+  const other = Array.from({ length: 1536 }, (_, i) => Math.cos(i * 3));
+  check('the canary refuses a different vector', !E.canaryMatches(other, v).ok);
+  check('the canary refuses a wrong length', !E.canaryMatches(v.slice(0, 512), v).ok);
+}
+{
+  const d = E.wordDiff('The fee is $450 today.', 'The fee is $495 today.');
+  check('the word diff marks exactly the changed word',
+    d.before.filter((x) => x.kind === 'del').map((x) => x.text.trim()).join() === '$450' &&
+    d.after.filter((x) => x.kind === 'ins').map((x) => x.text.trim()).join() === '$495');
+}
 
 console.log(failures ? `RESULT: ${failures} FAIL(S)` : 'RESULT: ALL PASS');
 process.exitCode = failures ? 1 : 0;

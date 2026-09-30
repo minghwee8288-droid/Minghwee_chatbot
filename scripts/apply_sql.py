@@ -34,7 +34,13 @@ def main() -> None:
             sys.exit(f"no such file: {path}")
 
     require_ref(args.expect_ref, need_db=True)
-    with psycopg.connect(settings.supabase_db_url, autocommit=True) as conn:
+    # psycopg's connection errors can quote part of the URL, password included,
+    # so a failure here prints only the error type.
+    try:
+        conn = psycopg.connect(settings.supabase_db_url, autocommit=True)
+    except Exception as exc:
+        sys.exit(f"[apply_sql] could not connect ({type(exc).__name__})")
+    with conn:
         for path in args.files:
             print(f"[apply_sql] running {path}", flush=True)
             conn.execute(path.read_text(encoding="utf-8"))

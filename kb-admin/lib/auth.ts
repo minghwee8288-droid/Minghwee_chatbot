@@ -1,12 +1,20 @@
 import 'server-only';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { decideAccess, denialPath } from './access';
+import { canApprove, canEdit, decideAccess, denialPath, type Role } from './access';
 import { env } from './env';
 import { membership } from './queries';
 import { ACCESS_COOKIE, userFromToken } from './session';
 
-export type Viewer = { userId: string; email: string; role: 'viewer' };
+export type Viewer = {
+  userId: string;
+  email: string;
+  role: Role;
+  /** True only when the editor is configured AND this role may edit. */
+  canEdit: boolean;
+  /** True only when the editor is configured AND this role is approver. */
+  canApprove: boolean;
+};
 export type AuthResult =
   | { ok: true; viewer: Viewer }
   | { ok: false; reason: 'no-session' | 'bad-session' | 'no-access' | 'inactive' };
@@ -36,7 +44,17 @@ export async function checkRequest(): Promise<AuthResult> {
     log(decision.reason, user.id);
     return { ok: false, reason: decision.reason };
   }
-  return { ok: true, viewer: { userId: user.id, email: user.email, role: decision.role } };
+  const editorOn = cfg.editor !== null;
+  return {
+    ok: true,
+    viewer: {
+      userId: user.id,
+      email: user.email,
+      role: decision.role,
+      canEdit: editorOn && canEdit(decision.role),
+      canApprove: editorOn && canApprove(decision.role),
+    },
+  };
 }
 
 /** For pages: the viewer, or a redirect to the sign-in page (via
@@ -45,4 +63,19 @@ export async function requireViewer(): Promise<Viewer> {
   const result = await checkRequest();
   if (!result.ok) redirect(denialPath(result.reason));
   return result.viewer;
+}
+
+/**
+ * For every server action that writes: the same check as checkRequest(), run
+ * afresh (the session verified with Supabase Auth, the role read from
+ * cb_kb_admin_users now, not from the page that showed the button), plus the
+ * editor must be configured and the role must allow editing. The id and email
+ * returned are what the kb_admin_* functions are given - and each of them
+ * looks the id up in cb_kb_admin_users again.
+ */
+export async function actorForWrite(): Promise<{ ok: true; actor: Viewer } | { ok: false; message: string }> {
+  const result = await checkRequest();
+  if (!result.ok) return { ok: false, message: 'Your session has ended. Sign in again.' };
+  if (!result.viewer.canEdit) return { ok: false, message: 'Your account cannot make changes here.' };
+  return { ok: true, actor: result.viewer };
 }

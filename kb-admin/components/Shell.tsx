@@ -6,6 +6,7 @@ const NAV = [
   { href: '/rows', label: 'Browse entries' },
   { href: '/rules', label: 'Pricing rules' },
   { href: '/test', label: 'Test a question' },
+  { href: '/activity', label: 'Activity' },
 ];
 
 /**
@@ -34,7 +35,7 @@ export function Shell({
             </p>
           </div>
           <nav className="sidebar-nav">
-            {NAV.map((item) => (
+            {(viewer.canApprove ? [...NAV.slice(0, 2), { href: '/pending', label: 'Pending approval' }, ...NAV.slice(2)] : NAV).map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
