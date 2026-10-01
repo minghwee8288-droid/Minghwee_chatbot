@@ -90,6 +90,10 @@ export type RowSummary = {
   is_active: boolean;
   managed_by: string | null;
   updated_at: string;
+  /** An open draft exists. For a new entry (migration 008) the live row has no
+   *  text yet, so the list shows the draft's question instead. */
+  has_draft: boolean;
+  draft_question: string | null;
   total_count: number;
 };
 
@@ -116,18 +120,23 @@ export async function rows(q: RowQuery): Promise<RowSummary[]> {
   if (search) {
     params.push(likePattern(search));
     const p = `$${params.length}`;
-    where.push(`(question ilike ${p} or answer ilike ${p} or content ilike ${p} or section_heading ilike ${p})`);
+    where.push(`(k.question ilike ${p} or k.answer ilike ${p} or k.content ilike ${p} or k.section_heading ilike ${p}
+                 or d.question ilike ${p} or d.answer ilike ${p})`);
   }
   params.push(PAGE_SIZE, Math.max(0, q.page - 1) * PAGE_SIZE);
   return select<RowSummary>(`
-    select id::text, question, section_heading,
-           left(coalesce(answer, content, ''), 220) as snippet,
-           service_type, contact_type, nationality, chunk_type, source_document,
-           is_active, metadata->>'managed_by' as managed_by, updated_at::text,
+    select k.id::text, k.question, k.section_heading,
+           left(coalesce(k.answer, k.content, d.answer, ''), 220) as snippet,
+           k.service_type, k.contact_type, k.nationality, k.chunk_type, k.source_document,
+           k.is_active, k.metadata->>'managed_by' as managed_by, k.updated_at::text,
+           (d.id is not null) as has_draft, d.question as draft_question,
            (count(*) over ())::int as total_count
-      from ${KB}
+      from ${KB} k
+      left join lateral (
+           select v.id, v.question, v.answer from public.cb_kb_entry_versions v
+            where v.entry_id = k.id and v.status = 'draft' limit 1) d on true
      ${where.length ? `where ${where.join(' and ')}` : ''}
-     order by source_document, service_type, question nulls last, id
+     order by k.source_document, k.service_type, coalesce(k.question, d.question) nulls last, k.id
      limit $${params.length - 1} offset $${params.length}`, params);
 }
 

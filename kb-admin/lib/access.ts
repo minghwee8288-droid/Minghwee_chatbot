@@ -51,11 +51,11 @@ export function isSingleRead(query: string): boolean {
 }
 
 /**
- * The ONLY writes kb-admin makes: one call to one of these five functions.
+ * The ONLY writes kb-admin makes: one call to one of these six functions.
  * Each is SECURITY DEFINER in the database and checks the caller's role
- * itself (scripts/sql, migration 004); the editor login can call
+ * itself (scripts/sql, migrations 004 and 008); the editor login can call
  * these and nothing else. This list is the code-side twin of that grant: the
- * same five signatures as migration 005 grants.
+ * same six signatures as migrations 005 and 008 grant.
  */
 export const WRITE_FUNCTIONS = {
   kb_admin_save_draft: ['uuid', 'text', 'uuid', 'text', 'text', 'text', 'text', 'text', 'text', 'boolean', 'text'],
@@ -63,6 +63,8 @@ export const WRITE_FUNCTIONS = {
   kb_admin_publish: ['uuid', 'text', 'uuid', 'vector', 'text'],
   kb_admin_restore: ['uuid', 'text', 'uuid', 'uuid', 'text'],
   kb_admin_toggle: ['uuid', 'text', 'uuid', 'boolean', 'text'],
+  // Migration 008: a new entry, switched off and unsearchable, plus its draft.
+  kb_admin_create_entry: ['uuid', 'text', 'text', 'text', 'text', 'text', 'text', 'text', 'text'],
 } as const;
 export type WriteFunction = keyof typeof WRITE_FUNCTIONS;
 
@@ -73,7 +75,7 @@ export function writeStatement(fn: WriteFunction): string {
   return `select public.${fn}(${args.join(', ')}) as result`;
 }
 
-/** True only for exactly one of the five statements above, character for character. */
+/** True only for exactly one of the six statements above, character for character. */
 export function isAllowedWrite(query: string): boolean {
   return (Object.keys(WRITE_FUNCTIONS) as WriteFunction[]).some((fn) => writeStatement(fn) === query);
 }

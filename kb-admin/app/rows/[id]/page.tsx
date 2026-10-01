@@ -21,6 +21,7 @@ const STATUS_PILL: Record<Version['status'], { tone: Tone; text: string }> = {
 };
 
 const FLASH: Record<string, string> = {
+  created: 'Entry created. It is switched off and the chatbot cannot see it yet; its text is the draft below. Review the draft and publish it (an approver is needed to switch it on).',
   published: 'Published. The chatbot now reads the new version of this entry.',
   discarded: 'The draft was discarded. Nothing the chatbot reads changed.',
   on: 'Switched on. The chatbot can use this entry again.',
@@ -116,7 +117,9 @@ export default async function RowPage({ params, searchParams }: { params: { id: 
   if (!r) notFound();
 
   const back = backQuery(searchParams);
-  const heading = r.question || r.section_heading || 'Untitled passage';
+  // A new entry (migration 008) holds no text until its first publish: the
+  // text is in its draft, read below once we know there is one.
+  const neverPublished = r.chunk_type === 'qa_pair' && r.question === null && r.answer === null;
   const text = r.answer || r.content || '';
   // Shown only when the stored passage says more than the answer: on most
   // question-and-answer entries it is just the question followed by the answer.
@@ -125,7 +128,8 @@ export default async function RowPage({ params, searchParams }: { params: { id: 
   const editable = r.chunk_type === 'qa_pair';
   const tab = searchParams.tab === 'history' && editable ? 'history' : 'details';
   const [draft, history] = editable ? await Promise.all([openDraft(r.id), tab === 'history' ? versions(r.id) : Promise.resolve([])]) : [null, []];
-  const flashKey = ['published', 'discarded'].find((k) => searchParams[k]) ?? (typeof searchParams.switched === 'string' ? searchParams.switched : '');
+  const heading = r.question || (neverPublished ? draft?.question : null) || r.section_heading || 'Untitled passage';
+  const flashKey = ['created', 'published', 'discarded'].find((k) => searchParams[k]) ?? (typeof searchParams.switched === 'string' ? searchParams.switched : '');
   const flash = FLASH[flashKey];
   // The list's filters ride along, so "Back to entries" still returns to the same view.
   const tabHref = (t: 'details' | 'history') => {
@@ -160,7 +164,9 @@ export default async function RowPage({ params, searchParams }: { params: { id: 
                 {draft ? 'Continue editing' : 'Edit'}
               </Link>
             ) : null}
-            {viewer.canApprove ? (
+            {/* Switching on an entry that has never been published would switch on an
+                empty entry with no search fingerprint; publishing its draft does that job. */}
+            {viewer.canApprove && !neverPublished ? (
               <ReasonAction
                 key={r.is_active ? 'on' : 'off'}
                 action={toggleEntry}
@@ -180,7 +186,12 @@ export default async function RowPage({ params, searchParams }: { params: { id: 
       </div>
 
       {flash ? <AmberNotice title={flash} /> : null}
-      {draft ? (
+      {neverPublished ? (
+        <AmberNotice title="New entry, not yet published">
+          This entry was added in kb-admin. It stays switched off, and the chatbot cannot find it, until its draft is
+          published. Publishing switches it on, so an approver is needed.
+        </AmberNotice>
+      ) : draft ? (
         <AmberNotice title="This entry has an open draft">
           Started by {draft.created_by_email ?? 'a colleague'} on {formatDate(draft.created_at)}. The chatbot still reads the
           live version below until the draft is published.

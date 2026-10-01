@@ -34,6 +34,13 @@ export default async function DocumentsPage() {
           docCount === 1 ? 'document' : 'documents'
         } · the chatbot reads these live.`}
       />
+      {viewer.canEdit ? (
+        <div>
+          <Link href="/rows/new" className="btn btn-primary">
+            Add Q&amp;A
+          </Link>
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-4 gap-4">
         <Stat label="Active entries" value={sum.active} />

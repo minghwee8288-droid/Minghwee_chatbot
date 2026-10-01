@@ -11,7 +11,7 @@ import { callWrite } from '@/lib/write';
  * Every change kb-admin makes starts here. Each action:
  *   1. runs actorForWrite() FIRST - the Supabase session verified again and
  *      the role read from cb_kb_admin_users now (never trusted from the page);
- *   2. calls exactly one of the five kb_admin_* functions (lib/write.ts),
+ *   2. calls exactly one of the six kb_admin_* functions (lib/write.ts),
  *      passing the verified user id and email;
  *   3. turns the database's KB001-KB006 into a plain sentence.
  * Next.js refuses a server action whose Origin is not this site.
@@ -66,6 +66,14 @@ export async function saveDraft(_prev: ActionState, form: FormData): Promise<Act
   if (!question || !answer) return { error: 'The question and the answer are both needed.' };
   if (hasNric(`${question} ${answer} ${heading}`)) return { error: errorMessage('KB006', '') };
 
+  // A new entry (migration 008) is created switched off with no text, and its
+  // first draft is switched ON. A later draft of it must stay switched on, or
+  // publishing it would put the text in place and leave the entry off - so
+  // keep "on" until the entry has been published once. Every other entry keeps
+  // its current state (null), as before.
+  const live = await row(entryId);
+  const neverPublished = live !== null && live.chunk_type === 'qa_pair' && live.question === null && live.answer === null;
+
   let versionId: string;
   try {
     versionId = await callWrite<string>('kb_admin_save_draft', [
@@ -78,7 +86,7 @@ export async function saveDraft(_prev: ActionState, form: FormData): Promise<Act
       text(form, 'service', 60),
       text(form, 'audience', 20),
       text(form, 'nationality', 5),
-      null, // on/off is not edited here: keep the entry's current state
+      neverPublished ? true : null, // on/off is not edited here (see above)
       reason,
     ]);
   } catch (error) {
@@ -86,6 +94,41 @@ export async function saveDraft(_prev: ActionState, form: FormData): Promise<Act
   }
   log('save_draft', actor.userId, entryId, `ok draft=${versionId.slice(0, 8)}`);
   redirect(`/drafts/${versionId}?saved=1`);
+}
+
+export async function createEntry(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const auth = await actorForWrite();
+  if (!auth.ok) return { error: auth.message };
+  const { actor } = auth;
+
+  const question = text(form, 'question').trim();
+  const answer = text(form, 'answer').trim();
+  const heading = text(form, 'section_heading', 500).trim();
+  const reason = text(form, 'reason', MAX_REASON).trim();
+  if (!reason) return { error: 'Please say why you are adding this entry.' };
+  if (!question || !answer) return { error: 'The question and the answer are both needed.' };
+  if (hasNric(`${question} ${answer} ${heading}`)) return { error: errorMessage('KB006', '') };
+
+  let created: { entry_id: string; version_id: string };
+  try {
+    // The database creates the entry switched off and unsearchable, and its
+    // text as a draft. Nothing the chatbot reads changes until it is published.
+    created = await callWrite<{ entry_id: string; version_id: string }>('kb_admin_create_entry', [
+      actor.userId,
+      actor.email,
+      question,
+      answer,
+      heading,
+      text(form, 'service', 60),
+      text(form, 'audience', 20),
+      text(form, 'nationality', 5),
+      reason,
+    ]);
+  } catch (error) {
+    return failure('create_entry', actor.userId, 'new', error);
+  }
+  log('create_entry', actor.userId, created.entry_id, `ok draft=${created.version_id.slice(0, 8)}`);
+  redirect(`/rows/${created.entry_id}?created=1`);
 }
 
 export async function publishDraft(_prev: ActionState, form: FormData): Promise<ActionState> {

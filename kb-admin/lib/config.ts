@@ -12,7 +12,7 @@
  *   3. the bot's preview secret.
  *
  * And, only when the editor is switched on (see `editor` below):
- *   4. the kb_admin_editor database login, which can call the five
+ *   4. the kb_admin_editor database login, which can call the six
  *      kb_admin_* functions and nothing else;
  *   5. an embedding API key, used only to embed an entry's new text.
  * With neither set the editor is off and kb-admin stays read-only.

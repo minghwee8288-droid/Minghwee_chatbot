@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Shell } from '@/components/Shell';
 import { documentLabel, label, type LabelKind } from '@/components/labels';
-import { ActivePill, PageHeader, previewText } from '@/components/ui';
+import { ActivePill, PageHeader, Pill, previewText } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
 import { FILTERS, PAGE_SIZE, filterOptions, rows, type FilterKey } from '@/lib/queries';
 
@@ -184,7 +184,7 @@ export default async function RowsPage({ searchParams }: { searchParams: Params 
             </thead>
             <tbody>
               {list.map((r, i) => {
-                const heading = r.question || r.section_heading;
+                const heading = r.question || r.draft_question || r.section_heading;
                 const preview = previewText(r.snippet, 180, r.snippet.length >= SNIPPET_CHARS);
                 return (
                   <tr key={r.id}>
@@ -214,6 +214,11 @@ export default async function RowsPage({ searchParams }: { searchParams: Params 
                     </td>
                     <td>
                       <ActivePill active={r.is_active} />
+                      {r.has_draft ? (
+                        <span className="ml-1.5">
+                          <Pill tone="warn">Draft</Pill>
+                        </span>
+                      ) : null}
                     </td>
                   </tr>
                 );

@@ -100,9 +100,10 @@ console.log('forms:');
 }
 
 console.log('writes (Phase 2 editor):');
-// The ONLY writes: one of five SECURITY DEFINER functions, called from one
+// The ONLY writes: one of six SECURITY DEFINER functions, called from one
 // module, as one exact statement each. Everything else stays refused above.
-const FIVE = ['kb_admin_discard_draft', 'kb_admin_publish', 'kb_admin_restore', 'kb_admin_save_draft', 'kb_admin_toggle'];
+// The five of migration 004, plus kb_admin_create_entry (migration 008).
+const SIX = ['kb_admin_create_entry', 'kb_admin_discard_draft', 'kb_admin_publish', 'kb_admin_restore', 'kb_admin_save_draft', 'kb_admin_toggle'];
 const ROLE_NAMES = new Set(['kb_admin_reader', 'kb_admin_editor']);
 const named = new Map();
 for (const f of code) {
@@ -110,8 +111,8 @@ for (const f of code) {
     if (!ROLE_NAMES.has(m[0])) named.set(m[0], [...(named.get(m[0]) ?? []), rel(f)]);
   }
 }
-const strays = [...named.keys()].filter((n) => !FIVE.includes(n));
-check('the only kb_admin_* functions named are the five', strays.length === 0, strays.map((n) => `${n} in ${named.get(n)[0]}`).join(', '));
+const strays = [...named.keys()].filter((n) => !SIX.includes(n));
+check('the only kb_admin_* functions named are the six', strays.length === 0, strays.map((n) => `${n} in ${named.get(n)[0]}`).join(', '));
 const writeTs = src('lib/write.ts');
 check('lib/write.ts exports callWrite and nothing else', exportsOf(writeTs).join(',') === 'callWrite', exportsOf(writeTs).join(','));
 check('lib/write.ts sends only writeStatement(fn), after isAllowedWrite()',
@@ -125,7 +126,7 @@ const actionsSrc = src('app/editor/actions.ts');
 check("app/editor/actions.ts is a 'use server' module", /^'use server';/.test(actionsSrc));
 const actionFns = [...actionsSrc.matchAll(/export async function (\w+)\([^)]*\)[^{]*\{\s*\n\s*(.*)/g)];
 const unguarded = actionFns.filter((m) => m[2].trim() !== 'const auth = await actorForWrite();').map((m) => m[1]);
-check('every server action checks the session and role first (actorForWrite)', actionFns.length === 5 && unguarded.length === 0,
+check('every server action checks the session and role first (actorForWrite)', actionFns.length === 6 && unguarded.length === 0,
   `${actionFns.length} action(s)${unguarded.length ? `; unguarded: ${unguarded.join(', ')}` : ''}`);
 const otherServer = code.filter((f) => /^'use server';/.test(readFileSync(f, 'utf8'))).map(rel).sort();
 check("no other 'use server' module than sign-in and the editor", otherServer.join(',') === 'app/editor/actions.ts,app/login/actions.ts', otherServer.join(','));
@@ -303,10 +304,10 @@ check('token expiry read', secondsLeft(jwt({ exp: now + 300 }), now) === 300);
 check('garbage token reads as expired', secondsLeft('garbage', now) < 0);
 
 console.log('behaviour - writes:');
-check('exactly the five functions are allowed', Object.keys(WRITE_FUNCTIONS).sort().join(',') === FIVE.join(','), Object.keys(WRITE_FUNCTIONS).sort().join(','));
-check('each of the five statements is allowed', FIVE.every((fn) => isAllowedWrite(writeStatement(fn))));
+check('exactly the six functions are allowed', Object.keys(WRITE_FUNCTIONS).sort().join(',') === SIX.join(','), Object.keys(WRITE_FUNCTIONS).sort().join(','));
+check('each of the six statements is allowed', SIX.every((fn) => isAllowedWrite(writeStatement(fn))));
 check('every statement binds every value ($n) and splices nothing',
-  FIVE.every((fn) => writeStatement(fn) === `select public.${fn}(${WRITE_FUNCTIONS[fn].map((t, i) => `$${i + 1}::${t}`).join(', ')}) as result`));
+  SIX.every((fn) => writeStatement(fn) === `select public.${fn}(${WRITE_FUNCTIONS[fn].map((t, i) => `$${i + 1}::${t}`).join(', ')}) as result`));
 // Built from pieces so this file itself names no write verb.
 const verb = (a, b) => a + b;
 const refusedWrites = [
@@ -324,15 +325,20 @@ const refusedWrites = [
 ];
 check('anything else is refused (internal helpers, a second statement, raw writes, reads)', refusedWrites.every((w) => !isAllowedWrite(w)),
   refusedWrites.filter((w) => isAllowedWrite(w)).join(' | '));
-// The code's five signatures are the five the database grants to kb_admin_editor.
+// The code's six signatures are the six the database grants to kb_admin_editor:
+// five in migration 005, kb_admin_create_entry in migration 008.
 const grantFile = resolve(ROOT, '..', 'scripts', 'sql', 'kb_admin_005_editor_login.sql');
-if (existsSync(grantFile)) {
-  const granted = [...readFileSync(grantFile, 'utf8').matchAll(/public\.(kb_admin_\w+)\(([^)]*)\)/g)]
-    .map((m) => `${m[1]}(${m[2].replace(/\s+/g, '')})`).sort().join(' ');
-  const ours = FIVE.map((fn) => `${fn}(${WRITE_FUNCTIONS[fn].join(',')})`).sort().join(' ');
-  check('the five signatures match the kb_admin_editor grant (kb_admin_005)', granted === ours, granted);
+const grantFile008 = resolve(ROOT, '..', 'scripts', 'sql', 'kb_admin_008_create_entry.sql');
+if (existsSync(grantFile) && existsSync(grantFile008)) {
+  const sig = (m) => `${m[1]}(${m[2].replace(/\s+/g, '')})`;
+  const granted005 = [...readFileSync(grantFile, 'utf8').matchAll(/public\.(kb_admin_\w+)\(([^)]*)\)/g)].map(sig);
+  const granted008 = [...readFileSync(grantFile008, 'utf8')
+    .matchAll(/grant execute on function\s+public\.(kb_admin_\w+)\(([^)]*)\)\s+to kb_admin_editor/g)].map(sig);
+  const granted = [...granted005, ...granted008].sort().join(' ');
+  const ours = SIX.map((fn) => `${fn}(${WRITE_FUNCTIONS[fn].join(',')})`).sort().join(' ');
+  check('the six signatures match the kb_admin_editor grants (kb_admin_005 + kb_admin_008)', granted === ours, granted);
 } else {
-  console.log('  (scripts/sql/kb_admin_005_editor_login.sql not found - grant comparison skipped)');
+  console.log('  (kb_admin_005 / kb_admin_008 SQL not found - grant comparison skipped)');
 }
 
 console.log('behaviour - editor settings:');

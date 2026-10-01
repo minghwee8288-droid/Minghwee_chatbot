@@ -4,15 +4,15 @@ import { isAllowedWrite, writeStatement, WRITE_FUNCTIONS, type WriteFunction } f
 import { env } from './env';
 
 /**
- * The ONLY way kb-admin changes anything, and only through five functions.
+ * The ONLY way kb-admin changes anything, and only through six functions.
  *
  * Three layers, each enough on its own:
  *   1. GRANTS: the kb_admin_editor login has no privilege on any table. It can
- *      EXECUTE the five kb_admin_* functions (scripts/sql, migration 005),
+ *      EXECUTE the six kb_admin_* functions (scripts/sql, migrations 005, 008),
  *      each of which checks the caller's role in cb_kb_admin_users itself.
  *   2. This module exports `callWrite` and nothing else, and sends only the
  *      exact statement lib/access.ts writeStatement() builds for one of the
- *      five names - every value a bound parameter.
+ *      six names - every value a bound parameter.
  *   3. scripts/selfcheck.mjs fails if any other kb-admin file names a write.
  *
  * A separate pool from the reader's (lib/db.ts): reads never run as the
@@ -50,7 +50,7 @@ export type WriteParam = string | number | boolean | null;
 export async function callWrite<T>(fn: WriteFunction, params: WriteParam[]): Promise<T> {
   const statement = writeStatement(fn);
   if (!isAllowedWrite(statement) || params.length !== WRITE_FUNCTIONS[fn].length) {
-    throw new Error('kb-admin calls the five kb_admin_* functions only');
+    throw new Error('kb-admin calls the six kb_admin_* functions only');
   }
   const [row] = await sql().unsafe(statement, params);
   return (row as unknown as { result: T }).result;

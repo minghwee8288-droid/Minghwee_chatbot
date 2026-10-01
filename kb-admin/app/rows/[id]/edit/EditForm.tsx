@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useFormState, useFormStatus } from 'react-dom';
 import { label } from '@/components/labels';
-import { saveDraft } from '@/app/editor/actions';
+import { createEntry, saveDraft } from '@/app/editor/actions';
 import { AUDIENCES, CHAR_LIMIT, NATIONALITIES, hasNric, lengthState } from '@/lib/editing';
 
 export type EditValues = {
@@ -26,19 +26,27 @@ function SaveButton({ blocked }: { blocked: boolean }) {
 
 const COUNTER_COLOUR = { ok: 'var(--muted)', warn: 'var(--warn)', block: 'var(--bad)' } as const;
 
+/**
+ * mode 'edit' (Phase 2): a draft of an existing entry.
+ * mode 'create' (migration 008): a brand-new entry - the database creates it
+ * switched off and unsearchable, with this text as its first draft.
+ */
 export function EditForm({
   entryId,
   initial,
   services,
   liveLength,
+  mode = 'edit',
 }: {
-  entryId: string;
+  entryId?: string;
   initial: EditValues;
   services: string[];
   liveLength: number;
+  mode?: 'edit' | 'create';
 }) {
+  const creating = mode === 'create';
   const [v, setV] = useState(initial);
-  const [raw, formAction] = useFormState(saveDraft, { error: '' });
+  const [raw, formAction] = useFormState(creating ? createEntry : saveDraft, { error: '' });
   // After a redirect to the same route (every action here ends in one), Next 14
   // re-renders this still-mounted form with the state set to undefined.
   const state = raw ?? { error: '' };
@@ -46,12 +54,12 @@ export function EditForm({
 
   const len = lengthState(v.question, v.answer, liveLength);
   const nric = hasNric(`${v.question} ${v.answer} ${v.section_heading}`);
-  const unchanged = (Object.keys(initial) as (keyof EditValues)[]).every((k) => initial[k].trim() === v[k].trim());
+  const unchanged = !creating && (Object.keys(initial) as (keyof EditValues)[]).every((k) => initial[k].trim() === v[k].trim());
   const serviceOptions = services.includes(v.service) ? services : [v.service, ...services];
 
   return (
     <form action={formAction} className="card card-pad space-y-5">
-      <input type="hidden" name="entry_id" value={entryId} />
+      {creating ? null : <input type="hidden" name="entry_id" value={entryId} />}
 
       <div>
         <label htmlFor="question" className="field-label mb-1.5 block">
@@ -123,9 +131,17 @@ export function EditForm({
 
       <div>
         <label htmlFor="reason" className="field-label mb-1.5 block">
-          Reason for the change (required)
+          {creating ? 'Why are you adding this entry? (required)' : 'Reason for the change (required)'}
         </label>
-        <textarea id="reason" name="reason" rows={2} required maxLength={500} className="textarea" placeholder="e.g. The agency changed the fee on 1 October" />
+        <textarea
+          id="reason"
+          name="reason"
+          rows={2}
+          required
+          maxLength={500}
+          className="textarea"
+          placeholder={creating ? 'e.g. Clients keep asking this and the knowledge base has no answer' : 'e.g. The agency changed the fee on 1 October'}
+        />
       </div>
 
       {nric ? (
@@ -142,7 +158,11 @@ export function EditForm({
       <div className="flex items-center gap-3">
         <SaveButton blocked={len.level === 'block' || nric || unchanged} />
         <p className="text-[12px] text-muted">
-          {unchanged ? 'Nothing has changed yet.' : 'Saving a draft changes nothing the chatbot reads. You review it next, then publish.'}
+          {unchanged
+            ? 'Nothing has changed yet.'
+            : creating
+              ? 'Saving creates the entry switched off, with this text as a draft. The chatbot cannot see it until an approver publishes it.'
+              : 'Saving a draft changes nothing the chatbot reads. You review it next, then publish.'}
         </p>
       </div>
     </form>

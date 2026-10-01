@@ -96,7 +96,8 @@ app/
 scripts/             preflight, retrieval check, reset, simulate, SQL migrations
   sql/               kb_rules_001_create, kb_rules_002_seed, kb_owner_001_tag_loader,
                      kb_admin_001..007 (kb-admin Phase 1 recorded + the Q&A editor;
-                     007 is checks only) — applied ONLY via
+                     007 is checks only), kb_admin_008 (add a new Q&A entry;
+                     on TEST and production) — applied ONLY via
                      apply_sql.py --expect-ref <project ref>
   seed_kb_canary.py  writes (never applies) the SQL seeding cb_kb_canary with the bot's
                      own embed_query; kb-admin must reproduce that vector to publish
@@ -108,14 +109,16 @@ reset-ui/            Next.js "clear a conversation" page (separate deliverable, 
                      chatbot endpoint, talks to Supabase directly with the service-role
                      key from its own serverless functions. See reset-ui/README.md.
 kb-admin/            Next.js knowledge-base tool (Documents, Rows, Rules, Test a
-                     question; Phase 2: edit Q&A entries). Standalone: imports nothing
+                     question; Phase 2: edit Q&A entries; Phase 3 scope A: add a new
+                     Q&A entry). Standalone: imports nothing
                      from app/. Signs in via Supabase Auth + an active cb_kb_admin_users
                      row (viewer | editor | approver), checked on every request.
                      READS as kb_admin_reader inside BEGIN READ ONLY. WRITES only as
                      kb_admin_editor, which holds no table privilege and can only
-                     EXECUTE five SECURITY DEFINER functions - kb_admin_save_draft,
+                     EXECUTE six SECURITY DEFINER functions - kb_admin_save_draft,
                      kb_admin_publish, kb_admin_discard_draft, kb_admin_restore,
-                     kb_admin_toggle (scripts/sql/kb_admin_004) - which enforce roles,
+                     kb_admin_toggle (scripts/sql/kb_admin_004) and
+                     kb_admin_create_entry (kb_admin_008) - which enforce roles,
                      the 1200-char limit, no NRIC, approval, stale drafts and the
                      embedding canary, and audit every write (cb_kb_audit, append-only;
                      cb_kb_entry_versions holds drafts and history; the bot reads
@@ -455,6 +458,7 @@ because the lead is opened early and the ticket is created much later.
 | A passport that runs out before the renewal could finish is said out loud | `info_collector._expires_before_we_finish` + `EXPIRING_SOON_NOTE` | Live: *"in 5 days"* answered with *"It takes approximately 6 to 8 weeks"*, the two figures one line apart and nothing connecting them — 2 runs out of 2. `passport_expiry` had been collected since the flow was written and put on the ticket; **nothing ever read it.** Coarse on purpose and fails towards SILENCE: "next March", "when the contract ends" and a formatted date all return None, because guessing at a date and then calling somebody's passport urgent is worse than the omission. 60 days, which covers the slowest route we hold — a per-nationality table would be a second copy of lead times that live in the knowledge base (§9.8). |
 | The pricing rules have ONE reader, and a bad table can never widen or empty them | `app/services/kb_rules.py` + `cb_kb_rules` | `FEE_STATED_SERVICES`, `COST_WITHHELD_SERVICES`, `FEE_BY_NATIONALITY` and the salary floor moved out of four files into one table, so the KB Admin UI can change a price policy without a deploy. Callers read a validated in-memory snapshot and never the database. An empty, half-read or invalid table is REFUSED whole and the last good set stays in force, else the code defaults — "withhold everything" would also switch off the retrieval filter that keeps $695 out of a $450 passport renewal. `fee_enquiry` is withheld and locked in the table itself; `transfer`/`transfer_employer` are one switch, enforced by a commit-time trigger. |
 | kb-admin writes a Q&A entry only through five database functions | `scripts/sql/kb_admin_004` + `kb_admin_005` + `kb-admin/scripts/selfcheck.mjs` | `kb_admin_editor` has no table privilege; the functions (owned by NOLOGIN `kb_admin_fn_owner`) check the person's role, 1200 chars, NRIC, approval, stale drafts and the canary, and write `cb_kb_audit`. Their UPDATE policy is limited to `chunk_type = 'qa_pair'`. Proved on TEST in one rolled-back transaction, and `007` re-checks the grants wherever it runs. |
+| A Q&A entry added in kb-admin is invisible to the bot until an approver publishes it | `scripts/sql/kb_admin_008` (`kb_admin_create_entry`) + its INSERT policy | The new row is inserted switched off, with no embedding and NO question/answer/content - the text lives in a version-2 draft over a version-1 baseline of the empty row. That is what lets the unchanged `kb_admin_publish` work: it sees the text change, demands a vector (KB005), and switching on needs an approver. The owner's INSERT is ten columns (never question, answer, content or embedding) and RLS admits only an inactive, text-less `qa_pair` from `Ming Hwee KB Admin` tagged `managed_by: ui`. kb-admin hides "Switch on" on such an entry. `007`'s INSERT check uses `has_table_privilege`, which does not see column grants; `008` checks the exact surface itself. |
 | The loader never overwrites the KB Admin UI | `load_service_notes._ui_owned` + `metadata.managed_by` | Every row is `loader` or `ui`. All four write paths (ROWS, UPDATES, TEXT_REPLACEMENTS, RETIRED) skip and report a `ui` row — without it the first loader run after the UI went live would silently undo the client's edits, because three of the four find their targets by searching. Proved by RUNNING the loader against a stub DB holding one, in `selfcheck_kb_prep.py`. |
 | Nobody without the preview key learns anything from the preview route | `main.create_app` + `admin.require_preview_key` + `selfcheck_kb_prep.py` | No secret: the route is not registered (404, absent from the schema). With one, the key is a route dependency and the body is NOT a declared parameter - FastAPI decodes a declared body before dependencies, so malformed JSON answered 422 to anyone. 422 is now only ever seen by a key holder. Rate-limited, one at a time, 32 KB cap. Proved over HTTP, eight faults injected, eight red. |
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
@@ -1273,7 +1277,7 @@ docker compose logs chatbot | grep "Safety gate"
 # diagnostics (all read-only)
 python scripts/smoke_nodes.py          # RUNS each node with the LLM and DB stubbed. Run this FIRST.
 python scripts/selfcheck_reset_ui.py   # reset-ui/ still clears what reset_conversation.py clears
-(cd kb-admin && npm run selfcheck)     # kb-admin: writes only via the five functions, auth and role
+(cd kb-admin && npm run selfcheck)     # kb-admin: writes only via the six functions, auth and role
                                        #   on every route and action, no secret leaked
 (cd kb-admin && npm run dev:test)      # kb-admin on 5177 against TEST (.env.test.local)
 python scripts/selfcheck_flows.py      # behavioural assertions; also runs IN the container:
@@ -1396,6 +1400,60 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-01** - **kb-admin Phase 3 scope A: add a new Q&A entry. On TEST and,
+  since the same day, production.** No bot code changes: the bot still reads only
+  active rows with an embedding.
+  (A) **`scripts/sql/kb_admin_008_create_entry.sql`**: a sixth SECURITY DEFINER
+  function, `kb_admin_create_entry`, owned by `kb_admin_fn_owner` and executable
+  by `kb_admin_editor`. Same rules as 004: an editor or approver, an NRIC/FIN
+  refused, 1200 characters, routing checked. It also widens the audit CHECK with
+  `entry_created`. Rollback: `rollback/rollback_kb_admin_008_create_entry.sql`.
+  It refuses while any `Ming Hwee KB Admin` row or `entry_created` audit row
+  exists. Verified on TEST: it refused, because one entry exists there.
+  (B) **Two departures from the brief, both forced by the unchanged
+  `kb_admin_publish`.** A lone version-1 draft cannot be published: publish needs
+  a `published` version to base the draft on. And a live row that already held
+  the text would publish with "wording unchanged", keeping a NULL vector the bot
+  can never retrieve. So the row starts empty and switched off, version 1 is its
+  baseline, and version 2 is the draft. `cb_kb_entry_versions` has no
+  `is_draft`/`published_at`/`published_by` columns; a draft is `status='draft'`.
+  `namespace`, `page_or_section`, `rag_score_floor` and `source_document` are
+  columns, not metadata keys. Metadata carries the import's real six:
+  `managed_by`, `keywords`, `priority`, `figures_present`, `table_column`,
+  `date_valid_from`. `rag_score_floor` is 0.420 when the text has a number; it is
+  set at creation and not revisited, because the owner cannot update it.
+  (C) **kb-admin**:
+  - an "Add Q&A" button (editor/approver) on the Knowledge base page, and
+    `/rows/new`, which reuses the edit form in a create mode;
+  - a "Draft" badge in the entries list, which shows a new entry by its draft
+    question;
+  - the entry page explains a not-yet-published entry and hides "Switch on"
+    there;
+  - `saveDraft` keeps a never-published entry's later drafts switched on.
+  `WRITE_FUNCTIONS` and `selfcheck.mjs` expect six, checked against the grants in
+  005 and 008.
+  (D) **Verified on TEST**:
+  - 008 dry-run, then applied; 007 is still 10/10.
+  - Behaviour test, one transaction ending in ROLLBACK: 24/24, covering all ten
+    asked for plus the RLS refusals.
+  - End to end through the running UI on 5177: create as editor, held for an
+    approver, published by the approver. Three throwaway TEST accounts were used
+    and removed; TEST has no service-role key.
+  - The bot's own `embed_query` + match function + post-filters returned the
+    entry first at 0.694.
+  - selfcheck 127/127, with five injected faults all red. Build passes.
+  - Phase 1 and Phase 2 HTTP suites all pass.
+  (E) **Applied to production 2026-10-01**, on the user's go-word. Before it, a
+  read-only check and an export of every column of all 404 rows. 007 is 10/10.
+  A read-only check then confirmed the function is owned by `kb_admin_fn_owner`,
+  EXECUTE is held by `kb_admin_editor` only, `entry_created` is in the audit
+  CHECK, and there are 0 `Ming Hwee KB Admin` rows. Re-export against the pre-008
+  export: **0 differences**, `updated_at` and `embedding` included. Against the
+  2026-09-30 Phase 2 export, one row differs (content, embedding, metadata,
+  updated_at). That is an approver's own kb-admin draft, publish, restore and
+  publish on 2026-09-30, all four in `cb_kb_audit`, with no `external_*` write.
+  The bot still sees no new row: nothing has been created on production.
 
 - **2026-09-30** - **kb-admin Phase 2: the agency can edit Q&A entries, and the
   database is what stops them editing anything else.** No bot behaviour changes: the
