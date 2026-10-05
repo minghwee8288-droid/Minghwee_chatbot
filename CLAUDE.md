@@ -1404,6 +1404,43 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-10-05** - **kb-admin Phase 3 scope B, session 2: the document chunker and
+  the lost-facts check. Code only; nothing calls them yet, and no database row,
+  SQL file or production setting changed.**
+  (A) **`kb-admin/lib/chunker.ts`** (mammoth for .docx; .md; .txt; never PDF).
+  Passages are at most 1,200 characters and tables at most 3,000, the bot's own
+  limits. `[cite:N]` markers are removed. A table is written in the import's
+  "column: value | column: value" format.
+  - `section_heading` is "parent — nearest", two levels only, and never the
+    document title.
+  - Consecutive small sections under one parent are packed into one chunk headed
+    by the parent, each keeping its own heading as its first line.
+  - A short question paragraph stays with its answer.
+  - Four of the five .docx sources use no heading styles, so a short all-bold
+    line, or a one-cell box, counts as a heading.
+  (B) **`kb-admin/lib/facts.ts` `findLostFacts`** lists every phone number,
+  amount, time span, percentage and number that the live rows state and the new
+  chunks do not. Equivalent forms are compared as one ("1 to 2 weeks" =
+  "1-2 weeks", "S$650" = "$650").
+  **Why it exists:** the source files predate the live corrections. Re-uploaded
+  as they are, the FAQ file would bring back S$570, "2-3 weeks" and "6-8 weeks",
+  and the helper-rights file the old WhatsApp number. Run against TEST, it
+  catches all of those.
+  (C) **Embedding parity.** The import's document-chunk vectors cannot be
+  reproduced from their stored text by any concatenation (cosine 0.79-0.98).
+  The method is proven, because the canary and two calibration rows score 1.0.
+  The import embedded Q&A rows as `question + ' ' + answer`. There is therefore
+  no convention to preserve. On the Checklist, heading + `\n` + content and
+  content alone retrieve the same probes, with heading + content marginally
+  ahead.
+  (D) **Read-only TEST scripts:** `scripts/check_embedding_parity.mjs`,
+  `verify_chunker.mjs` (chunk counts, row-by-row comparison, lost facts) and
+  `compare_embedding_methods.mjs`. They share `kb_test_readonly.mjs`: the TEST
+  ref is required, the production ref is refused, and everything runs in
+  BEGIN READ ONLY.
+  `npm run selfcheck` gains the chunker and lost-facts checks; three injected
+  faults all went red.
+
 - **2026-10-01** - **kb-admin Phase 3 scope B, session 1: the database layer for
   document upload. SQL only, on TEST only; production waits on a go-word.** No bot
   code and no kb-admin code changed. The bot reads none of the new tables.

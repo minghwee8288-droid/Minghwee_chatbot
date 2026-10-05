@@ -11,6 +11,7 @@
     "selfcheck": "node --conditions=react-server scripts/selfcheck.mjs"
   },
   "dependencies": {
+    "mammoth": "^1.13.0",
     "next": "14.2.35",
     "postgres": "3.4.9",
     "react": "^18.3.1",

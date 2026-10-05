@@ -411,5 +411,100 @@ check('an unknown error never shows the database text', !E.errorMessage('42P01',
     d.after.filter((x) => x.kind === 'ins').map((x) => x.text.trim()).join() === '$495');
 }
 
+console.log('behaviour - document chunker (Phase 3 scope B):');
+{
+  const pkg = JSON.parse(src('package.json'));
+  check('mammoth is a runtime dependency', Boolean(pkg.dependencies?.mammoth), pkg.dependencies?.mammoth ?? 'missing');
+  check('no PDF library is a dependency', !Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).some((d) => /pdf/i.test(d)));
+  const C = await import(pathToFileURL(join(ROOT, 'lib/chunker.ts')).href);
+  check('lib/chunker.ts exports chunkDocument', typeof C.chunkDocument === 'function');
+  check('the limits are the bot\'s own (1200 passage / 3000 table)', C.MAX_PASSAGE_CHARS === 1200 && C.MAX_TABLE_CHARS === 3000);
+  check('only docx, md and txt are accepted', C.FILE_TYPES.join(',') === 'docx,md,txt');
+  let refused = false;
+  try {
+    await C.chunkDocument(Buffer.from('%PDF-1.7'), 'pdf', 'x.pdf');
+  } catch (e) {
+    refused = e instanceof C.ChunkerError;
+  }
+  check('a PDF is refused', refused);
+
+  const sentence = 'The helper must be given one rest day every week by law. ';
+  const md = [
+    '# Title', '', 'Intro text.', '', '## Rest days', '', sentence.repeat(30).trim() + '[cite:12]', '',
+    '## Fees', '', '| Item | Amount |', '|---|---|', '| Agency fee | $1,428 |', '| Insurance | $590 |', '',
+  ].join('\n');
+  const chunks = await C.chunkDocument(Buffer.from(md), 'md', 'test.md');
+  const passages = chunks.filter((c) => c.chunk_type === 'passage');
+  const table = chunks.find((c) => c.chunk_type === 'table_unit');
+  check('no passage is over 1,200 characters', passages.every((c) => c.content.length <= 1200), passages.map((c) => c.content.length).join(','));
+  check('a long paragraph splits at a sentence end', passages.filter((c) => c.section_heading === 'Rest days').length >= 2 &&
+    passages.filter((c) => c.section_heading === 'Rest days').every((c) => c.content.endsWith('.')));
+  check('[cite:N] markers are removed', !chunks.some((c) => /\[cite:/.test(c.content)));
+  check('section_heading is the nearest heading, not the title', passages.some((c) => c.section_heading === 'Rest days') && chunks.find((c) => c.content === 'Intro text.')?.section_heading === 'Title');
+  check('a table is one table_unit in the import\'s format',
+    table?.content === 'Fees\nItem: Agency fee | Amount: $1,428\nItem: Insurance | Amount: $590' && table.metadata.table_column === 'Item, Amount');
+  check('figures set figures_present and the suggested floor', table?.metadata.figures_present === true && table.suggested_rag_score_floor === 0.42 &&
+    chunks.find((c) => c.content === 'Intro text.')?.suggested_rag_score_floor === null);
+  check('metadata is the import\'s six keys, managed_by ui', chunks.every((c) =>
+    Object.keys(c.metadata).sort().join(',') === 'date_valid_from,figures_present,keywords,managed_by,priority,table_column' &&
+    c.metadata.managed_by === 'ui' && Array.isArray(c.metadata.keywords) && c.metadata.priority === 3));
+  check('ordinals run 1..n', chunks.every((c, i) => c.ordinal === i + 1));
+
+  const rows = Array.from({ length: 60 }, (_, i) => `| ${i + 1} | ${'Do the work carefully and well. '.repeat(3).trim()} |`);
+  const big = await C.chunkDocument(Buffer.from(['## Code', '', '| # | Rule |', '|---|---|', ...rows].join('\n')), 'md', 'big.md');
+  check('a table over 3,000 characters splits by rows, heading line repeated', big.length >= 2 &&
+    big.every((c) => c.chunk_type === 'table_unit' && c.content.length <= 3000 && c.content.startsWith('Code\n#: ')));
+
+  const txt = await C.chunkDocument(Buffer.from('First block.\n\nSecond block.'), 'txt', 't.txt');
+  check('.txt: blank-line blocks, no headings', txt.length === 1 && txt[0].section_heading === null && txt[0].content === 'First block.\n\nSecond block.');
+  let notUtf8 = false;
+  try {
+    await C.chunkDocument(Buffer.from([0xff, 0xfe, 0x41]), 'txt', 'bad.txt');
+  } catch (e) {
+    notUtf8 = e instanceof C.ChunkerError;
+  }
+  check('non-UTF-8 text is refused', notUtf8);
+  check('the chunker reaches no database, network or environment',
+    !/from '(postgres|\.\/db|\.\/write|\.\/env|\.\/embed)'|fetch\(|process\.env/.test(src('lib/chunker.ts')));
+
+  // Headings: parent + " — " + nearest, two levels only; the nearest alone with no parent.
+  const long = 'She keeps her own passport and nobody may hold it for her. '.repeat(25).trim();
+  const h = await C.chunkDocument(Buffer.from([
+    '# Module', '', '## 27.3 Your Passport', '', '### What is OK', '', '- You keep your passport.', '',
+    '### What is NOT OK', '', long, '', '## Overview', '', 'Short text.', '',
+  ].join('\n')), 'md', 'h.md');
+  check('the heading join is " — "', C.HEADING_JOIN === ' — ' && C.combineHeading('A', 'B') === 'A — B' &&
+    C.combineHeading(null, 'B') === 'B' && C.combineHeading('A', 'A') === 'A');
+  check('section_heading is "parent — nearest"', h.some((c) => c.section_heading === '27.3 Your Passport — What is OK') &&
+    h.some((c) => c.section_heading === '27.3 Your Passport — What is NOT OK'), h.map((c) => c.section_heading).join(' | '));
+  check('only two levels, and never the document title as parent', !h.some((c) => (c.section_heading ?? '').split(C.HEADING_JOIN).length > 2) &&
+    !h.some((c) => (c.section_heading ?? '').startsWith('Module')) && h.some((c) => c.section_heading === 'Overview'));
+
+  // Packing: consecutive small sections under one parent share a chunk headed by the parent, never over 1,200.
+  const subs = Array.from({ length: 12 }, (_, i) => [`### Point ${i + 1}`, '', `Rule ${i + 1}: ${'keep the house clean and tidy. '.repeat(4).trim()}`, '']).flat();
+  const packed = await C.chunkDocument(Buffer.from(['## House rules', '', ...subs, '## Other', '', 'Unrelated.'].join('\n')), 'md', 'p.md');
+  const rulesChunks = packed.filter((c) => c.section_heading === 'House rules');
+  check('small sections under one parent are packed, headed by the parent', rulesChunks.length >= 2 && rulesChunks.length < 12 &&
+    rulesChunks[0].content.startsWith('Point 1\nRule 1:'), `${rulesChunks.length} chunk(s)`);
+  check('packing never exceeds 1,200 characters, and keeps every section', packed.every((c) => c.content.length <= 1200) &&
+    Array.from({ length: 12 }, (_, i) => `Point ${i + 1}\n`).every((p) => rulesChunks.some((c) => c.content.includes(p))));
+  check('a section under a different parent is not packed in', packed.some((c) => c.section_heading === 'Other' && c.content === 'Unrelated.'));
+
+  // Lost facts: what the live rows state that the new chunks would drop.
+  const F = await import(pathToFileURL(join(ROOT, 'lib/facts.ts')).href);
+  const lost = F.findLostFacts(
+    ['WhatsApp us on +65 6111 2222. A transfer takes about 1 to 2 weeks. From S$670/month.', 'Fee $1,428, 50% refund.[cite:49]'],
+    ['WhatsApp us on +65 6999 8888. A transfer takes about 1-2 weeks. From $670 per month.', 'Fee $1,428, 50% refund.'],
+  );
+  const facts = lost.map((f) => `${f.kind}:${f.fact}`).sort().join(',');
+  check('findLostFacts catches a changed phone number', facts === 'phone:61112222', facts || 'nothing found');
+  check('findLostFacts treats "1 to 2 weeks" = "1-2 weeks" and "S$670" = "$670", and ignores [cite:N]', !/span|money|number:49/.test(facts));
+  const lost2 = F.findLostFacts(['Allow about 4 to 6 weeks; the bond is S$5,000.'], ['Allow about 6-8 weeks; the bond is S$5,000.']);
+  check('findLostFacts catches a changed time span', lost2.length === 1 && lost2[0].kind === 'span' && lost2[0].fact === '4-6 weeks',
+    lost2.map((f) => `${f.kind}:${f.fact}`).join(','));
+  check('lib/facts.ts reaches no database, network or environment',
+    !/from '(postgres|\.\/db|\.\/write|\.\/env|\.\/embed)'|fetch\(|process\.env/.test(src('lib/facts.ts')));
+}
+
 console.log(failures ? `RESULT: ${failures} FAIL(S)` : 'RESULT: ALL PASS');
 process.exitCode = failures ? 1 : 0;
