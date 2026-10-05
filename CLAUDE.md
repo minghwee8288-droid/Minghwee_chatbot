@@ -1412,6 +1412,16 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-10-05** - **kb-admin login: show/hide password toggle.** UI only;
+  sign-in itself is unchanged (same field name, autocomplete, action).
+  An eye button inside the right edge of the password field
+  (`app/login/LoginForm.tsx`) switches it between `password` and `text`. It is
+  a `type="button"`, so it never submits, with `aria-pressed` and the labels
+  "Show password" / "Hide password". The field starts hidden and is hidden again
+  after every sign-in attempt. The icons are inline SVG, with no new dependency.
+  **Verified:** 5 new selfcheck checks, 5 injected faults all red, and
+  `npm run build` passes.
+
 - **2026-10-05** - **kb-admin speed: Vercel region icn1, parallel queries,
   loading states.** Code only; no database change, nothing written.
   (A) **The cause was the region.** The functions ran in iad1 (Washington)

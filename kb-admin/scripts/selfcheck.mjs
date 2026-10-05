@@ -671,5 +671,21 @@ console.log('speed (2026-10-05, region icn1):');
     /redirect\('\/documents'\)/.test(src('app/login/actions.ts')) && !/href: '\/'/.test(src('components/Shell.tsx')));
 }
 
+console.log('login show/hide password (2026-10-05):');
+{
+  const lf = src('app/login/LoginForm.tsx');
+  const btn = lf.slice(lf.indexOf('<button\n            type="button"'), lf.indexOf('</button>', lf.indexOf('<button\n            type="button"')));
+  check('the toggle is a type="button" (never submits) with aria-pressed and both aria-labels',
+    btn.length > 0 && /aria-pressed=\{showPassword\}/.test(btn) && /'Hide password'/.test(btn) && /'Show password'/.test(btn));
+  check('the field starts hidden and switches between password and text',
+    /useState\(false\)/.test(lf) && /type=\{showPassword \? 'text' : 'password'\}/.test(lf));
+  check('the field is hidden again after every sign-in attempt',
+    /useEffect\(\(\) => setShowPassword\(false\), \[raw\]\)/.test(lf));
+  check('the password field keeps its name, autocomplete and required, and the form still posts to login',
+    /name="password"/.test(lf) && /autoComplete="current-password"/.test(lf) && /useFormState<LoginState, FormData>\(login,/.test(lf) &&
+    /<form action=\{action\}/.test(lf));
+  check('the icons are inline SVG, no icon package', /<svg /.test(lf) && !/from '(lucide|react-icons|@heroicons)/.test(lf));
+}
+
 console.log(failures ? `RESULT: ${failures} FAIL(S)` : 'RESULT: ALL PASS');
 process.exitCode = failures ? 1 : 0;
