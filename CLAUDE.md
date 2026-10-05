@@ -100,8 +100,8 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
                      on TEST and production), kb_admin_009..013 (document
                      upload: tables, kb_admin_doc_owner, nine functions,
                      checks, probe seed) and kb_admin_014 (exact live search,
-                     baseline batch on first replacement); 009..014 TEST only
-                     so far — applied ONLY via
+                     baseline batch on first replacement); 009..014 on TEST
+                     and production (2026-10-05; run 012 AFTER 014) — applied ONLY via
                      apply_sql.py --expect-ref <project ref>
   seed_kb_canary.py  writes (never applies) the SQL seeding cb_kb_canary with the bot's
                      own embed_query; kb-admin must reproduce that vector to publish
@@ -464,7 +464,7 @@ because the lead is opened early and the ticket is created much later.
 | kb-admin writes a Q&A entry only through five database functions | `scripts/sql/kb_admin_004` + `kb_admin_005` + `kb-admin/scripts/selfcheck.mjs` | `kb_admin_editor` has no table privilege; the functions (owned by NOLOGIN `kb_admin_fn_owner`) check the person's role, 1200 chars, NRIC, approval, stale drafts and the canary, and write `cb_kb_audit`. Their UPDATE policy is limited to `chunk_type = 'qa_pair'`. Proved on TEST in one rolled-back transaction, and `007` re-checks the grants wherever it runs. |
 | A Q&A entry added in kb-admin is invisible to the bot until an approver publishes it | `scripts/sql/kb_admin_008` (`kb_admin_create_entry`) + its INSERT policy | The new row is inserted switched off, with no embedding and NO question/answer/content - the text lives in a version-2 draft over a version-1 baseline of the empty row. That is what lets the unchanged `kb_admin_publish` work: it sees the text change, demands a vector (KB005), and switching on needs an approver. The owner's INSERT is ten columns (never question, answer, content or embedding) and RLS admits only an inactive, text-less `qa_pair` from `Ming Hwee KB Admin` tagged `managed_by: ui`. kb-admin hides "Switch on" on such an entry. `007`'s INSERT check uses `has_table_privilege`, which does not see column grants; `008` checks the exact surface itself. |
 | A document version reaches the live table only through an approver's publish, and never touches a Q&A row | `scripts/sql/kb_admin_009`-`011` (`kb_admin_doc_*`, owned by NOLOGIN `kb_admin_doc_owner`) | Upload, stage and edit write only the four new tables, which the bot never reads (012 proves a staged chunk with a perfect-match vector is invisible to `cb_match_knowledge_base_updated`). Publish needs an approver, a recorded impact check whose batch hash still matches, and every vector from the canary's model. It inserts the chunks as `document_chunk` (the live CHECK has no `passage`) or `table_unit`, and switches off - never deletes - every other active `document_chunk`/`table_unit` row of the same `source_document`, imported ones included, stamping them `managed_by: ui`. RLS limits the owner to `document_chunk`/`table_unit` rows: it can never update or insert a `qa_pair`, nor insert under 'Ming Hwee Service Notes' or 'Ming Hwee KB Admin'; it UPDATEs only `is_active` and `metadata`, and never DELETEs. `source_name` IS the live `source_document` string. Upload refuses the bot's internal sources (`rag._INTERNAL_SOURCES`, mirrored in SQL). |
-| A document publish never strands the imported version, and the impact check ranks as the bot does | `kb_admin_014` (`kb_admin__doc_record_baseline`, `kb_admin_match_live`) + `kb-admin/lib/retrieval.ts` + `scripts/check_rerank_parity.py` | The first publish over an imported document records its live rows (in no batch) as a superseded baseline batch - same ids, text and vectors - so the unchanged `kb_admin_doc_restore` can switch them back on; afterwards only `is_active`, `metadata` (managed_by ui, restored_by_batch) and `updated_at` differ. "Now" in the impact check is the bot's exact live search, and the TS port of `_drop_non_evidence` / `_drop_internal` / `_enforce_row_floor` / `_rerank` must match Python exactly (5,000 generated cases). Chunks are embedded as `section_heading + "\n" + content`. 009-014 are on TEST only. |
+| A document publish never strands the imported version, and the impact check ranks as the bot does | `kb_admin_014` (`kb_admin__doc_record_baseline`, `kb_admin_match_live`) + `kb-admin/lib/retrieval.ts` + `scripts/check_rerank_parity.py` | The first publish over an imported document records its live rows (in no batch) as a superseded baseline batch - same ids, text and vectors - so the unchanged `kb_admin_doc_restore` can switch them back on; afterwards only `is_active`, `metadata` (managed_by ui, restored_by_batch) and `updated_at` differ. "Now" in the impact check is the bot's exact live search, and the TS port of `_drop_non_evidence` / `_drop_internal` / `_enforce_row_floor` / `_rerank` must match Python exactly (5,000 generated cases). Chunks are embedded as `section_heading + "\n" + content`. 009-014 are on TEST and production (2026-10-05). |
 | The loader never overwrites the KB Admin UI | `load_service_notes._ui_owned` + `metadata.managed_by` | Every row is `loader` or `ui`. All four write paths (ROWS, UPDATES, TEXT_REPLACEMENTS, RETIRED) skip and report a `ui` row — without it the first loader run after the UI went live would silently undo the client's edits, because three of the four find their targets by searching. Proved by RUNNING the loader against a stub DB holding one, in `selfcheck_kb_prep.py`. |
 | Nobody without the preview key learns anything from the preview route | `main.create_app` + `admin.require_preview_key` + `selfcheck_kb_prep.py` | No secret: the route is not registered (404, absent from the schema). With one, the key is a route dependency and the body is NOT a declared parameter - FastAPI decodes a declared body before dependencies, so malformed JSON answered 422 to anyone. 422 is now only ever seen by a key holder. Rate-limited, one at a time, 32 KB cap. Proved over HTTP, eight faults injected, eight red. |
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
@@ -1410,6 +1410,38 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-05** - **kb-admin Phase 3 scope B, session 4: 009-014 applied to
+  production.** Applied on the user's go-word, each via
+  `apply_sql.py --expect-ref qizcnyuzgylzoyfvymfo`. No document has been uploaded
+  or published on production, and no existing row was touched. The bot reads none
+  of the new tables.
+  (A) **Order: 009, 010, 011, 013, 014, then 012.** 012 asserts that the editor
+  executes exactly 16 functions, including `kb_admin_match_live`, which only 014
+  creates. Run fourth, it would fail by construction. It writes nothing (it ends
+  in ROLLBACK), so running it last loses nothing. **Anyone rebuilding a database
+  from these files: run 012 after 014.**
+  (B) **Pre-check, read-only:**
+  - 007 10/10.
+  - 404 rows, 0 from `Ming Hwee KB Admin`.
+  - None of the 009-014 objects existed.
+  - Export of every column of all 404 rows, identical to the 2026-10-01
+    after-008 export.
+  (C) **During the apply:**
+  - Every file's own checks passed: 009 2/2, 010, 011, 013 (42 probes), 014,
+    and 012 7/7 (16 editor functions).
+  - 007 was 10/10 after every file.
+  (D) **After the apply:**
+  - `kb_admin_match_live` matched `cb_match_knowledge_base_updated` row for row
+    and score for score on 10 query/filter sets. Eight of them used a pool-wide
+    match_count, so every row floor was exercised. This ran in a READ ONLY
+    transaction, and the audit count was unchanged.
+  - A second full-column export of all 404 rows: **0 differences**, including
+    `updated_at` and `embedding`.
+  - The four document tables are empty apart from the 42 probes.
+  Exports are in `Minghwee_backups/`, `*_before009.json` and `*_after014.json`.
+  (E) **Vercel is unchanged by the apply.** The document UI reaches production
+  when main is pushed.
 
 - **2026-10-05** - **kb-admin Phase 3 scope B, session 3: the document UI, and 014.
   TEST only; production and Vercel untouched.**
