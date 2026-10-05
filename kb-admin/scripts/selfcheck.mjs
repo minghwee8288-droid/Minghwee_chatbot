@@ -584,5 +584,66 @@ console.log('behaviour - document upload rules and the impact check (Phase 3 sco
     cmp.entering.join() === 'n' && cmp.leaving.join() === 'b' && cmp.weakAfter && cmp.newFigures.join() === 'n');
 }
 
+console.log('behaviour - small fixes (2026-10-05):');
+{
+  const D = await import(pathToFileURL(join(ROOT, 'lib/documents.ts')).href);
+  const C = await import(pathToFileURL(join(ROOT, 'lib/chunker.ts')).href);
+  const P = await import(pathToFileURL(join(ROOT, 'lib/plural.ts')).href);
+
+  // 1. Namespace: "Usual for the service" is a fixed map, shown, and sent per chunk.
+  const live = ['candidate_guidance', 'company_info', 'emergency', 'faq', 'fees', 'hiring_process', 'mdw_rights', 'mom_regulations', 'services_general'];
+  check('namespace: General is services_general, hiring is hiring_process, fees is fees (not mom_regulations)',
+    D.usualNamespace('general', live) === 'services_general' && D.usualNamespace('new_hiring', live) === 'hiring_process' &&
+    D.usualNamespace('fee_enquiry', live) === 'fees' && D.usualNamespace('passport_renewal', live) === 'mom_regulations',
+    ['general', 'new_hiring', 'fee_enquiry', 'passport_renewal'].map((s) => D.usualNamespace(s, live)).join(','));
+  check('namespace: an unmapped service or a namespace no live row uses falls back to services_general, else the database default',
+    D.usualNamespace('insurance', live) === 'services_general' && D.usualNamespace('general', ['mom_regulations']) === '');
+  check('namespace: prepare sends the usual namespace of each chunk\'s own service, and the form shows it',
+    /namespace: s\.namespace \|\| usualNamespace\(p\.service, s\.spaces\)/.test(src('app/docs/actions.ts')) &&
+    /Usual for the service \(\{usual/.test(src('app/documents/upload/UploadFlow.tsx')) &&
+    /Will use:/.test(src('app/documents/upload/UploadFlow.tsx')));
+
+  // 2. A lone heading: every chunk's section_heading, and no "#" left in the text.
+  const one = await C.chunkDocument(Buffer.from([
+    'Preamble before the title.', '', '# KB admin test', '', 'The code word is mango.', '', '| Item | Amount |', '|---|---|', '| Fee | $123 |', '',
+  ].join('\n')), 'md', 'one.md');
+  check('lone heading: it is every chunk\'s section_heading (never "(no heading)")', one.length === 3 && one.every((c) => c.section_heading === 'KB admin test'),
+    one.map((c) => c.section_heading).join(' | '));
+  const variants = await Promise.all(['  # KB admin test\n\nText.\n', '#KB admin test\n\nText.\n', '# KB admin test\nText.\n']
+    .map((m) => C.chunkDocument(Buffer.from(m), 'md', 'v.md')));
+  check('lone heading: no markdown "#" marker left in any chunk (indented, no-space, no blank line)',
+    variants.every((v) => v.length === 1 && v[0].section_heading === 'KB admin test' && v[0].content === 'Text.') &&
+    ![...one, ...variants.flat()].some((c) => /^\s{0,3}#/m.test(c.content)), JSON.stringify(variants.map((v) => v.map((c) => c.content))));
+  const notHeading = await C.chunkDocument(Buffer.from('#1 priority is safety.\n'), 'md', 'n.md');
+  check('"#1 priority" stays text (a digit after "#" is not a heading)', notHeading[0]?.content === '#1 priority is safety.');
+  check('docx: Word\'s Title style is mapped to a heading', /p\[style-name='Title'\] => h1/.test(src('lib/chunker.ts')) &&
+    /convertToHtml\(\{ buffer: bytes \}, \{ styleMap: DOCX_STYLE_MAP \}\)/.test(src('lib/chunker.ts')));
+
+  // 3. Currency is part of the highlighted figure.
+  const money = await C.chunkDocument(Buffer.from([
+    '# Fees', '', 'Courier S$3, levy SGD 300, Malaysia RM50, Indonesia Rp. 500,000, Philippines PHP 2,000 or ₱300, insurance $45 and a 12% refund.', '',
+  ].join('\n')), 'md', 'money.md');
+  const marked = D.figureParts(money[0]?.content ?? '').filter((p) => p.figure).map((p) => p.text);
+  check('currency: S$, SGD, RM, Rp, PHP, ₱ and $ are highlighted with their number',
+    marked.join('|') === 'S$3|SGD 300|RM50|Rp. 500,000|PHP 2,000|₱300|$45|12%' && money[0]?.metadata.figures_present === true, marked.join('|'));
+  const edge = D.figureParts('ASGD5 and US$9, then 7,').filter((p) => p.figure).map((p) => p.text);
+  check('currency: a prefix inside a word is not taken, and no trailing comma', edge.join('|') === '5|$9|7', edge.join('|'));
+
+  // 4. Singular and plural.
+  check('plural: 1 chunk / 2 chunks / 1 entry / 3 entries / "1" from the URL',
+    P.plural(1, 'chunk') === '1 chunk' && P.plural(2, 'chunk') === '2 chunks' && P.plural(1, 'entry') === '1 entry' &&
+    P.plural(3, 'entry') === '3 entries' && P.plural('1', 'chunk') === '1 chunk' && P.plural(0, 'question') === '0 questions' &&
+    P.plural(1200, 'row') === '1,200 rows');
+  const pages = code.filter((f) => /^(app|components)\//.test(rel(f)));
+  const handRolled = pages.filter((f) => /\}\s+(chunks|entries|rows|questions|probes|documents|versions|drafts)\b(?!\s*=)|\}\s*(chunk|entr|row|question|document|version|draft)\$?\{[^}]*\?\s*''/.test(readFileSync(f, 'utf8')));
+  check('plural: no page writes a count straight before a fixed plural noun, or hand-rolls the "s"', !handRolled.length, handRolled.map(rel).join(', '));
+
+  // 5. 007's messages say it checks the Phase 2 functions only, and that 012 is the full check.
+  const s007 = existsSync(join(ROOT, '..', 'scripts/sql/kb_admin_007_checks.sql')) ? readFileSync(join(ROOT, '..', 'scripts/sql/kb_admin_007_checks.sql'), 'utf8') : '';
+  check('007 says Phase 2 only and names 012 as the full check, not "the five functions and nothing else"',
+    Boolean(s007) && !/the five functions and nothing else/.test(s007) && (s007.match(/Phase 2 only; 012/g) ?? []).length === 2 &&
+    /012_grants_checks\s*\n?--\s*is the full check/.test(s007));
+}
+
 console.log(failures ? `RESULT: ${failures} FAIL(S)` : 'RESULT: ALL PASS');
 process.exitCode = failures ? 1 : 0;

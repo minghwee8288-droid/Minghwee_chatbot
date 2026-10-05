@@ -3,6 +3,7 @@ import { Shell } from '@/components/Shell';
 import { documentLabel } from '@/components/labels';
 import { PageHeader, Pill, formatDate, previewText, type Tone } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
+import { plural } from '@/lib/plural';
 import { activity, type AuditRow } from '@/lib/queries';
 
 /** What each audit action means, in plain words. Unknown actions are shown as given. */
@@ -45,11 +46,11 @@ function docDetail(a: AuditRow): string {
   const n = a.new_values ?? {};
   if (a.action === 'batch_published') {
     const self = n.self_published === true ? ' - published by the person who prepared it' : '';
-    return ` (${n.rows_inserted ?? 0} chunks on, ${n.rows_retired ?? 0} off${n.baseline_batch_id ? '; the imported version kept as an earlier version' : ''}${self})`;
+    return ` (${plural(n.rows_inserted as number, 'chunk')} on, ${n.rows_retired ?? 0} off${n.baseline_batch_id ? '; the imported version kept as an earlier version' : ''}${self})`;
   }
-  if (a.action === 'batch_restored') return ` (${n.rows_restored ?? 0} chunks back on, ${n.rows_retired ?? 0} off)`;
-  if (a.action === 'doc_retired') return ` (${n.rows_retired ?? 0} chunks off)`;
-  if (a.action === 'batch_prepared') return ` (${n.chunks_added ?? 0} chunks)`;
+  if (a.action === 'batch_restored') return ` (${plural(n.rows_restored as number, 'chunk')} back on, ${n.rows_retired ?? 0} off)`;
+  if (a.action === 'doc_retired') return ` (${plural(n.rows_retired as number, 'chunk')} off)`;
+  if (a.action === 'batch_prepared') return ` (${plural(n.chunks_added as number, 'chunk')})`;
   return '';
 }
 

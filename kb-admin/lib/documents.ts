@@ -84,11 +84,56 @@ export function internalMarkers(text: string): string[] {
   return INTERNAL_MARKERS.filter((m) => m.pattern.test(text)).map((m) => m.label);
 }
 
-/** Text split into plain parts and figures, for highlighting. Same figure pattern as the database. */
+/**
+ * The namespace "Usual for the service" means on upload (decided 2026-10-05).
+ * Namespace is a label only - RAG_NAMESPACE is unset, so the bot never filters
+ * on it - but staff read it. It used to be left to the database, which picks
+ * the namespace most rows of the service carry; every loader row is
+ * mom_regulations (the loader copies one sample row's value), so General came
+ * out as mom_regulations. A fixed map instead, shown next to the dropdown.
+ */
+export const USUAL_NAMESPACE: Readonly<Record<string, string>> = {
+  general: 'services_general',
+  new_hiring: 'hiring_process',
+  direct_hiring: 'hiring_process',
+  transfer: 'hiring_process',
+  transfer_employer: 'hiring_process',
+  replacement: 'hiring_process',
+  fee_enquiry: 'fees',
+  salary_enquiry: 'mdw_rights',
+  dispute_salary: 'mdw_rights',
+  dispute_assault: 'mdw_rights',
+  renewal: 'mom_regulations',
+  passport_renewal: 'mom_regulations',
+  home_leave: 'mom_regulations',
+};
+const FALLBACK_NAMESPACE = 'services_general';
+
+/**
+ * The usual namespace for a service, among the namespaces active rows use (the
+ * only ones the database accepts). '' only if neither the mapped value nor the
+ * fallback is in use - then the database's own default applies.
+ */
+export function usualNamespace(service: string, available: readonly string[]): string {
+  const mapped = USUAL_NAMESPACE[service];
+  if (mapped && available.includes(mapped)) return mapped;
+  return available.includes(FALLBACK_NAMESPACE) ? FALLBACK_NAMESPACE : '';
+}
+
+/**
+ * A figure for highlighting: a number with commas, decimals or %, and the
+ * currency in front of it as part of it - S$, SGD, $, RM, Rp, PHP, ₱ - so
+ * "S$3" is marked whole, not "S" + "$3". A letter prefix must not follow a
+ * letter ("ASGD" is not SGD). Display only: the database's numbers helper and
+ * the chunker's figures_present test are unchanged.
+ */
+const FIGURE_HIGHLIGHT = /(?:(?<![A-Za-z])(?:S\$|SGD|RM|Rp\.?|PHP)\s?|₱\s?|\$)?\d(?:[\d,]*\d)?(?:\.\d+)?%?/g;
+
+/** Text split into plain parts and figures, for highlighting. */
 export function figureParts(text: string): { text: string; figure: boolean }[] {
   const out: { text: string; figure: boolean }[] = [];
   let last = 0;
-  for (const m of text.matchAll(/\$?\d[\d,]*(?:\.\d+)?%?/g)) {
+  for (const m of text.matchAll(FIGURE_HIGHLIGHT)) {
     const at = m.index ?? 0;
     if (at > last) out.push({ text: text.slice(last, at), figure: false });
     out.push({ text: m[0], figure: true });

@@ -4,6 +4,7 @@ import { useFormState, useFormStatus } from 'react-dom';
 import { markChecked, runImpactCheck, type ActionState, type ImpactState } from '@/app/docs/actions';
 import { documentLabel, label } from '@/components/labels';
 import { Pill } from '@/components/ui';
+import { plural } from '@/lib/plural';
 import type { ImpactRow, ProbeImpact } from '@/lib/retrieval';
 
 function Run({ again }: { again: boolean }) {
@@ -57,7 +58,7 @@ function Probe({ p, source }: { p: ProbeImpact; source: string }) {
         </span>
         {changed ? <Pill tone="warn">{p.entering.length} in, {p.leaving.length} out</Pill> : <Pill tone="off">No change</Pill>}
         {p.weakAfter ? <Pill tone="bad">Best score {p.bestAfter.toFixed(3)} (under 0.40)</Pill> : null}
-        {p.newFigures.length ? <Pill tone="lock">{p.newFigures.length} new row{p.newFigures.length === 1 ? '' : 's'} with figures</Pill> : null}
+        {p.newFigures.length ? <Pill tone="lock">{plural(p.newFigures.length, 'new row')} with figures</Pill> : null}
         {touches(p.now) || touches(p.after) ? <Pill tone="good">This document</Pill> : null}
       </summary>
       <div className="grid grid-cols-2 gap-4 px-5 pb-4">

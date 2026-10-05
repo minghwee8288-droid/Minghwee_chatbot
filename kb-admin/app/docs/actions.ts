@@ -3,7 +3,7 @@
 import { redirect } from 'next/navigation';
 import { actorForWrite } from '@/lib/auth';
 import { chunkDocument, ChunkerError, type Chunk } from '@/lib/chunker';
-import { embeddingText, fileProblem, fileTypeOf, sourceProblem } from '@/lib/documents';
+import { embeddingText, fileProblem, fileTypeOf, sourceProblem, usualNamespace } from '@/lib/documents';
 import { AUDIENCES, NATIONALITIES, hasNric, vectorLiteral } from '@/lib/editing';
 import { EmbedError, embedQuestions, embedTexts } from '@/lib/embed';
 import {
@@ -113,6 +113,8 @@ type DocSettings = {
   audience: string;
   nationality: string;
   namespace: string;
+  /** Namespaces active rows use: where "usual for the service" is resolved. */
+  spaces: string[];
 };
 
 async function readSettings(form: FormData): Promise<{ ok: true; s: DocSettings } | { ok: false; error: string }> {
@@ -136,7 +138,7 @@ async function readSettings(form: FormData): Promise<{ ok: true; s: DocSettings 
   const label = text(form, 'display_label', 200).trim();
   return {
     ok: true,
-    s: { file, type: fileTypeOf(file.name) as DocSettings['type'], source, label, service, audience, nationality, namespace },
+    s: { file, type: fileTypeOf(file.name) as DocSettings['type'], source, label, service, audience, nationality, namespace, spaces },
   };
 }
 
@@ -265,7 +267,8 @@ export async function prepareDocument(_prev: PreviewState, form: FormData): Prom
         service: p.service,
         audience: p.audience,
         nationality: p.nationality,
-        namespace: s.namespace || null,
+        // Chosen, or the usual one for THIS chunk's service (lib/documents USUAL_NAMESPACE).
+        namespace: s.namespace || usualNamespace(p.service, s.spaces) || null,
       }));
       await callWrite<number>('kb_admin_doc_stage', [actor.userId, actor.email, uploaded.batch_id, group, model]);
     }

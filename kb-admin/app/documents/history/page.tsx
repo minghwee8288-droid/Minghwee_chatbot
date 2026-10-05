@@ -5,6 +5,7 @@ import { Shell } from '@/components/Shell';
 import { BATCH_STATUS, documentLabel } from '@/components/labels';
 import { AmberNotice, PageHeader, Pill, formatDate } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
+import { plural } from '@/lib/plural';
 import { batchesOf, documentBySource, liveDocRows, qaPairCount } from '@/lib/queries';
 
 /** Every version of one document, newest first: restore an earlier one, or retire the document. */
@@ -17,7 +18,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Reco
     <Shell viewer={viewer} active="/documents">
       <PageHeader
         title={source ? documentLabel(source) : 'Document history'}
-        sub={`${live.length} chunk${live.length === 1 ? '' : 's'} live now${qa ? ` · ${qa} Q&A entr${qa === 1 ? 'y' : 'ies'} from this source, managed separately` : ''}`}
+        sub={`${plural(live.length, 'chunk')} live now${qa ? ` · ${plural(qa, 'Q&A entry')} from this source, managed separately` : ''}`}
       />
       <p className="text-[13px]">
         <Link href="/documents" className="link">
@@ -26,10 +27,10 @@ export default async function HistoryPage({ searchParams }: { searchParams: Reco
       </p>
       {searchParams.restored ? (
         <AmberNotice title="Restored">
-          {searchParams.restored} chunks switched back on, {searchParams.off} switched off.
+          {plural(searchParams.restored, 'chunk')} switched back on, {plural(searchParams.off, 'chunk')} switched off.
         </AmberNotice>
       ) : null}
-      {searchParams.retired ? <AmberNotice title="Retired">{searchParams.retired} chunks switched off. Restore an earlier version to bring the document back.</AmberNotice> : null}
+      {searchParams.retired ? <AmberNotice title="Retired">{plural(searchParams.retired, 'chunk')} switched off. Restore an earlier version to bring the document back.</AmberNotice> : null}
       {searchParams.discarded ? <AmberNotice title="Discarded">The batch was discarded. The live document did not change.</AmberNotice> : null}
 
       <div className="flex flex-wrap gap-3">
@@ -45,7 +46,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Reco
             openLabel="Retire document"
             submitLabel="Retire"
             needReason
-            confirmText={`Switch off all ${live.length} live chunks of this document. Its Q&A entries are not touched.`}
+            confirmText={`Switch off ${live.length === 1 ? 'the live chunk' : `all ${plural(live.length, 'live chunk')}`} of this document. Its Q&A entries are not touched.`}
             help="The chatbot stops using this document straight away. An earlier version can be restored afterwards."
           />
         ) : null}

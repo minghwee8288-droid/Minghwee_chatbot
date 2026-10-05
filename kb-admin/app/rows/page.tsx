@@ -3,6 +3,7 @@ import { Shell } from '@/components/Shell';
 import { documentLabel, label, type LabelKind } from '@/components/labels';
 import { ActivePill, PageHeader, Pill, previewText } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
+import { plural } from '@/lib/plural';
 import { FILTERS, PAGE_SIZE, filterOptions, rows, type FilterKey } from '@/lib/queries';
 
 type Params = Record<string, string | string[] | undefined>;
@@ -88,7 +89,7 @@ export default async function RowsPage({ searchParams }: { searchParams: Params 
   const link = (p: number) => `/rows?${query(p)}`;
   const here = query(page);
   const filtered = Object.keys(filters).length > 0 || active !== 'all' || Boolean(search);
-  const entries = (n: number) => `${n.toLocaleString('en-SG')} ${n === 1 ? 'entry' : 'entries'}`;
+  const entries = (n: number) => plural(n, 'entry');
 
   return (
     <Shell viewer={viewer} active="/rows">

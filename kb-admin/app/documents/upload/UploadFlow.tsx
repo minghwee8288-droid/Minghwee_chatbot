@@ -6,7 +6,8 @@ import { prepareDocument, previewDocument, type PreviewState } from '@/app/docs/
 import { FigureText } from '@/components/FigureText';
 import { label } from '@/components/labels';
 import { AUDIENCES, NATIONALITIES } from '@/lib/editing';
-import { MAX_UPLOAD_BYTES, factWarnings, fileProblem, internalMarkers, sourceProblem } from '@/lib/documents';
+import { MAX_UPLOAD_BYTES, factWarnings, fileProblem, internalMarkers, sourceProblem, usualNamespace } from '@/lib/documents';
+import { plural } from '@/lib/plural';
 import type { LostFact } from '@/lib/facts';
 
 type Override = { include: boolean; service: string; audience: string; nationality: string };
@@ -22,7 +23,7 @@ function FactList({ facts }: { facts: LostFact[] }) {
         <ul className="list-disc space-y-0.5 pl-5">
           {main.map((f) => (
             <li key={`${f.kind}|${f.fact}`}>
-              <span className="mono font-semibold">{f.fact}</span> <span className="text-muted">({f.kind}, {f.liveRows} chunk{f.liveRows === 1 ? '' : 's'})</span>{' '}
+              <span className="mono font-semibold">{f.fact}</span> <span className="text-muted">({f.kind}, {plural(f.liveRows, 'chunk')})</span>{' '}
               <span className="text-muted">…{f.example}…</span>
             </li>
           ))}
@@ -31,7 +32,7 @@ function FactList({ facts }: { facts: LostFact[] }) {
       {numbers.length ? (
         <details>
           <summary className="cursor-pointer text-muted">
-            {numbers.length} other number{numbers.length === 1 ? '' : 's'}
+            {plural(numbers.length, 'other number')}
           </summary>
           <p className="mono mt-1">{numbers.map((f) => f.fact).join(', ')}</p>
         </details>
@@ -77,6 +78,7 @@ export function UploadFlow({
   const p = preview.preview;
 
   const source = mode === 'new' ? newName.trim() : existing;
+  const usual = usualNamespace(service, namespaces);
 
   const form = (extra: Record<string, string> = {}) => {
     const fd = new FormData();
@@ -218,11 +220,15 @@ export function UploadFlow({
           <div>
             <label htmlFor="namespace" className="field-label mb-1.5 block">Namespace</label>
             <select id="namespace" className="select" value={namespace} onChange={(e) => setNamespace(e.target.value)}>
-              <option value="">Usual for the service</option>
+              <option value="">Usual for the service ({usual || 'database default'})</option>
               {namespaces.map((n) => (
                 <option key={n} value={n}>{n}</option>
               ))}
             </select>
+            <p className="mt-1 text-[12px] text-muted" data-namespace={namespace || usual}>
+              Will use: <span className="mono">{namespace || usual || 'the database default'}</span>
+              {namespace ? null : ` · a chunk given another service gets that service’s usual namespace`}
+            </p>
           </div>
         </div>
 
@@ -240,7 +246,7 @@ export function UploadFlow({
         <>
           <div className="space-y-3">
             <h2 className="text-[15px] font-semibold">
-              {chunks.length} chunk{chunks.length === 1 ? '' : 's'} from {p.fileName} · {ticked.length} ticked
+              {plural(chunks.length, 'chunk')} from {p.fileName} · {ticked.length} ticked
             </h2>
             {stale ? (
               <div className="notice notice-amber" role="status">The file or source changed since this preview. Preview again before preparing.</div>
@@ -293,7 +299,7 @@ export function UploadFlow({
                 <span className="notice-dot" aria-hidden="true" />
                 <div>
                   This document was imported with longer passages; the new version is split differently, so expect many changes in the impact check.
-                  The {p.importedRows} imported chunk{p.importedRows === 1 ? '' : 's'} are kept as the original version and can be restored.
+                  The {plural(p.importedRows, 'imported chunk')} {p.importedRows === 1 ? 'is' : 'are'} kept as the original version and can be restored.
                 </div>
               </div>
             ) : null}
@@ -345,7 +351,7 @@ export function UploadFlow({
 
           <div className="card card-pad space-y-3">
             <p className="text-[13px] text-muted">
-              Prepare stores the file, embeds the {ticked.length} ticked chunk{ticked.length === 1 ? '' : 's'} and stages them for review. The chatbot sees nothing until
+              Prepare stores the file, embeds the {plural(ticked.length, 'ticked chunk')} and stages {ticked.length === 1 ? 'it' : 'them'} for review. The chatbot sees nothing until
               an approver publishes. To drop a chunk later, discard the batch and upload again.
             </p>
             {prepared.error ? (
@@ -354,7 +360,7 @@ export function UploadFlow({
               </div>
             ) : null}
             <button type="button" className="btn btn-primary" disabled={pending || Boolean(stale) || !ticked.length} onClick={onPrepare}>
-              {pending ? 'Preparing…' : `Prepare ${ticked.length} chunk${ticked.length === 1 ? '' : 's'}`}
+              {pending ? 'Preparing…' : `Prepare ${plural(ticked.length, 'chunk')}`}
             </button>
           </div>
         </>

@@ -4,6 +4,7 @@ import { documentLabel, label } from '@/components/labels';
 import { AmberNotice, PageHeader, Pill, formatDate, previewText } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
 import { APPROVAL_WORDS, approvalReasons } from '@/lib/editing';
+import { plural } from '@/lib/plural';
 import { batchesAwaitingApproval, openDrafts } from '@/lib/queries';
 
 /** Every open draft, and every document version whose impact check is recorded. Approvers open one and publish it; the list itself changes nothing. */
@@ -22,7 +23,7 @@ export default async function PendingPage() {
     <Shell viewer={viewer} active="/pending">
       <PageHeader
         title="Pending approval"
-        sub={`${drafts.length} open draft${drafts.length === 1 ? '' : 's'} and ${batches.length} document version${batches.length === 1 ? '' : 's'}, oldest first.`}
+        sub={`${plural(drafts.length, 'open draft')} and ${plural(batches.length, 'document version')}, oldest first.`}
       />
       <h2 className="text-[15px] font-semibold">Documents checked and waiting to be published</h2>
       {batches.length ? (

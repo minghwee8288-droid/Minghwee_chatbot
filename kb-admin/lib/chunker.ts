@@ -15,7 +15,10 @@ import mammoth from 'mammoth';
  *     ignored (it stored passages of up to 2,076 and tables of up to 5,512);
  *   * section_heading names where the text sits: its parent heading and the
  *     nearest heading, "27.3 Your Passport — What is OK" (two levels only; the
- *     nearest alone when there is no parent; never the document's title);
+ *     nearest alone when there is no parent; never the document's title as a
+ *     parent). A document with only one heading - often just its title - uses
+ *     that heading for every chunk, and no "#" heading marker or Word Title
+ *     line is ever left in a chunk's text;
  *   * consecutive small sections under the same parent are packed into one
  *     chunk (each keeps its own heading as its first line), headed by the
  *     parent - so a page of short sub-sections is not cut into dozens of
@@ -73,6 +76,9 @@ const BOLD_HEADING_MAX = 150;
 const FIGURE = /\$?\d[\d,]*(?:\.\d+)?%?/;
 const CITE = /\[cite:\d+\]/g;
 
+/** Added to mammoth's defaults (which already map Heading 1-6). */
+const DOCX_STYLE_MAP = ["p[style-name='Title'] => h1:fresh"];
+
 /** The separator between the parent and the nearest heading in section_heading. */
 export const HEADING_JOIN = ' — ';
 const SUBHEADING = 99;
@@ -89,7 +95,9 @@ export async function chunkDocument(fileBytes: Buffer | Uint8Array, fileType: Fi
   const bytes = Buffer.from(fileBytes);
   let blocks: Block[];
   if (fileType === 'docx') {
-    const { value } = await mammoth.convertToHtml({ buffer: bytes });
+    // Word's Title style is a heading, not a paragraph: left unmapped, mammoth
+    // writes it as <p> and the title line sat in the first chunk's text.
+    const { value } = await mammoth.convertToHtml({ buffer: bytes }, { styleMap: DOCX_STYLE_MAP });
     blocks = htmlBlocks(value);
   } else {
     let text: string;
@@ -179,7 +187,19 @@ function buildChunks(blocks: Block[], noHeadings: boolean): Chunk[] {
   };
   const fits = (members: Section[], key: string) => members.map((m) => part(m, key)).join('\n\n').length <= MAX_PASSAGE_CHARS;
 
-  for (const u of sectionsOf(blocks, noHeadings)) {
+  const units = sectionsOf(blocks, noHeadings);
+  // A document with ONE heading (usually just its title): that heading is every
+  // chunk's section_heading, text before it included - never "(no heading)".
+  const headings = noHeadings ? [] : blocks.filter((b) => b.kind === 'heading');
+  if (headings.length === 1) {
+    const only = cap(headings[0].text, MAX_PASSAGE_CHARS);
+    for (const u of units) {
+      if (u.kind === 'table') u.heading ??= only;
+      else if (!u.nearest && !u.parent) u.nearest = only;
+    }
+  }
+
+  for (const u of units) {
     if (u.kind === 'table') {
       flush();
       for (const t of tableChunks(u.heading, u.columns, u.rows)) out.push(t);
@@ -346,7 +366,13 @@ function textBlocks(text: string): Block[] {
 
 /* ------------------------------------------------------------------ .md */
 
-const MD_HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/;
+/**
+ * An ATX heading. Also read as one, so its "#" never stays in a chunk's text
+ * (2026-10-05): up to three spaces in front (valid Markdown), "#Title" with no
+ * space when a letter follows, and a bare "#" (an empty heading, dropped).
+ * "#1 priority" is not a heading - a digit straight after "#" stays text.
+ */
+const MD_HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*?)|([A-Za-z].*?)|)[ \t]*#*[ \t]*$/;
 /** A thematic break (---, ***, ___): a separator, not text. */
 const MD_RULE = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
 const MD_TABLE_ROW = /^\s*\|.*\|\s*$/;
@@ -366,7 +392,7 @@ function markdownBlocks(text: string): Block[] {
     const h = line.match(MD_HEADING);
     if (h) {
       flushPara();
-      const t = clean(h[2]);
+      const t = clean(h[2] ?? h[3] ?? '');
       if (t) blocks.push({ kind: 'heading', text: t, level: h[1].length });
       continue;
     }

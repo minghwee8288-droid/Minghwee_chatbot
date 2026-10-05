@@ -6,6 +6,7 @@ import { BATCH_STATUS, documentLabel } from '@/components/labels';
 import { PageHeader, Pill } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
 import { sourceProblem } from '@/lib/documents';
+import { plural } from '@/lib/plural';
 import { sourcesOverview, totals } from '@/lib/queries';
 
 function Stat({ label, value, warn = false }: { label: string; value: number; warn?: boolean }) {
@@ -33,9 +34,7 @@ export default async function DocumentsPage() {
     <Shell viewer={viewer} active="/documents">
       <PageHeader
         title="Knowledge base"
-        sub={`${sum.active.toLocaleString('en-SG')} active ${sum.active === 1 ? 'entry' : 'entries'} across ${docCount} ${
-          docCount === 1 ? 'document' : 'documents'
-        } · the chatbot reads these live.`}
+        sub={`${plural(sum.active, 'active entry')} across ${plural(docCount, 'document')} · the chatbot reads these live.`}
       />
       {viewer.canEdit ? (
         <div className="flex gap-3">

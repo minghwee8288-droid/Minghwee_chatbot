@@ -8,6 +8,7 @@ import { BATCH_STATUS, documentLabel, label } from '@/components/labels';
 import { AmberNotice, PageHeader, Pill, formatDate, type Tone } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
 import { batch, editableServices, namespaces, stagedChunks } from '@/lib/queries';
+import { plural } from '@/lib/plural';
 import { ChunkEditor } from './ChunkEditor';
 
 export default async function BatchPage({ params, searchParams }: { params: { id: string }; searchParams: Record<string, string | undefined> }) {
@@ -26,7 +27,7 @@ export default async function BatchPage({ params, searchParams }: { params: { id
         sub={
           <>
             {b.is_baseline ? 'The imported version, recorded when this document was first replaced' : 'A version prepared in KB Admin'} ·{' '}
-            {b.chunk_count} chunk{b.chunk_count === 1 ? '' : 's'} · prepared by {b.prepared_by_email} on {formatDate(b.prepared_at)}
+            {plural(b.chunk_count, 'chunk')} · prepared by {b.prepared_by_email} on {formatDate(b.prepared_at)}
           </>
         }
       />
@@ -39,7 +40,7 @@ export default async function BatchPage({ params, searchParams }: { params: { id
         </Link>
       </div>
 
-      {searchParams.prepared ? <AmberNotice title="Prepared">{searchParams.prepared} chunks were staged. Review them, run the impact check, then an approver publishes.</AmberNotice> : null}
+      {searchParams.prepared ? <AmberNotice title="Prepared">{plural(searchParams.prepared, 'chunk')} {searchParams.prepared === '1' ? 'was' : 'were'} staged. Review them, run the impact check, then an approver publishes.</AmberNotice> : null}
       {searchParams.edited ? <AmberNotice title="Chunk saved">Chunk {searchParams.edited} was saved. The impact check has to run again before publishing.</AmberNotice> : null}
       {searchParams.checked ? <AmberNotice title="Impact check recorded">An approver can now publish this version.</AmberNotice> : null}
       {searchParams.published ? (
@@ -48,8 +49,7 @@ export default async function BatchPage({ params, searchParams }: { params: { id
           <div>
             <p className="notice-head">Published</p>
             <p>
-              {searchParams.added} chunk{searchParams.added === '1' ? '' : 's'} added to what the chatbot reads, {searchParams.off} earlier chunk
-              {searchParams.off === '1' ? '' : 's'} switched off.
+              {plural(searchParams.added, 'chunk')} added to what the chatbot reads, {plural(searchParams.off, 'earlier chunk')} switched off.
               {searchParams.baseline ? ' The imported version was kept as an earlier version you can restore.' : ''}
             </p>
           </div>

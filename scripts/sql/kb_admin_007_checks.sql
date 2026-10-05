@@ -8,6 +8,13 @@
 -- Each block RAISEs NOTICE 'PASS ...' or RAISEs EXCEPTION 'FAIL ...'. The
 -- first FAIL stops the run with a non-zero exit from apply_sql.py.
 --
+-- SCOPE (wording clarified 2026-10-05; no check changed): this checks the
+-- PHASE 2 functions only - the five Q&A functions of 004. It says nothing
+-- about 008's kb_admin_create_entry or the 009-014 document functions, and
+-- has_table_privilege cannot see column-level grants (008's ten-column INSERT
+-- for kb_admin_fn_owner reads as "no INSERT" here). kb_admin_012_grants_checks
+-- is the full check: all 16 editor functions and the column-level surface.
+--
 -- Run with:  python scripts/apply_sql.py --expect-ref <project ref> <this file>
 
 begin transaction read only;
@@ -38,7 +45,8 @@ end
 $$;
 
 -- -----------------------------------------------------------------------------
--- 2. kb_admin_editor can EXECUTE the five functions, and touch no table
+-- 2. kb_admin_editor can EXECUTE the five Phase 2 functions, and touch no table
+--    (the other 11 it executes since 008 and 011/014 are 012's to check)
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -82,7 +90,7 @@ begin
         end if;
     end loop;
 
-    raise notice 'PASS: kb_admin_editor executes the five functions and nothing else';
+    raise notice 'PASS: kb_admin_editor executes the five Phase 2 functions, no table, no helper (Phase 2 only; 012 checks all 16)';
 end
 $$;
 
@@ -169,7 +177,7 @@ begin
          where n.nspname = 'public' and pr.proname in (
                'kb_admin_save_draft', 'kb_admin_discard_draft', 'kb_admin_publish',
                'kb_admin_restore', 'kb_admin_toggle')) <> 5 then
-        raise exception 'FAIL: expected exactly five kb_admin_* entry functions';
+        raise exception 'FAIL: expected exactly five Phase 2 kb_admin_* entry functions';
     end if;
     if has_table_privilege('kb_admin_fn_owner', 'public.cb_kb_audit', 'UPDATE')
        or has_table_privilege('kb_admin_fn_owner', 'public.cb_kb_audit', 'DELETE')
@@ -179,7 +187,7 @@ begin
        or has_column_privilege('kb_admin_fn_owner', 'public.cb_knowledge_base_updated', 'chunk_type', 'UPDATE') then
         raise exception 'FAIL: kb_admin_fn_owner holds more than its narrow grants';
     end if;
-    raise notice 'PASS: five SECURITY DEFINER functions owned by a NOLOGIN, narrowly granted owner';
+    raise notice 'PASS: the five Phase 2 SECURITY DEFINER functions owned by a NOLOGIN, narrowly granted owner (Phase 2 only; 012 is the full check)';
 end
 $$;
 

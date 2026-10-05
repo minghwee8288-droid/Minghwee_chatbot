@@ -96,7 +96,8 @@ app/
 scripts/             preflight, retrieval check, reset, simulate, SQL migrations
   sql/               kb_rules_001_create, kb_rules_002_seed, kb_owner_001_tag_loader,
                      kb_admin_001..007 (kb-admin Phase 1 recorded + the Q&A editor;
-                     007 is checks only), kb_admin_008 (add a new Q&A entry;
+                     007 is checks only, of the Phase 2 functions only -
+                     012 is the full check), kb_admin_008 (add a new Q&A entry;
                      on TEST and production), kb_admin_009..013 (document
                      upload: tables, kb_admin_doc_owner, nine functions,
                      checks, probe seed) and kb_admin_014 (exact live search,
@@ -461,7 +462,7 @@ because the lead is opened early and the ticket is created much later.
 | The client is never told what our records lack, nor how to treat their helper | prompt rules 3a / 3b | *"not listed in our records"* went out on three different paths; *"please speak with her calmly and avoid any threats or punishment"* accused a client of nothing they had said. |
 | A passport that runs out before the renewal could finish is said out loud | `info_collector._expires_before_we_finish` + `EXPIRING_SOON_NOTE` | Live: *"in 5 days"* answered with *"It takes approximately 6 to 8 weeks"*, the two figures one line apart and nothing connecting them — 2 runs out of 2. `passport_expiry` had been collected since the flow was written and put on the ticket; **nothing ever read it.** Coarse on purpose and fails towards SILENCE: "next March", "when the contract ends" and a formatted date all return None, because guessing at a date and then calling somebody's passport urgent is worse than the omission. 60 days, which covers the slowest route we hold — a per-nationality table would be a second copy of lead times that live in the knowledge base (§9.8). |
 | The pricing rules have ONE reader, and a bad table can never widen or empty them | `app/services/kb_rules.py` + `cb_kb_rules` | `FEE_STATED_SERVICES`, `COST_WITHHELD_SERVICES`, `FEE_BY_NATIONALITY` and the salary floor moved out of four files into one table, so the KB Admin UI can change a price policy without a deploy. Callers read a validated in-memory snapshot and never the database. An empty, half-read or invalid table is REFUSED whole and the last good set stays in force, else the code defaults — "withhold everything" would also switch off the retrieval filter that keeps $695 out of a $450 passport renewal. `fee_enquiry` is withheld and locked in the table itself; `transfer`/`transfer_employer` are one switch, enforced by a commit-time trigger. |
-| kb-admin writes a Q&A entry only through five database functions | `scripts/sql/kb_admin_004` + `kb_admin_005` + `kb-admin/scripts/selfcheck.mjs` | `kb_admin_editor` has no table privilege; the functions (owned by NOLOGIN `kb_admin_fn_owner`) check the person's role, 1200 chars, NRIC, approval, stale drafts and the canary, and write `cb_kb_audit`. Their UPDATE policy is limited to `chunk_type = 'qa_pair'`. Proved on TEST in one rolled-back transaction, and `007` re-checks the grants wherever it runs. |
+| kb-admin writes a Q&A entry only through five database functions | `scripts/sql/kb_admin_004` + `kb_admin_005` + `kb-admin/scripts/selfcheck.mjs` | `kb_admin_editor` has no table privilege; the functions (owned by NOLOGIN `kb_admin_fn_owner`) check the person's role, 1200 chars, NRIC, approval, stale drafts and the canary, and write `cb_kb_audit`. Their UPDATE policy is limited to `chunk_type = 'qa_pair'`. Proved on TEST in one rolled-back transaction, and `007` re-checks these five functions' grants wherever it runs. **007 covers the Phase 2 functions only** and cannot see column-level grants; `kb_admin_012_grants_checks` is the full check (all 16 editor functions, the column-level surface). |
 | A Q&A entry added in kb-admin is invisible to the bot until an approver publishes it | `scripts/sql/kb_admin_008` (`kb_admin_create_entry`) + its INSERT policy | The new row is inserted switched off, with no embedding and NO question/answer/content - the text lives in a version-2 draft over a version-1 baseline of the empty row. That is what lets the unchanged `kb_admin_publish` work: it sees the text change, demands a vector (KB005), and switching on needs an approver. The owner's INSERT is ten columns (never question, answer, content or embedding) and RLS admits only an inactive, text-less `qa_pair` from `Ming Hwee KB Admin` tagged `managed_by: ui`. kb-admin hides "Switch on" on such an entry. `007`'s INSERT check uses `has_table_privilege`, which does not see column grants; `008` checks the exact surface itself. |
 | A document version reaches the live table only through an approver's publish, and never touches a Q&A row | `scripts/sql/kb_admin_009`-`011` (`kb_admin_doc_*`, owned by NOLOGIN `kb_admin_doc_owner`) | Upload, stage and edit write only the four new tables, which the bot never reads (012 proves a staged chunk with a perfect-match vector is invisible to `cb_match_knowledge_base_updated`). Publish needs an approver, a recorded impact check whose batch hash still matches, and every vector from the canary's model. It inserts the chunks as `document_chunk` (the live CHECK has no `passage`) or `table_unit`, and switches off - never deletes - every other active `document_chunk`/`table_unit` row of the same `source_document`, imported ones included, stamping them `managed_by: ui`. RLS limits the owner to `document_chunk`/`table_unit` rows: it can never update or insert a `qa_pair`, nor insert under 'Ming Hwee Service Notes' or 'Ming Hwee KB Admin'; it UPDATEs only `is_active` and `metadata`, and never DELETEs. `source_name` IS the live `source_document` string. Upload refuses the bot's internal sources (`rag._INTERNAL_SOURCES`, mirrored in SQL). |
 | A document publish never strands the imported version, and the impact check ranks as the bot does | `kb_admin_014` (`kb_admin__doc_record_baseline`, `kb_admin_match_live`) + `kb-admin/lib/retrieval.ts` + `scripts/check_rerank_parity.py` | The first publish over an imported document records its live rows (in no batch) as a superseded baseline batch - same ids, text and vectors - so the unchanged `kb_admin_doc_restore` can switch them back on; afterwards only `is_active`, `metadata` (managed_by ui, restored_by_batch) and `updated_at` differ. "Now" in the impact check is the bot's exact live search, and the TS port of `_drop_non_evidence` / `_drop_internal` / `_enforce_row_floor` / `_rerank` must match Python exactly (5,000 generated cases). Chunks are embedded as `section_heading + "\n" + content`. 009-014 are on TEST and production (2026-10-05). |
@@ -1410,6 +1411,43 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-05** - **kb-admin small fix pass (UI and chunker only).** No SQL
+  behaviour changed, nothing was written to any database, and the bot is
+  untouched.
+  (A) **Namespace "Usual for the service" is a fixed map**
+  (`lib/documents.ts` `USUAL_NAMESPACE`):
+  - general → `services_general`;
+  - new hiring, direct hire, transfer and replacement → `hiring_process`;
+  - fee enquiry → `fees`;
+  - salary enquiry and both disputes → `mdw_rights`;
+  - renewal, passport renewal and home leave → `mom_regulations`;
+  - anything else → `services_general`.
+
+  The database default was "most rows of the service", and the loader stamps
+  every row it inserts with one sample row's namespace (all 134 Service Notes
+  rows are `mom_regulations`). So General came out as `mom_regulations`, and
+  the rule first asked for would have too. The form shows the resolved value.
+  Prepare sends it explicitly for each chunk, from that chunk's own service.
+  It is a label only: `RAG_NAMESPACE` is unset.
+  (B) **A document with one heading** uses it as every chunk's
+  `section_heading`, text before it included. A Markdown heading is now read
+  when indented by up to three spaces, when written `#Title` with no space, or
+  as a bare `#`, so no `#` marker is left in a chunk. `#1 priority` stays text.
+  Word's Title style is mapped to a heading. On all seven source documents and
+  the test document the chunker's output is byte-identical to before (none of
+  the .docx files uses the Title style).
+  (C) **Highlighting** takes the currency as part of the figure (S$, SGD, $,
+  RM, Rp, PHP, ₱) and no longer takes a trailing comma. Display only: the
+  database numbers helper and `figures_present` are unchanged.
+  (D) **Every count goes through `lib/plural.ts`.** "1 chunks switched off"
+  came from the Retired, Restored, Prepared and Activity texts. The self-check
+  fails on a count written before a fixed plural noun.
+  (E) **007's messages and header say it checks the Phase 2 functions only.**
+  It cannot see column-level grants; **012 is the full check**. Wording only,
+  every check unchanged, and it was not re-run anywhere.
+  **Verified:** 12 new self-check assertions, each turned red by its own
+  injected fault (12/12); selfcheck all pass; `npm run build` passes.
 
 - **2026-10-05** - **kb-admin Phase 3 scope B, session 4: 009-014 applied to
   production.** Applied on the user's go-word, each via
