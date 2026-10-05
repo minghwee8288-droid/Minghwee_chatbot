@@ -66,6 +66,21 @@ export async function requireViewer(): Promise<Viewer> {
 }
 
 /**
+ * For pages: the same check as requireViewer(), with the page's own queries
+ * started at the same moment rather than after it (2026-10-05, speed). The
+ * queries only read, as kb_admin_reader; their result is returned ONLY once
+ * access is confirmed - a refused request redirects inside requireViewer()
+ * and the data is never awaited, rendered or sent. A query that fails on a
+ * refused request is swallowed here, so it cannot surface as an error.
+ */
+export async function requireViewerWith<T>(load: () => Promise<T>): Promise<[Viewer, T]> {
+  const data = load();
+  data.catch(() => undefined);
+  const viewer = await requireViewer();
+  return [viewer, await data];
+}
+
+/**
  * For every server action that writes: the same check as checkRequest(), run
  * afresh (the session verified with Supabase Auth, the role read from
  * cb_kb_admin_users now, not from the page that showed the button), plus the

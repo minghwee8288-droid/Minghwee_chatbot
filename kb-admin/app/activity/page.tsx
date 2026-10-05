@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { Shell } from '@/components/Shell';
 import { documentLabel } from '@/components/labels';
 import { PageHeader, Pill, formatDate, previewText, type Tone } from '@/components/ui';
-import { requireViewer } from '@/lib/auth';
+import { requireViewerWith } from '@/lib/auth';
 import { plural } from '@/lib/plural';
 import { activity, type AuditRow } from '@/lib/queries';
 
@@ -69,8 +69,7 @@ function sentence(a: AuditRow): string {
 }
 
 export default async function ActivityPage() {
-  const viewer = await requireViewer();
-  const list = await activity();
+  const [viewer, list] = await requireViewerWith(() => activity());
   return (
     <Shell viewer={viewer} active="/activity">
       <PageHeader title="Activity" sub="The latest 100 changes to the knowledge base, newest first. Times are Singapore time." />

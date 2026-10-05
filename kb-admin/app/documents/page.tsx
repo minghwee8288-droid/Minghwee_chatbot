@@ -4,7 +4,7 @@ import { ConfirmAction } from '@/components/ConfirmAction';
 import { Shell } from '@/components/Shell';
 import { BATCH_STATUS, documentLabel } from '@/components/labels';
 import { PageHeader, Pill } from '@/components/ui';
-import { requireViewer } from '@/lib/auth';
+import { requireViewerWith } from '@/lib/auth';
 import { sourceProblem } from '@/lib/documents';
 import { plural } from '@/lib/plural';
 import { sourcesOverview, totals } from '@/lib/queries';
@@ -27,8 +27,7 @@ function DocStatus({ active, inactive }: { active: number; inactive: number }) {
 }
 
 export default async function DocumentsPage() {
-  const viewer = await requireViewer();
-  const [docs, sum] = await Promise.all([sourcesOverview(), totals()]);
+  const [viewer, [docs, sum]] = await requireViewerWith(() => Promise.all([sourcesOverview(), totals()]));
   const docCount = docs.length;
   return (
     <Shell viewer={viewer} active="/documents">

@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import type { Viewer } from '@/lib/auth';
 
-const NAV = [
+export const NAV = [
   { href: '/documents', label: 'Knowledge base' },
   { href: '/rows', label: 'Browse entries' },
   { href: '/rules', label: 'Pricing rules' },

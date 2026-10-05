@@ -430,6 +430,14 @@ export async function batchesOf(documentId: string): Promise<Batch[]> {
      where b.document_id = $1 order by b.created_at desc`, [documentId]);
 }
 
+/** batchesOf() keyed on the source name, so document history needs no first lookup. */
+export async function batchesOfSource(source: string): Promise<Batch[]> {
+  if (!source) return [];
+  return select<Batch>(`
+    select ${BATCH_COLUMNS} from public.cb_kb_batches b join public.cb_kb_documents d on d.id = b.document_id
+     where d.source_name = $1 order by b.created_at desc`, [source]);
+}
+
 /** Staged batches whose impact check is recorded: waiting for an approver to publish. */
 export async function batchesAwaitingApproval(): Promise<Batch[]> {
   return select<Batch>(`

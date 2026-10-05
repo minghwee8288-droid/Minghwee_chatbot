@@ -2,14 +2,15 @@ import Link from 'next/link';
 import { Shell } from '@/components/Shell';
 import { documentLabel, label } from '@/components/labels';
 import { AmberNotice, PageHeader, Pill, formatDate, previewText } from '@/components/ui';
-import { requireViewer } from '@/lib/auth';
+import { requireViewerWith } from '@/lib/auth';
 import { APPROVAL_WORDS, approvalReasons } from '@/lib/editing';
 import { plural } from '@/lib/plural';
 import { batchesAwaitingApproval, openDrafts } from '@/lib/queries';
 
 /** Every open draft, and every document version whose impact check is recorded. Approvers open one and publish it; the list itself changes nothing. */
 export default async function PendingPage() {
-  const viewer = await requireViewer();
+  // Started with the sign-in check; a non-approver is shown none of it.
+  const [viewer, [drafts, batches]] = await requireViewerWith(() => Promise.all([openDrafts(), batchesAwaitingApproval()]));
   if (!viewer.canApprove) {
     return (
       <Shell viewer={viewer} active="/pending">
@@ -18,7 +19,6 @@ export default async function PendingPage() {
       </Shell>
     );
   }
-  const [drafts, batches] = await Promise.all([openDrafts(), batchesAwaitingApproval()]);
   return (
     <Shell viewer={viewer} active="/pending">
       <PageHeader

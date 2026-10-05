@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { Shell } from '@/components/Shell';
 import { documentLabel, label, type LabelKind } from '@/components/labels';
 import { ActivePill, PageHeader, Pill, previewText } from '@/components/ui';
-import { requireViewer } from '@/lib/auth';
+import { requireViewerWith } from '@/lib/auth';
 import { plural } from '@/lib/plural';
 import { FILTERS, PAGE_SIZE, filterOptions, rows, type FilterKey } from '@/lib/queries';
 
@@ -57,24 +57,35 @@ function one(v: string | string[] | undefined): string {
 }
 
 export default async function RowsPage({ searchParams }: { searchParams: Params }) {
-  const viewer = await requireViewer();
-  const options = await filterOptions();
+  const activeParam = one(searchParams.active);
+  const active = activeParam === 'active' || activeParam === 'inactive' ? activeParam : 'all';
+  const search = one(searchParams.q).slice(0, 200);
+  const page = Math.max(1, Math.min(1000, Number.parseInt(one(searchParams.page) || '1', 10) || 1));
+  const asked: Partial<Record<FilterKey, string>> = {};
+  for (const key of Object.keys(FILTERS) as FilterKey[]) {
+    const value = one(searchParams[key]);
+    if (value) asked[key] = value;
+  }
+
+  // The filter lists and the entries at once, with the sign-in check. The entries
+  // are read with the filters as asked; in the rare case one names a value that
+  // does not exist, it is dropped below and the entries are read again.
+  const [viewer, [options, firstList]] = await requireViewerWith(() =>
+    Promise.all([filterOptions(), rows({ filters: asked, active, search, page })]),
+  );
 
   // Only values that actually exist are used as filters; anything else is ignored.
   const filters: Partial<Record<FilterKey, string>> = {};
-  for (const key of Object.keys(FILTERS) as FilterKey[]) {
-    const value = one(searchParams[key]);
+  for (const key of Object.keys(asked) as FilterKey[]) {
+    const value = asked[key];
     if (value && options[key].includes(value)) filters[key] = value;
   }
   // A filter with fewer than two values to choose between is not shown; it
   // comes back by itself once a second value exists.
   const shownFilters = (Object.keys(FILTERS) as FilterKey[]).filter((key) => options[key].length >= 2);
-  const activeParam = one(searchParams.active);
-  const active = activeParam === 'active' || activeParam === 'inactive' ? activeParam : 'all';
-  const search = one(searchParams.q).slice(0, 200);
-  const page = Math.max(1, Math.min(1000, Number.parseInt(one(searchParams.page) || '1', 10) || 1));
 
-  const list = await rows({ filters, active, search, page });
+  const dropped = Object.keys(filters).length !== Object.keys(asked).length;
+  const list = dropped ? await rows({ filters, active, search, page }) : firstList;
   const total = list[0]?.total_count ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 

@@ -5,7 +5,7 @@ import { documentLabel, label } from '@/components/labels';
 import { restoreVersion, toggleEntry } from '@/app/editor/actions';
 import { ReasonAction } from '@/components/ReasonAction';
 import { ActivePill, AmberNotice, Pill, formatDate, type Tone } from '@/components/ui';
-import { requireViewer } from '@/lib/auth';
+import { requireViewerWith } from '@/lib/auth';
 import { FILTERS, openDraft, row, versions, type Version } from '@/lib/queries';
 
 type Params = Record<string, string | string[] | undefined>;
@@ -112,8 +112,13 @@ function Code({ value }: { value: string }) {
 }
 
 export default async function RowPage({ params, searchParams }: { params: { id: string }; searchParams: Params }) {
-  const viewer = await requireViewer();
-  const r = await row(params.id);
+  // The entry, its open draft and (on the history tab) its versions, all at once
+  // with the sign-in check. The draft and versions only exist for a Q&A entry;
+  // for any other row they come back empty and are not used.
+  const wantsHistory = searchParams.tab === 'history';
+  const [viewer, [r, draftFound, historyFound]] = await requireViewerWith(() =>
+    Promise.all([row(params.id), openDraft(params.id), wantsHistory ? versions(params.id) : Promise.resolve([] as Version[])]),
+  );
   if (!r) notFound();
 
   const back = backQuery(searchParams);
@@ -127,7 +132,8 @@ export default async function RowPage({ params, searchParams }: { params: { id: 
   const managedRaw = typeof r.metadata?.managed_by === 'string' ? r.metadata.managed_by : '(none)';
   const editable = r.chunk_type === 'qa_pair';
   const tab = searchParams.tab === 'history' && editable ? 'history' : 'details';
-  const [draft, history] = editable ? await Promise.all([openDraft(r.id), tab === 'history' ? versions(r.id) : Promise.resolve([])]) : [null, []];
+  const draft = editable ? draftFound : null;
+  const history = editable && tab === 'history' ? historyFound : [];
   const heading = r.question || (neverPublished ? draft?.question : null) || r.section_heading || 'Untitled passage';
   const flashKey = ['created', 'published', 'discarded'].find((k) => searchParams[k]) ?? (typeof searchParams.switched === 'string' ? searchParams.switched : '');
   const flash = FLASH[flashKey];

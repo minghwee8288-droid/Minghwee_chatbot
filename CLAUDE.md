@@ -1412,6 +1412,38 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-10-05** - **kb-admin speed: Vercel region icn1, parallel queries,
+  loading states.** Code only; no database change, nothing written.
+  (A) **The cause was the region.** The functions ran in iad1 (Washington)
+  while the database pooler and Supabase Auth are in Seoul, so every round trip
+  was about 0.19 s. A page made 7-10 of them: Supabase Auth, the access row,
+  then the page's queries. Each query costs 3 round trips (BEGIN READ ONLY,
+  the query, COMMIT). The project's Function Region is now **icn1**, set in
+  Vercel's settings; the login page's `X-Vercel-Id` reads `bom1::icn1`.
+  (B) **`requireViewerWith(load)`** (`lib/auth.ts`) starts a page's queries at
+  the same moment as the sign-in check. The data is returned only after
+  `requireViewer()` has confirmed access. A refused request redirects first,
+  and its query error is swallowed. Six pages use it: Knowledge base, Browse,
+  entry detail, Pending, Activity and document history.
+  - **Browse** reads the filter lists and the entries together, re-reading only
+    if a filter in the URL names a value that does not exist (as before, it is
+    ignored).
+  - **Entry detail** reads the entry, its draft and (history tab) its versions
+    together. The id guards mean a bad id is still a 404.
+  - **Document history** reads its versions by source name (`batchesOfSource`)
+    in the same round, not after the document lookup.
+  (C) The pool's `idle_timeout` is **300 s** (was 20), so a reader's pause no
+  longer costs a fresh TLS and login handshake.
+  (D) **`loading.tsx`** for the main routes (`components/LoadingPage.tsx`): the
+  same sidebar frame, title and placeholder blocks. It holds no session data,
+  no viewer and no query.
+  (E) Sign-in and the nav already went straight to `/documents`; nothing links
+  `/`. **Not done (#2a, for later):** `default_transaction_read_only` on
+  `kb_admin_reader`, which would make each query one round trip instead of
+  three - a database change.
+  **Verified:** selfcheck all pass, with 8 new checks; 7 injected faults, 7 red;
+  `npm run build` passes.
+
 - **2026-10-05** - **kb-admin small fix pass (UI and chunker only).** No SQL
   behaviour changed, nothing was written to any database, and the bot is
   untouched.

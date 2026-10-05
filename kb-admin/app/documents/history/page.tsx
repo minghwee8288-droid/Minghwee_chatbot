@@ -4,16 +4,17 @@ import { ConfirmAction } from '@/components/ConfirmAction';
 import { Shell } from '@/components/Shell';
 import { BATCH_STATUS, documentLabel } from '@/components/labels';
 import { AmberNotice, PageHeader, Pill, formatDate } from '@/components/ui';
-import { requireViewer } from '@/lib/auth';
+import { requireViewerWith } from '@/lib/auth';
 import { plural } from '@/lib/plural';
-import { batchesOf, documentBySource, liveDocRows, qaPairCount } from '@/lib/queries';
+import { batchesOfSource, documentBySource, liveDocRows, qaPairCount } from '@/lib/queries';
 
 /** Every version of one document, newest first: restore an earlier one, or retire the document. */
 export default async function HistoryPage({ searchParams }: { searchParams: Record<string, string | undefined> }) {
-  const viewer = await requireViewer();
   const source = (searchParams.source ?? '').slice(0, 500);
-  const [doc, live, qa] = await Promise.all([documentBySource(source), liveDocRows(source), qaPairCount(source)]);
-  const versions = doc ? await batchesOf(doc.id) : [];
+  // All four at once, with the sign-in check: the versions are read by source name, not after the document.
+  const [viewer, [doc, live, qa, versions]] = await requireViewerWith(() =>
+    Promise.all([documentBySource(source), liveDocRows(source), qaPairCount(source), batchesOfSource(source)]),
+  );
   return (
     <Shell viewer={viewer} active="/documents">
       <PageHeader

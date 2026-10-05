@@ -162,7 +162,7 @@ check('switching on/off also checks canApprove before calling the database',
   toggleSrc.indexOf('actor.canApprove') > 0 && toggleSrc.indexOf('actor.canApprove') < toggleSrc.indexOf("callWrite('kb_admin_toggle'"));
 
 const pages = code.filter((f) => /^app\/.*page\.tsx$/.test(rel(f)) && rel(f) !== 'app/login/page.tsx');
-for (const p of pages) check(`${rel(p)} requires a viewer`, readFileSync(p, 'utf8').includes('requireViewer('));
+for (const p of pages) check(`${rel(p)} requires a viewer`, /requireViewer(With)?\(/.test(readFileSync(p, 'utf8')));
 const apis = code.filter((f) => /^app\/api\/.*route\.ts$/.test(rel(f)));
 for (const a of apis) check(`${rel(a)} checks the session`, readFileSync(a, 'utf8').includes('checkRequest('));
 check('found pages and API routes to check', pages.length >= 6 && apis.length >= 1, `${pages.length} pages, ${apis.length} api`);
@@ -643,6 +643,32 @@ console.log('behaviour - small fixes (2026-10-05):');
   check('007 says Phase 2 only and names 012 as the full check, not "the five functions and nothing else"',
     Boolean(s007) && !/the five functions and nothing else/.test(s007) && (s007.match(/Phase 2 only; 012/g) ?? []).length === 2 &&
     /012_grants_checks\s*\n?--\s*is the full check/.test(s007));
+}
+
+console.log('speed (2026-10-05, region icn1):');
+{
+  const authBody = src('lib/auth.ts').slice(src('lib/auth.ts').indexOf('export async function requireViewerWith'));
+  const fnBody = authBody.slice(0, authBody.indexOf('\n}\n'));
+  check('requireViewerWith starts the queries, swallows a refused request\'s error, and returns data only after requireViewer()',
+    /const data = load\(\);/.test(fnBody) && /data\.catch\(/.test(fnBody) &&
+    fnBody.indexOf('await requireViewer()') > 0 && fnBody.indexOf('await requireViewer()') < fnBody.indexOf('await data'));
+  const MAIN = ['app/documents/page.tsx', 'app/rows/page.tsx', 'app/rows/[id]/page.tsx', 'app/pending/page.tsx', 'app/activity/page.tsx', 'app/documents/history/page.tsx'];
+  const notParallel = MAIN.filter((p) => !/requireViewerWith\(\(\) =>/.test(src(p)) || /await requireViewer\(\)/.test(src(p)));
+  check('the six main pages start their queries alongside the sign-in check', !notParallel.length, notParallel.join(', '));
+  check('Browse reads the filter lists and the entries together; entry detail reads entry, draft and versions together',
+    /Promise\.all\(\[filterOptions\(\), rows\(/.test(src('app/rows/page.tsx')) &&
+    /Promise\.all\(\[row\(params\.id\), openDraft\(params\.id\)/.test(src('app/rows/[id]/page.tsx')));
+  check('document history reads its versions by source in the same round as the rest (no second lookup)',
+    /batchesOfSource\(source\)\]/.test(src('app/documents/history/page.tsx')) && !/batchesOf\(/.test(src('app/documents/history/page.tsx')));
+  check('the connection pool keeps an idle connection for 300 s', /idle_timeout: 300,/.test(src('lib/db.ts')));
+  const LOADING = ['app/documents', 'app/documents/history', 'app/documents/upload', 'app/documents/batches/[id]', 'app/documents/batches/[id]/impact',
+    'app/rows', 'app/rows/[id]', 'app/pending', 'app/activity'];
+  const missing = LOADING.filter((d) => !/<LoadingPage /.test(src(`${d}/loading.tsx`)));
+  check('every main page has a loading state', !missing.length, missing.join(', '));
+  const loadingSrc = src('components/LoadingPage.tsx') + LOADING.map((d) => src(`${d}/loading.tsx`)).join('\n');
+  check('a loading state reads no session, no database and shows no viewer', !/from '@\/lib\/(auth|db|queries|session)'|viewer|cookies\(/.test(loadingSrc));
+  check('signing in lands straight on the Knowledge base, and the nav never links "/"',
+    /redirect\('\/documents'\)/.test(src('app/login/actions.ts')) && !/href: '\/'/.test(src('components/Shell.tsx')));
 }
 
 console.log(failures ? `RESULT: ${failures} FAIL(S)` : 'RESULT: ALL PASS');

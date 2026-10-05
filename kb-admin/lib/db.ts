@@ -31,7 +31,9 @@ function sql(): postgres.Sql {
       ssl: 'require',
       prepare: false,
       max: 3,
-      idle_timeout: 20,
+      // Kept open across a reader's pauses: at 20 s, a page read for longer
+      // than that paid a fresh TLS + login handshake on the next click.
+      idle_timeout: 300,
       connect_timeout: 10,
       connection: { application_name: 'kb-admin' },
     });
