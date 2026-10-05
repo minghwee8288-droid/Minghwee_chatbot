@@ -2,7 +2,7 @@
   "name": "minghwee-kb-admin",
   "private": true,
   "version": "0.1.0",
-  "description": "Viewer and Q&A editor for the chatbot's knowledge base. Standalone: imports nothing from app/, holds no service-role or LLM key; writes only through five kb_admin_* database functions.",
+  "description": "Viewer and Q&A editor for the chatbot's knowledge base. Standalone: imports nothing from app/, holds no service-role or LLM key; writes only through sixteen kb_admin_* database functions.",
   "scripts": {
     "dev": "next dev -p 5176 -H 127.0.0.1",
     "dev:test": "node scripts/dev-test.mjs",

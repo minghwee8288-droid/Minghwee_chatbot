@@ -302,6 +302,8 @@ export type AuditRow = {
   question: string | null;
   old_values: Record<string, unknown> | null;
   new_values: Record<string, unknown> | null;
+  /** For a document action: the document's source name. */
+  source_name: string | null;
 };
 
 /** The latest 100 audit rows, newest first, with the entry's current question. */
@@ -309,9 +311,203 @@ export async function activity(): Promise<AuditRow[]> {
   return select<AuditRow>(`
     select a.id::text, a.entry_id::text, a.action, a.actor_email, a.actor_db_role, a.reason,
            a.self_approved, a.created_at::text, k.question,
-           a.old_values, a.new_values
+           a.old_values, a.new_values,
+           case when a.action in ('doc_uploaded', 'batch_prepared', 'batch_published', 'batch_restored',
+                                  'batch_discarded', 'doc_retired', 'chunk_edited') then
+             coalesce(a.new_values->>'source_document', a.new_values->>'source_name',
+                      (select d.source_name from public.cb_kb_documents d
+                        where d.id::text = coalesce(a.new_values->>'document_id', a.old_values->>'document_id',
+                                (select b.document_id::text from public.cb_kb_batches b
+                                  where b.id::text = coalesce(a.new_values->>'batch_id', a.old_values->>'batch_id')))))
+           end as source_name
       from public.cb_kb_audit a
       left join ${KB} k on k.id = a.entry_id
      order by a.created_at desc, a.id desc
      limit 100`);
+}
+
+// --- Documents (Phase 3 scope B). Read as kb_admin_reader: file_bytes and the
+// embedding columns are not granted and never named.
+
+export type SourceOverview = DocumentSummary & {
+  qa_pairs: number;
+  document_id: string | null;
+  display_label: string | null;
+  latest_batch_id: string | null;
+  latest_status: string | null;
+  staged_batch_id: string | null;
+  /** Active document rows that belong to no batch: the version imported before kb-admin. */
+  imported_rows: number;
+};
+
+/** Every source: live counts, and its kb-admin document and latest batch if it has one. */
+export async function sourcesOverview(): Promise<SourceOverview[]> {
+  return select<SourceOverview>(`
+    with live as (
+        select k.source_document,
+               count(*)::int as total,
+               count(*) filter (where k.is_active)::int as active,
+               count(*) filter (where not k.is_active)::int as inactive,
+               count(*) filter (where k.chunk_type = 'qa_pair')::int as qa_pairs,
+               count(*) filter (where k.is_active and k.chunk_type in ('document_chunk', 'table_unit')
+                                  and not exists (select 1 from public.cb_kb_staged_chunks s where s.id = k.id))::int as imported_rows,
+               array_agg(distinct k.service_type order by k.service_type) as services,
+               max(k.updated_at)::text as last_changed
+          from ${KB} k group by k.source_document),
+    names as (select source_document as name from live union select source_name from public.cb_kb_documents)
+    select n.name as source_document,
+           coalesce(l.total, 0) as total, coalesce(l.active, 0) as active, coalesce(l.inactive, 0) as inactive,
+           coalesce(l.qa_pairs, 0) as qa_pairs, coalesce(l.imported_rows, 0) as imported_rows,
+           coalesce(l.services, '{}') as services, l.last_changed,
+           d.id::text as document_id, d.display_label,
+           b.id::text as latest_batch_id, b.status as latest_status,
+           (select s.id::text from public.cb_kb_batches s where s.document_id = d.id and s.status = 'staged') as staged_batch_id
+      from names n
+      left join live l on l.source_document is not distinct from n.name
+      left join public.cb_kb_documents d on d.source_name = n.name
+      left join lateral (select x.id, x.status from public.cb_kb_batches x
+                          where x.document_id = d.id and not x.is_baseline
+                          order by x.created_at desc limit 1) b on true
+     order by n.name`);
+}
+
+export type DocRecord = {
+  id: string;
+  source_name: string;
+  display_label: string | null;
+  file_name: string;
+  file_type: string;
+  file_size_bytes: number;
+  uploaded_by_email: string;
+  uploaded_at: string;
+};
+
+const DOC_COLUMNS = `id::text, source_name, display_label, file_name, file_type, file_size_bytes, uploaded_by_email, uploaded_at::text`;
+
+export async function documentBySource(source: string): Promise<DocRecord | null> {
+  const [found] = await select<DocRecord>(`select ${DOC_COLUMNS} from public.cb_kb_documents where source_name = $1`, [source]);
+  return found ?? null;
+}
+
+export async function documentById(id: string): Promise<DocRecord | null> {
+  if (!UUID.test(id)) return null;
+  const [found] = await select<DocRecord>(`select ${DOC_COLUMNS} from public.cb_kb_documents where id = $1`, [id]);
+  return found ?? null;
+}
+
+export type Batch = {
+  id: string;
+  document_id: string;
+  status: 'staged' | 'published' | 'superseded' | 'discarded' | 'retired';
+  chunk_count: number;
+  prepared_by: string;
+  prepared_by_email: string;
+  prepared_at: string;
+  published_by_email: string | null;
+  published_at: string | null;
+  impact_check_run_at: string | null;
+  reason: string | null;
+  is_baseline: boolean;
+  source_name: string;
+};
+
+const BATCH_COLUMNS = `b.id::text, b.document_id::text, b.status, b.chunk_count, b.prepared_by::text, b.prepared_by_email,
+           b.prepared_at::text, b.published_by_email, b.published_at::text, b.impact_check_run_at::text,
+           b.reason, b.is_baseline, d.source_name`;
+
+export async function batch(id: string): Promise<Batch | null> {
+  if (!UUID.test(id)) return null;
+  const [found] = await select<Batch>(`
+    select ${BATCH_COLUMNS} from public.cb_kb_batches b join public.cb_kb_documents d on d.id = b.document_id
+     where b.id = $1`, [id]);
+  return found ?? null;
+}
+
+export async function batchesOf(documentId: string): Promise<Batch[]> {
+  if (!UUID.test(documentId)) return [];
+  return select<Batch>(`
+    select ${BATCH_COLUMNS} from public.cb_kb_batches b join public.cb_kb_documents d on d.id = b.document_id
+     where b.document_id = $1 order by b.created_at desc`, [documentId]);
+}
+
+/** Staged batches whose impact check is recorded: waiting for an approver to publish. */
+export async function batchesAwaitingApproval(): Promise<Batch[]> {
+  return select<Batch>(`
+    select ${BATCH_COLUMNS} from public.cb_kb_batches b join public.cb_kb_documents d on d.id = b.document_id
+     where b.status = 'staged' and b.impact_check_run_at is not null order by b.impact_check_run_at`);
+}
+
+export type StagedChunk = {
+  id: string;
+  ordinal: number;
+  chunk_type: 'passage' | 'table_unit';
+  section_heading: string | null;
+  content: string;
+  model_name: string | null;
+  service: string;
+  audience: string;
+  nationality: string;
+  namespace: string;
+  metadata: Record<string, unknown>;
+};
+
+const CHUNK_COLUMNS = `id::text, ordinal, chunk_type, section_heading, content, model_name, service, audience,
+           nationality, namespace, metadata`;
+
+export async function stagedChunks(batchId: string): Promise<StagedChunk[]> {
+  if (!UUID.test(batchId)) return [];
+  return select<StagedChunk>(`
+    select ${CHUNK_COLUMNS} from public.cb_kb_staged_chunks where batch_id = $1 order by ordinal`, [batchId]);
+}
+
+export async function stagedChunk(id: string): Promise<(StagedChunk & { batch_id: string }) | null> {
+  if (!UUID.test(id)) return null;
+  const [found] = await select<StagedChunk & { batch_id: string }>(`
+    select ${CHUNK_COLUMNS}, batch_id::text from public.cb_kb_staged_chunks where id = $1`, [id]);
+  return found ?? null;
+}
+
+export type LiveDocRow = { id: string; chunk_type: string; section_heading: string | null; content: string; batched: boolean };
+
+/** A source's active document_chunk / table_unit rows: what an upload would replace. */
+export async function liveDocRows(source: string): Promise<LiveDocRow[]> {
+  return select<LiveDocRow>(`
+    select k.id::text, k.chunk_type, k.section_heading, coalesce(k.content, '') as content,
+           exists (select 1 from public.cb_kb_staged_chunks s where s.id = k.id) as batched
+      from ${KB} k
+     where k.source_document = $1 and k.is_active and k.chunk_type in ('document_chunk', 'table_unit')
+     order by k.id`, [source]);
+}
+
+export async function qaPairCount(source: string): Promise<number> {
+  const [found] = await select<{ n: number }>(`
+    select count(*)::int as n from ${KB} where source_document = $1 and chunk_type = 'qa_pair'`, [source]);
+  return found?.n ?? 0;
+}
+
+/** Namespaces active rows use: the only ones the database accepts. */
+export async function namespaces(): Promise<string[]> {
+  const [found] = await select<{ list: string[] }>(`
+    select array(select distinct namespace from ${KB} where is_active and namespace is not null order by 1) as list`);
+  return found?.list ?? [];
+}
+
+export type Probe = { question_text: string; service: string | null; audience: string | null; nationality: string | null };
+
+export async function probes(): Promise<Probe[]> {
+  return select<Probe>(`
+    select question_text, service, audience, nationality from public.cb_kb_probe_questions
+     where is_active order by question_text`);
+}
+
+/** metadata for rows a search returned: live rows, and a batch's staged chunks. */
+export async function metadataOf(ids: string[]): Promise<Record<string, Record<string, unknown> | null>> {
+  const clean = [...new Set(ids.filter((i) => UUID.test(i)))];
+  if (!clean.length) return {};
+  const found = await select<{ id: string; metadata: Record<string, unknown> | null }>(`
+    select id::text, metadata from ${KB} where id = any($1::uuid[])
+    union all
+    select s.id::text, s.metadata from public.cb_kb_staged_chunks s
+     where s.id = any($1::uuid[]) and not exists (select 1 from ${KB} k where k.id = s.id)`, [`{${clean.join(',')}}`]);
+  return Object.fromEntries(found.map((r) => [r.id, r.metadata]));
 }

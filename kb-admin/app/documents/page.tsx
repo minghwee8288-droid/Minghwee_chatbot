@@ -1,9 +1,12 @@
 import Link from 'next/link';
+import { retireDocument } from '@/app/docs/actions';
+import { ConfirmAction } from '@/components/ConfirmAction';
 import { Shell } from '@/components/Shell';
-import { documentLabel } from '@/components/labels';
+import { BATCH_STATUS, documentLabel } from '@/components/labels';
 import { PageHeader, Pill } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
-import { documents, totals } from '@/lib/queries';
+import { sourceProblem } from '@/lib/documents';
+import { sourcesOverview, totals } from '@/lib/queries';
 
 function Stat({ label, value, warn = false }: { label: string; value: number; warn?: boolean }) {
   return (
@@ -24,7 +27,7 @@ function DocStatus({ active, inactive }: { active: number; inactive: number }) {
 
 export default async function DocumentsPage() {
   const viewer = await requireViewer();
-  const [docs, sum] = await Promise.all([documents(), totals()]);
+  const [docs, sum] = await Promise.all([sourcesOverview(), totals()]);
   const docCount = docs.length;
   return (
     <Shell viewer={viewer} active="/documents">
@@ -35,9 +38,12 @@ export default async function DocumentsPage() {
         } · the chatbot reads these live.`}
       />
       {viewer.canEdit ? (
-        <div>
+        <div className="flex gap-3">
           <Link href="/rows/new" className="btn btn-primary">
             Add Q&amp;A
+          </Link>
+          <Link href="/documents/upload" className="btn btn-primary">
+            Upload document
           </Link>
         </div>
       ) : null}
@@ -58,6 +64,8 @@ export default async function DocumentsPage() {
               <col style={{ width: 90 }} />
               <col style={{ width: 90 }} />
               <col style={{ width: 130 }} />
+              <col style={{ width: 150 }} />
+              <col style={{ width: 230 }} />
             </colgroup>
             <thead>
               <tr>
@@ -66,6 +74,8 @@ export default async function DocumentsPage() {
                 <th scope="col" className="num">Active</th>
                 <th scope="col" className="num">Inactive</th>
                 <th scope="col">Status</th>
+                <th scope="col">Latest version</th>
+                <th scope="col">Versions</th>
               </tr>
             </thead>
             <tbody>
@@ -89,6 +99,39 @@ export default async function DocumentsPage() {
                     </td>
                     <td>
                       <DocStatus active={d.active} inactive={d.inactive} />
+                    </td>
+                    <td>
+                      {d.latest_status ? (
+                        <Link href={`/documents/batches/${d.latest_batch_id}`}>
+                          <Pill tone={BATCH_STATUS[d.latest_status]?.tone ?? 'off'}>{BATCH_STATUS[d.latest_status]?.text ?? d.latest_status}</Pill>
+                        </Link>
+                      ) : (
+                        <span className="text-[12px] text-muted">{d.total > d.qa_pairs ? 'Imported' : 'Q&A only'}</span>
+                      )}
+                    </td>
+                    <td className="text-[12px]">
+                      {d.source_document && (d.total > d.qa_pairs || d.document_id) ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Link href={`/documents/history?source=${encodeURIComponent(d.source_document)}`} className="link">
+                            History
+                          </Link>
+                          {viewer.canEdit && !sourceProblem(d.source_document) ? (
+                            <Link href={`/documents/upload?source=${encodeURIComponent(d.source_document)}`} className="link">
+                              Replace
+                            </Link>
+                          ) : null}
+                          {viewer.canApprove && d.document_id && d.active > d.qa_pairs ? (
+                            <ConfirmAction
+                              action={retireDocument}
+                              hidden={{ document_id: d.document_id, source: d.source_document }}
+                              openLabel="Retire"
+                              submitLabel="Retire"
+                              needReason
+                              confirmText="Switch off every live chunk of this document. Its Q&A entries are not touched."
+                            />
+                          ) : null}
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 );

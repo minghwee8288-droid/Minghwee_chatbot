@@ -99,7 +99,9 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
                      007 is checks only), kb_admin_008 (add a new Q&A entry;
                      on TEST and production), kb_admin_009..013 (document
                      upload: tables, kb_admin_doc_owner, nine functions,
-                     checks, probe seed; TEST only so far) — applied ONLY via
+                     checks, probe seed) and kb_admin_014 (exact live search,
+                     baseline batch on first replacement); 009..014 TEST only
+                     so far — applied ONLY via
                      apply_sql.py --expect-ref <project ref>
   seed_kb_canary.py  writes (never applies) the SQL seeding cb_kb_canary with the bot's
                      own embed_query; kb-admin must reproduce that vector to publish
@@ -112,15 +114,15 @@ reset-ui/            Next.js "clear a conversation" page (separate deliverable, 
                      key from its own serverless functions. See reset-ui/README.md.
 kb-admin/            Next.js knowledge-base tool (Documents, Rows, Rules, Test a
                      question; Phase 2: edit Q&A entries; Phase 3 scope A: add a new
-                     Q&A entry). Standalone: imports nothing
+                     Q&A entry; scope B: upload, review, impact-check, publish,
+                     restore and retire documents). Standalone: imports nothing
                      from app/. Signs in via Supabase Auth + an active cb_kb_admin_users
                      row (viewer | editor | approver), checked on every request.
                      READS as kb_admin_reader inside BEGIN READ ONLY. WRITES only as
                      kb_admin_editor, which holds no table privilege and can only
-                     EXECUTE six SECURITY DEFINER functions - kb_admin_save_draft,
-                     kb_admin_publish, kb_admin_discard_draft, kb_admin_restore,
-                     kb_admin_toggle (scripts/sql/kb_admin_004) and
-                     kb_admin_create_entry (kb_admin_008) - which enforce roles,
+                     EXECUTE sixteen SECURITY DEFINER functions (lib/access.ts) -
+                     the six Q&A ones (kb_admin_004, 008), the nine document ones
+                     (011) and kb_admin_match_live (014) - which enforce roles,
                      the 1200-char limit, no NRIC, approval, stale drafts and the
                      embedding canary, and audit every write (cb_kb_audit, append-only;
                      cb_kb_entry_versions holds drafts and history; the bot reads
@@ -462,6 +464,7 @@ because the lead is opened early and the ticket is created much later.
 | kb-admin writes a Q&A entry only through five database functions | `scripts/sql/kb_admin_004` + `kb_admin_005` + `kb-admin/scripts/selfcheck.mjs` | `kb_admin_editor` has no table privilege; the functions (owned by NOLOGIN `kb_admin_fn_owner`) check the person's role, 1200 chars, NRIC, approval, stale drafts and the canary, and write `cb_kb_audit`. Their UPDATE policy is limited to `chunk_type = 'qa_pair'`. Proved on TEST in one rolled-back transaction, and `007` re-checks the grants wherever it runs. |
 | A Q&A entry added in kb-admin is invisible to the bot until an approver publishes it | `scripts/sql/kb_admin_008` (`kb_admin_create_entry`) + its INSERT policy | The new row is inserted switched off, with no embedding and NO question/answer/content - the text lives in a version-2 draft over a version-1 baseline of the empty row. That is what lets the unchanged `kb_admin_publish` work: it sees the text change, demands a vector (KB005), and switching on needs an approver. The owner's INSERT is ten columns (never question, answer, content or embedding) and RLS admits only an inactive, text-less `qa_pair` from `Ming Hwee KB Admin` tagged `managed_by: ui`. kb-admin hides "Switch on" on such an entry. `007`'s INSERT check uses `has_table_privilege`, which does not see column grants; `008` checks the exact surface itself. |
 | A document version reaches the live table only through an approver's publish, and never touches a Q&A row | `scripts/sql/kb_admin_009`-`011` (`kb_admin_doc_*`, owned by NOLOGIN `kb_admin_doc_owner`) | Upload, stage and edit write only the four new tables, which the bot never reads (012 proves a staged chunk with a perfect-match vector is invisible to `cb_match_knowledge_base_updated`). Publish needs an approver, a recorded impact check whose batch hash still matches, and every vector from the canary's model. It inserts the chunks as `document_chunk` (the live CHECK has no `passage`) or `table_unit`, and switches off - never deletes - every other active `document_chunk`/`table_unit` row of the same `source_document`, imported ones included, stamping them `managed_by: ui`. RLS limits the owner to `document_chunk`/`table_unit` rows: it can never update or insert a `qa_pair`, nor insert under 'Ming Hwee Service Notes' or 'Ming Hwee KB Admin'; it UPDATEs only `is_active` and `metadata`, and never DELETEs. `source_name` IS the live `source_document` string. Upload refuses the bot's internal sources (`rag._INTERNAL_SOURCES`, mirrored in SQL). |
+| A document publish never strands the imported version, and the impact check ranks as the bot does | `kb_admin_014` (`kb_admin__doc_record_baseline`, `kb_admin_match_live`) + `kb-admin/lib/retrieval.ts` + `scripts/check_rerank_parity.py` | The first publish over an imported document records its live rows (in no batch) as a superseded baseline batch - same ids, text and vectors - so the unchanged `kb_admin_doc_restore` can switch them back on; afterwards only `is_active`, `metadata` (managed_by ui, restored_by_batch) and `updated_at` differ. "Now" in the impact check is the bot's exact live search, and the TS port of `_drop_non_evidence` / `_drop_internal` / `_enforce_row_floor` / `_rerank` must match Python exactly (5,000 generated cases). Chunks are embedded as `section_heading + "\n" + content`. |
 | The loader never overwrites the KB Admin UI | `load_service_notes._ui_owned` + `metadata.managed_by` | Every row is `loader` or `ui`. All four write paths (ROWS, UPDATES, TEXT_REPLACEMENTS, RETIRED) skip and report a `ui` row — without it the first loader run after the UI went live would silently undo the client's edits, because three of the four find their targets by searching. Proved by RUNNING the loader against a stub DB holding one, in `selfcheck_kb_prep.py`. |
 | Nobody without the preview key learns anything from the preview route | `main.create_app` + `admin.require_preview_key` + `selfcheck_kb_prep.py` | No secret: the route is not registered (404, absent from the schema). With one, the key is a route dependency and the body is NOT a declared parameter - FastAPI decodes a declared body before dependencies, so malformed JSON answered 422 to anyone. 422 is now only ever seen by a key holder. Rate-limited, one at a time, 32 KB cap. Proved over HTTP, eight faults injected, eight red. |
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
@@ -1403,6 +1406,75 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-05** - **kb-admin Phase 3 scope B, session 3: the document UI, and 014.
+  TEST only; production and Vercel untouched.**
+  (A) **`kb_admin_014`** (agreed mid-session, TEST only), for two gaps found while
+  building:
+  - **No kb-admin login could run the bot's live search**: neither may read
+    `embedding`. `kb_admin_match_live` is that search, read-only, owned by
+    `kb_admin_doc_owner`, executable by `kb_admin_editor`. Proved identical to
+    `cb_match_knowledge_base_updated` on 10 query and filter sets over the whole
+    pool, so every row floor is exercised.
+  - **Publishing over an imported document left its rows unrestorable**: they
+    were in no batch. Publish now first records them as a superseded
+    `is_baseline` batch.
+    - To fit, the staged-chunk length CHECK exempts baseline chunks (imported
+      rows run to 5,512 characters), and one INSERT policy admits them.
+    - The publish body is 011's verbatim plus that one call; its result and
+      audit entry gain `baseline_batch_id`. Restore is unchanged.
+  - Behaviour test (rolled back): **25/25**. Five injected faults, five red.
+  - The rollback dry-run puts 011's publish back byte-identical, and refuses
+    while a baseline exists. 012 now expects 16 editor functions; 012 is 7/7
+    and 007 is 10/10.
+  (B) **UI**: Knowledge base (latest version, Upload / Replace / History /
+  Retire), Upload (preview, then prepare), the batch page (edit a chunk,
+  discard, publish), the impact check, history (restore, retire), and Pending
+  and Activity. `lib/write.ts` WRITE_FUNCTIONS is 16.
+  - **The preview saves and embeds nothing.** It warns about:
+    - lost facts, and stale facts brought back (both from `lib/facts.ts`);
+    - staff wording;
+    - Q&A entries left alone;
+    - an imported document being re-split.
+  - **Prepare** sends the file again; the server chunks it again and refuses if
+    the choices no longer match. Chunks are embedded as heading + newline +
+    content, in batches of 64.
+  - **The impact check** embeds the probes once per process. It compares top-5
+    lists (fetch 10, then the bot's filter and rerank) and flags rows entering
+    and leaving, best scores under 0.40, and new rows carrying figures.
+  (C) **Found while testing.** postgres.js serialises a bound value by its
+  database type. A JSON string sent as `jsonb` was encoded a second time, and a
+  hex string sent as `bytea` would have stored the hex *text* as the file. Now
+  a Buffer and real arrays are sent; stored files are verified byte-for-byte
+  against disk.
+  (D) **Limits.**
+  - Next 14's `serverActions.bodySizeLimit` (4.5mb) covers form fields, not file
+    parts, so a 5 MB file reached the action. Its own 4 MB check refused it; on
+    Vercel the platform's ~4.5 MB limit is in front.
+  - `maxDuration = 300` is set on the upload and impact pages.
+  - Retire needs a kb-admin document row, so a source never uploaded through
+    kb-admin cannot be retired from the UI.
+  (E) **Verified on TEST**, in a real browser (Playwright, throwaway accounts,
+  removed afterwards):
+  - **Full test-document flow:** upload, preview, prepare, edit, impact check,
+    publish, retire, restore. The bot's own search then ranks the test
+    document first.
+  - **Checklist replaced:** 13 chunks published, 10 imported chunks switched
+    off, then the baseline restored.
+  - **Refusals:** viewer, editor, internal and reserved names, a 4 MB+ file and
+    a PDF, all in the UI and again by calling the actions directly with real
+    sessions.
+  - **HTTP suites:** 28, 73 and 13 checks.
+  - **Full-column diff of the live table:**
+    - 16 rows added: the test document's 3, live; and the replacement's 13,
+      switched off.
+    - 10 rows changed: the Checklist's imported rows, in `metadata` (managed_by
+      loader to ui, plus restored_by_batch) and `updated_at` only.
+    - No external_* audit row.
+  - **Selfcheck:** all pass; ten injected faults, ten red.
+  - **Rerank parity:** exact on 5,000 cases; two injected faults break it.
+  The stale-facts warning flagged the Checklist source's old WhatsApp number,
+  which the live rows had already corrected.
 
 - **2026-10-05** - **kb-admin Phase 3 scope B, session 2: the document chunker and
   the lost-facts check. Code only; nothing calls them yet, and no database row,

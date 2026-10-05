@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Shell } from '@/components/Shell';
+import { documentLabel } from '@/components/labels';
 import { PageHeader, Pill, formatDate, previewText, type Tone } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
 import { activity, type AuditRow } from '@/lib/queries';
@@ -15,7 +16,42 @@ const WHAT: Record<string, { text: string; tone: Tone }> = {
   external_insert: { text: 'added, outside KB Admin,', tone: 'bad' },
   external_update: { text: 'changed, outside KB Admin,', tone: 'bad' },
   external_delete: { text: 'removed, outside KB Admin,', tone: 'bad' },
+  entry_created: { text: 'added a new Q&A entry,', tone: 'off' },
+  doc_uploaded: { text: 'uploaded a file for', tone: 'off' },
+  batch_prepared: { text: 'prepared chunks for review in', tone: 'off' },
+  chunk_edited: { text: 'edited a chunk being prepared in', tone: 'off' },
+  batch_discarded: { text: 'discarded a version being prepared of', tone: 'off' },
+  batch_published: { text: 'published a new version of', tone: 'good' },
+  batch_restored: { text: 'restored an earlier version of', tone: 'warn' },
+  doc_retired: { text: 'retired (switched off) the whole document', tone: 'bad' },
 };
+
+/** The audit action names, in words, for the pill. */
+const ACTION_NAME: Record<string, string> = {
+  doc_uploaded: 'file uploaded',
+  batch_prepared: 'chunks prepared',
+  chunk_edited: 'chunk edited',
+  batch_discarded: 'version discarded',
+  batch_published: 'document published',
+  batch_restored: 'version restored',
+  doc_retired: 'document retired',
+  entry_created: 'entry added',
+};
+
+const DOC_ACTIONS = new Set(['doc_uploaded', 'batch_prepared', 'chunk_edited', 'batch_discarded', 'batch_published', 'batch_restored', 'doc_retired']);
+
+/** The numbers a document action reports, in words. */
+function docDetail(a: AuditRow): string {
+  const n = a.new_values ?? {};
+  if (a.action === 'batch_published') {
+    const self = n.self_published === true ? ' - published by the person who prepared it' : '';
+    return ` (${n.rows_inserted ?? 0} chunks on, ${n.rows_retired ?? 0} off${n.baseline_batch_id ? '; the imported version kept as an earlier version' : ''}${self})`;
+  }
+  if (a.action === 'batch_restored') return ` (${n.rows_restored ?? 0} chunks back on, ${n.rows_retired ?? 0} off)`;
+  if (a.action === 'doc_retired') return ` (${n.rows_retired ?? 0} chunks off)`;
+  if (a.action === 'batch_prepared') return ` (${n.chunks_added ?? 0} chunks)`;
+  return '';
+}
 
 function sentence(a: AuditRow): string {
   const who = a.actor_email ?? `the database login "${a.actor_db_role}"`;
@@ -52,9 +88,20 @@ export default async function ActivityPage() {
                 <tr key={a.id}>
                   <td className="mono whitespace-nowrap text-[12px]">{formatDate(a.created_at)}</td>
                   <td className="max-w-[520px]">
-                    <Pill tone={WHAT[a.action]?.tone ?? 'off'}>{a.action.replace(/_/g, ' ')}</Pill>{' '}
+                    <Pill tone={WHAT[a.action]?.tone ?? 'off'}>{ACTION_NAME[a.action] ?? a.action.replace(/_/g, ' ')}</Pill>{' '}
                     <span>{sentence(a)} </span>
-                    {a.entry_id ? (
+                    {DOC_ACTIONS.has(a.action) ? (
+                      <>
+                        {a.source_name ? (
+                          <Link href={`/documents/history?source=${encodeURIComponent(a.source_name)}`} className="link" title={a.source_name}>
+                            {documentLabel(a.source_name)}
+                          </Link>
+                        ) : (
+                          'a document'
+                        )}
+                        <span className="text-[12px] text-muted">{docDetail(a)}</span>
+                      </>
+                    ) : a.entry_id ? (
                       <Link href={`/rows/${a.entry_id}?tab=history`} className="link">
                         {previewText(a.question || 'an entry', 90)}
                       </Link>

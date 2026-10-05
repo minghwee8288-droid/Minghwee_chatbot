@@ -51,11 +51,11 @@ export function isSingleRead(query: string): boolean {
 }
 
 /**
- * The ONLY writes kb-admin makes: one call to one of these six functions.
- * Each is SECURITY DEFINER in the database and checks the caller's role
- * itself (scripts/sql, migrations 004 and 008); the editor login can call
- * these and nothing else. This list is the code-side twin of that grant: the
- * same six signatures as migrations 005 and 008 grant.
+ * The ONLY database calls kb-admin makes as kb_admin_editor: one call to one of
+ * these sixteen functions. Each is SECURITY DEFINER in the database and checks
+ * the caller's role itself; the editor login can call these and nothing else.
+ * This list is the code-side twin of that grant: the same sixteen signatures
+ * that migrations 005, 008, 011 and 014 grant to kb_admin_editor.
  */
 export const WRITE_FUNCTIONS = {
   kb_admin_save_draft: ['uuid', 'text', 'uuid', 'text', 'text', 'text', 'text', 'text', 'text', 'boolean', 'text'],
@@ -65,17 +65,34 @@ export const WRITE_FUNCTIONS = {
   kb_admin_toggle: ['uuid', 'text', 'uuid', 'boolean', 'text'],
   // Migration 008: a new entry, switched off and unsearchable, plus its draft.
   kb_admin_create_entry: ['uuid', 'text', 'text', 'text', 'text', 'text', 'text', 'text', 'text'],
+  // Migration 011: documents.
+  kb_admin_doc_upload: ['uuid', 'text', 'text', 'text', 'text', 'bytea', 'text'],
+  kb_admin_doc_stage: ['uuid', 'text', 'uuid', 'jsonb', 'text'],
+  kb_admin_doc_edit_chunk: ['uuid', 'text', 'uuid', 'text', 'text', 'text', 'text', 'text', 'text', 'double precision[]', 'text'],
+  kb_admin_doc_mark_checked: ['uuid', 'text', 'uuid'],
+  kb_admin_doc_publish: ['uuid', 'text', 'uuid', 'text'],
+  kb_admin_doc_restore: ['uuid', 'text', 'uuid', 'text'],
+  kb_admin_doc_discard: ['uuid', 'text', 'uuid'],
+  kb_admin_doc_retire: ['uuid', 'text', 'uuid', 'text'],
+  // Read-only searches (011, 014): what the bot's search would return with a
+  // staged batch in place, and what it returns now.
+  kb_admin_match_with_batch: ['uuid', 'text', 'uuid', 'vector', 'text', 'text', 'text', 'integer', 'double precision'],
+  kb_admin_match_live: ['uuid', 'text', 'vector', 'text', 'text', 'text', 'integer', 'double precision'],
 } as const;
 export type WriteFunction = keyof typeof WRITE_FUNCTIONS;
+
+/** The two that return rows, not one value: their rows come back as one jsonb array. */
+export const ROW_FUNCTIONS: readonly WriteFunction[] = ['kb_admin_match_with_batch', 'kb_admin_match_live'];
 
 /** The exact text of the one statement allowed for a function. Every value is
  *  a bound, typed parameter ($1::uuid ...); nothing is ever spliced in. */
 export function writeStatement(fn: WriteFunction): string {
-  const args = WRITE_FUNCTIONS[fn].map((type, i) => `$${i + 1}::${type}`);
-  return `select public.${fn}(${args.join(', ')}) as result`;
+  const args = WRITE_FUNCTIONS[fn].map((type, i) => `$${i + 1}::${type}`).join(', ');
+  if (ROW_FUNCTIONS.includes(fn)) return `select coalesce(jsonb_agg(to_jsonb(m)), '[]'::jsonb) as result from public.${fn}(${args}) m`;
+  return `select public.${fn}(${args}) as result`;
 }
 
-/** True only for exactly one of the six statements above, character for character. */
+/** True only for exactly one of the statements above, character for character. */
 export function isAllowedWrite(query: string): boolean {
   return (Object.keys(WRITE_FUNCTIONS) as WriteFunction[]).some((fn) => writeStatement(fn) === query);
 }

@@ -29,18 +29,40 @@ Every credential is server-side (nothing is `NEXT_PUBLIC_`).
    embeddings), the rules, the access list, the version history, the audit log and the
    canary. Every query runs inside `BEGIN READ ONLY`; `lib/db.ts` exports `select` only.
 3. **`kb_admin_editor`** (only when the editor is on) - holds **no table privilege at all**.
-   It can do one thing: EXECUTE five database functions, `kb_admin_save_draft`,
-   `kb_admin_publish`, `kb_admin_discard_draft`, `kb_admin_restore` and `kb_admin_toggle`.
-   Those are SECURITY DEFINER, owned by the NOLOGIN role `kb_admin_fn_owner`, and enforce
-   every rule themselves: the caller's role, the 1200-character limit, no NRIC/FIN, which
-   changes need an approver, stale drafts, the canary, and an audit row for each write.
-   `lib/write.ts` exports only `callWrite`, which sends one of those five fixed statements.
+   It can do one thing: EXECUTE sixteen database functions (`lib/access.ts`
+   `WRITE_FUNCTIONS`), all SECURITY DEFINER and owned by NOLOGIN roles:
+   - Q&A entries (owner `kb_admin_fn_owner`, migrations 004 and 008): `kb_admin_save_draft`,
+     `kb_admin_publish`, `kb_admin_discard_draft`, `kb_admin_restore`, `kb_admin_toggle`,
+     `kb_admin_create_entry`;
+   - documents (owner `kb_admin_doc_owner`, migrations 011 and 014): `kb_admin_doc_upload`,
+     `kb_admin_doc_stage`, `kb_admin_doc_edit_chunk`, `kb_admin_doc_mark_checked`,
+     `kb_admin_doc_publish`, `kb_admin_doc_restore`, `kb_admin_doc_discard`,
+     `kb_admin_doc_retire`, and two read-only searches, `kb_admin_match_with_batch` and
+     `kb_admin_match_live`.
+   They enforce every rule themselves: the caller's role, the character limits, no
+   NRIC/FIN, which changes need an approver, stale drafts and impact checks, the canary,
+   and an audit row for each write. `lib/write.ts` exports only `callWrite`, which sends
+   one of those sixteen fixed statements.
 4. The embedding key (only when the editor is on), to embed an entry's new text.
 5. The bot's **preview secret**, for Test a question.
 
-It holds no service-role key and no LLM key. Nothing it does can touch a document
-chunk, the rules, the access list or anything outside Q&A entries - the database
-refuses, whatever the app sends.
+It holds no service-role key and no LLM key. Nothing it does can touch the rules, the
+access list, a Q&A entry outside the Q&A functions, or a document chunk outside the
+document functions (which never touch a Q&A row, never delete, and switch rows on and off
+only by publish, restore and retire) - the database refuses, whatever the app sends.
+
+### Documents (Phase 3 scope B)
+
+Upload a .docx, .md or .txt file (4 MB at most; never PDF) on **Knowledge base → Upload
+document**. Preview chunks it (`lib/chunker.ts`) and shows warnings - facts the live rows
+state that the upload drops, older facts it brings back (`lib/facts.ts`), staff wording,
+Q&A entries left alone, an imported document being re-split - and saves nothing. Prepare
+stores the file, embeds the ticked chunks as heading + newline + content, and stages them.
+The impact check runs the 42 probe questions through the bot's search now and with the
+batch in place, with the bot's own filtering and reranking (`lib/retrieval.ts`, proved
+identical to `rag.py` by `scripts/check_rerank_parity.py`). An approver publishes once
+the check is recorded. The first replacement of an imported document records its
+imported chunks as an earlier version, so they can be restored.
 
 ### The editor is off unless all of its settings are set
 
@@ -108,7 +130,7 @@ the page off.
 
 ## The database side
 
-`scripts/sql/kb_admin_001` … `007`, applied in order with
+`scripts/sql/kb_admin_001` … `014`, applied in order with
 `python scripts/apply_sql.py --expect-ref <project ref> <file>`; 007 only checks. 001
 records the Phase 1 read-only setup and changes nothing where it already exists. After
 005, set the editor's password by hand (`ALTER ROLE kb_admin_editor PASSWORD '…' VALID
@@ -117,7 +139,7 @@ UNTIL 'infinity'`) - the file's placeholder is already expired. Then seed the ca
 ## Self-check
 
 `npm run selfcheck` fails if any source file names a write verb or a `kb_admin_*` function
-outside the five allowed call sites, the Supabase data API, a service-role key or
+outside the sixteen allowed functions and two action modules, the Supabase data API, a service-role key or
 `NEXT_PUBLIC_`; if `lib/db.ts` exports anything but `select`; if a page, API route or
 server action skips the auth or role check; if a form reads its state without a default
 (it is `undefined` after a redirect); if `.env.local` is tracked or any secret in it

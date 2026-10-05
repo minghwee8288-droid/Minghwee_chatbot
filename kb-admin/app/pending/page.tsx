@@ -1,12 +1,12 @@
 import Link from 'next/link';
 import { Shell } from '@/components/Shell';
-import { label } from '@/components/labels';
+import { documentLabel, label } from '@/components/labels';
 import { AmberNotice, PageHeader, Pill, formatDate, previewText } from '@/components/ui';
 import { requireViewer } from '@/lib/auth';
 import { APPROVAL_WORDS, approvalReasons } from '@/lib/editing';
-import { openDrafts } from '@/lib/queries';
+import { batchesAwaitingApproval, openDrafts } from '@/lib/queries';
 
-/** Every open draft. Approvers open one and publish it; the list itself changes nothing. */
+/** Every open draft, and every document version whose impact check is recorded. Approvers open one and publish it; the list itself changes nothing. */
 export default async function PendingPage() {
   const viewer = await requireViewer();
   if (!viewer.canApprove) {
@@ -17,10 +17,45 @@ export default async function PendingPage() {
       </Shell>
     );
   }
-  const drafts = await openDrafts();
+  const [drafts, batches] = await Promise.all([openDrafts(), batchesAwaitingApproval()]);
   return (
     <Shell viewer={viewer} active="/pending">
-      <PageHeader title="Pending approval" sub={`${drafts.length} open draft${drafts.length === 1 ? '' : 's'}, oldest first.`} />
+      <PageHeader
+        title="Pending approval"
+        sub={`${drafts.length} open draft${drafts.length === 1 ? '' : 's'} and ${batches.length} document version${batches.length === 1 ? '' : 's'}, oldest first.`}
+      />
+      <h2 className="text-[15px] font-semibold">Documents checked and waiting to be published</h2>
+      {batches.length ? (
+        <div className="card tbl-wrap">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Document</th>
+                <th className="num">Chunks</th>
+                <th>Prepared by</th>
+                <th>Impact check</th>
+              </tr>
+            </thead>
+            <tbody>
+              {batches.map((b) => (
+                <tr key={b.id} data-batch={b.id}>
+                  <td>
+                    <Link href={`/documents/batches/${b.id}`} className="link font-medium" title={b.source_name}>
+                      {documentLabel(b.source_name)}
+                    </Link>
+                  </td>
+                  <td className="num mono">{b.chunk_count}</td>
+                  <td>{b.prepared_by_email}</td>
+                  <td className="mono whitespace-nowrap text-[12px]">{formatDate(b.impact_check_run_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="card card-pad text-[13px] text-muted">No document version is waiting.</div>
+      )}
+      <h2 className="text-[15px] font-semibold">Q&amp;A drafts</h2>
       {drafts.length ? (
         <div className="card tbl-wrap">
           <table className="tbl">

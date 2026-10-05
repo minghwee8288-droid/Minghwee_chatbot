@@ -462,6 +462,14 @@ body {
     border-radius: 3px;
   }
 
+  /* A figure in document text: every number the bot could quote. */
+  .figure {
+    background: var(--warn-bg);
+    color: var(--warn);
+    border-radius: 3px;
+    padding: 0 2px;
+  }
+
   /* Score strip (Test a question) -------------------------------------- */
   .strip {
     border-radius: 8px;

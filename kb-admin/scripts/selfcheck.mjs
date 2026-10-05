@@ -99,11 +99,19 @@ console.log('forms:');
   }
 }
 
-console.log('writes (Phase 2 editor):');
-// The ONLY writes: one of six SECURITY DEFINER functions, called from one
-// module, as one exact statement each. Everything else stays refused above.
-// The five of migration 004, plus kb_admin_create_entry (migration 008).
-const SIX = ['kb_admin_create_entry', 'kb_admin_discard_draft', 'kb_admin_publish', 'kb_admin_restore', 'kb_admin_save_draft', 'kb_admin_toggle'];
+console.log('writes (Phase 2 editor, Phase 3 documents):');
+// The ONLY writes: one of sixteen SECURITY DEFINER functions, called from two
+// action modules, as one exact statement each. Everything else stays refused
+// above. The five of migration 004, kb_admin_create_entry (008), the nine
+// document functions (011) and kb_admin_match_live (014).
+const SIXTEEN = [
+  'kb_admin_create_entry', 'kb_admin_discard_draft', 'kb_admin_doc_discard', 'kb_admin_doc_edit_chunk',
+  'kb_admin_doc_mark_checked', 'kb_admin_doc_publish', 'kb_admin_doc_restore', 'kb_admin_doc_retire',
+  'kb_admin_doc_stage', 'kb_admin_doc_upload', 'kb_admin_match_live', 'kb_admin_match_with_batch',
+  'kb_admin_publish', 'kb_admin_restore', 'kb_admin_save_draft', 'kb_admin_toggle',
+];
+const SIX = SIXTEEN; // the name the checks below grew up with
+const ACTION_FILES = ['app/docs/actions.ts', 'app/editor/actions.ts'];
 const ROLE_NAMES = new Set(['kb_admin_reader', 'kb_admin_editor']);
 const named = new Map();
 for (const f of code) {
@@ -112,24 +120,43 @@ for (const f of code) {
   }
 }
 const strays = [...named.keys()].filter((n) => !SIX.includes(n));
-check('the only kb_admin_* functions named are the six', strays.length === 0, strays.map((n) => `${n} in ${named.get(n)[0]}`).join(', '));
+check('the only kb_admin_* functions named are the sixteen', strays.length === 0, strays.map((n) => `${n} in ${named.get(n)[0]}`).join(', '));
 const writeTs = src('lib/write.ts');
 check('lib/write.ts exports callWrite and nothing else', exportsOf(writeTs).join(',') === 'callWrite', exportsOf(writeTs).join(','));
 check('lib/write.ts sends only writeStatement(fn), after isAllowedWrite()',
   /const statement = writeStatement\(fn\);/.test(writeTs) && /if \(!isAllowedWrite\(statement\)/.test(writeTs) &&
-  (writeTs.match(/\.unsafe\(/g) ?? []).length === 1 && /\.unsafe\(statement, params\)/.test(writeTs) && !/\.begin\(|sql\(\)`/.test(writeTs));
+  (writeTs.match(/\.unsafe\(/g) ?? []).length === 1 && /\.unsafe\(statement, params( as postgres\.ParameterOrJSON<never>\[\])?\)/.test(writeTs) && !/\.begin\(|sql\(\)`/.test(writeTs));
 const pgUsers = code.filter((f) => /from 'postgres'/.test(readFileSync(f, 'utf8'))).map(rel).sort();
 check('only lib/db.ts and lib/write.ts open a database connection', pgUsers.join(',') === 'lib/db.ts,lib/write.ts', pgUsers.join(','));
 const writeUsers = code.filter((f) => /from '@\/lib\/write'|from '\.\.?\/.*write'/.test(readFileSync(f, 'utf8'))).map(rel);
-check('only app/editor/actions.ts calls lib/write.ts', writeUsers.join(',') === 'app/editor/actions.ts', writeUsers.join(','));
+check('only the two action modules call lib/write.ts', writeUsers.sort().join(',') === ACTION_FILES.join(','), writeUsers.join(','));
 const actionsSrc = src('app/editor/actions.ts');
-check("app/editor/actions.ts is a 'use server' module", /^'use server';/.test(actionsSrc));
-const actionFns = [...actionsSrc.matchAll(/export async function (\w+)\([^)]*\)[^{]*\{\s*\n\s*(.*)/g)];
-const unguarded = actionFns.filter((m) => m[2].trim() !== 'const auth = await actorForWrite();').map((m) => m[1]);
-check('every server action checks the session and role first (actorForWrite)', actionFns.length === 6 && unguarded.length === 0,
-  `${actionFns.length} action(s)${unguarded.length ? `; unguarded: ${unguarded.join(', ')}` : ''}`);
+for (const file of ACTION_FILES) {
+  const text = src(file);
+  check(`${file} is a 'use server' module`, /^'use server';/.test(text));
+  const fns = [...text.matchAll(/export async function (\w+)\([^)]*\)[^{]*\{\s*\n\s*(.*)/g)];
+  const unguarded = fns.filter((m) => m[2].trim() !== 'const auth = await actorForWrite();').map((m) => m[1]);
+  const expected = file === 'app/editor/actions.ts' ? 6 : 9;
+  check(`every server action in ${file} checks the session and role first (actorForWrite)`, fns.length === expected && unguarded.length === 0,
+    `${fns.length} action(s)${unguarded.length ? `; unguarded: ${unguarded.join(', ')}` : ''}`);
+}
+const docActions = src('app/docs/actions.ts');
+const bodyOf = (fn) => {
+  const start = docActions.indexOf(`export async function ${fn}`);
+  const next = docActions.indexOf('export async function', start + 10);
+  return start < 0 ? '' : docActions.slice(start, next < 0 ? undefined : next);
+};
+for (const fn of ['publishBatch', 'restoreBatch', 'retireDocument']) {
+  const body = bodyOf(fn);
+  check(`${fn} checks canApprove before calling the database`,
+    body.indexOf('actor.canApprove') > 0 && body.indexOf('actor.canApprove') < body.indexOf('callWrite('));
+}
+for (const fn of ['previewDocument', 'runImpactCheck']) {
+  const calls = [...bodyOf(fn).matchAll(/callWrite[^(]*\(\s*'(\w+)'/g)].map((m) => m[1]);
+  check(`${fn} calls no function that writes`, calls.every((c) => c.startsWith('kb_admin_match_')), calls.join(',') || 'none');
+}
 const otherServer = code.filter((f) => /^'use server';/.test(readFileSync(f, 'utf8'))).map(rel).sort();
-check("no other 'use server' module than sign-in and the editor", otherServer.join(',') === 'app/editor/actions.ts,app/login/actions.ts', otherServer.join(','));
+check("no other 'use server' module than sign-in, the editor and documents", otherServer.join(',') === 'app/docs/actions.ts,app/editor/actions.ts,app/login/actions.ts', otherServer.join(','));
 const toggleSrc = actionsSrc.slice(actionsSrc.indexOf('export async function toggleEntry'));
 check('switching on/off also checks canApprove before calling the database',
   toggleSrc.indexOf('actor.canApprove') > 0 && toggleSrc.indexOf('actor.canApprove') < toggleSrc.indexOf("callWrite('kb_admin_toggle'"));
@@ -205,7 +232,7 @@ for (const envName of ['.env.local', '.env.test.local']) {
 
 console.log('behaviour:');
 const { validateConfig } = await import(pathToFileURL(join(ROOT, 'lib/config.ts')).href);
-const { decideAccess, denialPath, isSingleRead, secondsLeft, canEdit, canApprove, isAllowedWrite, writeStatement, WRITE_FUNCTIONS } =
+const { decideAccess, denialPath, isSingleRead, secondsLeft, canEdit, canApprove, isAllowedWrite, writeStatement, WRITE_FUNCTIONS, ROW_FUNCTIONS } =
   await import(pathToFileURL(join(ROOT, 'lib/access.ts')).href);
 const E = await import(pathToFileURL(join(ROOT, 'lib/editing.ts')).href);
 
@@ -304,10 +331,14 @@ check('token expiry read', secondsLeft(jwt({ exp: now + 300 }), now) === 300);
 check('garbage token reads as expired', secondsLeft('garbage', now) < 0);
 
 console.log('behaviour - writes:');
-check('exactly the six functions are allowed', Object.keys(WRITE_FUNCTIONS).sort().join(',') === SIX.join(','), Object.keys(WRITE_FUNCTIONS).sort().join(','));
-check('each of the six statements is allowed', SIX.every((fn) => isAllowedWrite(writeStatement(fn))));
+check('exactly the sixteen functions are allowed', Object.keys(WRITE_FUNCTIONS).sort().join(',') === SIX.join(','), Object.keys(WRITE_FUNCTIONS).sort().join(','));
+check('each of the sixteen statements is allowed', SIX.every((fn) => isAllowedWrite(writeStatement(fn))));
+const bound = (fn) => WRITE_FUNCTIONS[fn].map((t, i) => `$${i + 1}::${t}`).join(', ');
 check('every statement binds every value ($n) and splices nothing',
-  SIX.every((fn) => writeStatement(fn) === `select public.${fn}(${WRITE_FUNCTIONS[fn].map((t, i) => `$${i + 1}::${t}`).join(', ')}) as result`));
+  SIX.every((fn) => writeStatement(fn) === (ROW_FUNCTIONS.includes(fn)
+    ? `select coalesce(jsonb_agg(to_jsonb(m)), '[]'::jsonb) as result from public.${fn}(${bound(fn)}) m`
+    : `select public.${fn}(${bound(fn)}) as result`)));
+check('only the two searches return rows', ROW_FUNCTIONS.slice().sort().join(',') === 'kb_admin_match_live,kb_admin_match_with_batch');
 // Built from pieces so this file itself names no write verb.
 const verb = (a, b) => a + b;
 const refusedWrites = [
@@ -325,20 +356,26 @@ const refusedWrites = [
 ];
 check('anything else is refused (internal helpers, a second statement, raw writes, reads)', refusedWrites.every((w) => !isAllowedWrite(w)),
   refusedWrites.filter((w) => isAllowedWrite(w)).join(' | '));
-// The code's six signatures are the six the database grants to kb_admin_editor:
-// five in migration 005, kb_admin_create_entry in migration 008.
-const grantFile = resolve(ROOT, '..', 'scripts', 'sql', 'kb_admin_005_editor_login.sql');
-const grantFile008 = resolve(ROOT, '..', 'scripts', 'sql', 'kb_admin_008_create_entry.sql');
-if (existsSync(grantFile) && existsSync(grantFile008)) {
-  const sig = (m) => `${m[1]}(${m[2].replace(/\s+/g, '')})`;
-  const granted005 = [...readFileSync(grantFile, 'utf8').matchAll(/public\.(kb_admin_\w+)\(([^)]*)\)/g)].map(sig);
-  const granted008 = [...readFileSync(grantFile008, 'utf8')
-    .matchAll(/grant execute on function\s+public\.(kb_admin_\w+)\(([^)]*)\)\s+to kb_admin_editor/g)].map(sig);
-  const granted = [...granted005, ...granted008].sort().join(' ');
-  const ours = SIX.map((fn) => `${fn}(${WRITE_FUNCTIONS[fn].join(',')})`).sort().join(' ');
-  check('the six signatures match the kb_admin_editor grants (kb_admin_005 + kb_admin_008)', granted === ours, granted);
+// The code's sixteen signatures are the sixteen the database grants to
+// kb_admin_editor: five in 005, one in 008, nine in 011, one in 014 (014 also
+// grants kb_admin_doc_publish again, which it replaces).
+const sqlDir = resolve(ROOT, '..', 'scripts', 'sql');
+const grantFiles = ['kb_admin_005_editor_login.sql', 'kb_admin_008_create_entry.sql', 'kb_admin_011_doc_functions.sql', 'kb_admin_014_live_match_baseline.sql'];
+if (grantFiles.every((f) => existsSync(join(sqlDir, f)))) {
+  const norm = (t) => t.replace(/\s+/g, '').replace(/float8\[\]/g, 'doubleprecision[]').replace(/doubleprecision/g, 'double precision');
+  const sig = (m) => `${m[1]}(${norm(m[2])})`;
+  const granted = new Set();
+  for (const m of readFileSync(join(sqlDir, grantFiles[0]), 'utf8').matchAll(/public\.(kb_admin_\w+)\(([^)]*)\)/g)) granted.add(sig(m));
+  for (const f of grantFiles.slice(1)) {
+    for (const block of readFileSync(join(sqlDir, f), 'utf8').matchAll(/grant execute on function([\s\S]*?)to kb_admin_editor/g)) {
+      for (const m of block[1].matchAll(/public\.(kb_admin_\w+)\(([^)]*)\)/g)) granted.add(sig(m));
+    }
+  }
+  const ours = SIX.map((fn) => `${fn}(${norm(WRITE_FUNCTIONS[fn].join(','))})`).sort().join(' ');
+  const theirs = [...granted].sort().join(' ');
+  check('the sixteen signatures match the kb_admin_editor grants (005, 008, 011, 014)', theirs === ours, theirs);
 } else {
-  console.log('  (kb_admin_005 / kb_admin_008 SQL not found - grant comparison skipped)');
+  console.log('  (grant SQL files not found - grant comparison skipped)');
 }
 
 console.log('behaviour - editor settings:');
@@ -504,6 +541,47 @@ console.log('behaviour - document chunker (Phase 3 scope B):');
     lost2.map((f) => `${f.kind}:${f.fact}`).join(','));
   check('lib/facts.ts reaches no database, network or environment',
     !/from '(postgres|\.\/db|\.\/write|\.\/env|\.\/embed)'|fetch\(|process\.env/.test(src('lib/facts.ts')));
+}
+
+console.log('behaviour - document upload rules and the impact check (Phase 3 scope B, session 3):');
+{
+  const D = await import(pathToFileURL(join(ROOT, 'lib/documents.ts')).href);
+  check('the upload cap is 4 MB', D.MAX_UPLOAD_BYTES === 4 * 1024 * 1024 && D.fileProblem('a.md', 4 * 1024 * 1024) === null &&
+    /4 MB/.test(D.fileProblem('a.md', 4 * 1024 * 1024 + 1) ?? ''));
+  check('a PDF is refused before upload', /PDF/.test(D.fileProblem('report.pdf', 100) ?? ''));
+  check('only .docx, .md and .txt upload', D.fileProblem('a.docx', 9) === null && D.fileProblem('a.txt', 9) === null && D.fileProblem('a.doc', 9) !== null);
+  const refusedNames = ['MingHwee Hiring Pipelines Brief.docx', 'MHOS-100_Product_Blueprint', 'Notes for Vendor.md', 'Some Internal Notes',
+    'Ming Hwee Service Notes', 'ming_hwee-kb  admin', ''];
+  check('internal, reserved and empty source names are refused (the database rules)', refusedNames.every((n) => D.sourceProblem(n) !== null),
+    refusedNames.filter((n) => D.sourceProblem(n) === null).join(' | '));
+  check('ordinary source names are accepted', ['KB admin test document.md', 'Ming_Hwee_Helper_Expectation_Checklist.docx'].every((n) => D.sourceProblem(n) === null));
+  check('chunks are embedded as heading + newline + content', D.embeddingText('Fees', 'Agency fee $1,428') === 'Fees\nAgency fee $1,428' &&
+    D.embeddingText(null, 'x') === 'x');
+  check('staff wording is flagged, client wording is not', D.internalMarkers('Owner: Sales | SLA 24h').length === 2 &&
+    D.internalMarkers('The agency fee is $1,428 and your helper starts in 4 to 6 weeks.').length === 0);
+  check('figures are found for highlighting', D.figureParts('Fee $1,428 in 2 weeks').filter((p) => p.figure).map((p) => p.text).join('|') === '$1,428|2');
+  const w = D.factWarnings([{ section_heading: 'A', content: 'Call +65 6111 2222 within 1 to 2 weeks.' }],
+    [{ section_heading: 'A', content: 'Call +65 6999 8888 within 2-3 weeks.' }]);
+  check('lost and stale facts both found', w.lost.some((f) => f.fact === '61112222') && w.stale.some((f) => f.fact === '2-3 weeks'),
+    `${w.lost.map((f) => f.fact)} / ${w.stale.map((f) => f.fact)}`);
+
+  const R = await import(pathToFileURL(join(ROOT, 'lib/retrieval.ts')).href);
+  const rows = [
+    { id: 'a', similarity: 0.6, source_document: 'MingHwee Hiring Pipelines Brief.docx', metadata: {} },
+    { id: 'b', similarity: 0.55, source_document: 'x.md', metadata: { priority: 3 } },
+    { id: 'c', similarity: 0.53, source_document: 'x.md', metadata: { priority: 1 } },
+    { id: 'd', similarity: 0.41, source_document: 'x.md', rag_score_floor: '0.420' },
+    { id: 'e', similarity: 0.5, source_document: 'x.md', chunk_type: 'style_example' },
+  ];
+  check('the bot\'s rerank: internal, style and below-floor rows dropped, priority 1 lifted', R.botTop(rows).map((r) => r.id).join('') === 'cb',
+    R.botTop(rows).map((r) => r.id).join(''));
+  check('the search over-fetches 10 for 5, threshold 0.35, soft floor 0.40', R.FETCH_COUNT === 10 && R.MATCH_COUNT === 5 &&
+    R.MATCH_THRESHOLD === 0.35 && R.SOFT_FLOOR === 0.4);
+  const row = (id, s, figures = false) => ({ id, similarity: s, figures, source_document: 'x', section_heading: null, chunk_type: 'document_chunk', from_batch: false, preview: '' });
+  const cmp = R.compareProbe({ question: 'q', service: null, audience: null, nationality: null },
+    [row('a', 0.6), row('b', 0.5)], [row('a', 0.39), row('n', 0.38, true)]);
+  check('the comparison finds rows entering and leaving, a weak best score, a new figure row',
+    cmp.entering.join() === 'n' && cmp.leaving.join() === 'b' && cmp.weakAfter && cmp.newFigures.join() === 'n');
 }
 
 console.log(failures ? `RESULT: ${failures} FAIL(S)` : 'RESULT: ALL PASS');

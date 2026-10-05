@@ -50,3 +50,12 @@ export function label(kind: LabelKind, code: string | null | undefined): string 
   if (kind === 'service') return serviceLabel(code);
   return NAMES[kind][code] ?? code;
 }
+
+/** A document version's status, as a reviewer reads it. */
+export const BATCH_STATUS: Record<string, { text: string; tone: 'good' | 'warn' | 'bad' | 'off' | 'lock' }> = {
+  staged: { text: 'Being prepared', tone: 'warn' },
+  published: { text: 'Live', tone: 'good' },
+  superseded: { text: 'Earlier version', tone: 'off' },
+  discarded: { text: 'Discarded', tone: 'off' },
+  retired: { text: 'Retired', tone: 'bad' },
+};

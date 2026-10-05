@@ -9,6 +9,13 @@ const nextConfig = {
     // Runs instrumentation.ts at server start, which validates the environment
     // and refuses to start against the wrong project.
     instrumentationHook: true,
+    // Document upload (lib/documents.ts MAX_UPLOAD_BYTES = 4 MB) sends the file
+    // in a server action. Vercel refuses a request body over about 4.5 MB, so
+    // this matches it: a 4 MB file plus the form's other fields fits, and
+    // anything bigger is refused here rather than half-way through.
+    serverActions: {
+      bodySizeLimit: '4.5mb',
+    },
   },
   async headers() {
     return [

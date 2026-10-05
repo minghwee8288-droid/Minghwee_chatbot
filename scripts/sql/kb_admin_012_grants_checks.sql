@@ -134,7 +134,8 @@ end
 $$;
 
 -- -----------------------------------------------------------------------------
--- 3. kb_admin_editor: EXECUTE on exactly 15 functions, no table, no helper
+-- 3. kb_admin_editor: EXECUTE on exactly 16 functions, no table, no helper
+--    (6 Q&A + 9 document from 011 + kb_admin_match_live from 014)
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -153,7 +154,8 @@ declare
         'kb_admin_doc_restore(uuid,text,uuid,text)',
         'kb_admin_doc_discard(uuid,text,uuid)',
         'kb_admin_doc_retire(uuid,text,uuid,text)',
-        'kb_admin_match_with_batch(uuid,text,uuid,vector,text,text,text,integer,double precision)'];
+        'kb_admin_match_with_batch(uuid,text,uuid,vector,text,text,text,integer,double precision)',
+        'kb_admin_match_live(uuid,text,vector,text,text,text,integer,double precision)'];
     got text[];
     t record;
 begin
@@ -171,7 +173,7 @@ begin
             raise exception 'FAIL: kb_admin_editor holds a privilege on public.%', t.relname;
         end if;
     end loop;
-    raise notice 'PASS: kb_admin_editor executes exactly 15 functions (6 Q&A + 9 document) and holds no table privilege';
+    raise notice 'PASS: kb_admin_editor executes exactly 16 functions (6 Q&A + 9 document + live match) and holds no table privilege';
 end
 $$;
 
@@ -305,7 +307,7 @@ begin
                     pg_get_userbyid(pr.proowner) owner, pr.proconfig
                from pg_proc pr join pg_namespace n on n.oid = pr.pronamespace
               where n.nspname = 'public' and (pr.proname like 'kb\_admin\_doc\_%' or pr.proname like 'kb\_admin\_\_doc\_%'
-                                              or pr.proname = 'kb_admin_match_with_batch') loop
+                                              or pr.proname in ('kb_admin_match_with_batch', 'kb_admin_match_live')) loop
         if p.owner <> 'kb_admin_doc_owner' then raise exception 'FAIL: % owned by %', p.sig, p.owner; end if;
         if not exists (select 1 from unnest(p.proconfig) x where x like 'search_path=%pg_temp%') then
             raise exception 'FAIL: % has no pinned search_path', p.sig;
