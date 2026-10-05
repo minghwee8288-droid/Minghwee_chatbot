@@ -97,7 +97,9 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
   sql/               kb_rules_001_create, kb_rules_002_seed, kb_owner_001_tag_loader,
                      kb_admin_001..007 (kb-admin Phase 1 recorded + the Q&A editor;
                      007 is checks only), kb_admin_008 (add a new Q&A entry;
-                     on TEST and production) — applied ONLY via
+                     on TEST and production), kb_admin_009..013 (document
+                     upload: tables, kb_admin_doc_owner, nine functions,
+                     checks, probe seed; TEST only so far) — applied ONLY via
                      apply_sql.py --expect-ref <project ref>
   seed_kb_canary.py  writes (never applies) the SQL seeding cb_kb_canary with the bot's
                      own embed_query; kb-admin must reproduce that vector to publish
@@ -459,6 +461,7 @@ because the lead is opened early and the ticket is created much later.
 | The pricing rules have ONE reader, and a bad table can never widen or empty them | `app/services/kb_rules.py` + `cb_kb_rules` | `FEE_STATED_SERVICES`, `COST_WITHHELD_SERVICES`, `FEE_BY_NATIONALITY` and the salary floor moved out of four files into one table, so the KB Admin UI can change a price policy without a deploy. Callers read a validated in-memory snapshot and never the database. An empty, half-read or invalid table is REFUSED whole and the last good set stays in force, else the code defaults — "withhold everything" would also switch off the retrieval filter that keeps $695 out of a $450 passport renewal. `fee_enquiry` is withheld and locked in the table itself; `transfer`/`transfer_employer` are one switch, enforced by a commit-time trigger. |
 | kb-admin writes a Q&A entry only through five database functions | `scripts/sql/kb_admin_004` + `kb_admin_005` + `kb-admin/scripts/selfcheck.mjs` | `kb_admin_editor` has no table privilege; the functions (owned by NOLOGIN `kb_admin_fn_owner`) check the person's role, 1200 chars, NRIC, approval, stale drafts and the canary, and write `cb_kb_audit`. Their UPDATE policy is limited to `chunk_type = 'qa_pair'`. Proved on TEST in one rolled-back transaction, and `007` re-checks the grants wherever it runs. |
 | A Q&A entry added in kb-admin is invisible to the bot until an approver publishes it | `scripts/sql/kb_admin_008` (`kb_admin_create_entry`) + its INSERT policy | The new row is inserted switched off, with no embedding and NO question/answer/content - the text lives in a version-2 draft over a version-1 baseline of the empty row. That is what lets the unchanged `kb_admin_publish` work: it sees the text change, demands a vector (KB005), and switching on needs an approver. The owner's INSERT is ten columns (never question, answer, content or embedding) and RLS admits only an inactive, text-less `qa_pair` from `Ming Hwee KB Admin` tagged `managed_by: ui`. kb-admin hides "Switch on" on such an entry. `007`'s INSERT check uses `has_table_privilege`, which does not see column grants; `008` checks the exact surface itself. |
+| A document version reaches the live table only through an approver's publish, and never touches a Q&A row | `scripts/sql/kb_admin_009`-`011` (`kb_admin_doc_*`, owned by NOLOGIN `kb_admin_doc_owner`) | Upload, stage and edit write only the four new tables, which the bot never reads (012 proves a staged chunk with a perfect-match vector is invisible to `cb_match_knowledge_base_updated`). Publish needs an approver, a recorded impact check whose batch hash still matches, and every vector from the canary's model. It inserts the chunks as `document_chunk` (the live CHECK has no `passage`) or `table_unit`, and switches off - never deletes - every other active `document_chunk`/`table_unit` row of the same `source_document`, imported ones included, stamping them `managed_by: ui`. RLS limits the owner to `document_chunk`/`table_unit` rows: it can never update or insert a `qa_pair`, nor insert under 'Ming Hwee Service Notes' or 'Ming Hwee KB Admin'; it UPDATEs only `is_active` and `metadata`, and never DELETEs. `source_name` IS the live `source_document` string. Upload refuses the bot's internal sources (`rag._INTERNAL_SOURCES`, mirrored in SQL). |
 | The loader never overwrites the KB Admin UI | `load_service_notes._ui_owned` + `metadata.managed_by` | Every row is `loader` or `ui`. All four write paths (ROWS, UPDATES, TEXT_REPLACEMENTS, RETIRED) skip and report a `ui` row — without it the first loader run after the UI went live would silently undo the client's edits, because three of the four find their targets by searching. Proved by RUNNING the loader against a stub DB holding one, in `selfcheck_kb_prep.py`. |
 | Nobody without the preview key learns anything from the preview route | `main.create_app` + `admin.require_preview_key` + `selfcheck_kb_prep.py` | No secret: the route is not registered (404, absent from the schema). With one, the key is a route dependency and the body is NOT a declared parameter - FastAPI decodes a declared body before dependencies, so malformed JSON answered 422 to anyone. 422 is now only ever seen by a key holder. Rate-limited, one at a time, 32 KB cap. Proved over HTTP, eight faults injected, eight red. |
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
@@ -1277,7 +1280,7 @@ docker compose logs chatbot | grep "Safety gate"
 # diagnostics (all read-only)
 python scripts/smoke_nodes.py          # RUNS each node with the LLM and DB stubbed. Run this FIRST.
 python scripts/selfcheck_reset_ui.py   # reset-ui/ still clears what reset_conversation.py clears
-(cd kb-admin && npm run selfcheck)     # kb-admin: writes only via the six functions, auth and role
+(cd kb-admin && npm run selfcheck)     # kb-admin: writes only via its kb_admin_* functions, auth and role
                                        #   on every route and action, no secret leaked
 (cd kb-admin && npm run dev:test)      # kb-admin on 5177 against TEST (.env.test.local)
 python scripts/selfcheck_flows.py      # behavioural assertions; also runs IN the container:
@@ -1400,6 +1403,57 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-01** - **kb-admin Phase 3 scope B, session 1: the database layer for
+  document upload. SQL only, on TEST only; production waits on a go-word.** No bot
+  code and no kb-admin code changed. The bot reads none of the new tables.
+  (A) **`kb_admin_009`**: `cb_kb_documents`, `cb_kb_batches`, `cb_kb_staged_chunks`,
+  `cb_kb_probe_questions`. RLS on; nothing for anon / authenticated / service_role;
+  `kb_admin_reader` reads every column except `file_bytes` and `embedding`. A
+  passage is at most 1200 characters and a table 3000 - the bot's own
+  `rag_max_chunk_chars` / `rag_max_table_chars`. At most one staged and one
+  published batch per document. The audit CHECK gains seven document actions.
+  (B) **`kb_admin_010`**: `kb_admin_doc_owner`, NOLOGIN. On the live table it
+  holds 15 INSERT columns and 2 UPDATE columns (`is_active`, `metadata`), under
+  three RLS policies. `kb_admin_fn_owner` is unchanged; the new role gets EXECUTE
+  on four of its helpers (require_actor, refuse_nric, check_routing, numbers), so
+  the NRIC pattern and the role rule keep one definition.
+  (C) **`kb_admin_011`**: upload, stage, edit_chunk, mark_checked, publish,
+  restore, discard, retire, and `kb_admin_match_with_batch`. The last is read-only
+  and returns what the bot's search would return if the batch were published.
+  `kb_admin_editor` now executes 15 functions.
+  (D) **Departures from the brief, agreed before writing:**
+  - `passage` is published as `document_chunk`, since the live CHECK has no
+    `passage`.
+  - The owner may switch off imported (`managed_by: loader`) document chunks,
+    not only `ui` ones. All 270 imported chunks are `loader`, so the first upload
+    of an imported document could otherwise never retire its old version.
+  - A ninth function, `kb_admin_doc_mark_checked`, records the impact check.
+    Nothing else could, without making the simulation write.
+  - `source_name` is the exact live `source_document` string (the imported rows
+    use file names), plus an optional `display_label`.
+
+  Smaller ones:
+  - stage and edit take `p_model_name`, and staged chunks store `model_name`;
+  - no `cb_kb_entry_versions` grant, since no document function writes one;
+  - publish gives each live row its staged chunk's id, so restore needs no
+    lookup;
+  - 012 ends in ROLLBACK rather than READ ONLY, because its CHECK and
+    invisibility tests need real rows.
+  (E) **Verified on TEST**:
+  - 009-013 applied, each file's own checks PASS; 012 passes 7/7.
+  - 007 is still 10/10, and 013 is idempotent (42 probes).
+  - Every column of all 403 live rows is unchanged, and audit/version counts are
+    unchanged.
+  - Behaviour test, one transaction ending in ROLLBACK, on a real imported
+    source: **76/76**. Covered: every refusal code; upload, stage, simulate,
+    check, edit, publish, a second version, restore, discard and retire; a mixed
+    source (the FAQs document) whose Q&A pairs stay byte-identical; and direct
+    writes as the owner, refused by RLS.
+  - Eight injected faults: seven red. The eighth stays green by design, because
+    the second lock (RLS) holds; removing both locks is caught.
+  - Rollbacks 012 -> 009 dry-run in one rolled-back transaction, and 009's
+    refusal proved with a document present.
 
 - **2026-10-01** - **kb-admin Phase 3 scope A: add a new Q&A entry. On TEST and,
   since the same day, production.** No bot code changes: the bot still reads only
