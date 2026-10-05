@@ -464,7 +464,7 @@ because the lead is opened early and the ticket is created much later.
 | kb-admin writes a Q&A entry only through five database functions | `scripts/sql/kb_admin_004` + `kb_admin_005` + `kb-admin/scripts/selfcheck.mjs` | `kb_admin_editor` has no table privilege; the functions (owned by NOLOGIN `kb_admin_fn_owner`) check the person's role, 1200 chars, NRIC, approval, stale drafts and the canary, and write `cb_kb_audit`. Their UPDATE policy is limited to `chunk_type = 'qa_pair'`. Proved on TEST in one rolled-back transaction, and `007` re-checks the grants wherever it runs. |
 | A Q&A entry added in kb-admin is invisible to the bot until an approver publishes it | `scripts/sql/kb_admin_008` (`kb_admin_create_entry`) + its INSERT policy | The new row is inserted switched off, with no embedding and NO question/answer/content - the text lives in a version-2 draft over a version-1 baseline of the empty row. That is what lets the unchanged `kb_admin_publish` work: it sees the text change, demands a vector (KB005), and switching on needs an approver. The owner's INSERT is ten columns (never question, answer, content or embedding) and RLS admits only an inactive, text-less `qa_pair` from `Ming Hwee KB Admin` tagged `managed_by: ui`. kb-admin hides "Switch on" on such an entry. `007`'s INSERT check uses `has_table_privilege`, which does not see column grants; `008` checks the exact surface itself. |
 | A document version reaches the live table only through an approver's publish, and never touches a Q&A row | `scripts/sql/kb_admin_009`-`011` (`kb_admin_doc_*`, owned by NOLOGIN `kb_admin_doc_owner`) | Upload, stage and edit write only the four new tables, which the bot never reads (012 proves a staged chunk with a perfect-match vector is invisible to `cb_match_knowledge_base_updated`). Publish needs an approver, a recorded impact check whose batch hash still matches, and every vector from the canary's model. It inserts the chunks as `document_chunk` (the live CHECK has no `passage`) or `table_unit`, and switches off - never deletes - every other active `document_chunk`/`table_unit` row of the same `source_document`, imported ones included, stamping them `managed_by: ui`. RLS limits the owner to `document_chunk`/`table_unit` rows: it can never update or insert a `qa_pair`, nor insert under 'Ming Hwee Service Notes' or 'Ming Hwee KB Admin'; it UPDATEs only `is_active` and `metadata`, and never DELETEs. `source_name` IS the live `source_document` string. Upload refuses the bot's internal sources (`rag._INTERNAL_SOURCES`, mirrored in SQL). |
-| A document publish never strands the imported version, and the impact check ranks as the bot does | `kb_admin_014` (`kb_admin__doc_record_baseline`, `kb_admin_match_live`) + `kb-admin/lib/retrieval.ts` + `scripts/check_rerank_parity.py` | The first publish over an imported document records its live rows (in no batch) as a superseded baseline batch - same ids, text and vectors - so the unchanged `kb_admin_doc_restore` can switch them back on; afterwards only `is_active`, `metadata` (managed_by ui, restored_by_batch) and `updated_at` differ. "Now" in the impact check is the bot's exact live search, and the TS port of `_drop_non_evidence` / `_drop_internal` / `_enforce_row_floor` / `_rerank` must match Python exactly (5,000 generated cases). Chunks are embedded as `section_heading + "\n" + content`. |
+| A document publish never strands the imported version, and the impact check ranks as the bot does | `kb_admin_014` (`kb_admin__doc_record_baseline`, `kb_admin_match_live`) + `kb-admin/lib/retrieval.ts` + `scripts/check_rerank_parity.py` | The first publish over an imported document records its live rows (in no batch) as a superseded baseline batch - same ids, text and vectors - so the unchanged `kb_admin_doc_restore` can switch them back on; afterwards only `is_active`, `metadata` (managed_by ui, restored_by_batch) and `updated_at` differ. "Now" in the impact check is the bot's exact live search, and the TS port of `_drop_non_evidence` / `_drop_internal` / `_enforce_row_floor` / `_rerank` must match Python exactly (5,000 generated cases). Chunks are embedded as `section_heading + "\n" + content`. 009-014 are on TEST only. |
 | The loader never overwrites the KB Admin UI | `load_service_notes._ui_owned` + `metadata.managed_by` | Every row is `loader` or `ui`. All four write paths (ROWS, UPDATES, TEXT_REPLACEMENTS, RETIRED) skip and report a `ui` row — without it the first loader run after the UI went live would silently undo the client's edits, because three of the four find their targets by searching. Proved by RUNNING the loader against a stub DB holding one, in `selfcheck_kb_prep.py`. |
 | Nobody without the preview key learns anything from the preview route | `main.create_app` + `admin.require_preview_key` + `selfcheck_kb_prep.py` | No secret: the route is not registered (404, absent from the schema). With one, the key is a route dependency and the body is NOT a declared parameter - FastAPI decodes a declared body before dependencies, so malformed JSON answered 422 to anyone. 422 is now only ever seen by a key holder. Rate-limited, one at a time, 32 KB cap. Proved over HTTP, eight faults injected, eight red. |
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
@@ -1265,6 +1265,10 @@ at a time.
   nothing, her home-country agency may not — but only Ming Hwee can say so, and the
   new row deliberately does not deny the loan. **Does a helper placed by Ming Hwee
   carry a placement loan, and to whom?** See also §9.17.
+- **Corrected copies of the six original source documents** before any of them
+  is re-uploaded through kb-admin (2026-10-05, §11 session 3 (F)). The files on
+  hand predate the live corrections, and uploading them as they are would
+  publish the old figures again.
 - **What a helper can expect to earn.** *"What salary will I get"* scores **0.000** for a
   candidate - nothing in the KB answers it. The same missing grounded salary band as
   §9's entry above, from the other side of the desk.
@@ -1475,6 +1479,44 @@ Append here, newest first. One entry per behavioural change.
   - **Rerank parity:** exact on 5,000 cases; two injected faults break it.
   The stale-facts warning flagged the Checklist source's old WhatsApp number,
   which the live rows had already corrected.
+  (F) **Where scope B stands after sessions 1-3, in one place.**
+  - **SQL:** `kb_admin_009`-`014` (+ a rollback file each), **applied to TEST
+    only**. Production has 001-008 and none of 009-014. Applying them needs an
+    explicit go-word, the same pre-check/export/re-export routine as 008, and
+    Vercel's editor env vars stay unset until then.
+  - **Sixteen editor functions** (`kb-admin/lib/access.ts` `WRITE_FUNCTIONS`):
+    - the six Q&A ones (004, 008);
+    - the nine from 011: doc upload, stage, edit_chunk, mark_checked, publish,
+      restore, discard and retire, plus `kb_admin_match_with_batch`;
+    - `kb_admin_match_live` from 014.
+    012 and the selfcheck both assert exactly this list.
+  - **Baseline-batch rule (014):** the first publish over a source with live
+    rows that belong to no batch (the imported originals) records them first as
+    a superseded `is_baseline` batch. Same ids, text and vectors. That is what
+    lets `kb_admin_doc_restore` switch them back on.
+  - **Embedding method:** every chunk is embedded as
+    `section_heading + "\n" + content` (`lib/documents.ts` `embeddingText`).
+    It is checked against the canary model before staging.
+  - **Chunker and facts check:** `lib/chunker.ts` (session 2, above) and
+    `lib/facts.ts`. The preview shows lost facts (in live, missing from the
+    upload) and stale facts (in the upload, corrected out of live) side by side.
+  - **Decision: the six original source documents are NOT re-uploaded until
+    their files are corrected.** They are:
+    - `minghwee FAQs and Overview.md`
+    - `27-helper-rights-simple-english.md`
+    - `BEHAVIOUR CODE FOR DOMESTIC HELPERS.docx`
+    - `MOM_MDW_Eligibility_Hiring_Guide.docx`
+    - `MingHwee Hiring Pipelines Brief.docx`
+    - `Ming_Hwee_Client_Service_Agreement_SOURCE.docx`
+
+    The files predate the live corrections (S$570, the old transfer spans, the
+    old WhatsApp number, the retired Form A fees, the staff pipeline wording of
+    §9.25). Uploading them as they are would publish those back. The Checklist
+    was replaced only as a test and restored to its imported baseline. Whoever
+    does this later: fix the file first, then upload it and expect the preview
+    to show zero stale facts.
+  - The browser, HTTP and account test scripts are kept outside the repo, in
+    `Minghwee_backups/kb-admin-handover/test-scripts/` (with a README).
 
 - **2026-10-05** - **kb-admin Phase 3 scope B, session 2: the document chunker and
   the lost-facts check. Code only; nothing calls them yet, and no database row,
