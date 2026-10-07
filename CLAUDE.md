@@ -1468,10 +1468,13 @@ Append here, newest first. One entry per behavioural change.
   replacement or refund policy stated, because we hold none (§9 waiting list). Two
   corrections: the no-agency comparison row now says our direct-hire service does
   those things, and "What is the process for a direct hire?" describes the process and
-  the two timelines instead of our intake questions. **In `load_service_notes.py`,
-  NOT yet loaded to production** - TEST has no service-role key, so they were verified
-  by merging them into the real search in the replay (embedded the loader's way,
-  ranked by the database's cosine), not by loading them anywhere.
+  the two timelines instead of our intake questions. Verified first by merging them
+  into the real search in the replay (TEST has no service-role key), then **loaded to
+  production the same day**: every column of all rows exported before and after
+  (`Minghwee_backups/kb_export_PRODUCTION_2026-10-07_{before,after}_dh.json`) - 405 ->
+  409, the four rows added, the two corrected in answer/content/embedding/updated_at
+  only, nothing else; a second loader run changed 0. The enquiry replayed on the live
+  search alone retrieves all four.
   (E) **A complaint is its own flow** (`ticket.COMPLAINT`). Live, the model kept the
   direct-hire intake ("the client only greets and announces a complaint... the active
   direct-hiring service remains in progress"), the reply came from clause 10.1 of the
