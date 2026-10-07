@@ -617,11 +617,13 @@ CASES = [
       "incoming_text": "hi i would like to hire a helper. what is the process to go about it?",
       "history_text": "",
       "_expect_prompt": "introduce yourself in one short sentence"}),
-    # ...and on no other turn, or she says it every time.
+    # ...and on no other turn, or she says it every time. Written in the
+    # webhook's own rendering ("Client:" / "You:"): since 2026-10-07 only a
+    # "You:" line counts as Claire having spoken (guards.claire_has_spoken).
     ("response_generator", "...and only on the first message",
      {"intent": "process_question", "service_type": "new_hiring",
       "incoming_text": "what is the process to go about it?",
-      "history_text": "client: hi\nbot: Hi, I'm Claire, Ming Hwee's AI assistant.",
+      "history_text": "Client: hi\nYou: Hi, I'm Claire, Ming Hwee's AI assistant.",
       "_forbid_prompt": "introduce yourself in one short sentence"}),
 
     # --- home leave tells them to book the ticket, 2026-09-17 --------------
@@ -1960,6 +1962,117 @@ CASES = [
       "rag_context": "The total service fee and third-party costs are $4,225.",
       "_stub_reply": "The total service fee and third-party costs are $4,225.",
       "_expect_reply": "rather one of our agents"}),
+
+    # --- 2026-10-07: conversation 26, a complaint and a direct-hire enquiry ---
+    # Our TEAM had been messaging this client all week; Claire had not. The
+    # history was not empty, so she never introduced herself. Agent lines are
+    # "Agent:" now, and only a "You:" line counts as her having spoken.
+    ("response_generator", "Claire introduces herself where only our team has spoken",
+     {"intent": "general_question", "service_type": None,
+      "incoming_text": "what are your opening hours?",
+      "history_text": "Agent: Good afternoon Thomas, require to submit MOM application\nClient: Okay\nAgent: Kindly authorise",
+      "_expect_prompt": "introduce yourself in one short sentence"}),
+    ("info_collector", "...and so does the collector",
+     {"intent": "new_hiring", "service_type": "new_hiring",
+      "incoming_text": "i want to hire a helper",
+      "history_text": "Agent: Good afternoon Thomas, require to submit MOM application\nClient: Okay\nAgent: Kindly authorise",
+      "_expect_prompt": "your introduction is NOT optional"}),
+    # "Hi / I want to lodge a complaint" was glued onto the direct-hire intake
+    # by the model ("the active direct-hiring service remains in progress").
+    ("intent_classifier", "a complaint is its own topic, not the intake in progress",
+     {"incoming_text": "Hi\nI want to lodge a complaint",
+      "intent": "direct_hiring", "service_type": "direct_hiring",
+      "history_text": "Client: tell me about direct hire\nYou: May I know your name?",
+      "_stub_intent": {"intent": "direct_hiring", "service_type": "direct_hiring",
+                       "contact_type": "employer", "confidence": 0.96},
+      "_expect_state": {"intent": "complaint", "service_type": "complaint"}}),
+    # ...and what the client says next IS the complaint. Live, the description
+    # was read as a direct-hire case enquiry and got the next intake question.
+    ("intent_classifier", "...and what they say next belongs to the complaint",
+     {"incoming_text": "it is about my helper Rowena, your agent did not reply for 3 days",
+      "intent": "complaint", "service_type": "complaint",
+      "history_text": "Client: I want to lodge a complaint\nYou: Please tell me here what happened.",
+      "_stub_intent": {"intent": "case_enquiry", "service_type": "direct_hiring",
+                       "contact_type": "employer", "confidence": 0.9},
+      "_expect_state": {"intent": "complaint", "service_type": "complaint"}}),
+    # The controls: "no complaints" is not one, and a client can drop it.
+    ("intent_classifier", "...while 'no complaints' is not a complaint",
+     {"incoming_text": "no complaints so far, how long does it take?",
+      "intent": "direct_hiring", "service_type": "direct_hiring",
+      "history_text": "Client: hi\nYou: How can I help?",
+      "_stub_intent": {"intent": "process_question", "service_type": "direct_hiring",
+                       "contact_type": "employer", "confidence": 0.9},
+      "_expect_state": {"service_type": "direct_hiring"}}),
+    ("intent_classifier", "...and 'never mind' ends the complaint",
+     {"incoming_text": "never mind, forget it. I want to hire a helper",
+      "intent": "complaint", "service_type": "complaint",
+      "history_text": "Client: I want to complain\nYou: Please tell me here what happened.",
+      "_stub_intent": {"intent": "new_hiring", "service_type": "new_hiring",
+                       "contact_type": "employer", "confidence": 0.9},
+      "_expect_state": {"service_type": "new_hiring"}}),
+    # The agency's own wording: sorry, what we need, when, and who to call -
+    # and never "anything else?" to somebody who has just complained.
+    ("info_collector", "a complaint opens with the wait, the number and no 'anything else'",
+     {"intent": "complaint", "service_type": "complaint",
+      "incoming_text": "Hi\nI want to lodge a complaint",
+      "history_text": "Agent: Good afternoon Thomas, require to submit MOM application\nClient: Okay\nAgent: Kindly authorise",
+      "_stub_extraction": {},
+      "_expect_reply": "within one working day",
+      "_forbid_reply": "anything else"}),
+    ("info_collector", "...introduces Claire where she has not spoken",
+     {"intent": "complaint", "service_type": "complaint",
+      "incoming_text": "I want to lodge a complaint",
+      "history_text": "Agent: Good afternoon Thomas, require to submit MOM application\nClient: Okay\nAgent: Kindly authorise",
+      "_stub_extraction": {},
+      "_expect_reply": "I'm Claire, Ming Hwee's AI assistant"}),
+    ("info_collector", "...and asks for all of it at once",
+     {"intent": "complaint", "service_type": "complaint",
+      "incoming_text": "I want to lodge a complaint",
+      "history_text": "",
+      "_stub_extraction": {},
+      "_expect_reply": "your name, your case or helper details and what happened",
+      "_expect_state": {"asked_field_counts": {"full_name": 1, "complaint_subject": 1,
+                                               "complaint_detail": 1}}}),
+    # "I want to lodge a complaint" is the request, not the complaint - filed as
+    # it, the collection would close on the opening turn with nothing in it.
+    ("info_collector", "...and the request is not filed as the complaint",
+     {"intent": "complaint", "service_type": "complaint",
+      "incoming_text": "I want to lodge a complaint",
+      "history_text": "",
+      "_stub_extraction": {"complaint_detail": "wants to lodge a complaint"},
+      "_expect_not_collected": ["complaint_detail"],
+      "_expect_state": {"info_complete": False}}),
+    ("info_collector", "...while what happened closes it",
+     {"intent": "complaint", "service_type": "complaint", "collected_service": "complaint",
+      "incoming_text": "your agent did not reply to me for 3 days about the MOM application",
+      "history_text": "Client: I want to complain\nYou: Please tell me here what happened.",
+      "collected_info": {"full_name": "Thomas", "complaint_subject": "my helper Rowena"},
+      "asked_field_counts": {"complaint_detail": 1},
+      "_stub_extraction": {"complaint_detail": "agent did not reply for 3 days about the MOM application"},
+      "_expect_state": {"info_complete": True},
+      "_expect_reply": "has been logged"}),
+    # The reference number only exists once the ticket does.
+    ("ticket_creator", "a logged complaint is given its reference number",
+     {"intent": "complaint", "service_type": "complaint",
+      "incoming_text": "your agent did not reply to me",
+      "collected_info": {"full_name": "Thomas", "complaint_detail": "no reply for 3 days"},
+      "_expect_reply": "CB-2026-0099"}),
+    # "find out more about direct hire process and costs" - answered in full,
+    # then the first question, even though the classifier called it a fee turn.
+    ("info_collector", "a client asking to hear about a service is told before asked",
+     {"intent": "fee_enquiry", "service_type": "direct_hiring",
+      "incoming_text": "Hi I will like to find out more about direct hire process and costs",
+      "history_text": "Agent: Good afternoon Thomas, require to submit MOM application\nClient: Okay\nAgent: Kindly authorise",
+      "_stub_extraction": {},
+      "_expect_prompt": "THE CLIENT HAS ASKED TO KNOW ABOUT THIS SERVICE"}),
+    ("info_collector", "...and not again once the collection is under way",
+     {"intent": "process_question", "service_type": "direct_hiring",
+      "collected_service": "direct_hiring",
+      "incoming_text": "what is the process?",
+      "history_text": "Client: hi\nYou: May I know your name?",
+      "collected_info": {"full_name": "Thomas"}, "asked_field_counts": {"full_name": 1},
+      "_stub_extraction": {},
+      "_forbid_prompt": "THE CLIENT HAS ASKED TO KNOW ABOUT THIS SERVICE"}),
 ]
 
 
@@ -2046,7 +2159,25 @@ async def _run_intent_classifier(state, stub=None):
         return await intent_classifier(state)
 
 
+async def _run_ticket_creator(state, stub=None):
+    """ticket_creator with the ticket insert and assignment stubbed.
+
+    Added 2026-10-07 for the complaint's closing message, which carries the
+    ticket number and can only be written once the row exists - so the only
+    proof that it is written at all is to run the node.
+    """
+    with patch("app.graph.nodes.ticket_creator.ticket_service.create",
+               new=AsyncMock(return_value={"id": "t-1", "ticket_number": "CB-2026-0099"})), \
+         patch("app.graph.nodes.ticket_creator.ticket_service.pick_ticket_to_update",
+               new=AsyncMock(return_value=None)), \
+         patch("app.graph.nodes.ticket_creator.assignment_service.resolve_agent",
+               new=AsyncMock(return_value=(None, "unassigned"))):
+        from app.graph.nodes.ticket_creator import ticket_creator
+        return await ticket_creator(state)
+
+
 RUNNERS = {
+    "ticket_creator": _run_ticket_creator,
     "info_collector": _run_info_collector,
     "response_generator": _run_response_generator,
     "blocked_topic_responder": _run_blocked_topic_responder,

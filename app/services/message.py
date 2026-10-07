@@ -521,12 +521,25 @@ def format_history(rows: list[dict[str, Any]]) -> str:
     AI assistant" anywhere. It also opens "Thank you for contacting Ming Hwee
     Agency", so the repeated-gratitude guard thought she had already thanked
     them. Boilerplate the office sends automatically is not part of her turn.
+
+    A human agent's message is not her turn either, and is rendered "Agent:".
+    It was "You:" until 2026-10-07, which told the model that every line our
+    team had sent this client - "require to purchase insurance of total amount
+    $557.75", "Kindly authorise" - was Claire speaking. Two consequences, both
+    live on conversation 26: she never introduced herself (the history was not
+    empty, so it read as a conversation already under way - see
+    guards.claire_has_spoken), and every guard that compares her reply with
+    "her" last line (near_duplicate, strip_repeated_opener, answering our own
+    question) was comparing it with an agent's.
     """
     lines: list[str] = []
     for row in rows:
         body = (row.get("body") or "").strip()
         if not body or row.get("sent_by") == AUTO_REPLY_SENDER:
             continue
-        speaker = "Client" if row.get("direction") == "inbound" else "You"
+        if row.get("direction") == "inbound":
+            speaker = "Client"
+        else:
+            speaker = "You" if row.get("is_bot") else "Agent"
         lines.append(f"{speaker}: {body}")
     return "\n".join(lines)

@@ -10,7 +10,14 @@ import logging
 import re
 from typing import Any
 
+from app.graph.complaint import (
+    COMPLAINT_COLLECT_NOTE,
+    complaint_closing,
+    complaint_opening,
+    states_a_complaint,
+)
 from app.graph.guards import (
+    claire_has_spoken,
     COST_DEFERRAL_REPLY,
     asks_for_documents,
     asks_for_process,
@@ -52,7 +59,11 @@ from app.graph.prompts.templates import (
     COLLECTOR_INSTRUCTION,
     EXTRACTION_SYSTEM,
     EXTRACTION_USER,
+    ENQUIRY_OVERVIEW_NOTE,
+    FEE_ANSWER_NOTE,
     FEE_HANDOVER_INSTRUCTION,
+    FEE_NEEDS_NATIONALITY_NOTE,
+    FEE_NOT_HELD_FOR_NATIONALITY_NOTE,
     HANDOVER_CLOSER_INSTRUCTION,
 )
 from app.graph.state import RESET_KEY, ConversationState, effective_contact_type
@@ -181,7 +192,7 @@ _VOLUNTEERED_REQUIREMENT = re.compile(
 # of every conversation becomes the formula that the no-repeat rules exist to
 # stop, so the model is told what the reason is and left to say it in its voice.
 COLLECTOR_INTRO_NOTE = (
-    f"{chr(10)}{chr(10)}This is the client's first message and your introduction is "
+    f"{chr(10)}{chr(10)}This is the first message you have sent this client, and your introduction is "
     "NOT optional: before anything else, say who you are — Claire, Ming Hwee's AI "
     "assistant. One short sentence, your own words, then the rest of your reply. Do "
     "not skip it because you have an answer to give; give the answer after it."
@@ -765,8 +776,12 @@ def _is_first_contact(state: ConversationState) -> bool:
     caught it as "bot_confused" and handed each message to a human, so the
     client got silence rather than an error — the failure looked like the bot
     ignoring them.
+
+    "Said anything" means CLAIRE said anything: a history full of our human
+    team's messages is still one she has never spoken in (2026-10-07,
+    conversation 26 - see guards.claire_has_spoken).
     """
-    return not (state.get("history_text") or "").strip()
+    return not claire_has_spoken(state.get("history_text") or "")
 
 
 def _prior_hires(state: ConversationState) -> int:
@@ -1891,6 +1906,77 @@ def _heavy_workload(collected: dict[str, Any]) -> bool:
 # it did before.
 
 
+# Services a client can ask to hear about before going ahead - every employer
+# intake. Not the candidate flows (she is registering, not buying), not the
+# money enquiries (a price question is answered on its own), and not the
+# complaint, disputes or a missing helper (nobody asks for a brochure there).
+_OVERVIEW_ON_REQUEST = frozenset(
+    {
+        "new_hiring",
+        "direct_hiring",
+        "replacement",
+        ticket_service.TRANSFER_EMPLOYER,
+        "renewal",
+        "home_leave",
+        "passport_renewal",
+        "insurance",
+    }
+)
+
+# Asking to be told about it, as opposed to asking for it. Measured against the
+# two live openings on conversation 26 - "find out more about direct hire
+# process and costs" and "know more about hiring transfer helpers and the costs
+# involved" - which asks_for_process catches one of and asks_about_price the
+# other, and neither of which is a question.
+_WANTS_TO_KNOW = re.compile(
+    r"\b(?:find\s+out|know|learn|hear|understand)\s+(?:more\s+)?(?:about|on)\b"
+    r"|\btell\s+me\s+(?:more\s+)?about\b"
+    r"|\bmore\s+(?:info(?:rmation)?|details?)\s+(?:on|about|regarding)\b"
+    r"|\bhow\s+does\s+(?:it|this|a|the)\b[^.?!]{0,30}\bwork\b",
+    re.IGNORECASE,
+)
+
+
+# The closing question of a long answer, split onto a line of its own. Asked
+# for in ENQUIRY_OVERVIEW_NOTE and, measured 2026-10-07, ignored 2 runs of 2:
+# "...before anything is signed. May I know your name?" - the one line the
+# client has to answer, buried at the end of a paragraph about contract terms.
+_TRAILING_QUESTION = re.compile(r"([.!])[ \t]+([^.!?\n]*\?)\s*$")
+
+
+def _question_on_its_own_line(reply: str) -> str:
+    """Move a closing question that shares a line with other text onto its own."""
+    return _TRAILING_QUESTION.sub(r"\1\n\n\2", (reply or "").rstrip())
+
+
+def enquiry_overview_due(state: ConversationState) -> bool:
+    """Whether this turn answers "tell me about this service" before collecting.
+
+    True on the turn a client opens an employer service by asking how it works,
+    what it involves or to know more about it - and only before its collection
+    has started, and never on a topic a human already owns. Read by three
+    callers that must agree: the router (send it to the collector, even when the
+    classifier called it a fee question), the retriever (search for the whole
+    service, not the cost alone) and the collector (answer it in full, then ask).
+    See templates.ENQUIRY_OVERVIEW_NOTE for the conversation that made it.
+    """
+    message = state.get("incoming_text") or ""
+    if not (asks_for_process(message) or _WANTS_TO_KNOW.search(message)):
+        return False
+    contact = effective_contact_type(state)
+    service = ticket_service.resolve_service(state.get("service_type"), contact)
+    if service not in _OVERVIEW_ON_REQUEST:
+        return False
+    topic = ticket_service.topic_key_for(service, contact, state.get("intent"))
+    if topic and topic in (state.get("blocked_topics") or {}):
+        return False
+    if state.get("collected_service") == service and any(
+        (state.get("asked_field_counts") or {}).values()
+    ):
+        return False
+    return True
+
+
 def briefs_on_this_turn(service_type: str | None, asked: dict | None) -> bool:
     """Whether this is the turn a small-ticket service explains itself.
 
@@ -2532,6 +2618,17 @@ async def _extract(
         # "replace her" is the request restated, not a description of the
         # helper they want - and a field that already looks answered is never
         # asked. See _PREFERENCE_FIELDS for the ticket this reached.
+        # "I want to lodge a complaint" is the request, not the complaint.
+        # Filed as complaint_detail it would close the collection on the
+        # opening turn and log a ticket with nothing in it.
+        if key == "complaint_detail" and not states_a_complaint(text):
+            logger.info(
+                "Conversation %s: ignoring '%s' for 'complaint_detail' - it says "
+                "there is a complaint, not what it is",
+                state.get("conversation_id"),
+                text[:40],
+            )
+            continue
         if key in _PREFERENCE_FIELDS and not _states_a_preference(text):
             logger.info(
                 "Conversation %s: ignoring '%s' for '%s' - it restates the request "
@@ -3289,6 +3386,36 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     label = service_label(service_type)
     system_prompt_state = {**dict(state), "collected_info": collected}
 
+    # A complaint's first reply is fixed wording - see app/graph/complaint.py
+    # for why, and for the live conversation it replaces. Everything still
+    # outstanding is asked for at once, as the agency's own example does,
+    # because somebody who is already unhappy should not be walked through a
+    # form one question at a time to be heard.
+    if service_type == ticket_service.COMPLAINT and missing and not any(asked.values()):
+        name = str(collected.get("full_name") or "").strip()
+        if name.lower() == UNANSWERED:
+            name = ""
+        for field in missing:
+            counts[field.key] = 1
+        logger.info(
+            "Conversation %s: complaint opened - asking for %s",
+            state.get("conversation_id"),
+            ", ".join(field.key for field in missing),
+        )
+        return {
+            **lead_fields,
+            "collected_info": carry,
+            "service_type": service_type,
+            "collected_service": service_type,
+            "asked_field_counts": counts,
+            "missing_field_keys": [field.key for field in missing],
+            "info_complete": False,
+            "reply": complaint_opening(
+                name, [field.key for field in missing], _is_first_contact(state)
+            ),
+            "needs_handover": False,
+        }
+
     # She is not from a country we can place her from, and nothing below this
     # point should run: no next question, no completion, no briefing.
     #
@@ -3478,6 +3605,30 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # can go out with the next question rather than being ignored.
     answer_first = ANSWER_THEN_ASK_INSTRUCTION if client_asked else ""
 
+    # "Tell me about this service" - answered in full before the first
+    # question. It REPLACES the short answer and the one-clause overview and
+    # purpose notes, which would otherwise each ask for their own opening
+    # sentence, and the two route notes, which forbid quoting a timeline that
+    # this instruction says to give - labelled, for each route.
+    overview = enquiry_overview_due(state)
+    if overview:
+        answer_first = ENQUIRY_OVERVIEW_NOTE + FEE_ANSWER_NOTE
+        if ticket_service.fee_varies_by_nationality(service_type):
+            nat = lead_service.nationality_in_play(
+                collected, state.get("incoming_text")
+            )
+            if not nat:
+                answer_first += FEE_NEEDS_NATIONALITY_NOTE
+            elif not ticket_service.fee_is_known_for(service_type, nat):
+                answer_first += FEE_NOT_HELD_FOR_NATIONALITY_NOTE
+        small_ticket_note = purpose_note = nationality_note = location_note = ""
+        logger.info(
+            "Conversation %s: client asked to hear about %s - answering in full "
+            "before the first question",
+            state.get("conversation_id"),
+            service_type,
+        )
+
     # ...but the full step-by-step is the CLOSING message, not this one.
     #
     # Live, 2026-09-11: a job seeker asked "can you please tell me the further
@@ -3568,6 +3719,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             + closed_note
             + follow_up_notes.get(next_field.key, "")
             + answer_first
+            + (COMPLAINT_COLLECT_NOTE if service_type == ticket_service.COMPLAINT else "")
         )
         if next_field.optional:
             # §2 step 4 / §23.6: asked once, and a no is taken as an answer.
@@ -3587,7 +3739,11 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             # and neither does introducing yourself before asking anything.
             # Four only where all three are genuinely required: the
             # introduction, the answer to what they asked, and our question.
-            max_sentences=4
+            # An overview is a lead-in, a timeline, a list of steps, the costs
+            # and the question - clamp_reply counts every step as a sentence.
+            max_sentences=22
+            if overview
+            else 4
             if (first_contact and (answer_first or missing_note))
             else 3
             if (answer_first or first_contact or small_ticket_note or purpose_note
@@ -3600,7 +3756,17 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             # binned by ungrounded_figures for offering it (2026-09-09 D).
             grounded_options=_effective_options(next_field, collected),
             previous_answered=previous_answered,
+            stepped=overview,
         )
+        if overview:
+            reply = _question_on_its_own_line(reply)
+        if overview and (reply or "").strip() == (next_field.question or "").strip():
+            logger.error(
+                "Conversation %s: the %s overview was discarded by a guard - the "
+                "client got the bare question instead",
+                state.get("conversation_id"),
+                service_type,
+            )
         counts[next_field.key] = 1
         logger.info(
             "Conversation %s collecting '%s' for %s (attempt %d, %s field(s) outstanding)",
@@ -3652,7 +3818,13 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         service_label=label,
         enquiry_label="our fees" if service_type == "fee_enquiry" else "helper salary",
     ) + dropped_note + briefing_note + answer_first
-    reply = await _write(
+    # A complaint closes on fixed wording with its reference number, which
+    # ticket_creator fills in once the ticket exists; this is what goes out if
+    # that ticket cannot be created. See app/graph/complaint.py.
+    complaint_name = str(collected.get("full_name") or "").strip()
+    reply = complaint_closing(
+        "" if complaint_name.lower() == UNANSWERED else complaint_name, None
+    ) if service_type == ticket_service.COMPLAINT else await _write(
         state,
         system_prompt_state,
         instruction,

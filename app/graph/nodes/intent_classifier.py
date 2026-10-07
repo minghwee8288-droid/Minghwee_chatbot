@@ -69,6 +69,31 @@ _MISSING_HELPER = re.compile(
     re.IGNORECASE,
 )
 
+# A client lodging a complaint about us (ticket.COMPLAINT). Deterministic, for
+# the reason _MISSING_HELPER is: the model reads "I want to lodge a complaint"
+# against the conversation it lands in, and on conversation 26 (2026-10-07) it
+# kept the direct-hire intake that was in progress - "the client only greets
+# and announces a complaint without describing its subject, so the active
+# direct-hiring service remains in progress" - so the complaint raised no
+# ticket and the client's description of it was answered with the next
+# direct-hire question. A complaint is never an answer to one of our questions.
+# The lookaheads keep "no complaints, thank you" and "not complaining, just
+# asking" out of it.
+_COMPLAINT = re.compile(
+    r"^(?!.*\bno\s+complaints?\b)(?!.*\bnot\s+(?:a\s+)?complain)"
+    r"(?!.*\bnothing\s+to\s+complain)"
+    r"(?=.*?\b(?:complain(?:t|ts|ing|ed|s)?|grievances?)\b)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Words that end a complaint collection early. Anything else said while one is
+# being collected belongs to it - see the hold in intent_classifier().
+_LEAVE_COMPLAINT = re.compile(
+    r"\b(?:never\s*mind|forget\s+(?:it|the\s+complaint|about\s+it)|"
+    r"cancel\s+(?:it|the\s+complaint|my\s+complaint)|no\s+need\s+to\s+log)\b",
+    re.IGNORECASE,
+)
+
 HUMAN_REQUEST_PATTERNS = re.compile(
     r"\b(speak|talk|chat)\s+(to|with)\s+(a\s+)?(human|person|real person|someone|"
     r"agent|consultant|manager|boss|thomas)\b|\bcall me\b|\bwho am i (talking|speaking) to\b",
@@ -201,6 +226,10 @@ _NAMED_SERVICE = (
     # named as surely as "transfer" is, and it is what keeps the stickiness
     # rules below from pulling the report back into whatever flow was running.
     (_MISSING_HELPER, ticket_service.MISSING_HELPER),
+    # Second, for the same reason: a complaint names its own topic however much
+    # of another service it mentions - "your agent never replied about my
+    # transfer" is a complaint, not a transfer request.
+    (_COMPLAINT, ticket_service.COMPLAINT),
     (re.compile(r"\btransfer\b", re.I), "transfer"),
     # Before renewal: "renew my insurance" names both, and the one the client
     # actually asked for is the insurance.
@@ -514,6 +543,35 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
                 state.get("conversation_id"), intent, ticket_service.MISSING_HELPER,
             )
         intent = service_type = ticket_service.MISSING_HELPER
+
+    # A complaint about us. After the missing-helper report (which is the more
+    # urgent of the two and can be phrased as a complaint), and like it, NOT
+    # held back by a collection in progress. A pay or leave dispute the model
+    # has already recognised keeps its own flow, and a harm report the model
+    # reached and the second check confirmed is never downgraded.
+    elif _COMPLAINT.search(message) and intent not in {
+        "dispute_salary", "dispute_assault",
+    }:
+        if intent != ticket_service.COMPLAINT:
+            logger.info(
+                "Conversation %s: complaint keywords override intent %r -> %s",
+                state.get("conversation_id"), intent, ticket_service.COMPLAINT,
+            )
+        intent = service_type = ticket_service.COMPLAINT
+
+    # While a complaint is being taken down, what the client says next is the
+    # complaint - their name, the helper, what happened. Without this the third
+    # message on conversation 26 ("it is about my helper Rowena, your agent did
+    # not reply ... about her MOM application") read as a case enquiry about a
+    # direct hire and was answered with the next direct-hire question. Only a
+    # harm report, a missing helper, or the client plainly dropping it ends it.
+    elif (
+        active_service == ticket_service.COMPLAINT
+        and ticket_service.COMPLAINT not in (state.get("blocked_topics") or {})
+        and intent not in {"dispute_assault", ticket_service.MISSING_HELPER}
+        and not _LEAVE_COMPLAINT.search(message)
+    ):
+        intent = service_type = ticket_service.COMPLAINT
 
     # --- Deterministic overrides. The model gets these two wrong repeatedly and
     # each has a visible consequence the client complains about. Neither fires

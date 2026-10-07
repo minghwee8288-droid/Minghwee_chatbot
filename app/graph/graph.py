@@ -13,7 +13,7 @@ from app.config import settings
 from app.graph.guards import answering_our_question
 from app.graph.nodes.blocked_topic_responder import asks_general_info, blocked_topic_responder
 from app.graph.nodes.handover_executor import handover_executor
-from app.graph.nodes.info_collector import info_collector
+from app.graph.nodes.info_collector import enquiry_overview_due, info_collector
 from app.graph.nodes.intent_classifier import intent_classifier
 from app.graph.nodes.rag_retriever import rag_retriever
 from app.graph.nodes.response_generator import response_generator
@@ -128,6 +128,15 @@ def route_after_rag(state: ConversationState) -> str:
     # and the only one that will not re-escalate a topic a human already owns.
     if _blocked_topic(state):
         return "blocked_topic_responder"
+
+    # "Tell me about direct hire - the process and the costs" opens a service.
+    # The collector answers it in full and THEN asks its first question, even
+    # when the classifier called the turn a fee question - the money branch
+    # below would answer it in two sentences and stop, which on conversation
+    # 26 (2026-10-07) left the client with no timeline, no costs worth the
+    # name and nothing to reply to. See enquiry_overview_due.
+    if enquiry_overview_due(state):
+        return "info_collector"
 
     # A money question asked ON TOP of a service we are already handling is a
     # QUESTION, not a second job to qualify. fee_enquiry and salary_enquiry are

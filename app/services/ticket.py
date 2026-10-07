@@ -169,6 +169,7 @@ SERVICE_LABELS = {
     "salary_enquiry": "helper salary",
     "dispute_salary": "a salary or leave issue",
     "missing_helper": "a helper who has gone missing",
+    "complaint": "a complaint",
     "candidate_registration": "registering a helper for placement",
     # Not services, but they reach service_label() as topic keys — a ticket
     # raised for an unanswerable question, and the "Also asked about" line on a
@@ -278,6 +279,26 @@ TRANSFER_EMPLOYER = "transfer_employer"
 # own service rather than a dispute_assault: see the note on _MISSING_HELPER in
 # intent_classifier for the live conversation that made the difference.
 MISSING_HELPER = "missing_helper"
+
+# A client lodging a complaint about us - our service, a member of staff, how
+# their case has been handled (2026-10-07). Its own service, never folded into
+# whatever was being collected: live on conversation 26, "Hi / I want to lodge
+# a complaint" was glued to the direct-hire intake the client had opened
+# twenty minutes earlier, answered "please share your complaint in writing ...
+# is there anything else I can help you with?" from clause 10.1 of the Service
+# Agreement, and when he described it the next message was the next direct-hire
+# question. No ticket, no reference, nobody told. The agency: "a complaint needs
+# to have a clear expectation ... it should ask for details and provide [a]
+# complaint / ticketing number". Pay and leave disputes keep dispute_salary.
+COMPLAINT = "complaint"
+
+# What the client is told about the wait, and the number to call if it cannot
+# wait. Both are the agency's own words (2026-10-07: "a senior team member will
+# contact you within [one working day]. For urgent matters, you can reach us at
+# 65342277"). One place, because the opening message and the closing message
+# both say it and must never disagree.
+COMPLAINT_RESPONSE_TIME = "within one working day"
+COMPLAINT_URGENT_PHONE = "6534 2277"
 
 # What the classifier calls a helper offering herself for placement. It is an
 # intent name, not a flow — resolve_service() maps it onto CANDIDATE_HIRING.
@@ -1676,6 +1697,28 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             max_asks=2,
         ),
     ],
+    # A complaint about us. Exactly the three things the agency's own example
+    # reply asks for - "your name, your case or helper details and what
+    # happened" - and the opening turn asks for all three at once rather than
+    # one at a time (info_collector.complaint_opening): somebody who is already
+    # unhappy should not be walked through a form to be heard. The name comes
+    # from our records when we hold it (NAME_FROM_RECORD_ONLY).
+    COMPLAINT: [
+        Field("full_name", "name", "May I know your name?", max_asks=1),
+        Field(
+            "complaint_subject",
+            "which case or helper it is about",
+            "Which case or helper is this about?",
+            max_asks=1,
+            optional=True,
+        ),
+        Field(
+            "complaint_detail",
+            "what happened",
+            "Could you tell me what happened?",
+            max_asks=2,
+        ),
+    ],
     # §13 — immediate escalation, nothing collected.
     "dispute_assault": [],
     # §18 — the bot cannot open the file, so there is nothing to ask.
@@ -1683,7 +1726,7 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
 }
 
 # Services that open at the top priority level rather than the default one.
-HIGH_PRIORITY_SERVICES = {"dispute_assault", MISSING_HELPER}
+HIGH_PRIORITY_SERVICES = {"dispute_assault", MISSING_HELPER, COMPLAINT}
 
 # Mirrors cb_tkt_service_check. The chatbot recognises two kinds of enquiry the
 # portal's schema predates — a candidate offering herself for placement, and a
@@ -1726,6 +1769,9 @@ TICKET_SERVICE_FALLBACK = {
     # The nearest permitted bucket: a problem with the helper they already
     # employ, filed apart from any sale (ALWAYS_SEPARATE, like the disputes).
     MISSING_HELPER: "dispute_salary",
+    # The nearest of the eleven to a complaint, and the one the portal already
+    # treats as "a problem to resolve" rather than a sale.
+    COMPLAINT: "dispute_salary",
     CANDIDATE_REGISTRATION: "new_hiring",
     "media_received": "transfer",
     "general_question": "transfer",
@@ -2238,6 +2284,9 @@ NAME_FROM_RECORD_ONLY = frozenset(
         "direct_hiring",
         "insurance",
         "transfer_employer",
+        # A complaint is logged against a person and a reference is given to
+        # them, so the name on it is theirs, never a WhatsApp label (2026-10-07).
+        COMPLAINT,
         # The CANDIDATE flow, added 2026-09-10 when the agency tested it as a
         # job seeker: "bot didnt ask the name at first like all services then
         # it should greet after taking name". Live, it opened "Hi Vaidik Dubey,
@@ -2773,6 +2822,7 @@ SERVICE_SUMMARIES = {
     "salary_enquiry": "is asking about helper salary",
     "dispute_salary": "has raised a salary or leave issue",
     "missing_helper": "has reported that their helper has run away or gone missing",
+    "complaint": "has lodged a complaint",
     "dispute_assault": "has reported a safety incident",
     "media_received": "sent an attachment for us to look at",
     "case_enquiry": "is asking about their existing case",
@@ -2870,6 +2920,8 @@ _DETAIL_LABELS = {
     "notice_clearance": "Notice / clearance",
     "reason": "Reason",
     "issue_detail": "Issue",
+    "complaint_subject": "About",
+    "complaint_detail": "Complaint",
     "issue_duration": "Ongoing for",
     "client_message": "In their words",
     "lead_number": "Lead",
@@ -3075,7 +3127,7 @@ async def merge_into(ticket_id: str, *, service_type: str | None) -> None:
 # Topics that always get their own ticket and never absorb another. A safety
 # report or a formal complaint folded into a hiring enquiry is a complaint
 # nobody sees; both directions of that merge are barred here.
-ALWAYS_SEPARATE = {"dispute_assault", "dispute_salary", MISSING_HELPER}
+ALWAYS_SEPARATE = {"dispute_assault", "dispute_salary", MISSING_HELPER, COMPLAINT}
 
 # Which distinct piece of work each service belongs to.
 #

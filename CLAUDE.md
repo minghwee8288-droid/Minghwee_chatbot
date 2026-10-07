@@ -67,6 +67,8 @@ app/
     state.py         ConversationState TypedDict + reducers + effective_contact_type
     guards.py        (468) mechanical output safety — see §5
     closure.py       "say nothing" path (acknowledgements, closings)
+    complaint.py     a complaint's fixed opening and closing (the wait, the number
+                     to call, the ticket reference) - written here, not by the model
     llm.py           OpenRouter via langchain_openai; complete() / complete_json()
     checkpointer.py  rewrites LangGraph SQL to cb_-prefixed tables
     nodes/           intent_classifier, rag_retriever, response_generator,
@@ -177,6 +179,7 @@ START -> intent_classifier
 
 rag_retriever
   still parked ................................... blocked_topic_responder
+  enquiry_overview_due (asked about a service) ... info_collector
   service/enquiry/dispute/candidate intent ....... info_collector
   fields_for(service_type) non-empty .............. info_collector
   default ........................................ response_generator
@@ -469,6 +472,12 @@ because the lead is opened early and the ticket is created much later.
 | The loader never overwrites the KB Admin UI | `load_service_notes._ui_owned` + `metadata.managed_by` | Every row is `loader` or `ui`. All four write paths (ROWS, UPDATES, TEXT_REPLACEMENTS, RETIRED) skip and report a `ui` row — without it the first loader run after the UI went live would silently undo the client's edits, because three of the four find their targets by searching. Proved by RUNNING the loader against a stub DB holding one, in `selfcheck_kb_prep.py`. |
 | Nobody without the preview key learns anything from the preview route | `main.create_app` + `admin.require_preview_key` + `selfcheck_kb_prep.py` | No secret: the route is not registered (404, absent from the schema). With one, the key is a route dependency and the body is NOT a declared parameter - FastAPI decodes a declared body before dependencies, so malformed JSON answered 422 to anyone. 422 is now only ever seen by a key holder. Rate-limited, one at a time, 32 KB cap. Proved over HTTP, eight faults injected, eight red. |
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
+| Claire introduces herself in her first message, however many our TEAM sent before it | `guards.claire_has_spoken` + `message.format_history` ("Agent:") + the stage line in `build_system_prompt` | Agent messages were rendered "You:", so a thread full of them read as Claire's own and she never said who she was (conversation 26, 2026-10-07). Only a "You:" line is her. Every node's first-contact test reads the one predicate. |
+| A complaint is its own topic, raised whatever was being collected | `intent_classifier._COMPLAINT` + `ticket.COMPLAINT` | "Hi / I want to lodge a complaint" was glued to the direct-hire intake in progress and raised nothing. Keyword override like `_MISSING_HELPER`; a pay/leave `dispute_salary` the model recognised keeps its flow. While one is being taken down, what the client says next belongs to it unless they drop it ("never mind"). High priority, never merged, filed under `dispute_salary`. |
+| A complaint is told the wait, the number to call and its reference - and never "anything else?" | `app/graph/complaint.py` (+ `ticket_creator` for the number) | The agency's own example reply, word for word. Fixed wording, because it carries a promised time and a phone number the guards strip from model output, and a reference that only exists after the ticket insert. `COMPLAINT_RESPONSE_TIME` / `COMPLAINT_URGENT_PHONE` in `ticket.py`, one place. |
+| "I want to lodge a complaint" is not filed as the complaint | `complaint.states_a_complaint` | Filed as `complaint_detail` it would close the collection on the opening turn with an empty ticket. |
+| A client asking to hear about a service is answered in full before being asked anything | `info_collector.enquiry_overview_due` + `templates.ENQUIRY_OVERVIEW_NOTE` | "find out more about direct hire process and costs" got the intake questions presented as "the process" and "timing depends on the case". The router, the retriever and the collector read one predicate. Timeline (each route labelled), steps, government costs apart from our fee, who can hire, the terms - or that our agent will take them through - then the first question on its own line. Only before the collection starts, never on a parked topic, never a bare price question. |
+| ...searched for the whole service, with the filter kept whatever money words it contains | `rag_retriever.ENQUIRY_OVERVIEW_QUERY` / `_service_filter` | "costs" dropped the service filter, and the wider search returned a no-agency comparison that told the client the permit and bond were theirs to do. 12 rows, never widened. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -1242,7 +1251,16 @@ at a time.
 - **Whether "a live agent will reach out within 24 hours" is a commitment they want to
   make.** `strip_handover_talk` removes promised times deliberately, and a promise the
   agency cannot keep is worse than none — so this needs to be a carve-out they ask for,
-  not a prompt tweak.
+  not a prompt tweak. **Answered for COMPLAINTS on 2026-10-07** - their own example says
+  "a senior team member will contact you within [one working day]", so a complaint says
+  exactly that (`ticket.COMPLAINT_RESPONSE_TIME`). The bracket in their message reads
+  like a placeholder, so confirm the wording. Every other handover still promises no
+  time, and that half is still theirs to decide.
+- **The replacement and refund terms for a DIRECT HIRE.** Asked for by name on
+  2026-10-07, and not in our records: the knowledge base says only that they are in
+  the Service Agreement at the direct-hire rate, and the row written that day says
+  exactly that and that our agent goes through them. A row of their actual terms is
+  one entry in `load_service_notes.py`.
 - **Widening `cases_case_type_check`** so a passport renewal or a replacement can be
   opened as a typed case at all (§9.11). The portal's constraint, and their call.
 - **A helper-facing transfer document list.** The checklist they sent on 2026-09-10 is
@@ -1411,6 +1429,77 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-07** - **Conversation 26: a direct-hire enquiry answered with our own
+  intake questions, and a complaint that went nowhere.** The agency's two screenshots,
+  both from the same thread (Thomas, a real client whose agents had been messaging him
+  all week). Both read from the live checkpoint before anything was changed, and both
+  reproduced through the real graph.
+  (A) **Claire never introduced herself, because our team's messages were hers.**
+  `format_history` rendered every outbound line "You:", agents included, so a thread
+  full of "Good afternoon Thomas, require to submit MOM application" read as a
+  conversation Claire was already in, and every first-contact test (`not history`)
+  said no. Agent lines are "Agent:" now, `guards.claire_has_spoken` is the one test,
+  and the prompt says who those lines are from. The stage line has a new branch for
+  "our team has spoken and you have not".
+  (B) **The direct-hire answer was the intake, presented as the process.** "Hi I will
+  like to find out more about direct hire process and costs" was classified
+  `fee_enquiry` (or, on a re-run, `process_question`). Two causes stacked: "costs"
+  matched `_MONEY_TALK` and DROPPED the service filter, and the query was tagged
+  "(cost of direct hiring)" - so the six-step row, all three timeline rows and the
+  bond row never came back, and a no-agency comparison row ("With direct hire you
+  handle the Work Permit application, insurance, security bond... yourself") did. The
+  reply listed "Share the helper's full name..." as step 1 and "You will handle or
+  arrange the Work Permit application" as step 6, said the timing "depends on the
+  case", and asked nothing. On the `process_question` labelling the collector skipped
+  the answer entirely.
+  (C) **`enquiry_overview_due`**: an employer opening a service by asking how it works
+  or to know more about it gets it answered in full before the first question - the
+  agency's list: timeline, eligibility, government and third-party costs kept apart
+  from our fee, contract/replacement/refund terms and the medical, then a follow-up.
+  Read by the router (to the collector even when called a fee turn), the retriever
+  (`ENQUIRY_OVERVIEW_QUERY`, filter kept, 12 rows, never widened) and the collector
+  (`ENQUIRY_OVERVIEW_NOTE`, stepped, which replaces the short-answer, purpose and
+  route notes). The closing question is moved onto its own line in code: asked for in
+  the note and ignored 2 runs of 2.
+  (D) **Knowledge base**: four direct-hire rows (government and third-party costs,
+  who can hire, failing the medical, contract/replacement/refund terms) - every fact
+  already elsewhere in the KB, refiled where a direct-hire search reaches it, and NO
+  replacement or refund policy stated, because we hold none (§9 waiting list). Two
+  corrections: the no-agency comparison row now says our direct-hire service does
+  those things, and "What is the process for a direct hire?" describes the process and
+  the two timelines instead of our intake questions. **In `load_service_notes.py`,
+  NOT yet loaded to production** - TEST has no service-role key, so they were verified
+  by merging them into the real search in the replay (embedded the loader's way,
+  ranked by the database's cosine), not by loading them anywhere.
+  (E) **A complaint is its own flow** (`ticket.COMPLAINT`). Live, the model kept the
+  direct-hire intake ("the client only greets and announces a complaint... the active
+  direct-hiring service remains in progress"), the reply came from clause 10.1 of the
+  Service Agreement ("share your complaint in writing"), promised "a live agent will
+  pick it up shortly" with no ticket raised, and offered "anything else?". Re-run, the
+  client's description of the complaint was then answered with "which country is
+  Rowena from?". Now: a keyword override like the missing-helper one, a hold while it
+  is being taken down, three fields (name from our records, case or helper details,
+  what happened), the opening and closing in the agency's own words from
+  `app/graph/complaint.py` - sorry, what we need, "a senior team member will contact
+  you within one working day", "for urgent matters, you can call us on 6534 2277" -
+  and the closing carries the ticket reference, which `ticket_creator` writes in once
+  the row exists. High priority, never merged, filed under `dispute_salary` with the
+  true key in `captured_info`.
+  (F) **Verified.** Both screenshot turns replayed against production data, read-only:
+  the enquiry now opens "Hi Thomas, I'm Claire, Ming Hwee's AI assistant", gives 2 to
+  3 / 4 to 6 weeks labelled, six real steps, the levy/bond/insurance/medical apart from
+  our fee, who can hire, the terms deferred honestly, and a question. The complaint
+  matches the agency's example. A transfer enquiry from the same thread labels each
+  nationality's fee (3 runs of 3, every figure checked against its row). Controls
+  unchanged: a plain "I want to hire a helper" goes straight to the intake, a bare
+  price question gets the bare price, and "no complaints" is not one. Eleven faults
+  injected, eleven red. `smoke_nodes.py` gained a `ticket_creator` runner.
+  **Noticed and NOT changed:** the extractor reads the agents' lines too, so "Thomas"
+  from "Good afternoon Thomas" fills `full_name`, and once `update_channel` came back
+  "WhatsApp" from nothing the client said. Both are pre-existing behaviour, and both
+  were harmless here.
+  `selfcheck_flows.py` is **733 assertions**; `smoke_nodes.py` is **208 checks**.
 
 - **2026-10-05** - **kb-admin login: show/hide password toggle.** UI only;
   sign-in itself is unchanged (same field name, autocomplete, action).

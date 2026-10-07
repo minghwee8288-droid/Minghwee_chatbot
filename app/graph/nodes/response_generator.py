@@ -14,6 +14,7 @@ from app.graph.guards import (
     asks_again,
     asks_for_process,
     clamp_reply,
+    claire_has_spoken,
     greeting_only,
     holding_reply,
     is_degenerate,
@@ -243,7 +244,7 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
     # Rule 1, on the one turn it applies to. Appended AFTER the template is
     # chosen, so it survives whichever specialised instruction won above -
     # PROCESS_INSTRUCTION is the one that dropped it (2026-09-17).
-    if not (state.get("history_text") or "").strip():
+    if not claire_has_spoken(state.get("history_text") or ""):
         instruction += FIRST_CONTACT_INTRO_NOTE
 
     # A second attempt at a question we did not answer. Appended after the
@@ -388,7 +389,7 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         # Hwee's AI assistant") is a required sentence that the answer would
         # otherwise push off the end. A first enquiry can arrive here rather than
         # at the collector, and it was going out with no introduction at all.
-        first_message = not (state.get("history_text") or "").strip()
+        first_message = not claire_has_spoken(state.get("history_text") or "")
         # Eight steps plus an opening line and a closing offer. clamp_reply no
         # longer counts a "1." marker as a sentence of its own, so this is eight
         # actual steps rather than four.
@@ -417,7 +418,7 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
             "Conversation %s: nothing asked yet, inviting the question instead of handing over",
             state.get("conversation_id"),
         )
-        first_contact = not (state.get("history_text") or "").strip()
+        first_contact = not claire_has_spoken(state.get("history_text") or "")
         incoming = state.get("incoming_text", "")
         if first_contact:
             # Rule 1's introduction, which a returning client has already had.

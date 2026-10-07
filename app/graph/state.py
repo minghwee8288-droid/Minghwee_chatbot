@@ -42,6 +42,9 @@ SERVICE_INTENTS = {
     # not in the ticket CHECK constraint - it is filed under dispute_salary by
     # TICKET_SERVICE_FALLBACK, with the true key kept in captured_info.
     "missing_helper",
+    # A complaint about us (2026-10-07). Not a sale either, and filed under
+    # dispute_salary the same way, with the true key in captured_info.
+    "complaint",
 }
 
 ENQUIRY_INTENTS = {"fee_enquiry", "salary_enquiry"}

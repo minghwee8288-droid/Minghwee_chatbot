@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.graph.guards import greeting_only
+from app.graph.guards import claire_has_spoken, greeting_only
 from app.graph.prompts.style import STYLE_BLOCK
 from app.services.ticket import service_types_label
 
@@ -412,9 +412,23 @@ def build_system_prompt(
 ) -> str:
     """Assemble Parts A-D for a single turn."""
     state = state or {}
-    first_message = not (state.get("history_text") or "").strip()
+    history = state.get("history_text") or ""
+    first_message = not history.strip()
     if first_message:
         stage = "This is the client's first message. Open with your greeting, once."
+    elif not claire_has_spoken(history):
+        # Our TEAM has been talking to this client and Claire has not (live,
+        # 2026-10-07, conversation 26 - see guards.claire_has_spoken). The
+        # "already going" branch below told her not to greet, so she never
+        # said who she was.
+        stage = (
+            "You have not written in this conversation before. The earlier "
+            "messages marked \"Agent:\" are between the client and our human "
+            "team, not you. This is YOUR first message to them, so open with "
+            "your introduction, once, as rule 1 says - then deal with what "
+            "they have just asked. Do not continue or repeat anything our team "
+            "said unless the client asks about it."
+        )
     elif greeting_only(state.get("incoming_text") or ""):
         # THE CLIENT HAS GREETED US AND ASKED NOTHING, and this is a thread with
         # a past. Reported 2026-09-22: a client whose last exchange with us was
@@ -444,6 +458,14 @@ def build_system_prompt(
             "The conversation is already going. Do NOT greet again, do NOT thank "
             "them again, and do NOT add a closing line — reply as if you are "
             "mid-chat."
+        )
+
+    if claire_has_spoken(history) and any(
+        line.startswith("Agent:") for line in history.splitlines()
+    ):
+        stage += (
+            " Lines marked \"Agent:\" were written by a human colleague at "
+            "Ming Hwee, not by you - never speak of them as your own messages."
         )
 
     sections = [

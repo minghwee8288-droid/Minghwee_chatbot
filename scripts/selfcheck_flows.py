@@ -329,6 +329,8 @@ icol = importlib.import_module("app.graph.nodes.info_collector")
 _FEE_FIGURES = (f"{D}1,688", f"{D}1,588", f"{D}1,288",
                 f"{D}1,428", f"{D}1,188", f"{D}1,168")
 import app.services.message as ms
+import app.graph.state as _state_mod
+import app.graph.complaint as _complaint
 import app.services.handover as hs
 btr = importlib.import_module("app.graph.nodes.blocked_topic_responder")
 rg = importlib.import_module("app.graph.nodes.response_generator")
@@ -4213,8 +4215,8 @@ rows = [
  # has already caught one field-set change it was meant to (2026-09-10).
  ("and the WhatsApp push name is not evidence on these flows",
   sorted(t.NAME_FROM_RECORD_ONLY),
-  ["candidate_new_hiring", "direct_hiring", "home_leave", "insurance",
-   "new_hiring", "passport_renewal", "renewal", "replacement",
+  ["candidate_new_hiring", "complaint", "direct_hiring", "home_leave",
+   "insurance", "new_hiring", "passport_renewal", "renewal", "replacement",
    "transfer_employer"]),
  ("a name we hold is greeted with, not just filed",
   "CARRIES the name" in ico.RECORD_NAME_NOTE, True),
@@ -4701,6 +4703,131 @@ rows = [
  ("'how do I inform MOM' has an answer for a pregnant helper",
   [r for r in lsn.ROWS
    if r["question"] == "How do I inform MOM that my helper is pregnant?"] != [], True),
+
+ # --- 2026-10-07: conversation 26 - who is speaking ------------------------
+ # Our human team's messages were rendered "You:", so a thread full of them
+ # read as Claire's own, and she never introduced herself.
+ ("an agent's message is rendered as a colleague's, not Claire's",
+  ms.format_history([
+      {"direction": "outbound", "body": "Kindly authorise", "is_bot": False, "sent_by": "agent"},
+      {"direction": "inbound", "body": "Okay", "is_bot": False, "sent_by": None},
+      {"direction": "outbound", "body": "Hi, I'm Claire", "is_bot": True, "sent_by": "bot"},
+  ]), "Agent: Kindly authorise\nClient: Okay\nYou: Hi, I'm Claire"),
+ ("...and only Claire's own line counts as her having spoken",
+  (gd.claire_has_spoken("Agent: Kindly authorise\nClient: Okay"),
+   gd.claire_has_spoken("Client: hi\nYou: Hi, I'm Claire")), (False, True)),
+ ("...so her first message after our team's is an introduction",
+  "This is YOUR first message to them" in _sys.build_system_prompt(
+      {"history_text": "Agent: Kindly authorise\nClient: Okay", "incoming_text": "hi"}),
+  True),
+ ("...and once she has spoken it is not",
+  "This is YOUR first message to them" in _sys.build_system_prompt(
+      {"history_text": "Agent: hi\nYou: Hi, I'm Claire\nClient: ok",
+       "incoming_text": "what is the levy?"}), False),
+
+ # --- 2026-10-07: a complaint is its own topic -----------------------------
+ ("a complaint is recognised however it is phrased",
+  [m for m in ("Hi\nI want to lodge a complaint", "I'd like to make a complaint",
+               "i want to complain about your agent", "this is a formal grievance",
+               "I am complaining because nobody replied")
+   if not ic._COMPLAINT.search(m)], []),
+ ("...and 'no complaints' is not one",
+  [m for m in ("no complaints, thank you", "not complaining, just asking",
+               "nothing to complain about") if ic._COMPLAINT.search(m)], []),
+ ("...and it names its own topic over any service it mentions",
+  _named_svc("your agent never replied about my transfer, I want to complain"),
+  t.COMPLAINT),
+ ("a complaint routes to the collector, files high priority and on its own",
+  (t.COMPLAINT in _state_mod.SERVICE_INTENTS, t.COMPLAINT in t.HIGH_PRIORITY_SERVICES,
+   t.COMPLAINT in t.ALWAYS_SEPARATE,
+   t.TICKET_SERVICE_FALLBACK.get(t.COMPLAINT) in t.TICKET_SERVICE_TYPES),
+  (True, True, True, True)),
+ ("...and is never a sales lead",
+  _lead.kind_for(t.COMPLAINT, "employer"), None),
+ ("...and asks the three things the agency named",
+  [f.key for f in t.fields_for(t.COMPLAINT)],
+  ["full_name", "complaint_subject", "complaint_detail"]),
+ ("the complaint opening carries the wait and the number, and no 'anything else'",
+  [w in _complaint.complaint_opening("Thomas", ["complaint_detail"], False)
+   for w in ("Thomas", "within one working day", "6534 2277")]
+  + ["anything else" in _complaint.complaint_opening("", ["full_name"], True).lower()],
+  [True, True, True, False]),
+ ("...and the closing carries the reference number",
+  "CB-2026-0042" in _complaint.complaint_closing("Thomas", "CB-2026-0042"), True),
+ ("'I want to lodge a complaint' is the request, not the complaint",
+  [_complaint.states_a_complaint(v) for v in (
+      "wants to lodge a complaint", "I would like to make a formal complaint",
+      "agent did not reply for 3 days about the MOM application")],
+  [False, False, True]),
+
+ # --- 2026-10-07: "tell me about direct hire - the process and costs" -------
+ ("a client asking to hear about a service gets the overview",
+  [ico.enquiry_overview_due({"contact_type": "employer", "intent": i,
+                             "service_type": svc, "incoming_text": m})
+   for i, svc, m in (
+       ("fee_enquiry", "direct_hiring",
+        "Hi I will like to find out more about direct hire process and costs"),
+       ("transfer", "transfer",
+        "Hi I'd like to know more about hiring transfer helpers and the costs involved"),
+   )], [True, True]),
+ ("...but not a plain request, a bare price, a parked topic or a started intake",
+  [ico.enquiry_overview_due(st) for st in (
+      {"contact_type": "employer", "service_type": "new_hiring",
+       "incoming_text": "I want to hire a helper"},
+      {"contact_type": "employer", "service_type": "passport_renewal",
+       "incoming_text": "how much for passport renewal"},
+      {"contact_type": "employer", "service_type": "direct_hiring",
+       "intent": "direct_hiring", "incoming_text": "what is the process",
+       "blocked_topics": {"direct_hiring": {}}},
+      {"contact_type": "employer", "service_type": "direct_hiring",
+       "collected_service": "direct_hiring", "asked_field_counts": {"full_name": 1},
+       "incoming_text": "what is the process"},
+  )], [False, False, False, False]),
+ ("...and it reaches the collector even when called a fee question",
+  g.route_after_rag({"intent": "fee_enquiry", "service_type": "direct_hiring",
+                     "contact_type": "employer", "history_text": "",
+                     "incoming_text": "find out more about direct hire process and costs"}),
+  "info_collector"),
+ ("...searching for the whole service, with the filter kept despite 'costs'",
+  (rr._search_query({"intent": "fee_enquiry", "service_type": "direct_hiring",
+                     "contact_type": "employer",
+                     "incoming_text": "find out more about direct hire process and costs"}
+                    ).startswith(rr.ENQUIRY_OVERVIEW_QUERY),
+   rr._service_filter({"intent": "fee_enquiry", "service_type": "direct_hiring",
+                       "contact_type": "employer",
+                       "incoming_text": "find out more about direct hire process and costs"})),
+  (True, "direct_hiring")),
+ ("the overview asks for the timeline, the steps, the costs kept apart and the terms",
+  [w in _flat(tpl.ENQUIRY_OVERVIEW_NOTE) for w in (
+      "THE TIMELINE", "THE STEPS", "government and third-party costs",
+      "WHO CAN HIRE", "replacement or refund", "If you would like to go ahead")],
+  [True] * 6),
+ ("the direct-hire rows the agency said were missing are in the knowledge base",
+  sorted(r["question"] for r in lsn.ROWS
+         if r["service_type"] == "direct_hiring" and r.get("contact_type") == "employer"),
+  sorted([
+      "What government and third-party costs apply to a direct hire?",
+      "Who is eligible to hire a helper through a direct hire?",
+      "What happens if the helper does not pass her medical for a direct hire?",
+      "What are the contract terms, and is there a replacement or refund for a direct hire?",
+  ])),
+ ("...and none of them invents a replacement or refund policy",
+  [r["question"] for r in lsn.ROWS
+   if r["service_type"] == "direct_hiring" and _re.search(
+       r"guarantee|full refund|\d+\s*%|replacement within", r["answer"], _re.I)], []),
+ ("no row tells a direct-hire client the permit and bond are theirs to do",
+  [u["where"]["question"] for u in lsn.UPDATES
+   if "With direct hire you handle" in u["set"].get("answer", "")], []),
+ ("...and its closing question is put on a line of its own",
+  ico._question_on_its_own_line(
+      "The terms are in the Service Agreement. May I know your name?"),
+  "The terms are in the Service Agreement.\n\nMay I know your name?"),
+ ("...and the retriever gives it room for the terms as well as the process",
+  rr.ENQUIRY_OVERVIEW_MATCH_COUNT > rr.BRIEFING_MATCH_COUNT, True),
+ ("...and the process row describes the process, not our intake questions",
+  [u["set"]["answer"][:40] for u in lsn.UPDATES
+   if u["where"]["question"] == "What is the process for a direct hire?"
+   and "We take her full name and contact number" in u["set"]["answer"]], []),
 ]
 bad = 0
 for label, got, want in rows:

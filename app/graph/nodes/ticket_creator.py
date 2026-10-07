@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.graph.complaint import complaint_closing
 from app.graph.state import (
     AGENCY_INFO_INTENT,
     LEAD_CONTACT_TYPES,
@@ -26,6 +27,7 @@ REASON_BY_SERVICE = {
     "salary_enquiry": "salary_enquiry",
     "dispute_salary": "dispute_escalation",
     "dispute_assault": "dispute_escalation",
+    ticket_service.COMPLAINT: "dispute_escalation",
     MEDIA_INTENT: "media_received",
 }
 
@@ -353,4 +355,16 @@ async def ticket_creator(state: ConversationState) -> dict[str, Any]:
     if ticket:
         update["ticket_id"] = ticket.get("id")
         update["ticket_number"] = ticket.get("ticket_number")
+
+    # The one closing message that carries its ticket number, because the
+    # agency asked for it by name: "it should ... provide [a] complaint /
+    # ticketing number" (2026-10-07). It can only be written here - the number
+    # does not exist until the row does. If the insert failed the collector's
+    # version, without a number, is what goes out.
+    if service_type == ticket_service.COMPLAINT and (ticket or {}).get("ticket_number"):
+        name = str(collected.get("full_name") or "").strip()
+        update["reply"] = complaint_closing(
+            "" if name.lower() == lead_service.UNANSWERED else name,
+            ticket.get("ticket_number"),
+        )
     return update

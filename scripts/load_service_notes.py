@@ -2546,6 +2546,91 @@ ROWS += [
 ]
 
 
+# Direct hire, 2026-10-07. Conversation 26 asked "I will like to find out more
+# about direct hire process and costs", and the agency listed what the answer
+# lacked: "Typical timeline. Eligibility and employer requirements. Government
+# and third-party costs (levy, bond, insurance, medical), kept separate from the
+# agency fee. Contract terms, replacement or refund policy, and what happens if
+# the helper doesn't pass the medical." The timelines were already here; the
+# other four were not, under direct_hiring. Every fact below is already in the
+# knowledge base somewhere - the levy and PR rule (2026-09-28), the bond and
+# insurance row above, the income and eligibility rows, the 6ME row, and the
+# direct-hire Service Agreement named in the documents row - and is filed here so
+# a direct-hire search reaches it. NO new policy is stated: the replacement and
+# refund terms for a direct hire are not in our records, so that row says where
+# they are written and who goes through them, and nothing about what they are.
+ROWS += [
+    {
+        "service_type": "direct_hiring",
+        "contact_type": "employer",
+        "nationality": "all",
+        "section_heading": "Employer - direct hire government and third-party costs",
+        "question": "What government and third-party costs apply to a direct hire?",
+        "answer": (
+            "These are paid to the government or to third parties, separately "
+            "from our own fee for processing the direct hire. The monthly levy "
+            "to MOM is $300, or $60 if your household qualifies for the "
+            "concessionary rate - the concession does not apply to a PR "
+            "employer. MOM requires a $5,000 security bond for a helper who is "
+            "not Malaysian, which we arrange as an insured bond so you are not "
+            "putting the money up yourself. She also needs medical insurance and "
+            "personal accident insurance at MOM's minimum coverage, and a "
+            "medical examination - before her work permit application is filed "
+            "and every six months after that, usually about S$50 to S$80 each "
+            "time at a GP clinic. Our agent will confirm the insurance cover and "
+            "our fee for your case."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "contact_type": "employer",
+        "nationality": "all",
+        "section_heading": "Employer - who can hire a helper by direct hire",
+        "question": "Who is eligible to hire a helper through a direct hire?",
+        "answer": (
+            "The same MOM employer requirements apply as for any hire. You must "
+            "be 21 or above, a Singapore Citizen, a PR or the holder of a valid "
+            "work pass, and not an undischarged bankrupt, and you must be able to "
+            "support her - the minimum income we work to is S$2,500 a month for a "
+            "Citizen or PR employer. If you are employing a helper for the first "
+            "time you also complete MOM's Employers' Orientation Programme before "
+            "the application is filed. Our agent checks your eligibility with you "
+            "before anything is submitted."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "contact_type": "employer",
+        "nationality": "all",
+        "section_heading": "Employer - direct hire if she does not pass the medical",
+        "question": "What happens if the helper does not pass her medical for a direct hire?",
+        "answer": (
+            "Her medical fitness is confirmed before we file her work permit "
+            "application, so if she is found unfit at that check the application "
+            "does not go ahead for her. Once she is working for you, she has a "
+            "medical examination every six months, and if she fails it MOM "
+            "revokes her work permit. Our agent will go through what happens next "
+            "with you, including any fees, under your Service Agreement."
+        ),
+    },
+    {
+        "service_type": "direct_hiring",
+        "contact_type": "employer",
+        "nationality": "all",
+        "section_heading": "Employer - direct hire contract, replacement and refund terms",
+        "question": "What are the contract terms, and is there a replacement or refund for a direct hire?",
+        "answer": (
+            "The contract terms, and the replacement and refund terms that apply "
+            "to a direct hire, are set out in the Service Agreement and the "
+            "Service and Fee Schedule at the direct-hire rate. Our agent will take "
+            "you through them before you sign anything, so you know exactly where "
+            "you stand. We also go through her employment contract with you to "
+            "make sure it covers everything MOM requires - salary, rest days, "
+            "duties and termination terms."
+        ),
+    },
+]
+
 UPDATES: list[dict[str, Any]] = [
     {
         # "Last part info bots can void this info, as Er looking for Transfer
@@ -3168,6 +3253,64 @@ UPDATES.append(
     }
 )
 
+
+UPDATES += [
+    {
+        # Conversation 26, 2026-10-07: "find out more about direct hire process
+        # and costs" was answered with step 6 "You will handle or arrange the
+        # Work Permit application, insurance, security bond, medical checks and
+        # repatriation logistics" - taken from this row, which describes hiring
+        # with NO agency at all and reads, beside our own direct-hire rows, as
+        # though that is what our direct-hire service leaves to the client. It
+        # is the opposite: those are exactly the things we do.
+        "where": {"question": "What is the difference between hiring through an agency and direct hire?",
+                  "service_type": "general"},
+        "reason": "2026-10-07: read as our direct-hire service leaving the "
+                  "permit, bond and insurance to the client - which is what "
+                  "the service exists to do for them.",
+        "set": {
+            "answer": (
+                "If you hire a helper entirely on your own, with no agency, you "
+                "handle the Work Permit application, insurance, security bond, "
+                "medical checks and repatriation logistics yourself. With an "
+                "agency, a MOM-licensed employment agency handles the paperwork "
+                "and the sourcing for you. Ming Hwee's direct hire service sits "
+                "in between: you have already found the helper, there is no "
+                "sourcing or matching to do, and we handle the MOM application, "
+                "the documents, the insurance and bond, and getting her here and "
+                "settled."
+            ),
+        },
+    },
+    {
+        # The same conversation: this row described the questions we ASK at
+        # the start of a direct hire, under the question "What is the process",
+        # and it was the top match - so the reply listed "Share the helper's
+        # full name, contact number..." as steps 1 to 3 of the process. The
+        # real process and the timelines are in the rows below it; this one now
+        # says them, from those rows and nothing else.
+        "where": {"question": "What is the process for a direct hire?",
+                  "service_type": "direct_hiring"},
+        "reason": "2026-10-07: described our intake questions as the process, "
+                  "and the reply listed them as the client's steps.",
+        "set": {
+            "answer": (
+                "A direct hire is one where you have already found the helper "
+                "yourself and want us to process her. We first confirm who she is "
+                "and where she is now, because a helper already in Singapore on a "
+                "valid work permit follows a shorter route than one coming from "
+                "overseas. You then authorise us through Singpass, we collect your "
+                "documents and hers and confirm she is medically fit, file the work "
+                "permit application with MOM and arrange the security bond and "
+                "insurance, and finally either transfer her across here or bring "
+                "her in from overseas, and go through the handover with you. It "
+                "usually takes about 2 to 3 weeks if she is already in Singapore "
+                "on a valid work permit, and about 4 to 6 weeks if she is coming "
+                "from overseas."
+            ),
+        },
+    },
+]
 
 TEXT_REPLACEMENTS: list[dict[str, str]] = [
     # The agency gave the Filipino salary figures on 2026-09-17 and they

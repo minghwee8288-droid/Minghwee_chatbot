@@ -9,7 +9,7 @@ from typing import Any
 from app.config import settings
 from app.graph.guards import asks_about_price, last_bot_line
 from app.services import kb_rules
-from app.graph.nodes.info_collector import briefs_on_this_turn
+from app.graph.nodes.info_collector import briefs_on_this_turn, enquiry_overview_due
 from app.graph.state import (
     AGENCY_INFO_INTENT,
     ConversationState,
@@ -211,6 +211,24 @@ CANDIDATE_BRIEFING_QUERY = (
 # over again. 10 keeps every one of the five for PH, ID and MM.
 BRIEFING_MATCH_COUNT = 10
 
+# A client asking to hear about a service before going ahead (see
+# enquiry_overview_due). Measured 2026-10-07 under direct_hiring, top 10: the
+# process row, both step-by-step rows, all three timeline rows and the cost row
+# - where the client's own words, tagged "(cost of direct hiring)" and searched
+# with the service filter DROPPED because they said "costs", returned the cost
+# row, the intake row, a no-agency comparison and two marketing chunks, and no
+# timeline at all.
+ENQUIRY_OVERVIEW_QUERY = (
+    "what is the process step by step, how long does it take, what does it "
+    "cost including government and third-party costs, and who is eligible"
+)
+
+# Two more than a briefing: an overview owes the client the process, the
+# timeline (one row per route), the costs, who can hire AND the terms - at 10,
+# "what happens if she does not pass the medical", which the agency named,
+# was the row that fell off the end.
+ENQUIRY_OVERVIEW_MATCH_COUNT = 12
+
 # The OTHER briefing, and it had the same problem for a different reason.
 #
 # A small-ticket service is supposed to say what the job involves before it
@@ -293,6 +311,11 @@ def _search_query(state: ConversationState) -> str:
     # that is not going to use them (section 9.8 on duplicated constants).
     # rag_retriever runs before info_collector on the same turn and reads the
     # same asked_field_counts, so both see the same answer.
+    if enquiry_overview_due(state):
+        resolved = ticket_service.resolve_service(
+            state.get("service_type"), effective_contact_type(state)
+        )
+        return f"{ENQUIRY_OVERVIEW_QUERY}\n({_readable_service(_aliased(resolved))})"
     if briefs_on_this_turn(state.get("service_type"), state.get("asked_field_counts")):
         service = _readable_service(state.get("service_type"))
         return f"{OVERVIEW_QUERY}\n({service})"
@@ -513,6 +536,15 @@ def _retrieval_audience(state: ConversationState) -> str:
 
 def _service_filter(state: ConversationState) -> str | None:
     """Which service to narrow retrieval to — None means search everything."""
+    # An overview is about THIS service, whatever money words it contains -
+    # "process and costs" dropped the filter and reached a no-agency
+    # comparison row that told a direct-hire client to file their own permit.
+    if enquiry_overview_due(state):
+        return _aliased(
+            ticket_service.resolve_service(
+                state.get("service_type"), effective_contact_type(state)
+            )
+        )
     # Widening a money question is right when the figures live somewhere else
     # (see below) and wrong when THIS service states its own price: the widened
     # search then hands back another service's fee, which is not a vague answer
@@ -582,13 +614,15 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
     contact = _retrieval_audience(state)
     nationality = _nationality(state)
     service = _service_filter(state)
-    briefing = _briefing_turn(state)
+    overview = enquiry_overview_due(state)
+    briefing = _briefing_turn(state) or overview
     matches = await rag.search(
         query,
         service_type=service,
         contact_type=contact,
         nationality=nationality,
-        match_count=BRIEFING_MATCH_COUNT if briefing else None,
+        match_count=ENQUIRY_OVERVIEW_MATCH_COUNT if overview
+        else BRIEFING_MATCH_COUNT if briefing else None,
     )
     best = rag.best_similarity(matches)
 
@@ -626,7 +660,11 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
     fee_question = state.get("intent") == "fee_enquiry" or asks_about_price(
         state.get("incoming_text") or ""
     )
-    if service in kb_rules.fee_stated_services() and fee_question:
+    if enquiry_overview_due(state):
+        # Never widened: the whole point of the filter on this turn is that a
+        # wider search reaches rows about some other way of hiring.
+        pass
+    elif service in kb_rules.fee_stated_services() and fee_question:
         logger.info(
             "Retrieval under service=%s scored %.3f but it is a price question on a "
             "service that states its own fee - not widening, so another service's "

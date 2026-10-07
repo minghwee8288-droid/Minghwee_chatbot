@@ -525,6 +525,24 @@ def recent_bot_lines(history_text: str, count: int = 3) -> list[str]:
     return found
 
 
+def claire_has_spoken(history_text: str) -> bool:
+    """Whether Claire herself has written anything in this transcript yet.
+
+    "First contact" used to mean an EMPTY history, and that is false on any
+    number our team already talks to. Live, 2026-10-07, conversation 26: a
+    client whose agents had been messaging him all week about insurance and an
+    air ticket asked "Hi I will like to find out more about direct hire process
+    and costs". The history was full of those agents' lines, so the prompt said
+    the conversation was already going and Claire never said who she was - the
+    agency: "No greeting", "introduction of agent bot". Agents' lines are now
+    rendered "Agent:" (message.format_history), so "You:" is Claire alone, and
+    the first message SHE writes introduces her whoever spoke before.
+    """
+    return any(
+        line.startswith("You:") for line in (history_text or "").splitlines()
+    )
+
+
 def near_duplicate(reply: str, previous: str, threshold: float = 0.8) -> bool:
     """Whether a reply says essentially the same thing as the last one.
 
