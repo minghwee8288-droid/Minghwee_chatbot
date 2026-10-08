@@ -223,11 +223,14 @@ ENQUIRY_OVERVIEW_QUERY = (
     "cost including government and third-party costs, and who is eligible"
 )
 
-# Two more than a briefing: an overview owes the client the process, the
-# timeline (one row per route), the costs, who can hire AND the terms - at 10,
+# Four more than a briefing: an overview owes the client the process, the
+# timeline (one row per route), the costs, who can hire AND the terms. At 10,
 # "what happens if she does not pass the medical", which the agency named,
-# was the row that fell off the end.
-ENQUIRY_OVERVIEW_MATCH_COUNT = 12
+# was the row that fell off the end - and at 12 it STILL was: live on
+# conversation 3766 (2026-10-07) it ranked 13th, behind two documents rows,
+# and the reply said nothing about the medical. 14 keeps the same query, so
+# the set is the old twelve plus the next two rather than a different set.
+ENQUIRY_OVERVIEW_MATCH_COUNT = 14
 
 # The OTHER briefing, and it had the same problem for a different reason.
 #

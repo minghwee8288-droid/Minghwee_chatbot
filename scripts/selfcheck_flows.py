@@ -4824,6 +4824,8 @@ rows = [
   "The terms are in the Service Agreement.\n\nMay I know your name?"),
  ("...and the retriever gives it room for the terms as well as the process",
   rr.ENQUIRY_OVERVIEW_MATCH_COUNT > rr.BRIEFING_MATCH_COUNT, True),
+ ("...and enough room for the medical row, which ranked 13th live (conversation 3766)",
+  rr.ENQUIRY_OVERVIEW_MATCH_COUNT >= 14, True),
  ("...and the process row describes the process, not our intake questions",
   [u["set"]["answer"][:40] for u in lsn.UPDATES
    if u["where"]["question"] == "What is the process for a direct hire?"
