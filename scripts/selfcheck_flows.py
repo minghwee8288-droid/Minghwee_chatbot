@@ -4950,6 +4950,20 @@ rows = [
                "i want to complain about your agent", "this is a formal grievance",
                "I am complaining because nobody replied")
    if not ic._COMPLAINT.search(m)], []),
+ # 2026-10-08: mid-intake, only an explicit request opens a complaint, so
+ # every phrasing above must still read as one.
+ ("...and each of those is an explicit request, so it still opens one mid-intake",
+  [m for m in ("Hi\nI want to lodge a complaint", "I'd like to make a complaint",
+               "i want to complain about your agent", "this is a formal grievance",
+               "I am complaining because nobody replied", "I have a complaint about my helper",
+               "can you file a complaint for me")
+   if not ic._LODGES_COMPLAINT.search(m)], []),
+ ("...while mentioning past complaints is not a request to lodge one",
+  [m for m in ("Many times I have complained about this to you also",
+               "I complained before and she did not change",
+               "my neighbours complain about the noise",
+               "I don't want to complain, just tell me the cost")
+   if ic._LODGES_COMPLAINT.search(m)], []),
  ("...and 'no complaints' is not one",
   [m for m in ("no complaints, thank you", "not complaining, just asking",
                "nothing to complain about") if ic._COMPLAINT.search(m)], []),

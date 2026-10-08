@@ -2217,6 +2217,32 @@ CASES = [
       "_stub_intent": {"intent": "case_enquiry", "service_type": "direct_hiring",
                        "contact_type": "employer", "confidence": 0.9},
       "_expect_state": {"intent": "complaint", "service_type": "complaint"}}),
+    # 2026-10-08: the REASON for a replacement mentioned past complaints and
+    # was filed as complaint CB-2026-0031, abandoning the replacement.
+    ("intent_classifier", "an answer that mentions past complaints keeps the replacement",
+     {"incoming_text": "He is not good at cooking, she always makes more salt in my food. "
+                       "Many times I have complained about this to you also",
+      "intent": "replacement", "service_type": "replacement",
+      "history_text": "Client: It's about 4 months\nYou: Could you share the reason you would like to replace Ranchordas?",
+      "_stub_intent": {"intent": "replacement", "service_type": "replacement",
+                       "contact_type": "employer", "confidence": 0.9},
+      "_expect_state": {"intent": "replacement", "service_type": "replacement"}}),
+    # ...even when the model itself reads it as a complaint.
+    ("intent_classifier", "...even when the model calls it a complaint",
+     {"incoming_text": "Many times I have complained about this to you also",
+      "intent": "replacement", "service_type": "replacement",
+      "history_text": "Client: It's about 4 months\nYou: Could you share the reason you would like to replace her?",
+      "_stub_intent": {"intent": "complaint", "service_type": "complaint",
+                       "contact_type": "employer", "confidence": 0.8},
+      "_expect_state": {"service_type": "replacement"}}),
+    # ...while the same words with no question of ours pending still open one.
+    ("intent_classifier", "...but the same words unprompted are a complaint",
+     {"incoming_text": "Many times I have complained about this to you also",
+      "intent": "replacement", "service_type": "replacement",
+      "history_text": "Client: ok\nYou: A live agent will connect with you shortly.",
+      "_stub_intent": {"intent": "other", "service_type": "replacement",
+                       "contact_type": "employer", "confidence": 0.6},
+      "_expect_state": {"service_type": "complaint"}}),
     # The controls: "no complaints" is not one, and a client can drop it.
     ("intent_classifier", "...while 'no complaints' is not a complaint",
      {"incoming_text": "no complaints so far, how long does it take?",

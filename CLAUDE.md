@@ -481,6 +481,7 @@ because the lead is opened early and the ticket is created much later.
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
 | Claire introduces herself in her first message, however many our TEAM sent before it | `guards.claire_has_spoken` + `message.format_history` ("Agent:") + the stage line in `build_system_prompt` | Agent messages were rendered "You:", so a thread full of them read as Claire's own and she never said who she was (conversation 26, 2026-10-07). Only a "You:" line is her. Every node's first-contact test reads the one predicate. |
 | A complaint is its own topic, raised whatever was being collected | `intent_classifier._COMPLAINT` + `ticket.COMPLAINT` | "Hi / I want to lodge a complaint" was glued to the direct-hire intake in progress and raised nothing. Keyword override like `_MISSING_HELPER`; a pay/leave `dispute_salary` the model recognised keeps its flow. While one is being taken down, what the client says next belongs to it unless they drop it ("never mind"). High priority, never merged, filed under `dispute_salary`. |
+| ...but an answer to our own question that only MENTIONS complaining is still an answer | `intent_classifier._LODGES_COMPLAINT` in `_NAMED_SERVICE` | "Many times I have complained about this to you also", as the reason for a replacement, raised complaint CB-2026-0031 and dropped the replacement. Only an explicit request ("I want to lodge / file / make a complaint", "I have a complaint") names the complaint service, so the answer rule hands a mere mention back to the live collection. Unprompted, the bare word still opens a complaint. |
 | A complaint is told the wait, the number to call and its reference - and never "anything else?" | `app/graph/complaint.py` (+ `ticket_creator` for the number) | The agency's own example reply, word for word. Fixed wording, because it carries a promised time and a phone number the guards strip from model output, and a reference that only exists after the ticket insert. `COMPLAINT_RESPONSE_TIME` / `COMPLAINT_URGENT_PHONE` in `ticket.py`, one place. |
 | "I want to lodge a complaint" is not filed as the complaint | `complaint.states_a_complaint` | Filed as `complaint_detail` it would close the collection on the opening turn with an empty ticket. |
 | A client asking to hear about a service is answered in full before being asked anything | `info_collector.enquiry_overview_due` + `templates.ENQUIRY_OVERVIEW_NOTE` | "find out more about direct hire process and costs" got the intake questions presented as "the process" and "timing depends on the case". The router, the retriever and the collector read one predicate. Timeline (each route labelled), steps, government costs apart from our fee, who can hire, the terms - or that our agent will take them through - then the first question on its own line. Only before the collection starts, never on a parked topic, never a bare price question. |
@@ -1458,6 +1459,32 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-08** - **A replacement reason that mentioned past complaints was
+  filed as a complaint.** The agency's test: asked "Could you share the reason
+  you would like to replace Ranchordas?", the client wrote "He is not good at
+  cooking, she always makes more salt in my food. Many times I have complained
+  about this to you also". The `_COMPLAINT` keyword override (2026-10-07) fires
+  on the word anywhere, and `_named_service` used the same pattern, so the
+  answer rule that keeps an answer on the live collection saw a named service
+  and stood aside. Complaint ticket CB-2026-0031 was raised and the replacement
+  was abandoned at its fourth question.
+  `_LODGES_COMPLAINT` recognises a request to complain: want / like / need to
+  complain, lodge / file / make / raise a complaint, "I have a complaint", "this
+  is a complaint", "I am complaining". It has the same negation guards plus
+  "don't want to complain". `_NAMED_SERVICE` now uses it, so a mere mention
+  names no service and the answer rule returns the turn to the collection. The
+  override itself is unchanged: unprompted, the bare word still opens a
+  complaint, and "I want to lodge a complaint" mid-intake still does
+  (conversation 26).
+  **Verified:** the whole five-turn conversation replayed read-only from a fresh
+  state (the thread had been reset). Before the fix, 1 run of 1 raised the
+  complaint ticket. After, 3 runs of 3 stay on replacement, file the reason
+  ("not good at cooking; adds too much salt"), raise no ticket and ask the next
+  question. Five faults injected, five red. A first version also guarded the
+  override; that guard stayed green when broken, because the answer rule already
+  covers it, so it was removed.
+  `selfcheck_flows.py` is **793 assertions**; `smoke_nodes.py` is **235 checks**.
 
 - **2026-10-08** - **A helper asking for her own home leave is served, and her
   employer's number is taken.** Conversation 4551, the tester as a helper:

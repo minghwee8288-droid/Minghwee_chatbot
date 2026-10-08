@@ -86,6 +86,32 @@ _COMPLAINT = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# A REQUEST to lodge a complaint, as opposed to the word appearing at all.
+# Needed only while the client is answering a question we just asked, because
+# that is where the word turns up about something else. Live 2026-10-08, a
+# replacement: asked why they want to replace the helper, the client wrote "He
+# is not good at cooking, she always makes more salt in my food. Many times I
+# have complained about this to you also" - the REASON, mentioning past
+# complaints - and _COMPLAINT turned it into complaint ticket CB-2026-0031 with
+# the replacement abandoned. Every phrasing conversation 26 used is still here,
+# so "I want to lodge a complaint" mid-intake still opens one.
+_LODGES_COMPLAINT = re.compile(
+    r"^(?!.*\bno\s+complaints?\b)(?!.*\bnot\s+(?:a\s+)?complain)"
+    r"(?!.*\b(?:don'?t|do\s+not|not)\s+(?:want|wish|need)\s+to\s+"
+    r"(?:complain|lodge|file|make|raise))"
+    r"(?=.*?(?:"
+    r"\b(?:want|wish|would\s+like|like|need|have)\s+to\s+"
+    r"(?:(?:lodge|file|make|raise|submit|log|register)\s+(?:a\s+|an\s+|my\s+)?"
+    r"(?:formal\s+|official\s+)?(?:complaint|grievance)|complain)\b"
+    r"|\b(?:lodge|file|make|raise|submit|log|register)\s+(?:a\s+|an\s+|my\s+)?"
+    r"(?:formal\s+|official\s+)?(?:complaint|grievance)\b"
+    r"|\b(?:i\s+have|i've\s+got|i\s+got)\s+(?:a\s+|an\s+)?(?:formal\s+)?(?:complaint|grievance)\b"
+    r"|\bthis\s+is\s+(?:a\s+)?(?:formal\s+|official\s+)?(?:complaint|grievance)\b"
+    r"|\bi(?:'m|\s+am)\s+complaining\b"
+    r"))",
+    re.IGNORECASE | re.DOTALL,
+)
+
 # Words that end a complaint collection early. Anything else said while one is
 # being collected belongs to it - see the hold in intent_classifier().
 _LEAVE_COMPLAINT = re.compile(
@@ -228,8 +254,11 @@ _NAMED_SERVICE = (
     (_MISSING_HELPER, ticket_service.MISSING_HELPER),
     # Second, for the same reason: a complaint names its own topic however much
     # of another service it mentions - "your agent never replied about my
-    # transfer" is a complaint, not a transfer request.
-    (_COMPLAINT, ticket_service.COMPLAINT),
+    # transfer" is a complaint, not a transfer request. A REQUEST to complain,
+    # not the word: "many times I have complained about this" names no service
+    # (2026-10-08), and the bare word is already forced by the override in
+    # intent_classifier() wherever it should be.
+    (_LODGES_COMPLAINT, ticket_service.COMPLAINT),
     (re.compile(r"\btransfer\b", re.I), "transfer"),
     # Before renewal: "renew my insurance" names both, and the one the client
     # actually asked for is the insurance.
@@ -548,7 +577,11 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
     # urgent of the two and can be phrased as a complaint), and like it, NOT
     # held back by a collection in progress. A pay or leave dispute the model
     # has already recognised keeps its own flow, and a harm report the model
-    # reached and the second check confirmed is never downgraded.
+    # reached and the second check confirmed is never downgraded. An answer to
+    # our own question that only MENTIONS complaining ("many times I have
+    # complained about this", as the reason for a replacement) is handed back
+    # to the live collection by the answer rule further down, because
+    # _named_service counts only an explicit request (_LODGES_COMPLAINT).
     elif _COMPLAINT.search(message) and intent not in {
         "dispute_salary", "dispute_assault",
     }:
