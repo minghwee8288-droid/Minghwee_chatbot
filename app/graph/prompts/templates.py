@@ -534,9 +534,30 @@ If the records do not answer what they asked, say in one sentence that a live ag
 confirm that and connect with them shortly. Never guess, never give a "usually around..." \
 figure, and never invent a document list.
 
+If they are asking what something WE said or asked earlier in the conversation meant, \
+explain it plainly from the conversation (and the records, where they cover it). Never \
+ask them to clarify what they meant by our own words.
+
 Say nothing about the case itself — no figures, dates or decisions specific to what the \
 team is working on, and do not promise a time. Never name the agent, and never mention \
 tickets or systems. Maximum two short sentences."""
+
+
+# The client answering a question WE just asked, on a topic a live agent
+# already has. Live, conversation 4551, 2026-10-08: asked whether he meant the
+# rest-day question, he said "ys" and got "A live agent is handling your new
+# helper enquiry..."; he then explained he needs help every day and got "Of
+# course - which service can I help you with?". An answer is information for
+# the agent, and it is acknowledged as that.
+BLOCKED_TOPIC_DETAIL_INSTRUCTION = """The client is answering a question you just asked, \
+about their {service_label} request, which a live agent already has.
+
+Reply in one or two short sentences. If their answer confirms what they were asking \
+about, answer that now from the conversation and "Our records" above (plainly; a figure \
+only if the records state it). Otherwise acknowledge what they told you and say you have \
+added it for our agent. Do not ask the next intake question, do not ask which service \
+they want, do not say again that a live agent is handling it, and never name the agent \
+or mention tickets or systems."""
 
 
 PROCESS_ADDENDUM = """

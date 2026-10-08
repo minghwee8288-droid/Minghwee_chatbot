@@ -426,6 +426,7 @@ import app.services.assignment as _asg
 import app.services.handover as _hov
 import app.api.webhook as _wh
 _rg_mod = importlib.import_module("app.graph.nodes.response_generator")
+_btr = importlib.import_module("app.graph.nodes.blocked_topic_responder")
 
 
 class _FakeQuery:
@@ -5144,6 +5145,24 @@ rows = [
   rr._briefing_cost_due({"service_type": "passport_renewal"}, "MM"), False),
  ("...nor a service whose price we withhold",
   rr._briefing_cost_due({"service_type": "direct_hiring"}, None), False),
+ # Conversation 4551, 2026-10-08, a new hire end to end.
+ ("the rest-day question offers plain words, not 'compensation in lieu'",
+  [o for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "rest_day" for o in f.options if "lieu" in o], []),
+ ("...and gets a second ask when the turn went to another answer",
+  [f.max_asks for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "rest_day"], [2]),
+ ("a parked topic tells an answer to OUR question from the 'anything else?' offer",
+  (_btr.answers_our_question({"history_text": "You: Do you mean her rest days? In the meantime, is there anything else I can help you with?", "incoming_text": "ys"}),
+   _btr.answers_our_question({"history_text": "You: A live agent has it. In the meantime, is there anything else I can help you with?", "incoming_text": "okayy"}),
+   _btr.answers_our_question({"history_text": "You: Do you mean her rest days?", "incoming_text": "any update"})),
+  (True, False, False)),
+ ("a long detail about the parked hire is not a request for other work",
+  _btr.asks_for_other_work("Yes, I did not have any rest day arrangement as of now because I need help with everyday life. When I am outside she can take rest"), False),
+ ("...while a bare or explicit request still is",
+  (_btr.asks_for_other_work("I need help"), _btr.asks_for_other_work("Hey I want another service"),
+   _btr.asks_for_other_work("also i need another service for my mother, her helper needs passport renewal soon")),
+  (True, True, True)),
+ ("the per-turn reads run together, not one after another",
+  "await asyncio.gather(" in _pathlib.Path(_wh.__file__).read_text(encoding="utf-8"), True),
  ("the dashboard marks the conversation resolved only when no other ticket on it is open",
   ".in('status', ['open', 'in_progress'])" in _pathlib.Path("portal-ui/ticket-system/components/TicketDetailDrawer.jsx").read_text(encoding="utf-8")
   and "!otherOpen" in _pathlib.Path("portal-ui/ticket-system/components/TicketDetailDrawer.jsx").read_text(encoding="utf-8"), True),

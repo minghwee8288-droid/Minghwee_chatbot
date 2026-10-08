@@ -991,51 +991,75 @@ async def _process_locked(
     if not conversation.get("langgraph_thread_id"):
         await conversation_service.update(conversation["id"], langgraph_thread_id=thread_id)
 
-    # Only employers get the "previous enquiry" line, so only look it up for them.
     contact_type = conversation.get("contact_type") or ""
-    recent_tickets = (
-        await ticket_service.recent_for_conversation(conversation["id"], limit=3)
-        if contact_type == "employer"
-        else []
-    )
-    # An open lead means we have qualified this number before: the collector
-    # should not start the same questions again. Master records make it moot.
-    open_lead = (
-        await lead_service.find_by_phone(phone)
-        if not (conversation.get("matched_employer_id") or conversation.get("matched_candidate_id"))
-        else None
+    employer_id = conversation.get("matched_employer_id")
+    conversation_id = conversation["id"]
+
+    async def _nothing(value: Any) -> Any:
+        return value
+
+    # Every read below is independent of the others, so they run at once. One
+    # after another they were about a dozen round trips to Supabase on every
+    # turn, before the graph could start (the agency asked for faster replies,
+    # 2026-10-08; this was 3-6 s of each ~22 s reply).
+    (
+        recent_tickets,
+        open_lead,
+        prior_hires,
+        placed_helper,
+        placement_helpers,
+        ticket_helpers,
+        record_name,
+        matched_cases,
+        blocked_topics,
+        completed_topics,
+    ) = await asyncio.gather(
+        # Only employers get the "previous enquiry" line, so only look it up for them.
+        ticket_service.recent_for_conversation(conversation_id, limit=3)
+        if contact_type == "employer" else _nothing([]),
+        # An open lead means we have qualified this number before: the collector
+        # should not start the same questions again. Master records make it moot.
+        lead_service.find_by_phone(phone)
+        if not (employer_id or conversation.get("matched_candidate_id")) else _nothing(None),
+        # Has this number hired through us before? Read per turn rather than
+        # stored, for the same reason blocked_topics is: a placement created in
+        # the portal this morning must count this afternoon. Only for a number
+        # that matched an employer master record — nobody else can have a
+        # placement — so the extra read costs an unknown caller nothing.
+        contact_service.count_prior_hires(employer_id),
+        # And WHICH helper, when our records leave no doubt (one live placement,
+        # naming a candidate). Fills her name and nationality so an existing
+        # client is not asked for details already on their own file — the
+        # passport-renewal flow was opening with "May I know your helper's
+        # name?" to someone we placed her with.
+        contact_service.get_placed_helper(employer_id),
+        # Every helper we know this client has - a live placement, or one they
+        # named on an earlier ticket - so a helper service CONFIRMS her ("Is
+        # this home leave for Yoyo, or another helper?") instead of asking for a
+        # name we already hold. Agency, 2026-10-08.
+        contact_service.get_placement_helpers(employer_id)
+        if contact_type == "employer" else _nothing([]),
+        ticket_service.helpers_on_conversation(conversation_id)
+        if contact_type == "employer" else _nothing([]),
+        # The name on their FILE, which is not the same as the name WhatsApp
+        # reports - see contact.get_record_name. Per turn: a name added in the
+        # portal this morning must count this afternoon.
+        contact_service.get_record_name(employer_id),
+        # The cases the portal holds for this contact, READ ONLY - see
+        # contact.get_cases, which never writes to any case_* table. The phone
+        # is passed as well because a lead converted before the employers row
+        # carried a matchable number still names its case.
+        contact_service.get_cases(employer_id, phone),
+        # Topics a human is already working on this thread — read fresh every
+        # turn (never persisted on the checkpoint) so a ticket closing anywhere
+        # unblocks its topic on the very next message, with no extra sync step.
+        ticket_service.open_topics_for_conversation(conversation_id),
+        ticket_service.completed_topics_for_conversation(conversation_id),
     )
 
-    # Has this number hired through us before? Read per turn rather than stored,
-    # for the same reason blocked_topics is: a placement created in the portal
-    # this morning must count this afternoon. Only for a number that matched an
-    # employer master record — nobody else can have a placement — so the extra
-    # read costs an unknown caller nothing.
-    prior_hires = await contact_service.count_prior_hires(
-        conversation.get("matched_employer_id")
-    )
-
-    # And WHICH helper, when our records leave no doubt (one live placement,
-    # naming a candidate). Fills her name and nationality so an existing client
-    # is not asked for details already on their own file — the passport-renewal
-    # flow was opening with "May I know your helper's name?" to someone we
-    # placed her with. Read per turn for the same reason as the count above.
-    placed_helper = await contact_service.get_placed_helper(
-        conversation.get("matched_employer_id")
-    )
-
-    # Every helper we know this client has - a live placement, or one they
-    # named on an earlier ticket - so a helper service CONFIRMS her ("Is this
-    # home leave for Yoyo, or another helper?") instead of asking for a name
-    # we already hold. Agency, 2026-10-08. Placements first (a harder fact),
-    # then tickets newest first; three at most, one entry per name with its
-    # details merged across tickets (merge_known_helpers).
-    known_helpers: list[dict[str, str]] = []
-    if contact_type == "employer":
-        known_helpers = merge_known_helpers([
-            *await contact_service.get_placement_helpers(conversation.get("matched_employer_id")),
-            *await ticket_service.helpers_on_conversation(conversation["id"]),
-        ])
+    # Placements first (a harder fact), then tickets newest first; three at
+    # most, one entry per name with its details merged (merge_known_helpers).
+    known_helpers = merge_known_helpers([*placement_helpers, *ticket_helpers])
 
     # How long since anything was said on this thread, so "welcome back" is
     # said after a real break and not ten minutes into a conversation. The
@@ -1047,31 +1071,6 @@ async def _process_locked(
             hours_since_last_message = round((datetime.now(timezone.utc) - last_at).total_seconds() / 3600, 2)
         except (KeyError, TypeError, ValueError):
             hours_since_last_message = None
-
-    # The name on their FILE, which is not the same as the name WhatsApp
-    # reports - see contact.get_record_name. Read per turn for the same reason
-    # as the two above: a name added in the portal this morning must count this
-    # afternoon.
-    record_name = await contact_service.get_record_name(
-        conversation.get("matched_employer_id")
-    )
-
-    # The cases the portal holds for this contact. Read per turn for the same
-    # reason as the three above: a case opened in the portal this morning must
-    # count this afternoon, and a case is created on the office side days after
-    # the conversation that produced the lead. READ ONLY - see
-    # contact.get_cases, which never writes to any case_* table.
-    #
-    # The phone is passed as well as the employer id because a lead converted
-    # before the employers row carried a matchable number still names its case.
-    matched_cases = await contact_service.get_cases(
-        conversation.get("matched_employer_id"), phone
-    )
-
-    # Topics a human is already working on this thread — read fresh every
-    # turn (never persisted on the checkpoint) so a ticket closing anywhere
-    # unblocks its topic on the very next message, with no extra sync step.
-    blocked_topics = await ticket_service.open_topics_for_conversation(conversation["id"])
 
     payload = {
         "conversation_id": conversation["id"],
@@ -1089,7 +1088,7 @@ async def _process_locked(
         "prior_hires": prior_hires,
         "placed_helper": placed_helper,
         "known_helpers": known_helpers,
-        "completed_topics": await ticket_service.completed_topics_for_conversation(conversation["id"]),
+        "completed_topics": completed_topics,
         "hours_since_last_message": hours_since_last_message,
         "record_name": record_name or "",
         "recent_tickets": recent_tickets,

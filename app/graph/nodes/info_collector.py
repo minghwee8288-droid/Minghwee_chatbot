@@ -1262,6 +1262,16 @@ _NO_PREFERENCE = re.compile(
     re.IGNORECASE,
 )
 
+# Any sign in the MESSAGE of an open answer, for checking an extracted "no
+# preference" against what the client actually wrote. Broad on purpose: it only
+# has to fail on a message that is plainly about something else.
+_SAYS_NO_PREFERENCE = re.compile(
+    r"\b(no|not|none|nothing|any|anything|any\s?one|whatever|either|both|flexible|"
+    r"open|up\s+to\s+you|you\s+decide|doesn'?t\s+matter|does\s+not\s+matter|"
+    r"don'?t\s+mind|not\s+sure|no\s+idea|don'?t\s+know|fine|ok|okay)\b",
+    re.IGNORECASE,
+)
+
 # After this many attempts at the same field, take the client at their word and
 # move on. "I don't have this kind of stuff" is an answer; asking a ninth time —
 # which is what happened live on a replacement case reference — is not
@@ -2552,6 +2562,23 @@ async def _extract(
         if _NO_PREFERENCE.match(text) and not asked.get(key):
             logger.info(
                 "Conversation %s: ignoring '%s' for '%s' — that field was never asked",
+                state.get("conversation_id"),
+                text[:40],
+                key,
+            )
+            continue
+        # ...and asked is not enough either: the message has to SAY it. Live,
+        # conversation 4551, 2026-10-08: asked about rest days, the client
+        # answered the budget question before it ("You can find someone between
+        # 500 and 700") and the extractor filed rest_day "no preference" as
+        # well - so the ticket stated a preference nobody gave and the rest-day
+        # question, which he had not understood, was never put again.
+        if _NO_PREFERENCE.match(text) and not _SAYS_NO_PREFERENCE.search(
+            state.get("incoming_text") or ""
+        ):
+            logger.info(
+                "Conversation %s: ignoring '%s' for '%s' - nothing in the message "
+                "says they have no preference",
                 state.get("conversation_id"),
                 text[:40],
                 key,

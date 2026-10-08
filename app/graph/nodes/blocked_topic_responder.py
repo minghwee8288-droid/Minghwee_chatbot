@@ -27,6 +27,7 @@ from app.graph.guards import (
     quotes_hiring_package_cost,
     clamp_reply,
     is_degenerate,
+    last_bot_line,
     looks_like_document,
     mentions_handover,
     near_duplicate,
@@ -49,6 +50,7 @@ from app.services import kb_rules
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
     BLOCKED_TOPIC_ANSWER_INSTRUCTION,
+    BLOCKED_TOPIC_DETAIL_INSTRUCTION,
     BLOCKED_TOPIC_INSTRUCTION,
     PROCESS_ADDENDUM,
 )
@@ -162,6 +164,30 @@ _NEW_SERVICE_REQUEST = re.compile(
     r"\bchange\s+(the\s+)?(topic|subject)\b",
     re.IGNORECASE,
 )
+
+# The unmistakable half of the above: it says OTHER work, however long the
+# message. The loose "need ... help" half only counts in a short bare request -
+# live (4551, 2026-10-08) "Yes, I did not have any rest day arrangement as of
+# now because I need help with everyday life..." is a detail about the parked
+# hire, and was answered "Of course - which service can I help you with?".
+_EXPLICITLY_OTHER_WORK = re.compile(
+    r"\b(another|different|other|second|new|extra|additional)\s+(more\s+)?"
+    r"(service|servies|enquiry|inquiry|matter|case|request)\b|"
+    r"\b(something|anything)\s+else\b|"
+    r"\bnot\s+about\s+(that|this)\b|"
+    r"\bchange\s+(the\s+)?(topic|subject)\b",
+    re.IGNORECASE,
+)
+_BARE_REQUEST_MAX_WORDS = 10
+
+
+def asks_for_other_work(message: str) -> bool:
+    """A request for work other than the parked topic (see the two patterns)."""
+    if _EXPLICITLY_OTHER_WORK.search(message or ""):
+        return True
+    return bool(_NEW_SERVICE_REQUEST.search(message or "")) and (
+        len((message or "").split()) <= _BARE_REQUEST_MAX_WORDS
+    )
 
 # Deterministic on purpose. The one thing we need is which service they mean,
 # and a generated reply here reaches for the parked topic instead of moving off
@@ -411,6 +437,22 @@ def asks_general_info(message: str) -> bool:
             or asks_again(text))
 
 
+# The standing "anything else I can help you with?" offer that ends almost every
+# reply on a parked topic. It is not a question about the request, so it must
+# not make every message after it look like an answer to us.
+_ANYTHING_ELSE_OFFER = re.compile(r"[^.?!]*\banything else\b[^?]*\?", re.IGNORECASE)
+
+
+def answers_our_question(state: ConversationState) -> bool:
+    """The client answering a question we asked about the request (not the
+    "anything else?" offer), as opposed to chasing, greeting or asking."""
+    previous = _ANYTHING_ELSE_OFFER.sub("", last_bot_line(state.get("history_text") or "") or "")
+    if "?" not in previous:
+        return False
+    message = (state.get("incoming_text") or "").strip()
+    return bool(message) and "?" not in message and not _CHASING_STATUS.search(message)
+
+
 def _answerable(state: ConversationState) -> bool:
     """Whether this is a general question our own records can answer.
 
@@ -457,7 +499,10 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
     # rationed because repeating "still checking" is noise, but an actual answer
     # never is.
     answering = _answerable(state)
-    reassure = answering or _should_reassure(state, ticket, message)
+    # An answer to a question we just asked is information for the agent and
+    # is always acknowledged - see BLOCKED_TOPIC_DETAIL_INSTRUCTION.
+    detail = not answering and answers_our_question(state)
+    reassure = answering or detail or _should_reassure(state, ticket, message)
 
     # A greeting is greeted back, even with a topic parked. Live 2026-09-29,
     # conversation 36: "Hi 👋" the morning after a direct-hire handover was
@@ -518,7 +563,7 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
     # an ordinary chase but not for this — "hey" deserves an answer even if a
     # chase was just acknowledged a minute ago. This has its own reply and its
     # own dedup so it never inherits CHASE_REPLY's silence.
-    if not answering and _DIRECT_ADDRESS.search(message):
+    if not answering and not detail and _DIRECT_ADDRESS.search(message):
         already_said = any(
             near_duplicate(STILL_HERE_REPLY, line)
             for line in recent_bot_lines(state.get("history_text", ""), count=2)
@@ -547,7 +592,12 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
     # not-yet-parked service straight to collection so it never reaches here; if
     # a named service does land here it is a chase on a parked topic, which the
     # reassure/chase handling below answers properly.
-    if not answering and _NEW_SERVICE_REQUEST.search(message) and not _named_service(message):
+    if (
+        not answering
+        and not detail
+        and asks_for_other_work(message)
+        and not _named_service(message)
+    ):
         logger.info(
             "Conversation %s: client asking for work other than blocked topic %r "
             "(ticket %s) — asking which service",
@@ -574,7 +624,7 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
     # new to tell them, so do not spend a call generating another "still
     # checking" that the near-duplicate guard will discard into silence. Say the
     # one thing that IS new — that we have flagged the wait — and say it once.
-    if not answering and _chasing(state):
+    if not answering and not detail and _chasing(state):
         logger.info(
             "Conversation %s: client chasing blocked topic %r (ticket %s) — acknowledging the "
             "wait rather than repeating the holding line",
@@ -590,7 +640,11 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
         return {"reply": CHASE_REPLY, "needs_handover": False}
 
     label = ticket_service.service_types_label(ticket) if ticket.get("id") else service_label(topic_key)
-    template = BLOCKED_TOPIC_ANSWER_INSTRUCTION if answering else BLOCKED_TOPIC_INSTRUCTION
+    template = (
+        BLOCKED_TOPIC_ANSWER_INSTRUCTION if answering
+        else BLOCKED_TOPIC_DETAIL_INSTRUCTION if detail
+        else BLOCKED_TOPIC_INSTRUCTION
+    )
 
     # A process or documents question is answerable while a topic is parked, and
     # is one of the few whose honest answer will not fit in the budget above.
@@ -608,7 +662,7 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
         # Only when answering. On the holding path the records must not be in
         # the prompt at all — the instruction says not to answer, and a model
         # looking at a page of fees will answer anyway.
-        rag_context=state.get("rag_context", "") if answering else "",
+        rag_context=state.get("rag_context", "") if (answering or detail) else "",
         extra_instructions=(
             template.format(service_label=label) + (PROCESS_ADDENDUM if stepped else "")
         ),
@@ -629,7 +683,7 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
                 system_prompt,
                 user_prompt,
                 temperature=0.5,
-                max_tokens=420 if stepped else 150 if answering else 90,
+                max_tokens=420 if stepped else 150 if (answering or detail) else 90,
             )
         ).strip()
     except Exception:  # noqa: BLE001 - never leave the client without an answer
@@ -644,7 +698,9 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
     # records we just retrieved is an invented one, and a wrong fee is worse
     # than no fee. Falling back to the holding line is the safe outcome — the
     # client is no worse off than before this path existed.
-    invented = ungrounded_figures(reply, state.get("rag_context", "")) if answering else []
+    invented = (
+        ungrounded_figures(reply, state.get("rag_context", "")) if (answering or detail) else []
+    )
 
     # A new hire's price is never put in front of a client before a salesperson
     # has spoken to them (agency instruction, 2026-09-04), and until now that

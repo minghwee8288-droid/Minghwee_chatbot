@@ -955,10 +955,16 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             "rest_day",
             "rest day arrangement",
             "How would you want to handle her rest days?",
-            max_asks=1,
+            # Twice, not once: live (4551, 2026-10-08) the client used the
+            # turn to answer the budget question before it, so a single ask
+            # filed this "not provided" without his ever answering it.
+            max_asks=2,
             optional=True,
             group="their preferences",
-            options=("weekly day off", "compensation in lieu", "flexible"),
+            # Plain words. "compensation in lieu" went out live (4551,
+            # 2026-10-08) and the client later asked what the "relaxation
+            # point" question had meant.
+            options=("a weekly day off", "working on her rest day for extra pay", "flexible"),
         ),
         # --- When they need someone ---
         Field(

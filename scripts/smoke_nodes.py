@@ -103,6 +103,26 @@ CASES = [
       "known_helpers": [{"helper_name": "Yoyo", "nationality": "Indonesian"}],
       "_stub_extraction": {"helper_name": "yes"},
       "_expect_collected": {"helper_name": "Yoyo", "nationality": "Indonesian"}}),
+    # Conversation 4551, 2026-10-08: asked about rest days, the client answered
+    # the budget question before it, and the extractor filed rest_day "no
+    # preference" too - a preference nobody gave, on the ticket.
+    ("info_collector", "a 'no preference' the message never says is not filed",
+     {"service_type": "new_hiring", "intent": "new_hiring", "contact_type": "employer",
+      "incoming_text": "You can find someone between 500 and 700",
+      "history_text": "You: How would you want to handle her rest days?",
+      "collected_info": {"full_name": "Faizal Khan", "budget": "no preference"},
+      "asked_field_counts": {"full_name": 1, "budget": 1, "rest_day": 1},
+      "_stub_extraction": {"budget": "$500-700", "rest_day": "no preference"},
+      "_expect_collected": {"budget": "$500-700"},
+      "_expect_not_collected": ["rest_day"]}),
+    ("info_collector", "...while one the client did say is kept",
+     {"service_type": "new_hiring", "intent": "new_hiring", "contact_type": "employer",
+      "incoming_text": "no preference on rest days",
+      "history_text": "You: How would you want to handle her rest days?",
+      "collected_info": {"full_name": "Faizal Khan"},
+      "asked_field_counts": {"full_name": 1, "rest_day": 1},
+      "_stub_extraction": {"rest_day": "no preference"},
+      "_expect_collected": {"rest_day": "no preference"}}),
     ("info_collector", "...while 'no, another helper' does not",
      {"service_type": "home_leave", "intent": "home_leave",
       "incoming_text": "no, it is for another helper",
@@ -1678,6 +1698,23 @@ CASES = [
     # --- blocked_topic_responder -------------------------------------------
     # A question asked while a topic sits with an agent. The stepped branch is
     # allowed here too, and the holding branch must stay two sentences.
+    # Conversation 4551, 2026-10-08, after the new-hire briefing. An answer to
+    # a question we just asked is information for the agent, not a chase.
+    ("blocked_topic_responder", "an answer to our own question on a parked topic is noted, not held",
+     {"intent": "new_hiring", "service_type": "new_hiring",
+      "incoming_text": "ys",
+      "history_text": "Client: what is that relaxation point?\nYou: Do you mean the helper's rest day "
+                      "arrangement? In the meantime, is there anything else I can help you with?",
+      "blocked_topics": {"new_hiring": {"ticket_id": 1, "ticket_number": "CB-2026-0031"}},
+      "_expect_prompt": "answering a question you just asked"}),
+    ("blocked_topic_responder", "...and a long detail about the parked hire is never asked 'which service'",
+     {"intent": "new_hiring", "service_type": "new_hiring",
+      "incoming_text": "Yes, I did not have any rest day arrangement as of now because I need help "
+                       "with everyday life. When I am outside she can take rest",
+      "history_text": "Client: ys\nYou: A live agent is handling your new helper enquiry and will "
+                      "connect with you shortly. In the meantime, is there anything else I can help you with?",
+      "blocked_topics": {"new_hiring": {"ticket_id": 1, "ticket_number": "CB-2026-0031"}},
+      "_forbid_reply": "which service"}),
     ("blocked_topic_responder", "process question, parked",
      {"intent": "process_question", "service_type": "new_hiring",
       "incoming_text": "what is the full process for hiring a helper",

@@ -667,6 +667,11 @@ Easy to get wrong:
 - `ENABLE_API_DOCS` (default **false**) — `/docs`, `/redoc`, `/openapi.json`.
   Opt-in rather than keyed on `ENVIRONMENT`, because `ENVIRONMENT` defaults to
   `development` and `.env.example` sets it so.
+- `DEBOUNCE_SECONDS` (code default 2) — how long the client must stop typing
+  before a turn runs. The server's `.env` had **8**, which was 8 s of every
+  ~22 s reply (measured on conversation 4551, 2026-10-08). 3 is the
+  recommendation: a reply written while they are still typing is held anyway
+  (`debouncer.has_pending`), so a short debounce does not split answers.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1452,6 +1457,42 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-08** - **A new hire, tested end to end (conversation 4551): faster
+  replies, an invented rest-day answer, and the talk after the handover.**
+  (A) **Latency.** Read from the message timestamps and checkpoints: about 22 s
+  per reply - 8 s debounce (the server `.env`, see section 7), 3-6 s of setup
+  before the graph, ~7.5 s in the graph (classify ~2, search ~2, collect ~3.5),
+  ~2.5 s to send. The setup's ten independent reads now run together
+  (`asyncio.gather`): measured 1.3-1.6 s one by one, 0.2-0.6 s together. The
+  debounce is the server's to lower.
+  (B) **rest_day "no preference", never said.** Asked about rest days, he
+  answered the budget question before it ("You can find someone between 500 and
+  700"); the extractor filed rest_day "no preference" as well, the ticket stated
+  it, and the question he had not understood was never put again. An extracted
+  no-preference is now kept only if the message says something like it
+  (`_SAYS_NO_PREFERENCE`); rest_day may be asked twice; and its options are
+  plain words - he later asked what the "relaxation point" question meant, after
+  "compensation in lieu".
+  (C) **After the handover.** "What is that [relaxation point]?" got a question
+  back; his "ys" got the holding line; his rest-day explanation got "Of course -
+  which service can I help you with?" (`_NEW_SERVICE_REQUEST` read "I need help
+  with everyday life" as a request for other work). Now: a question about what
+  WE meant is explained; an answer to a question we asked (`answers_our_question`,
+  which ignores the standing "anything else?" offer) is noted for the agent
+  (`BLOCKED_TOPIC_DETAIL_INSTRUCTION`); and the loose "need ... help" reading
+  counts only in a short bare request (`asks_for_other_work`).
+  **Verified:** the budget turns replayed from the live checkpoint (no invented
+  value, the rest day collected when he gives it); the post-briefing turns
+  replayed twice on a rebuilt state (the conversation had been reset): the
+  question explained, the detail noted, "okayy" silent, no "which service".
+  Seven faults injected, seven red. The smoke rules comparison failed once on
+  the clock-rollover flake and passed 2 of 2 after.
+  **Not changed:** asked for "the cheapest cost", the bot still defers the
+  salary to an agent; the WhatsApp Business auto-replies ("next following
+  working day") are still on the agency's handset; "one set of lion" was filed
+  as a pet without comment.
+  `selfcheck_flows.py` is **784 assertions**; `smoke_nodes.py` is **226 checks**.
 
 - **2026-10-08** - **A resolved request was filed again from memory, "hello" got
   a status, and the bot denied knowing a helper's nationality it held.** The
