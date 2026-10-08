@@ -484,6 +484,7 @@ because the lead is opened early and the ticket is created much later.
 | A complaint is told the wait, the number to call and its reference - and never "anything else?" | `app/graph/complaint.py` (+ `ticket_creator` for the number) | The agency's own example reply, word for word. Fixed wording, because it carries a promised time and a phone number the guards strip from model output, and a reference that only exists after the ticket insert. `COMPLAINT_RESPONSE_TIME` / `COMPLAINT_URGENT_PHONE` in `ticket.py`, one place. |
 | "I want to lodge a complaint" is not filed as the complaint | `complaint.states_a_complaint` | Filed as `complaint_detail` it would close the collection on the opening turn with an empty ticket. |
 | A client asking to hear about a service is answered in full before being asked anything | `info_collector.enquiry_overview_due` + `templates.ENQUIRY_OVERVIEW_NOTE` | "find out more about direct hire process and costs" got the intake questions presented as "the process" and "timing depends on the case". The router, the retriever and the collector read one predicate. Timeline (each route labelled), steps, government costs apart from our fee, who can hire, the terms - or that our agent will take them through - then the first question on its own line. Only before the collection starts, never on a parked topic, never a bare price question. |
+| One salesperson per client conversation, and the portal inbox never loses a hand-assigned owner | `assignment.resolve_agent` (`_portal_owner`) + `claim_portal_owner` | A ticket goes to whoever owns the chat in the portal before the round robin is asked; the bot only ever FILLS an empty `wp_chat_conversations.assigned_user_id` (the IS NULL is in the UPDATE itself). `to_human` used to set it unconditionally, and the ordinary ticket path (`log_escalation`) never set it at all. Profile ↔ portal login is `cb_agent_portal_users`, ours, not `wp_chat_users.profile_id`, theirs. |
 | ...searched for the whole service, with the filter kept whatever money words it contains | `rag_retriever.ENQUIRY_OVERVIEW_QUERY` / `_service_filter` | "costs" dropped the service filter, and the wider search returned a no-agency comparison that told the client the permit and bond were theirs to do. 12 rows, never widened - plus `ENQUIRY_OVERVIEW_EXTRA_QUERIES`, a separate search per service for a question the agency named that the shared query cannot reach (direct hire's failed medical ranks 21st under it). |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -721,15 +722,11 @@ can still be tagged a candidate.
 
 Ordered by what will hurt first.
 
-1. **Half seeded (2026-10-08).** The round robin is live: every active `sales` profile
-   (Dan, Geraldine, Shirley) via `scripts/sql/assignment_001_round_robin_sales.sql`, so
-   tickets now get an owner. **Still open:** all 16 `wp_chat_users` rows have
-   `profile_id = NULL`, so `handover.map_to_portal_user` finds nothing and the WhatsApp
-   portal's chat list shows no owner. That column is the portal's; it needs their go-ahead.
-   The same mapping would let `_conversation_agent` respect an owner the PORTAL set
-   (`wp_chat_conversations.assigned_user_id`), which today it ignores - it reads only
-   earlier bot tickets. `scripts/seed_assignment.sql` is stale (old ids); its section 1
-   is superseded by assignment_001.
+1. **RESOLVED 2026-10-08 - see the change log.** Round robin = every active `sales`
+   profile (`assignment_001`); profile ↔ portal login in our own `cb_agent_portal_users`
+   (`assignment_002`), so `wp_chat_users.profile_id` is left empty and untouched. **Re-run
+   both files, in order, whenever the sales team changes.** `scripts/seed_assignment.sql`
+   is stale (old ids) and superseded by those two.
 2. **English-only safety nets, now that Claire replies in any language.**
    `ASSAULT_PATTERNS` — and therefore `emergency_override` in `webhook.py`, the
    out-of-hours path — will not fire on a harm report in Hindi or Burmese. The LLM
@@ -1239,7 +1236,7 @@ at a time.
   salesperson in `profiles`, in turn, one salesperson per client conversation. Built.
   (The tenant now holds exactly three `sales` profiles, all `@minghwee.com`, Shirley
   among them; the development accounts and her `admin` archetype noted here before are
-  gone.) **Still open:** permission to set `wp_chat_users.profile_id` (§9.1).
+  gone.) The portal link is our own table, so nothing of the portal's needs their go-ahead.
 - **The medical insurance minimum** (§9.14). Three figures in the knowledge base and the
   bot may quote any of them.
 - **The Settling-In Programme window.** Their flow says seven days; MOM's requirement for
@@ -1441,6 +1438,44 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-08** - **The portal inbox shows the ticket's salesperson, and the bot
+  never takes a chat off someone the portal team assigned.** The second half of
+  the round-robin change below, finishing §9.1.
+  (A) **The link lives in our own table.** The bot assigns a PROFILE; the portal
+  shows a PORTAL USER. The portal's `wp_chat_users.profile_id` was built for that
+  link and is empty on all 16 rows. Filling it would have meant writing to their
+  table, and adding a column would have altered it, which is worse: their
+  migration tooling could drop it. `cb_agent_portal_users` (`assignment_002`)
+  links each active salesperson to the portal login with the same email: Dan #8,
+  Geraldine #3, Shirley #5. It has foreign keys to their tables with ON DELETE
+  CASCADE on our side only, and RLS on. `map_to_portal_user` reads it first and
+  `wp_chat_users.profile_id` only as a fallback. Admins are deliberately not
+  linked.
+  Checked on the live database before deciding: no trigger, function, view or
+  policy reads `wp_chat_users.profile_id`, and portal login does not use it. The
+  portal app's own source is not in this repo.
+  (B) **The ordinary ticket path never set an owner at all.** Only `to_human`
+  (the bot-failure path) wrote `assigned_user_id`; `log_escalation`, which every
+  ticket goes through, did not. So even a perfect mapping would have changed
+  nothing in the inbox. Both now call `claim_portal_owner`.
+  (C) **...and `to_human` set it UNCONDITIONALLY**, so with any mapping it would
+  have moved a hand-assigned chat to whoever the round robin picked. 213
+  conversations already have a portal owner, and the portal team assigns by hand
+  ("How come Gurdeep and I (Geraldine) have the same lead?", 2026-10-08).
+  `claim_portal_owner` only fills an empty owner: the IS NULL is a filter on the
+  PATCH itself, so a person assigning the chat at the same moment cannot be
+  overwritten either. `assignment_rule` on the conversation moves with it.
+  (D) **The portal's owner decides the ticket.** `resolve_agent` reads the chat's
+  portal owner after the employer's salesperson and before the earlier-ticket
+  rule and the round robin. An owner with no linked profile (an admin, Gurdeep)
+  does not block the round robin, and stays the owner in the inbox.
+  **Verified:** `assignment_002` dry-run then applied twice, with no change on
+  the second run. Both directions resolve with the real client. The real client
+  builds `PATCH ... assigned_user_id=is.null` with `return=representation`. Ten
+  new assertions against a fake database; four faults injected (overwrite
+  allowed, portal owner ignored, ticket path claiming nothing, `to_human`
+  overwriting again), four red. `selfcheck_flows.py` is **746 assertions**.
 
 - **2026-10-08** - **Tickets get an owner: the round robin is every active
   salesperson.** The agency's rule: all salespeople in `profiles` take leads and

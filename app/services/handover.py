@@ -145,15 +145,17 @@ async def to_human(
             conversation_id=conversation_id,
         )
 
-    portal_user_id = await assignment_service.map_to_portal_user(assigned_agent_id)
+    # The portal owner is only ever FILLED, never replaced - this used to set
+    # assigned_user_id unconditionally, which would move a chat the portal team
+    # had assigned by hand to whoever the round robin picked (2026-10-08).
+    portal_user_id = await assignment_service.claim_portal_owner(
+        conversation_id, assigned_agent_id, assignment_rule
+    )
 
     patch: dict[str, Any] = {
         "bot_status": conversation_service.HUMAN_ACTIVE,
-        "assignment_rule": assignment_rule,
         "status": "open",
     }
-    if portal_user_id is not None:
-        patch["assigned_user_id"] = portal_user_id
     updated = await conversation_service.update(conversation_id, **patch) or conversation
 
     await _log(
@@ -210,6 +212,14 @@ async def log_escalation(
             conversation_id=conversation_id,
         )
 
+    # The ticket's salesperson becomes the chat's owner in the portal inbox -
+    # if it has none. This is the path every ordinary ticket takes, and until
+    # 2026-10-08 it never set an owner at all, so the inbox showed nobody even
+    # for an assigned ticket. bot_status is still left alone.
+    portal_user_id = await assignment_service.claim_portal_owner(
+        conversation_id, assigned_agent_id, assignment_rule
+    )
+
     await _log(
         conversation_id,
         BOT_TO_HUMAN,
@@ -226,7 +236,11 @@ async def log_escalation(
         assigned_agent_id,
         ticket_id,
     )
-    return {"assigned_agent_id": assigned_agent_id, "assignment_rule": assignment_rule}
+    return {
+        "assigned_agent_id": assigned_agent_id,
+        "assignment_rule": assignment_rule,
+        "assigned_user_id": portal_user_id,
+    }
 
 
 async def agent_took_over(conversation: dict[str, Any], reason: str = REASON_AGENT_TAKEOVER) -> None:

@@ -4,7 +4,18 @@ Priority:
 1. dispute_assault            -> admin escalation
 2. returning employer with a  -> that salesperson
    salesperson_profile_id
-3. everything else            -> round robin (cb_get_next_agent)
+3. the conversation already   -> that person: the portal inbox's owner first,
+   has an owner                  then the agent on an earlier ticket
+4. everything else            -> round robin (cb_get_next_agent)
+
+The agency's rule (2026-10-08): one salesperson handles one client's whole
+conversation. Rule 3 is that rule, and it reads the PORTAL's owner as well as
+our own tickets, because the portal team also assigns chats by hand.
+
+Profiles and portal users are two different ids. The bot assigns a PROFILE;
+the portal inbox shows a PORTAL USER (wp_chat_conversations.assigned_user_id).
+cb_agent_portal_users links the two (scripts/sql/assignment_002), with the
+portal's own, so far empty, wp_chat_users.profile_id as the fallback.
 """
 
 from __future__ import annotations
@@ -148,6 +159,14 @@ async def resolve_agent(
         logger.info("Returning employer -> existing salesperson %s", salesperson)
         return salesperson, EXISTING_SALESPERSON
 
+    # Someone on the portal team already took this chat: the ticket is theirs
+    # too, or the client ends up with two salespeople (the round robin would
+    # pick whoever is next, knowing nothing of the inbox).
+    portal_owner = await _portal_owner(conversation_id)
+    if portal_owner:
+        logger.info("Conversation %s is owned in the portal by %s -> keeping it", conversation_id, portal_owner)
+        return portal_owner, EXISTING_SALESPERSON
+
     sticky_agent = await _conversation_agent(conversation_id)
     if sticky_agent:
         logger.info("Conversation %s already has agent %s -> keeping it", conversation_id, sticky_agent)
@@ -162,19 +181,105 @@ async def resolve_agent(
     return None, ROUND_ROBIN
 
 
+PORTAL_LINKS = "cb_agent_portal_users"
+
+
 async def map_to_portal_user(profile_id: str | None) -> int | None:
-    """Translate a platform profile UUID into the portal's wp_chat_users.id."""
+    """Translate a platform profile UUID into the portal's wp_chat_users.id.
+
+    Our own link table first; the portal's wp_chat_users.profile_id only as a
+    fallback, in case the portal team ever fills it themselves.
+    """
     if not profile_id:
         return None
     try:
-        row = await db.select_one("wp_chat_users", "id, profile_id", profile_id=profile_id)
+        row = await db.select_one(PORTAL_LINKS, "portal_user_id", profile_id=profile_id)
+        if row:
+            return int(row["portal_user_id"])
+        row = await db.select_one("wp_chat_users", "id", profile_id=profile_id)
     except Exception:  # noqa: BLE001
         logger.exception("Portal user lookup failed for profile %s", profile_id)
         return None
     if not row:
-        logger.warning("Profile %s has no wp_chat_users row — portal cannot show the assignment", profile_id)
+        logger.warning("Profile %s has no portal login linked — portal cannot show the assignment", profile_id)
         return None
     return int(row["id"])
+
+
+async def _profile_of_portal_user(portal_user_id: int | None) -> str | None:
+    """The reverse of map_to_portal_user: which profile a portal login is."""
+    if portal_user_id is None:
+        return None
+    try:
+        row = await db.select_one(PORTAL_LINKS, "profile_id", portal_user_id=portal_user_id)
+        if row:
+            return row["profile_id"]
+        row = await db.select_one("wp_chat_users", "profile_id", id=portal_user_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Profile lookup failed for portal user %s", portal_user_id)
+        return None
+    return (row or {}).get("profile_id")
+
+
+async def _portal_owner(conversation_id: int | None) -> str | None:
+    """The profile of whoever owns this chat in the portal inbox, if we can tell.
+
+    An owner we cannot map (an admin, a login with no sales profile) returns
+    None, so the ticket falls to the next rule - and claim_portal_owner below
+    still leaves that owner in place in the inbox.
+    """
+    if not conversation_id:
+        return None
+    try:
+        row = await db.select_one("wp_chat_conversations", "assigned_user_id", id=conversation_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Portal owner lookup failed for conversation %s", conversation_id)
+        return None
+    owner = (row or {}).get("assigned_user_id")
+    if owner is None:
+        return None
+    profile_id = await _profile_of_portal_user(int(owner))
+    if not profile_id:
+        logger.info(
+            "Conversation %s is owned in the portal by user %s, who has no linked profile", conversation_id, owner
+        )
+    return profile_id
+
+
+async def claim_portal_owner(
+    conversation_id: int | None, profile_id: str | None, assignment_rule: str | None = None
+) -> int | None:
+    """Show this ticket's agent as the chat's owner in the portal inbox - ONLY if
+    the chat has no owner yet.
+
+    Never overwrites: a chat the portal team assigned by hand stays theirs. The
+    condition is in the UPDATE itself (assigned_user_id IS NULL), so a person
+    assigning the chat at the same moment cannot be overwritten either.
+    Returns the portal user now shown, or None if nothing was written.
+    """
+    if not conversation_id or not profile_id:
+        return None
+    portal_user_id = await map_to_portal_user(profile_id)
+    if portal_user_id is None:
+        return None
+    patch: dict[str, Any] = {"assigned_user_id": portal_user_id}
+    if assignment_rule:
+        patch["assignment_rule"] = assignment_rule
+    try:
+        result = await db.execute(
+            db.table("wp_chat_conversations")
+            .update(patch)
+            .eq("id", conversation_id)
+            .is_("assigned_user_id", "null")
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not set the portal owner on conversation %s", conversation_id)
+        return None
+    if result.data:
+        logger.info("Conversation %s now owned in the portal by user %s", conversation_id, portal_user_id)
+        return portal_user_id
+    logger.info("Conversation %s already has a portal owner - left as it is", conversation_id)
+    return None
 
 
 async def agent_profile(profile_id: str | None) -> dict[str, Any] | None:

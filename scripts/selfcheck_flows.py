@@ -340,6 +340,96 @@ def _overview_retrieval_has_medical() -> bool:
     return any(m.get("id") == "med" for m in out.get("rag_matches") or [])
 
 
+import app.services.assignment as _asg
+import app.services.handover as _hov
+
+
+class _FakeQuery:
+    """Records a supabase-style query chain; returns data from the fake DB."""
+
+    def __init__(self, fake, table):
+        self.fake, self.table, self.op, self.filters, self.patch = fake, table, "select", [], None
+
+    def update(self, patch):
+        self.op, self.patch = "update", patch
+        return self
+
+    def select(self, *_a, **_k):
+        return self
+
+    def eq(self, col, val):
+        self.filters.append(("eq", col, val))
+        return self
+
+    def is_(self, col, val):
+        self.filters.append(("is", col, val))
+        return self
+
+    def order(self, *_a, **_k):
+        return self
+
+    def limit(self, *_a):
+        return self
+
+
+class _FakeDB:
+    """Just enough of app.db.supabase.db for the assignment rules."""
+
+    def __init__(self, rows, owner=None, round_robin="rr-profile"):
+        self.rows, self.owner, self.round_robin, self.writes = rows, owner, round_robin, []
+
+    def table(self, name):
+        return _FakeQuery(self, name)
+
+    async def select_one(self, table, _cols, **where):
+        if table == "wp_chat_conversations":
+            return {"assigned_user_id": self.owner}
+        for row in self.rows.get(table, []):
+            if all(row.get(k) == v for k, v in where.items()):
+                return row
+        return None
+
+    async def execute(self, q):
+        class R:
+            data = []
+        if q.op == "update":
+            self.writes.append((q.table, q.patch, q.filters))
+            empty_only = ("is", "assigned_user_id", "null") in q.filters
+            if not (empty_only and self.owner is not None):
+                R.data = [{"id": 1}]
+        return R
+
+    async def rpc(self, *_a, **_k):
+        return self.round_robin
+
+
+_LINKS = {"cb_agent_portal_users": [
+    {"profile_id": "dan", "portal_user_id": 8},
+    {"profile_id": "geraldine", "portal_user_id": 3},
+]}
+
+
+def _with_fake_db(fake, coro_fn):
+    import asyncio
+    real = _asg.db
+    _asg.db = fake
+    try:
+        return asyncio.run(coro_fn())
+    finally:
+        _asg.db = real
+
+
+def _resolve_with(owner):
+    fake = _FakeDB(_LINKS, owner=owner)
+    return _with_fake_db(fake, lambda: _asg.resolve_agent(intent="new_hiring", conversation_id=42))
+
+
+def _claim_with(owner):
+    fake = _FakeDB(_LINKS, owner=owner)
+    shown = _with_fake_db(fake, lambda: _asg.claim_portal_owner(42, "dan", "round_robin"))
+    return shown, fake.writes
+
+
 from app.graph.prompts.style import STYLE_BLOCK
 import app.graph.guards as gd
 import app.graph.prompts.templates as tpl
@@ -4859,6 +4949,30 @@ rows = [
   sorted(rr.ENQUIRY_OVERVIEW_EXTRA_QUERIES), ["direct_hiring"]),
  ("...and the retriever actually RUNS it: the medical row reaches the overview's records",
   _overview_retrieval_has_medical(), True),
+ # 2026-10-08: one salesperson per client conversation, and the portal inbox
+ # shows the same person - without ever taking a chat off someone the portal
+ # team assigned by hand.
+ ("a chat the portal team gave Geraldine: the ticket goes to Geraldine, not the round robin",
+  _resolve_with(3), ("geraldine", _asg.EXISTING_SALESPERSON)),
+ ("...a chat nobody owns still goes to the round robin",
+  _resolve_with(None), ("rr-profile", _asg.ROUND_ROBIN)),
+ ("...and a portal owner with no linked profile (an admin) does not block the round robin",
+  _resolve_with(1), ("rr-profile", _asg.ROUND_ROBIN)),
+ ("the portal owner is written only where there is none: the UPDATE carries IS NULL",
+  [f for _t, _p, f in _claim_with(None)[1]][0], [("eq", "id", 42), ("is", "assigned_user_id", "null")]),
+ ("...an empty chat is claimed for the ticket's salesperson (Dan = portal user 8)",
+  _claim_with(None)[0], 8),
+ ("...and a chat someone already owns is left as it is",
+  _claim_with(3)[0], None),
+ ("the link is read from OUR table, not the portal's wp_chat_users.profile_id",
+  _with_fake_db(_FakeDB(_LINKS), lambda: _asg.map_to_portal_user("geraldine")), 3),
+ ("...with the portal's own column as the fallback if they ever fill it",
+  _with_fake_db(_FakeDB({"wp_chat_users": [{"id": 9, "profile_id": "sales1"}]}),
+                lambda: _asg.map_to_portal_user("sales1")), 9),
+ ("to_human no longer sets the portal owner unconditionally",
+  "patch[\"assigned_user_id\"]" in _pathlib.Path(_hov.__file__).read_text(encoding="utf-8"), False),
+ ("both handover paths claim the owner (the ticket path used to set none at all)",
+  _pathlib.Path(_hov.__file__).read_text(encoding="utf-8").count("claim_portal_owner("), 2),
  ("...and the process row describes the process, not our intake questions",
   [u["set"]["answer"][:40] for u in lsn.UPDATES
    if u["where"]["question"] == "What is the process for a direct hire?"
