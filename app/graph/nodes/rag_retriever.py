@@ -223,14 +223,26 @@ ENQUIRY_OVERVIEW_QUERY = (
     "cost including government and third-party costs, and who is eligible"
 )
 
-# Four more than a briefing: an overview owes the client the process, the
-# timeline (one row per route), the costs, who can hire AND the terms. At 10,
-# "what happens if she does not pass the medical", which the agency named,
-# was the row that fell off the end - and at 12 it STILL was: live on
-# conversation 3766 (2026-10-07) it ranked 13th, behind two documents rows,
-# and the reply said nothing about the medical. 14 keeps the same query, so
-# the set is the old twelve plus the next two rather than a different set.
-ENQUIRY_OVERVIEW_MATCH_COUNT = 14
+# Two more than a briefing: an overview owes the client the process, the
+# timeline (one row per route), the costs, who can hire AND the terms.
+ENQUIRY_OVERVIEW_MATCH_COUNT = 12
+
+# A question the agency named for one service that the overview query cannot
+# reach, searched on its own and its best row added to the set.
+#
+# "What happens if the helper doesn't pass the medical" is on the agency's
+# 2026-10-07 list for a direct hire, and its row ranks 21st under
+# ENQUIRY_OVERVIEW_QUERY (0.369) - so the overview never mentioned it. Both
+# obvious fixes were measured and rejected on 2026-10-08: no sensible match
+# count reaches rank 21 (14 was tried and deployed on a mis-measured "13th",
+# and fetched two documents rows instead), and adding the medical to the
+# SHARED query re-ranks every service - it dropped the in-Singapore timeline
+# from direct hire, the fees from a transfer and the timelines from home leave
+# and passport renewal, swapping them for generic medical-examination rows.
+# A separate search touches nothing but the service it is written for.
+ENQUIRY_OVERVIEW_EXTRA_QUERIES: dict[str, tuple[str, ...]] = {
+    "direct_hiring": ("what happens if the helper does not pass her medical",),
+}
 
 # The OTHER briefing, and it had the same problem for a different reason.
 #
@@ -605,6 +617,26 @@ def _nationality(state: ConversationState) -> str | None:
     return nationality_in_play(state.get("collected_info"), state.get("incoming_text"))
 
 
+async def _with_overview_extras(
+    matches: list[dict], service: str | None, contact: str | None, nationality: str | None
+) -> list[dict]:
+    """The overview set plus the best row for each ENQUIRY_OVERVIEW_EXTRA_QUERIES
+    entry of this service, same filters, never a duplicate."""
+    seen = {m.get("id") or m.get("question") for m in matches}
+    out = list(matches)
+    for extra in ENQUIRY_OVERVIEW_EXTRA_QUERIES.get(service or "", ()):
+        found = await rag.search(
+            extra, service_type=service, contact_type=contact,
+            nationality=nationality, match_count=1,
+        )
+        for row in found[:1]:
+            key = row.get("id") or row.get("question")
+            if key not in seen:
+                seen.add(key)
+                out.append(row)
+    return out
+
+
 async def rag_retriever(state: ConversationState) -> dict[str, Any]:
     case_summary = None
     if state.get("intent") == "case_enquiry" and state.get("matched_case_id"):
@@ -627,6 +659,8 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
         match_count=ENQUIRY_OVERVIEW_MATCH_COUNT if overview
         else BRIEFING_MATCH_COUNT if briefing else None,
     )
+    if overview:
+        matches = await _with_overview_extras(matches, service, contact, nationality)
     best = rag.best_similarity(matches)
 
     # A service filter can starve a question the knowledge base can answer.

@@ -477,7 +477,7 @@ because the lead is opened early and the ticket is created much later.
 | A complaint is told the wait, the number to call and its reference - and never "anything else?" | `app/graph/complaint.py` (+ `ticket_creator` for the number) | The agency's own example reply, word for word. Fixed wording, because it carries a promised time and a phone number the guards strip from model output, and a reference that only exists after the ticket insert. `COMPLAINT_RESPONSE_TIME` / `COMPLAINT_URGENT_PHONE` in `ticket.py`, one place. |
 | "I want to lodge a complaint" is not filed as the complaint | `complaint.states_a_complaint` | Filed as `complaint_detail` it would close the collection on the opening turn with an empty ticket. |
 | A client asking to hear about a service is answered in full before being asked anything | `info_collector.enquiry_overview_due` + `templates.ENQUIRY_OVERVIEW_NOTE` | "find out more about direct hire process and costs" got the intake questions presented as "the process" and "timing depends on the case". The router, the retriever and the collector read one predicate. Timeline (each route labelled), steps, government costs apart from our fee, who can hire, the terms - or that our agent will take them through - then the first question on its own line. Only before the collection starts, never on a parked topic, never a bare price question. |
-| ...searched for the whole service, with the filter kept whatever money words it contains | `rag_retriever.ENQUIRY_OVERVIEW_QUERY` / `_service_filter` | "costs" dropped the service filter, and the wider search returned a no-agency comparison that told the client the permit and bond were theirs to do. 14 rows, never widened - at 12 the medical row ranked 13th live and the reply never mentioned it. |
+| ...searched for the whole service, with the filter kept whatever money words it contains | `rag_retriever.ENQUIRY_OVERVIEW_QUERY` / `_service_filter` | "costs" dropped the service filter, and the wider search returned a no-agency comparison that told the client the permit and bond were theirs to do. 12 rows, never widened - plus `ENQUIRY_OVERVIEW_EXTRA_QUERIES`, a separate search per service for a question the agency named that the shared query cannot reach (direct hire's failed medical ranks 21st under it). |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -1433,20 +1433,30 @@ Append here, newest first. One entry per behavioural change.
 - **2026-10-08** - **The direct-hire overview left out "what if she fails the
   medical", which the agency had asked for by name.** Read from the live
   checkpoint after the 2026-10-07 deploy (conversation 3766): the enquiry
-  routed, retrieved and answered correctly, but the medical row ranked **13th**
-  against `ENQUIRY_OVERVIEW_MATCH_COUNT = 12`. The two documents rows ranked
-  above it. `ENQUIRY_OVERVIEW_MATCH_COUNT` is now **14**, with the query
-  unchanged, so the set is the old twelve plus the next two. Nothing that was
-  in the set can drop out.
-  **Rewording the query was the alternative, and it was not done because it
-  could not be measured.** The local embedding key returned 401. A reworded
-  query re-ranks everything and could have pushed out a timeline or a cost row,
-  so shipping it unmeasured would have traded a known gap for an unknown one.
-  If the medical line is still missing after this, measure the rewording
-  ("...and what happens if she does not pass the medical") against the
-  timeline and cost rows before changing the query.
-  A new self-check assertion; setting the count back to 12 makes it fail.
-  `selfcheck_flows.py` is **734 assertions**; `smoke_nodes.py` is 208 checks.
+  routed and answered correctly, but the medical row was not among the 12
+  retrieved.
+  (A) **The first fix (3046c2a, count 12 -> 14) was built on a wrong
+  measurement and did nothing.** The row was read as ranking 13th. Measured
+  properly, it ranks **21st** (0.369). The two extra rows were documents rows,
+  and the retest still left the medical out. That fix shipped unmeasured
+  because the probe ran from the scratchpad: `APP_ENV_FILE` is relative to
+  the working directory, so the settings came from somewhere else, and the
+  embedding key read as 401. **Run probes from the repo root.** The count is
+  back to 12.
+  (B) **Adding the medical to the shared query was measured and rejected.** It
+  brings the row in for direct hire but drops the in-Singapore timeline row
+  there. Across the other overview services it swaps the transfer fees and
+  the home-leave and passport timelines for generic six-monthly-medical rows.
+  (C) **`ENQUIRY_OVERVIEW_EXTRA_QUERIES`**: per service, a question the agency
+  named, searched on its own with the same filters. Its best row is added to
+  the set if not already there. Only `direct_hiring` has an entry, so every
+  other service's retrieval is byte-for-byte unchanged. Replayed 3 runs of 3
+  through the real graph: the row is in the records every time, and every
+  reply addresses the medical, two stating the application does not go ahead
+  and one deferring it to our agent.
+  The self-check now runs `rag_retriever` itself with the search stubbed.
+  Switching the extra search off makes it fail.
+  `selfcheck_flows.py` is **736 assertions**; `smoke_nodes.py` is 208 checks.
 
 - **2026-10-07** - **Conversation 26: a direct-hire enquiry answered with our own
   intake questions, and a complaint that went nowhere.** The agency's two screenshots,

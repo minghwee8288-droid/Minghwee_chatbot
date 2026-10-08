@@ -311,6 +311,35 @@ _dh_keys = [f.key for f in t.SERVICE_FIELDS["direct_hiring"]]
 _dh_at = lambda k: _dh_keys.index(k) if k in _dh_keys else -1
 import app.graph.graph as g
 rr = importlib.import_module("app.graph.nodes.rag_retriever")
+
+
+def _overview_retrieval_has_medical() -> bool:
+    """Run rag_retriever on the 2026-10-07 enquiry with the search stubbed:
+    the overview query never returns the medical row (rank 21 live), so only the
+    separate search can put it in the records."""
+    import asyncio
+    medical = {"id": "med", "question": "What happens if the helper does not pass "
+               "her medical for a direct hire?", "similarity": 0.715}
+
+    async def fake_search(query, **kw):
+        if "medical" in query and kw.get("match_count") == 1:
+            return [medical]
+        return [{"id": f"r{i}", "question": f"row {i}", "similarity": 0.5}
+                for i in range(kw.get("match_count") or 5)]
+
+    real = rr.rag.search
+    rr.rag.search = fake_search
+    try:
+        out = asyncio.run(rr.rag_retriever({
+            "intent": "fee_enquiry", "service_type": "direct_hiring",
+            "contact_type": "employer",
+            "incoming_text": "Hi I will like to find out more about direct hire process and costs",
+        }))
+    finally:
+        rr.rag.search = real
+    return any(m.get("id") == "med" for m in out.get("rag_matches") or [])
+
+
 from app.graph.prompts.style import STYLE_BLOCK
 import app.graph.guards as gd
 import app.graph.prompts.templates as tpl
@@ -4824,8 +4853,12 @@ rows = [
   "The terms are in the Service Agreement.\n\nMay I know your name?"),
  ("...and the retriever gives it room for the terms as well as the process",
   rr.ENQUIRY_OVERVIEW_MATCH_COUNT > rr.BRIEFING_MATCH_COUNT, True),
- ("...and enough room for the medical row, which ranked 13th live (conversation 3766)",
-  rr.ENQUIRY_OVERVIEW_MATCH_COUNT >= 14, True),
+ ("...and a direct hire searches separately for the failed medical (rank 21 under the overview query)",
+  any("medical" in q for q in rr.ENQUIRY_OVERVIEW_EXTRA_QUERIES.get("direct_hiring", ())), True),
+ ("...and only a direct hire: the shared query is left alone for every other service",
+  sorted(rr.ENQUIRY_OVERVIEW_EXTRA_QUERIES), ["direct_hiring"]),
+ ("...and the retriever actually RUNS it: the medical row reaches the overview's records",
+  _overview_retrieval_has_medical(), True),
  ("...and the process row describes the process, not our intake questions",
   [u["set"]["answer"][:40] for u in lsn.UPDATES
    if u["where"]["question"] == "What is the process for a direct hire?"
