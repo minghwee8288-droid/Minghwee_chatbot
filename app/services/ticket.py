@@ -485,6 +485,12 @@ _TAKING_ON_TRANSFER = Gate(
               "returning"),
 )
 
+# A home leave the HELPER is asking for herself. `requested_by` is written by
+# the collector on every home-leave turn ("helper" or "employer"), never asked,
+# so for an employer this is closed and the employer's details are not even
+# offered to the extractor.
+_HELPER_ASKING_FOR_LEAVE = Gate("requested_by", ("helper",))
+
 _RELEASING_HELPER = Gate(
     "transfer_direction",
     ("releas", "let her go", "let go", "my current", "transfer out", "send her",
@@ -1591,6 +1597,27 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             "What is the reason for her leave - her regular home leave, or "
             "something like a family matter?",
             max_asks=1,
+        ),
+        # Only when the HELPER is the one asking (requested_by, filled by the
+        # collector, never asked). Agency's choice, 2026-10-08: serve her, and
+        # take her employer's name and number so our agent can arrange it with
+        # them - live (4551) the bot told her both "our agent can speak with
+        # your employer directly" and "your employer needs to contact us",
+        # with no number to do the first.
+        Field(
+            "employer_name",
+            "her employer's name",
+            "What is your employer's name?",
+            max_asks=2,
+            gate=_HELPER_ASKING_FOR_LEAVE,
+        ),
+        Field(
+            "employer_contact",
+            "her employer's phone number",
+            "What is your employer's phone number, so our agent can contact them "
+            "to arrange your leave?",
+            max_asks=2,
+            gate=_HELPER_ASKING_FOR_LEAVE,
         ),
     ],
     # No _case_id() here, deliberately. A passport renewal is opened by the
@@ -2988,6 +3015,9 @@ _DETAIL_LABELS = {
     "passport_expiry": "Passport expires",
     "leave_dates": "Travel dates",
     "leave_reason": "Reason for the leave",
+    "requested_by": "Requested by",
+    "employer_name": "Her employer",
+    "employer_contact": "Her employer's number",
     "employer_consent": "Employer consent",
     # The candidate's own half of the matching form. Every heading says whose
     # answer it is, because a consultant reads this ticket beside an employer's

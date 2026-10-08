@@ -485,6 +485,7 @@ because the lead is opened early and the ticket is created much later.
 | "I want to lodge a complaint" is not filed as the complaint | `complaint.states_a_complaint` | Filed as `complaint_detail` it would close the collection on the opening turn with an empty ticket. |
 | A client asking to hear about a service is answered in full before being asked anything | `info_collector.enquiry_overview_due` + `templates.ENQUIRY_OVERVIEW_NOTE` | "find out more about direct hire process and costs" got the intake questions presented as "the process" and "timing depends on the case". The router, the retriever and the collector read one predicate. Timeline (each route labelled), steps, government costs apart from our fee, who can hire, the terms - or that our agent will take them through - then the first question on its own line. Only before the collection starts, never on a parked topic, never a bare price question. |
 | A status question about finished work is answered as finished | `response_generator.completed_request` + `COMPLETED_REQUEST_INSTRUCTION`, routed by `graph.route_after_rag`; webhook `completed_topics` | A topic whose LATEST ticket on the conversation is resolved/closed, asked about with `case_enquiry`, gets "our team has completed it - tell me if anything is outstanding". Never re-collected into a duplicate ticket, never "I'll check and come back". Exempt from the weak-retrieval handover. A NEW request for the same service still collects. A greeting is never given a status. |
+| A helper asking for her OWN home leave is served, and her employer's number taken | `info_collector._home_leave_for_herself` + `requested_by` + gated `employer_name`/`employer_contact` + `HELPER_OWN_LEAVE_NOTE` / `HELPER_HOME_LEAVE_BRIEFING_NOTE` | Agency's choice, 2026-10-08 (replaces the 2026-09-18 redirect to her employer). Her name is the helper's name; questions are put to her; her closing message gives her timeline, no fee (settled with her employer), only her own documents (a passport copy for Indonesia, the original for the Philippines), and "do not buy the ticket until your employer confirms". "Singapore" is never a home leave's home country - asked again with why. |
 | A finished collection is never filed twice | `info_collector.finished_collection` + `asks_for_service_again`, routed by `graph.route_after_rag`; `state.restarted_topics` | Nothing else clears a collection: an open ticket parks it, and resolving the ticket handed the old answers back to the next collector turn, which filed them again (CB-2026-0028, 0030). Finished = topic completed, nothing left unasked, not already restarted for that ticket. Only a turn that names or asks for the service reopens it, and then it starts clean like a switch; the marker stops the new collection being mistaken for the old. |
 | A helper's details are known in full and can be asked about | `webhook.merge_known_helpers` + `system.known_helpers_line` (response_generator only) | One entry per name, details merged across tickets: a renewal ticket, which never asks nationality, hid "Filipino" from her direct-hire ticket. Kept off the collector's prompt: it cost the closing briefing its heading 2 runs of 6. |
 | A closing briefing has the service's own fee row | `rag_retriever._with_briefing_cost` / `_briefing_cost_due` | A one-row cost search on the briefing turn, same filters, for a service in `fee_stated_services` and a nationality we hold a fee for. The ten briefing rows were all process and timing, so "$695" was deferred to an agent (section 9.27's shape). |
@@ -1457,6 +1458,36 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-08** - **A helper asking for her own home leave is served, and her
+  employer's number is taken.** Conversation 4551, the tester as a helper:
+  "Hey I need leave for 1 month" was read as an employer (the 2026-09-18
+  detection knew only "go home" / "home leave"), so she was asked "your
+  helper's name" and "which country is Vaidik from"; "Singapore" was filed as
+  the nationality; once she said "I am the helper" the 2026-09-18 branch sent
+  her back to her employer and the next four replies improvised - "our agent
+  can speak with your employer directly" (no number) and then "your employer
+  needs to contact Ming Hwee". The ticket had no way to reach the employer.
+  The agency chose (asked, 2026-10-08) to serve her, as passport renewal does.
+  The redirect branch and its two notes are gone. Now: a first-person request
+  for leave counts; `requested_by` (helper/employer) is written every home-leave
+  turn and opens two gated fields, her employer's name and phone number; her
+  own name fills `helper_name`; `HELPER_OWN_LEAVE_NOTE` puts every question to
+  her and says why we need the employer; her closing briefing
+  (`HELPER_HOME_LEAVE_BRIEFING_NOTE`) gives the lead time for her nationality,
+  no fee, only her documents and "do not buy the ticket until your employer has
+  confirmed". "Singapore" as a home leave's nationality is dropped and asked
+  again with the reason.
+  **Verified:** her conversation run 5 times through the real model on a fresh
+  state: asked about herself throughout, Singapore questioned, employer's name
+  and number collected, ticket complete. The first two runs asked an Indonesian
+  helper for her ORIGINAL passport; the note now says which nationality needs
+  the original, and 3 of 3 after ask for a copy. Eight faults injected, eight
+  red (the briefing note had no check until a smoke state was added).
+  **Not changed:** asked about cost after the ticket, the parked path quotes
+  "$250, paid by your employer"; she said she travels in 7 days and the 2-week
+  lead time was not flagged as too short.
+  `selfcheck_flows.py` is **791 assertions**; `smoke_nodes.py` is **232 checks**.
 
 - **2026-10-08** - **After the new-hire handover: a changed requirement got no
   reply, and the holding reply started asking questions.** The rest of

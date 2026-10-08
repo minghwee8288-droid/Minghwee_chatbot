@@ -946,126 +946,59 @@ condition the records do not state.
 """
 
 
-HELPER_HOME_LEAVE_NOTE = """
-The person writing is the HELPER herself, asking about her OWN home leave. She
-is not the employer, and every question this flow asks is written for the
-employer.
+# A HELPER asking for her OWN home leave.
+#
+# Until 2026-10-08 this sent her back to her employer and collected nothing
+# (2026-09-18, the agency's "kareena" test, where she had been asked for her
+# HELPER's name and later given the employer's briefing). Live on conversation
+# 4551 that left the bot improvising for four replies - "our agent can speak
+# with your employer directly" with no number to do it, then "your employer
+# needs to contact Ming Hwee" - and filing a ticket with "Singapore" as her
+# country and no way to reach the employer. The agency's choice that day: serve
+# her, and take her employer's name and number so our agent can arrange it with
+# them. The collection now runs for her (helper_name is her own name, and the
+# gated employer_name / employer_contact fields open), and these two notes make
+# the questions and the closing message hers.
+HELPER_OWN_LEAVE_NOTE = """
+The person writing is the HELPER herself, asking for her OWN home leave. Every
+question you put is about HER, so ask it to her directly - "which country are
+you from?", "when are you planning to travel, and when would you be back?" -
+never "your helper" and never "she". Her own name is the helper's name; do not
+ask for a helper's name.
 
-What is true, and what you should tell her:
+Her employer's name and phone number are asked so OUR AGENT can contact her
+employer to arrange the leave - say so when you ask for them. Home leave is
+arranged with her employer (they confirm the dates and sign the forms), which is
+why we need to reach them; that is a reason, not a refusal - do not send her
+away to her employer.
 
-- Home leave is her going back to her home country between contracts and then
-  returning to work. It is a real thing we arrange, so do not tell her it is
-  not possible or that it is not something we do.
-- It is arranged THROUGH HER EMPLOYER. Her employer has to give us the
-  documents, sign the embassy forms and confirm the dates - we cannot start it
-  from her side alone.
-- So ask her to let her employer know, and say her employer can message us here
-  and we will take it from there. If she would rather her employer heard it
-  from us, say our agent can speak to them.
-
-Say that warmly and in two or three sentences. She has asked for something
-ordinary and reasonable, and being sent back to her employer is already a
-disappointment - do not make it sound like a refusal or like she has done
-something wrong. Then offer to answer anything else.
-
-Do not hand her to a live agent for this. It is an answer we hold, and putting
-it in front of a consultant spends their time to repeat what you have just
-said.
-
-FOUR THINGS YOU MUST NOT DO:
-
-1. Do NOT give any fee, any timeline or any lead time. The cost of a home leave
-   is quoted to the EMPLOYER, who pays it, and every figure in this
-   conversation belongs to them. Telling her what it costs invites her to think
-   the bill is hers.
-
-2. Do NOT give the document list. It opens with her employer's NRIC and it is
-   the employer's to produce - asking her for it asks her for a document that
-   is not hers to give.
-
-3. Do NOT tell her to book the air ticket, and do NOT ask her to send us a copy
-   of it. Who pays for the ticket follows her employment contract and it is not
-   her call to make on her own.
-
-4. Do NOT keep asking the collection's questions - her employer's name, her
-   travel dates, which country she is from. None of them is answerable by her
-   in a way we could act on, and asking them is what makes this read as a form
-   rather than an answer.
-
-If it turns out an employer is writing after all, they will name their helper
-and the collection simply carries on - you do not need to guard against that.
+If she asks about the cost: the fee for arranging it is settled with her
+employer, and our agent will go through it with them - give no figure. If she
+asks how long it takes, answer from the records for HER nationality; if you do
+not know her nationality yet, ask it.
 """
 
 
-# The SECOND turn onward. The note above is right once and wrong every time
-# after that: it is written as an instruction ("ask your employer to message us
-# here"), and an instruction repeated on every reply stops being help and
-# becomes a brush-off.
-#
-# Live 2026-09-18, the agency reading their own helper transcript: "bot is
-# telling again and again in every message [Please ask your employer to message
-# us here] which looks weird ... tell or mention this where it actually needs
-# like in starting first message is ok". Four of the seven replies carried it,
-# and the same four carried "a consultant can speak with your employer
-# directly" as well - the same sentence twice over, closing every message the
-# same way.
-#
-# Said once, then referred to rather than repeated, which is the rule
-# `returning_note`, `purpose_note` and `_heavy_workload` all follow. Nothing
-# new is remembered for it: `flagged_once` already carries the branch's own
-# flag, and its ABSENCE is what makes a turn the first one.
-HELPER_HOME_LEAVE_FOLLOW_UP_NOTE = """
-The person writing is the HELPER herself, asking about her OWN home leave, and
-you have ALREADY told her on an earlier message that home leave is arranged
-through her employer and that her employer can message us here.
+HELPER_HOME_LEAVE_BRIEFING_NOTE = """
+THIS CLOSING MESSAGE GOES TO THE HELPER HERSELF, not to an employer. The records
+are written to the employer, so adapt them to her:
 
-She heard you. Do not tell her again.
+- TIMING: give the lead time for HER nationality from the records, as above.
+- COST: no figure at all. Say the fee for arranging it is settled with her
+  employer and our agent will go through it with them.
+- DOCUMENTS: only what SHE provides (her passport and her Work Permit). Her
+  ORIGINAL passport only where the records say the original is needed for her
+  nationality (a Filipino helper's embassy needs it); for an Indonesian helper
+  a copy is enough - say "a copy of your passport". Anything else on the
+  list (an NRIC, the forms) is her EMPLOYER's: say her employer provides it.
+  Never ask her for an NRIC.
+- NEXT STEPS: our agent will contact her employer on the number she gave to
+  confirm the dates and prepare the paperwork. Tell her NOT to buy her ticket
+  until her employer has confirmed the dates with us - who pays for it follows
+  her employment contract.
 
-ANSWER THE QUESTION SHE HAS JUST ASKED, in one or two sentences, inside that
-same frame. Her employer being the one who decides is context you may use
-freely - "the timing depends on when your employer confirms the dates", "your
-employer signs the embassy forms", "who pays for the ticket follows your
-employment contract" are all good answers and are what she is actually asking
-for.
-
-WHAT IS BANNED IS THE INSTRUCTION, not the fact:
-
-- "Please ask your employer to message us here"
-- "They can message us here and we will take it from there"
-- "If you prefer, our agent can speak with your employer directly"
-
-Those belong on the first message and nowhere else. Say one of them again ONLY
-when she asks what she should do next, how to get it started, or who to talk
-to - or when she tells you her employer has refused, does not know, or will not
-act. Then it is an answer. Anywhere else it is the same sentence for the third
-time.
-
-Do not close every message the same way either. A short offer of further help
-is fine sometimes; on every single reply it reads as a door being shut.
-
-DO NOT PROMISE HER A LIVE AGENT, and do not say anyone will contact her. No
-ticket is raised on this turn, so nobody is coming, and a helper told to wait
-for a call that never arrives is worse off than one who was told plainly what
-to do. If she is stuck, the offer is that our agent will speak to her
-EMPLOYER - that is the one we can actually keep.
-
-FOUR THINGS YOU MUST NOT DO:
-
-1. Do NOT give any fee, any timeline or any lead time. The cost of a home leave
-   is quoted to the EMPLOYER, who pays it, and every figure in this
-   conversation belongs to them.
-
-2. Do NOT give the document list. It opens with her employer's NRIC and it is
-   the employer's to produce.
-
-3. Do NOT tell her to book the air ticket, and do NOT ask her to send us a copy
-   of it.
-
-4. Do NOT ask the collection's questions - her employer's name, her travel
-   dates, which country she is from.
-
-If it turns out an employer is writing after all, they will name their helper
-and the collection simply carries on - you do not need to guard against that.
+Replace any instruction above that tells the client to book the ticket or send
+us a copy of it: that is for an employer.
 """
 
 

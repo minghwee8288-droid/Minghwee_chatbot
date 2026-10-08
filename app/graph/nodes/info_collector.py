@@ -45,8 +45,8 @@ from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
     CANDIDATE_PROCESS_COMES_LAST_NOTE,
     EXPIRING_SOON_NOTE,
-    HELPER_HOME_LEAVE_FOLLOW_UP_NOTE,
-    HELPER_HOME_LEAVE_NOTE,
+    HELPER_HOME_LEAVE_BRIEFING_NOTE,
+    HELPER_OWN_LEAVE_NOTE,
     HELPER_OWN_PASSPORT_NOTE,
     HELPER_PASSPORT_BRIEFING_NOTE,
     OWN_PASSPORT_NOTE,
@@ -703,7 +703,11 @@ _OWN_HOME_LEAVE = re.compile(
     r"|\bi\s+(?:want|need|would\s+like|wish)\s+(?:to\s+)?"
     r"(?:take\s+|apply\s+for\s+|go\s+on\s+)?(?:my\s+)?home\s+leave\b"
     r"|\bmy\s+home\s+leave\b"
-    r"|\bi\s+am\s+going\s+(?:back\s+)?home\b",
+    r"|\bi\s+am\s+going\s+(?:back\s+)?home\b"
+    # "Hey I need leave for 1 month" (live, 4551, 2026-10-08) - a first-person
+    # request for LEAVE, which only the helper makes about herself.
+    r"|\bi\s+(?:want|need|would\s+like|wish)\s+(?:to\s+(?:take|apply\s+for)\s+)?"
+    r"(?:a\s+|some\s+)?(?:\d+|one|two|three)?\s*(?:days?|weeks?|months?)?\s*(?:of\s+)?leave\b",
     re.IGNORECASE,
 )
 
@@ -1260,6 +1264,15 @@ _NO_PREFERENCE = re.compile(
     r"(any|anything|any\s?one|no\s+preference|no\s+pref|up\s+to\s+you|you\s+decide|"
     r"doesn'?t\s+matter|does\s+not\s+matter|whatever|either|both|flexible|open)\b",
     re.IGNORECASE,
+)
+
+_SINGAPORE = re.compile(r"\b(?:singapore|singaporean|sg)\b", re.IGNORECASE)
+
+SINGAPORE_NOT_HOME_NOTE = (
+    "\n\nTheir answer to the nationality question was Singapore. Home leave is "
+    "her trip back to her HOME country, so Singapore - where she works - is not "
+    "the answer we need. Say that briefly and kindly, and ask which country she "
+    "is from (the country of her passport)."
 )
 
 # Any sign in the MESSAGE of an open answer, for checking an extracted "no
@@ -2567,6 +2580,19 @@ async def _extract(
                 key,
             )
             continue
+        # Home leave is her trip back to her HOME country, so "Singapore" - where
+        # she works - is not an answer we can act on. Live (4551, 2026-10-08)
+        # "Vidhi Ji is from Singapore" was filed, and the ticket went to the
+        # agent with no embassy to work with. Dropped, and asked again with the
+        # reason (SINGAPORE_NOT_HOME_NOTE).
+        if service_type == "home_leave" and key == "nationality" and _SINGAPORE.search(text):
+            logger.info(
+                "Conversation %s: ignoring '%s' for a home leave's nationality - "
+                "Singapore is where she works, not her home country",
+                state.get("conversation_id"),
+                text[:40],
+            )
+            continue
         # ...and asked is not enough either: the message has to SAY it. Live,
         # conversation 4551, 2026-10-08: asked about rest days, the client
         # answered the budget question before it ("You can find someone between
@@ -3285,11 +3311,35 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
                 extracted = {**extracted, "helper_name": holder}
                 collected = {**collected, "helper_name": holder}
 
+    # The same question for a home leave: is the HELPER asking for her own?
+    # Agency's choice, 2026-10-08 (conversation 4551): serve her rather than
+    # send her back to her employer. Her own name is the helper's name, the
+    # questions are put to her about herself, and her employer's name and
+    # number are taken so our agent can arrange it with them (the gated
+    # employer_* fields). `requested_by` is written on every home-leave turn so
+    # the gate is closed - not undecided - for an employer.
+    leave_by_helper = service_type == "home_leave" and _home_leave_for_herself(state)
+    if service_type == "home_leave":
+        requester = "helper" if leave_by_helper else "employer"
+        extracted = {**extracted, "requested_by": requester}
+        collected = {**collected, "requested_by": requester}
+        holder = str(collected.get("full_name") or "").strip()
+        if leave_by_helper and holder and not str(collected.get("helper_name") or "").strip():
+            logger.info(
+                "Conversation %s: the helper is asking for her own home leave - "
+                "filling helper_name from her own name rather than asking",
+                state.get("conversation_id"),
+            )
+            extracted = {**extracted, "helper_name": holder}
+            collected = {**collected, "helper_name": holder}
+
     # Written on EVERY return below, so the answer survives the turn wherever
     # the turn happens to end - the next question, the briefing or the refusal.
     # A flag set on one path and not another is how a settled answer gets
     # re-decided from a later message that no longer says it.
     passport_flags = [_HOLDER_IS_SENDER] if whose_passport == "sender" else []
+    if leave_by_helper:
+        passport_flags.append("helper_home_leave")
 
     # §23.5: a client who cannot give a case ID is reassured and the flow
     # continues. Said once, on the turn the question is dropped.
@@ -3651,6 +3701,8 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         # what the client DOES, which is the end of the message either way.
         if service_type == "home_leave":
             briefing_note += HOME_LEAVE_TICKET_NOTE
+        if leave_by_helper:
+            briefing_note += HELPER_HOME_LEAVE_BRIEFING_NOTE
 
         # ...and if her passport runs out before the renewal could finish, the
         # briefing has to say so rather than print the two numbers one line
@@ -3927,59 +3979,6 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             "needs_handover": False,
         }
 
-    # THE RECORDS ARE STRIPPED HERE TOO, and for the same reason. The retrieved
-    # set on a home-leave turn genuinely contains "$250", "approximately 2
-    # weeks" and "a copy of your NRIC", so `ungrounded_figures` would pass any
-    # of them - they are real, they are simply the EMPLOYER's price and the
-    # EMPLOYER's paperwork. With `rag_context` blanked the model is never
-    # offered them, and any figure it writes anyway is ungrounded and takes the
-    # whole reply with it. `history_text` is deliberately left alone: on a
-    # thread where a briefing has already gone out it still carries the figure,
-    # which is why the note forbids quoting one as well.
-    if service_type == "home_leave" and _home_leave_for_herself(state):
-        # Said once, then referred to rather than repeated. The flag is written
-        # by this same branch, so its ABSENCE is exactly "this is the first turn
-        # we have told her" - no second piece of state, and it cannot drift out
-        # of step with the branch that owns it.
-        already_told = "helper_home_leave" in (state.get("flagged_once") or [])
-        logger.info(
-            "Conversation %s: the HELPER is asking about her own home leave — "
-            "answering rather than running the employer's intake (%s)",
-            state.get("conversation_id"),
-            "follow-up" if already_told else "first time",
-        )
-        return {
-            **lead_fields,
-            "collected_info": carry,
-            "service_type": service_type,
-            "collected_service": service_type,
-            "asked_field_counts": counts,
-            "missing_field_keys": [],
-            "info_complete": False,
-            "flagged_once": ["helper_home_leave"],
-            "reply": await _write(
-                {**dict(state), "rag_context": "", "rag_matches": []},
-                system_prompt_state,
-                HELPER_HOME_LEAVE_FOLLOW_UP_NOTE
-                if already_told
-                else HELPER_HOME_LEAVE_NOTE,
-                fallback=(
-                    # The fallback carries the routing line only on the turn the
-                    # note does. A guard discarding the reply must not be what
-                    # puts the repetition back.
-                    "Home leave has to be agreed with your employer, as we need "
-                    "their documents and signature before we can start it."
-                    if already_told
-                    else "Home leave is arranged through your employer, as we "
-                    "need their documents and signature before we can start "
-                    "it. Please let your employer know, and they can message "
-                    "us here and we will take it from there."
-                ),
-                max_sentences=3,
-            ),
-            "needs_handover": False,
-        }
-
     if service_type in ticket_service.CANDIDATE_SERVICES and (
         ticket_service.nationality_state(collected.get("nationality")) == "unsupported"
     ):
@@ -4083,6 +4082,15 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     helper_passport_note = (
         HELPER_OWN_PASSPORT_NOTE if whose_passport == "sender" else ""
     )
+    if leave_by_helper:
+        helper_passport_note = HELPER_OWN_LEAVE_NOTE
+    if (
+        service_type == "home_leave"
+        and asked.get("nationality")
+        and not str(collected.get("nationality") or "").strip()
+        and _SINGAPORE.search(state.get("incoming_text") or "")
+    ):
+        helper_passport_note += SINGAPORE_NOT_HOME_NOTE
 
     if missing:
         next_field = missing[0]

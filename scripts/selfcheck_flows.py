@@ -3929,7 +3929,22 @@ rows = [
  # only her name and the travel dates, so there was nothing to route on.
  ("home leave asks which country she is from",
   [f.key for f in t.SERVICE_FIELDS["home_leave"]],
-  ["full_name", "helper_name", "nationality", "leave_dates", "leave_reason"]),
+  ["full_name", "helper_name", "nationality", "leave_dates", "leave_reason",
+   "employer_name", "employer_contact"]),
+ # 2026-10-08, conversation 4551: the HELPER asking for her own home leave is
+ # served, and her employer's name and number taken (agency's choice).
+ ("...whose employer's name and number are asked only when the helper herself is asking",
+  ([f.key for f in t.applicable_fields("home_leave", {"requested_by": "employer"}) if f.key.startswith("employer_")],
+   [f.key for f in t.applicable_fields("home_leave", {"requested_by": "helper"}) if f.key.startswith("employer_")]),
+  ([], ["employer_name", "employer_contact"])),
+ ("a helper asking for leave in the first person is recognised as the helper",
+  [_ic._home_leave_for_herself({"incoming_text": m}) for m in
+   ("Hey I need leave for 1 month. Could you please help me?", "i want 1 month leave", "I am the helper")],
+  [True, True, True]),
+ ("...and an employer asking for their helper's leave is not",
+  [_ic._home_leave_for_herself({"incoming_text": m}) for m in
+   ("my helper needs leave for 1 month", "I need leave for my helper", "I want home leave for my maid")],
+  [False, False, False]),
  ("the nationality carries over from another enquiry",
   "nationality" in ico._PORTABLE_ACROSS_SERVICES, True),
  ("home leave is route-split by nationality",
