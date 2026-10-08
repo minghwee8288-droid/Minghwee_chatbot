@@ -904,6 +904,27 @@ def _dedupe(messages: list[IncomingMessage]) -> list[IncomingMessage]:
     return sorted(unique, key=lambda m: m.timestamp)
 
 
+def merge_known_helpers(helpers: list[dict[str, str]], limit: int = 3) -> list[dict[str, str]]:
+    """One entry per helper name, in the order given, with details merged from
+    every entry for that name - an earlier entry's nationality fills a later
+    one's gap. Live (3766, 2026-10-08) Choral's newest ticket was a work permit
+    renewal, which never asks her nationality, and keeping that entry alone hid
+    the "Filipino" her direct-hire ticket carried."""
+    merged: list[dict[str, str]] = []
+    by_name: dict[str, dict[str, str]] = {}
+    for helper in helpers:
+        key = str(helper.get("helper_name") or "").strip().lower()
+        if not key:
+            continue
+        if key not in by_name:
+            by_name[key] = dict(helper)
+            merged.append(by_name[key])
+        else:
+            for field, value in helper.items():
+                by_name[key].setdefault(field, value)
+    return merged[:limit]
+
+
 def _predates_our_last_reply(
     conversation: dict[str, Any], messages: list[IncomingMessage]
 ) -> bool:
@@ -1007,19 +1028,14 @@ async def _process_locked(
     # named on an earlier ticket - so a helper service CONFIRMS her ("Is this
     # home leave for Yoyo, or another helper?") instead of asking for a name
     # we already hold. Agency, 2026-10-08. Placements first (a harder fact),
-    # then tickets newest first; three at most, one entry per name.
+    # then tickets newest first; three at most, one entry per name with its
+    # details merged across tickets (merge_known_helpers).
     known_helpers: list[dict[str, str]] = []
     if contact_type == "employer":
-        seen_names: set[str] = set()
-        for helper in [
+        known_helpers = merge_known_helpers([
             *await contact_service.get_placement_helpers(conversation.get("matched_employer_id")),
             *await ticket_service.helpers_on_conversation(conversation["id"]),
-        ]:
-            key = helper["helper_name"].strip().lower()
-            if key not in seen_names:
-                seen_names.add(key)
-                known_helpers.append(helper)
-        known_helpers = known_helpers[:3]
+        ])
 
     # How long since anything was said on this thread, so "welcome back" is
     # said after a real break and not ten minutes into a conversation. The

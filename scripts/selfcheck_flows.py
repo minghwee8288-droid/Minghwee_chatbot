@@ -362,8 +362,70 @@ def _switch_marker():
     return out.get("collected_since")
 
 
+def _briefing_cost_in_records(service, collected) -> bool:
+    """Run rag_retriever on a closing-briefing turn with the search stubbed: the
+    briefing query never returns the fee row (live, 3766, 2026-10-08: ten
+    renewal rows, no $695), so only the separate cost search can add it."""
+    import asyncio
+    fee = {"id": "fee", "question": "How much does it cost?", "similarity": 0.6}
+
+    async def fake_search(query, **kw):
+        if query.startswith(rr.BRIEFING_COST_QUERY) and kw.get("match_count") == 1:
+            return [fee]
+        return [{"id": f"r{i}", "question": f"row {i}", "similarity": 0.6}
+                for i in range(kw.get("match_count") or 5)]
+
+    real = rr.rag.search
+    rr.rag.search = fake_search
+    try:
+        out = asyncio.run(rr.rag_retriever({
+            "intent": service, "service_type": service, "contact_type": "employer",
+            "collected_service": service, "collected_info": collected,
+            "incoming_text": "in 3 weeks",
+        }))
+    finally:
+        rr.rag.search = real
+    return any(m.get("id") == "fee" for m in out.get("rag_matches") or [])
+
+
+# The finished renewal still in memory on conversation 3766 when CB-2026-0029
+# had been resolved (2026-10-08).
+_FINISHED = {
+    "intent": "general_question", "service_type": "renewal", "collected_service": "renewal",
+    "contact_type": "employer", "blocked_topics": {},
+    "collected_info": {"full_name": "VD", "helper_name": "choral", "permit_expiry": "in 3 weeks",
+                       "helper_from_us": "hired elsewhere - no placement on record"},
+    "asked_field_counts": {"helper_name": 1, "permit_expiry": 1},
+    "completed_topics": {"renewal": {"ticket_number": "CB-2026-0029", "status": "resolved"}},
+    "incoming_text": "can you tell me the nationality of choral",
+}
+
+
+def _restart_result():
+    """Run the real collector wrapper on a new request for the finished
+    service, with the collection itself stubbed."""
+    import asyncio
+    seen = {}
+
+    async def fake_collect(state):
+        seen["switched_for"] = _ic.finished_collection(state)
+        return {"collected_service": "renewal"}
+
+    real = _ic._collect
+    _ic._collect = fake_collect
+    try:
+        out = asyncio.run(_ic.info_collector({
+            **_FINISHED, "intent": "renewal",
+            "incoming_text": "i also want to renew my other helpers work permit"}))
+    finally:
+        _ic._collect = real
+    return out.get("restarted_topics"), out.get("collected_since"), seen.get("switched_for")
+
+
 import app.services.assignment as _asg
 import app.services.handover as _hov
+import app.api.webhook as _wh
+_rg_mod = importlib.import_module("app.graph.nodes.response_generator")
 
 
 class _FakeQuery:
@@ -5039,6 +5101,49 @@ rows = [
                      "incoming_text": "my other helper wants home leave", "blocked_topics": {},
                      "completed_topics": {"home_leave": {"ticket_number": "CB-2026-0026", "status": "resolved"}}}),
   "info_collector"),
+ # 2026-10-08, conversation 3766, after the fix above went live: CB-2026-0029
+ # was resolved, and the next two turns that reached the collector re-filed the
+ # finished collection still in memory (CB-2026-0028, 0030).
+ ("a finished collection is recognised as finished",
+  _ic.finished_collection(_FINISHED), "renewal"),
+ ("...and a question about something else is answered, never re-filed (3766, CB-2026-0030)",
+  g.route_after_rag(_FINISHED), "response_generator"),
+ ("...as is 'tell me about your agency' (CB-2026-0028)",
+  g.route_after_rag({**_FINISHED, "intent": "agency_info",
+                     "incoming_text": "can you tell me more about yourself and your agency"}),
+  "response_generator"),
+ ("...and a turn merely LABELLED with the service ('okayy' came back intent=renewal)",
+  g.route_after_rag({**_FINISHED, "intent": "renewal", "incoming_text": "okayy"}), "response_generator"),
+ ("...while a NEW request for that service goes to the collector",
+  g.route_after_rag({**_FINISHED, "intent": "renewal",
+                     "incoming_text": "i also want to renew my other helpers work permit"}),
+  "info_collector"),
+ ("...which starts clean and marks the finished ticket as restarted",
+  _restart_result(), ({"renewal": "CB-2026-0029"}, "i also want to renew my other helpers work permit", "renewal")),
+ ("...so the new collection is never mistaken for the finished one",
+  _ic.finished_collection({**_FINISHED, "restarted_topics": {"renewal": "CB-2026-0029"}}), None),
+ ("...until a newer ticket on that topic is completed",
+  _ic.finished_collection({**_FINISHED, "restarted_topics": {"renewal": "CB-2026-0029"},
+                           "completed_topics": {"renewal": {"ticket_number": "CB-2026-0031"}}}), "renewal"),
+ ("...and a collection still waiting on an unasked question is not finished",
+  _ic.finished_collection({**_FINISHED, "collected_info": {"full_name": "VD", "helper_name": "choral"},
+                           "asked_field_counts": {"helper_name": 1}}), None),
+ ("...nor one whose topic has an open ticket",
+  _ic.finished_collection({**_FINISHED, "blocked_topics": {"renewal": {"ticket_number": "CB-2026-0030"}}}), None),
+ ("a greeting is never answered with a request's status ('hello' -> 'Our team has completed...')",
+  _rg_mod.completed_request({**_FINISHED, "intent": "case_enquiry", "incoming_text": "hello"}), None),
+ ("a helper's details are merged across her tickets (Choral's nationality was hidden)",
+  _wh.merge_known_helpers([{"helper_name": "choral"}, {"helper_name": "Yoyo", "nationality": "Myanmar"},
+                           {"helper_name": "Choral", "nationality": "Filipino"}]),
+  [{"helper_name": "choral", "nationality": "Filipino"}, {"helper_name": "Yoyo", "nationality": "Myanmar"}]),
+ ("...and what we know about them is put in front of the answering model",
+  "choral (Filipino)" in _sys.known_helpers_line([{"helper_name": "choral", "nationality": "Filipino"}]), True),
+ ("a closing briefing's records carry the service's own fee row (3766: $695 missing)",
+  _briefing_cost_in_records("renewal", {"helper_name": "choral", "permit_expiry": "in 3 weeks"}), True),
+ ("...but not a fee we do not hold for her nationality (Myanmar passport renewal, section 9.28)",
+  rr._briefing_cost_due({"service_type": "passport_renewal"}, "MM"), False),
+ ("...nor a service whose price we withhold",
+  rr._briefing_cost_due({"service_type": "direct_hiring"}, None), False),
  ("the dashboard marks the conversation resolved only when no other ticket on it is open",
   ".in('status', ['open', 'in_progress'])" in _pathlib.Path("portal-ui/ticket-system/components/TicketDetailDrawer.jsx").read_text(encoding="utf-8")
   and "!otherOpen" in _pathlib.Path("portal-ui/ticket-system/components/TicketDetailDrawer.jsx").read_text(encoding="utf-8"), True),

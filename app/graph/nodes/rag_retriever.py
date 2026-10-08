@@ -644,6 +644,48 @@ async def _with_overview_extras(
     return out
 
 
+# The closing briefing's cost line needs the service's own fee row, and the
+# shared briefing query does not reliably reach it. Live, conversation 3766,
+# 2026-10-08: a work permit renewal's ten retrieved rows were all process,
+# documents and timing (0.58-0.66) and the $695 row was not among them, so the
+# briefing said "the exact fee will be confirmed by our agent" for a fee we
+# state. Section 9.27 is the same thing on a new hire. A separate one-row
+# search, the ENQUIRY_OVERVIEW_EXTRA_QUERIES pattern, touches nothing else.
+BRIEFING_COST_QUERY = "how much does it cost"
+
+
+def _briefing_cost_due(state: ConversationState, nationality: str | None) -> bool:
+    """A closing briefing for a service whose price we state, for a
+    nationality we hold one for."""
+    service_key = state.get("service_type") or ""
+    if service_key in ticket_service.CANDIDATE_SERVICES:
+        return False
+    if service_key not in kb_rules.fee_stated_services():
+        return False
+    if ticket_service.fee_varies_by_nationality(service_key):
+        return ticket_service.fee_is_known_for(service_key, nationality)
+    return True
+
+
+async def _with_briefing_cost(
+    matches: list[dict], state: ConversationState,
+    service: str | None, contact: str | None, nationality: str | None,
+) -> list[dict]:
+    """The briefing set plus the service's best cost row, same filters."""
+    readable = _readable_service(state.get("service_type"))
+    found = await rag.search(
+        f"{BRIEFING_COST_QUERY}{chr(10)}(cost of {readable})",
+        service_type=service, contact_type=contact,
+        nationality=nationality, match_count=1,
+    )
+    seen = {m.get("id") or m.get("question") for m in matches}
+    out = list(matches)
+    for row in found[:1]:
+        if (row.get("id") or row.get("question")) not in seen:
+            out.append(row)
+    return out
+
+
 async def rag_retriever(state: ConversationState) -> dict[str, Any]:
     case_summary = None
     if state.get("intent") == "case_enquiry" and state.get("matched_case_id"):
@@ -668,6 +710,8 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
     )
     if overview:
         matches = await _with_overview_extras(matches, service, contact, nationality)
+    elif briefing and _briefing_cost_due(state, nationality):
+        matches = await _with_briefing_cost(matches, state, service, contact, nationality)
     best = rag.best_similarity(matches)
 
     # A service filter can starve a question the knowledge base can answer.

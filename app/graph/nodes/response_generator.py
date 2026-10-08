@@ -32,7 +32,7 @@ from app.graph.guards import (
 )
 from app.graph.llm import complete
 from app.services import kb_rules
-from app.graph.prompts.system import IDENTITY, build_system_prompt
+from app.graph.prompts.system import IDENTITY, build_system_prompt, known_helpers_line
 from app.graph.prompts.templates import (
     AGENCY_INFO_INSTRUCTION,
     ASKED_AGAIN_NOTE,
@@ -223,6 +223,11 @@ def completed_request(state: ConversationState) -> dict[str, Any] | None:
     (answer it, do not collect) and by this node (say it is finished)."""
     if (state.get("intent") or "") != "case_enquiry":
         return None
+    # "hello" came back case_enquiry on a thread full of status questions, and
+    # was answered "Our team has completed Yoyo's home leave request" (live,
+    # 3766, 2026-10-08). A greeting is greeted back, never given a status.
+    if greeting_only(state.get("incoming_text") or ""):
+        return None
     key = ticket_service.topic_key_for(
         state.get("service_type"), effective_contact_type(state), state.get("intent")
     )
@@ -270,6 +275,19 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
             "Conversation %s: contact type still unclear — asking rather than guessing",
             state.get("conversation_id"),
         )
+
+    # "hello" came back case_enquiry on a thread full of status questions, and
+    # the status instruction then wrote "I'm checking the latest update on
+    # Yoyo's home leave" - a second time, so the repeat guard handed it over and
+    # raised a ticket (replayed, 3766, 2026-10-08). A greeting with no question
+    # in it is greeted back, whatever the classifier called it.
+    incoming_text = state.get("incoming_text") or ""
+    if (
+        intent == "case_enquiry"
+        and greeting_only(incoming_text)
+        and claire_has_spoken(state.get("history_text") or "")
+    ):
+        return {"reply": greeting_back(state.get("record_name")), "needs_handover": False}
 
     instruction = instruction_template.format(handover_token=HANDOVER_TOKEN)
     finished = completed_request(state)
@@ -354,6 +372,12 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
                 _service,
                 _nat,
             )
+
+    # What the client has told us about their helpers, to answer from when they
+    # ask ("can you tell me the nationality of choral" - 3766, 2026-10-08).
+    helpers = known_helpers_line(state.get("known_helpers"))
+    if helpers:
+        instruction += f"{chr(10)}{chr(10)}{helpers}"
 
     system_prompt = build_system_prompt(
         dict(state),

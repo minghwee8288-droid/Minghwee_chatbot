@@ -390,6 +390,38 @@ def _contact_block(state: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def known_helpers_line(helpers: Any) -> str:
+    """The helpers this client has told us about, with what they told us.
+
+    Live, conversation 3766, 2026-10-08: "can you tell me the nationality of
+    choral" got "We don't have Choral's nationality confirmed yet; I'll check
+    with the team" - the client had given it on CB-2026-0023 ("Filipino") and
+    the webhook already had it in `known_helpers`, but nothing put it in front
+    of the model. "But I have told you the nationality of choral", he wrote.
+    Context to answer from when asked, never a file to read back unprompted -
+    the same rule as RETURNING_NOTE. Added by the answering node only, not to
+    every prompt: on the collector it competes with the closing briefing's own
+    structure (measured: the heading dropped 2 runs of 6 with it, 0 without).
+    """
+    parts = []
+    for helper in helpers or []:
+        if not isinstance(helper, dict):
+            continue
+        name = str(helper.get("helper_name") or "").strip()[:60]
+        if not name:
+            continue
+        nationality = str(helper.get("nationality") or "").strip()[:40]
+        parts.append(f"{name} ({nationality})" if nationality else name)
+    if not parts:
+        return ""
+    return (
+        "- Helpers this client has told us about on earlier requests: "
+        + "; ".join(parts)
+        + ". If they ask about one of these helpers (her nationality, say), answer "
+        "from this - they told us. Do not read the list out unprompted."
+    )
+
+
 def _case_block(case: dict[str, Any] | None) -> str:
     if not case:
         return ""

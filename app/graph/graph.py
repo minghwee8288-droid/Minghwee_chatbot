@@ -13,7 +13,12 @@ from app.config import settings
 from app.graph.guards import answering_our_question
 from app.graph.nodes.blocked_topic_responder import asks_general_info, blocked_topic_responder
 from app.graph.nodes.handover_executor import handover_executor
-from app.graph.nodes.info_collector import enquiry_overview_due, info_collector
+from app.graph.nodes.info_collector import (
+    asks_for_service_again,
+    enquiry_overview_due,
+    finished_collection,
+    info_collector,
+)
 from app.graph.nodes.intent_classifier import intent_classifier
 from app.graph.nodes.rag_retriever import rag_retriever
 from app.graph.nodes.response_generator import completed_request, response_generator
@@ -133,6 +138,17 @@ def route_after_rag(state: ConversationState) -> str:
     # completed is answered as completed - never re-collected into a duplicate
     # ticket (conversation 3766, 2026-10-08). See completed_request.
     if completed_request(state):
+        return "response_generator"
+
+    # The answers still in memory became a ticket our team has since completed.
+    # Only a new request for that service reopens the collection (which then
+    # starts clean); anything else - "tell me about your agency", "what is
+    # Choral's nationality", "hello" - is answered. Live, conversation 3766,
+    # 2026-10-08, both of the first two re-filed the finished request as a
+    # new ticket (CB-2026-0028, 0030). See finished_collection.
+    if finished_collection(state) and not (
+        intent in SERVICE_INTENTS and asks_for_service_again(state)
+    ):
         return "response_generator"
 
     # "Tell me about direct hire - the process and the costs" opens a service.

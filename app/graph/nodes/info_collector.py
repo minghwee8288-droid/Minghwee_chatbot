@@ -40,7 +40,7 @@ from app.graph.guards import (
 )
 from app.graph.llm import complete, complete_json
 from app.services import kb_rules
-from app.graph.nodes.intent_classifier import _named_service
+from app.graph.nodes.intent_classifier import _WANTS_SERVICE, _named_service
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
     CANDIDATE_PROCESS_COMES_LAST_NOTE,
@@ -772,9 +772,59 @@ def nationality_for_turn(state: ConversationState) -> str | None:
     both read it; both run before the collector's switch reset has dropped it."""
     collected = dict(state.get("collected_info") or {})
     resolved = ticket_service.resolve_service(state.get("service_type"), effective_contact_type(state))
-    if not nationality_carries(state.get("collected_service"), resolved):
+    if not nationality_carries(state.get("collected_service"), resolved) or (
+        resolved in _HELPER_SPECIFIC_NATIONALITY and finished_collection(state)
+    ):
         collected.pop("nationality", None)
     return lead_service.nationality_in_play(collected, state.get("incoming_text"))
+
+
+def finished_collection(state: ConversationState) -> str | None:
+    """The topic, if the collection still in memory is one that already became
+    a ticket our team has since resolved or closed.
+
+    Live, conversation 3766, 2026-10-08: CB-2026-0029 (Choral's work permit
+    renewal) was resolved in the dashboard, and the next turn that reached the
+    collector - "can you tell me the nationality of choral" - found the old
+    answers complete and filed them again as CB-2026-0030. "Tell me about your
+    agency" did the same to a resolved home leave (CB-2026-0028). Nothing
+    else ever clears a collection: an OPEN ticket parks the topic, and a
+    resolved one lifted the park and handed the stale answers straight back.
+
+    It is the finished collection while it has nothing left to ask (a field
+    asked and never answered counts as asked - the ticket filed it "not
+    provided"), and until the collector has restarted it once for that same
+    ticket (`restarted_topics`). The marker is what keeps a NEW request for the
+    same service from being mistaken for the old one once its own questions
+    are all out: the topic stays completed until the new ticket is raised.
+    """
+    contact = effective_contact_type(state)
+    service = ticket_service.resolve_service(state.get("service_type"), contact)
+    if not service or state.get("collected_service") != service:
+        return None
+    key = ticket_service.topic_key_for(service, contact, state.get("intent"))
+    if not key or key in (state.get("blocked_topics") or {}):
+        return None
+    done = (state.get("completed_topics") or {}).get(key)
+    if not isinstance(done, dict):
+        return None
+    if (state.get("restarted_topics") or {}).get(key) == done.get("ticket_number"):
+        return None
+    collected = state.get("collected_info") or {}
+    asked = state.get("asked_field_counts") or {}
+    if not collected:
+        return None
+    if any(not asked.get(field.key) for field in ticket_service.missing_fields(service, collected)):
+        return None
+    return key
+
+
+def asks_for_service_again(state: ConversationState) -> bool:
+    """A new request for a service, as opposed to a turn merely labelled with
+    one ("okayy" came back intent=renewal, live): it names the work, or asks
+    for it."""
+    text = state.get("incoming_text") or ""
+    return bool(_named_service(text) or _WANTS_SERVICE.search(text))
 
 
 def _is_first_contact(state: ConversationState) -> bool:
@@ -2977,6 +3027,9 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     contact_type = effective_contact_type(state)
     service_type = ticket_service.resolve_service(state.get("service_type"), contact_type)
     switched = bool(service_type) and bool(state.get("collected_service")) and state["collected_service"] != service_type
+    # A finished request asked for again starts clean, exactly like a switch.
+    restart_key = finished_collection(state)
+    switched = switched or bool(restart_key)
     unsent = _undelivered_question(state, switched)
     if unsent:
         logger.info(
@@ -3000,6 +3053,15 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         result = {**result, "last_question": None}
     if switched and result.get("collected_service") == service_type:
         result = {**result, "collected_since": _first_line(state.get("incoming_text"))}
+    if restart_key:
+        done = (state.get("completed_topics") or {}).get(restart_key) or {}
+        result = {
+            **result,
+            "restarted_topics": {
+                **(state.get("restarted_topics") or {}),
+                restart_key: done.get("ticket_number"),
+            },
+        }
     return result
 
 
@@ -3027,6 +3089,20 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     # fills the new service's fields with the old service's values and files a
     # ticket full of irrelevant detail.
     switched = bool(state.get("collected_service")) and state["collected_service"] != service_type
+    # The same service asked for again after our team finished the last one
+    # (finished_collection): those answers became a ticket that is done, and
+    # kept they would be filed again unseen - CB-2026-0028 and 0030, live. So
+    # it starts clean like a switch, and a helper-specific nationality goes
+    # with it, since the new request may be for another helper.
+    restart = bool(finished_collection(state))
+    if restart:
+        logger.info(
+            "Conversation %s: %s asked for again after its last ticket was "
+            "completed - starting a new collection",
+            state.get("conversation_id"),
+            service_type,
+        )
+    switched = switched or restart
     everything = state.get("collected_info") or {}
     # On a switch, keep the facts that are about the client rather than about the
     # old service, so the new flow never re-asks something they already told us.
@@ -3037,7 +3113,10 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             if key in _PORTABLE_ACROSS_SERVICES and str(value or "").strip()
             and not (
                 key == "nationality"
-                and not nationality_carries(state.get("collected_service"), service_type)
+                and (
+                    not nationality_carries(state.get("collected_service"), service_type)
+                    or (restart and service_type in _HELPER_SPECIFIC_NATIONALITY)
+                )
             )
         }
         if switched

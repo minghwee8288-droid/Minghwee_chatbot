@@ -269,6 +269,11 @@ class ConversationState(TypedDict, total=False):
     # each turn, so a status question about finished work is answered as
     # finished instead of restarting the intake.
     completed_topics: dict[str, dict[str, Any]]
+    # {topic_key: ticket_number} - the finished ticket whose collection the
+    # collector has already restarted for a new request, so the new
+    # collection is not mistaken for the finished one (finished_collection).
+    # Persisted: deliberately absent from _TURN_RESET.
+    restarted_topics: dict[str, Any]
     # Their last few cb_tickets rows (newest first), shown to a returning
     # employer's prompt so it can flag a topic that looks different from what
     # they raised before instead of silently starting a fresh collection.

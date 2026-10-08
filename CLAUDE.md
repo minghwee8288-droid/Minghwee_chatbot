@@ -484,7 +484,10 @@ because the lead is opened early and the ticket is created much later.
 | A complaint is told the wait, the number to call and its reference - and never "anything else?" | `app/graph/complaint.py` (+ `ticket_creator` for the number) | The agency's own example reply, word for word. Fixed wording, because it carries a promised time and a phone number the guards strip from model output, and a reference that only exists after the ticket insert. `COMPLAINT_RESPONSE_TIME` / `COMPLAINT_URGENT_PHONE` in `ticket.py`, one place. |
 | "I want to lodge a complaint" is not filed as the complaint | `complaint.states_a_complaint` | Filed as `complaint_detail` it would close the collection on the opening turn with an empty ticket. |
 | A client asking to hear about a service is answered in full before being asked anything | `info_collector.enquiry_overview_due` + `templates.ENQUIRY_OVERVIEW_NOTE` | "find out more about direct hire process and costs" got the intake questions presented as "the process" and "timing depends on the case". The router, the retriever and the collector read one predicate. Timeline (each route labelled), steps, government costs apart from our fee, who can hire, the terms - or that our agent will take them through - then the first question on its own line. Only before the collection starts, never on a parked topic, never a bare price question. |
-| A status question about finished work is answered as finished | `response_generator.completed_request` + `COMPLETED_REQUEST_INSTRUCTION`, routed by `graph.route_after_rag`; webhook `completed_topics` | A topic whose LATEST ticket on the conversation is resolved/closed, asked about with `case_enquiry`, gets "our team has completed it - tell me if anything is outstanding". Never re-collected into a duplicate ticket, never "I'll check and come back". Exempt from the weak-retrieval handover. A NEW request for the same service still collects. |
+| A status question about finished work is answered as finished | `response_generator.completed_request` + `COMPLETED_REQUEST_INSTRUCTION`, routed by `graph.route_after_rag`; webhook `completed_topics` | A topic whose LATEST ticket on the conversation is resolved/closed, asked about with `case_enquiry`, gets "our team has completed it - tell me if anything is outstanding". Never re-collected into a duplicate ticket, never "I'll check and come back". Exempt from the weak-retrieval handover. A NEW request for the same service still collects. A greeting is never given a status. |
+| A finished collection is never filed twice | `info_collector.finished_collection` + `asks_for_service_again`, routed by `graph.route_after_rag`; `state.restarted_topics` | Nothing else clears a collection: an open ticket parks it, and resolving the ticket handed the old answers back to the next collector turn, which filed them again (CB-2026-0028, 0030). Finished = topic completed, nothing left unasked, not already restarted for that ticket. Only a turn that names or asks for the service reopens it, and then it starts clean like a switch; the marker stops the new collection being mistaken for the old. |
+| A helper's details are known in full and can be asked about | `webhook.merge_known_helpers` + `system.known_helpers_line` (response_generator only) | One entry per name, details merged across tickets: a renewal ticket, which never asks nationality, hid "Filipino" from her direct-hire ticket. Kept off the collector's prompt: it cost the closing briefing its heading 2 runs of 6. |
+| A closing briefing has the service's own fee row | `rag_retriever._with_briefing_cost` / `_briefing_cost_due` | A one-row cost search on the briefing turn, same filters, for a service in `fee_stated_services` and a nationality we hold a fee for. The ten briefing rows were all process and timing, so "$695" was deferred to an agent (section 9.27's shape). |
 | A question that was never SENT is not counted as asked | `info_collector._undelivered_question` (`last_question`) | A reply held while the client is still typing is never delivered, but its ask was counted, so a `max_asks=1` field was filed "not provided" unseen. The next turn checks the transcript and records -1 (the counts are summed). |
 | Resolving one ticket does not close a conversation with others open | `portal-ui/.../TicketDetailDrawer.jsx` | A `resolved` conversation is a finished one: the bot starts a fresh thread on the next message and forgets everything collected. |
 | A helper we know the client has is CONFIRMED by name, never asked for and never assumed | `info_collector.HELPER_CONFIRM_SERVICES` + `helper_confirm_note` / `confirmed_helper` + webhook `known_helpers` | Known = live placements, then helpers named on this number's earlier tickets (`placements` is empty live, so the tickets are usually all we have). First ask only: "Is this home leave for Yoyo, or for another helper?". A known name or a lone yes fills her name and what we hold about her; an unknown name or a "no/another" is the other helper. A single placed helper is no longer filled in silently on these services. Not direct_hiring (a NEW helper). |
@@ -1080,6 +1083,11 @@ Ordered by what will hurt first.
     retrieved set. Not a wrong figure and not a guard failure - an answer we
     hold, not given. Left for its own change because it moves the briefing's
     retrieval, which the timing rows depend on.
+    **Likely FIXED 2026-10-08, verified on renewal only.** The same shape hit a
+    work permit renewal live ($695 deferred), and `_with_briefing_cost` now adds
+    the service's cost row on every briefing turn without touching the main
+    query: renewal quoted $695 in 13 replays of 13. The new-hire case was not
+    re-run, so leave this open until it is.
 
 28. **A Myanmar passport renewal is quoted $450 about one run in ten, on the
     first message.** Measured 2026-09-24 on `main` against the restored test
@@ -1444,6 +1452,49 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-08** - **A resolved request was filed again from memory, "hello" got
+  a status, and the bot denied knowing a helper's nationality it held.** The
+  agency's retest of the fix below, conversation 3766, read from the checkpoints
+  step by step (the first reading paired each message with the previous reply
+  and blamed the wrong turn).
+  (A) **Duplicate tickets CB-2026-0028 and 0030.** No ticket was raised by a
+  status question. "Tell me about your agency" (agency_info) and "can you tell
+  me the nationality of choral" (general_question) both fell through to the
+  collector on the in-flight service, which found the finished answers still in
+  memory and filed them again. Nothing has ever cleared a collection: an open
+  ticket parks the topic, and resolving it unparked the stale answers.
+  `finished_collection` recognises them (topic completed, nothing unasked, not
+  already restarted for that ticket); the router answers any turn that does not
+  name or ask for the service (`asks_for_service_again`, because "okayy" came
+  back intent=renewal); a real new request restarts the collection like a
+  switch, dropping a helper-specific nationality, and records
+  `restarted_topics` so its own questions are not mistaken for the old ones.
+  The first version matched the ticket's details against memory and failed on
+  3766 itself: the extractor had reworded `leave_dates` after the ticket.
+  (B) **"hello" -> "Our team has completed Yoyo's home leave request".** The
+  classifier called it case_enquiry. `completed_request` now ignores a
+  greeting, and replayed without that, the status instruction repeated "I'm
+  checking the latest update" and the repeat guard raised a ticket - so a
+  greeting-only case_enquiry is answered with `greeting_back`.
+  (C) **"We don't have Choral's nationality confirmed yet".** It was on
+  CB-2026-0023 ("Filipino"), but `known_helpers` kept only the newest entry per
+  name, CB-2026-0029, a renewal, which never asks it. Merged now, and given to
+  the answering model (response_generator only; on the collector it cost the
+  closing briefing its heading 2 runs of 6). Replayed: "Choral is Filipino."
+  (D) **The renewal briefing deferred $695.** All ten briefing rows were
+  process and timing; a separate one-row cost search adds the fee row. Not for a
+  nationality we hold no fee for (section 9.28) nor a withheld service.
+  **Verified:** the whole evening replayed read-only in sequence through the
+  real model, each turn seeing the tickets as they stood: one ticket raised (the
+  real renewal), none duplicated, every reply right; then a new renewal for
+  another helper restarted, confirmed Yoyo, asked the expiry and filed once.
+  Briefing alone 12 runs of 12 with $695. Eleven faults injected, eleven red.
+  **Not changed:** CB-0029 was resolved one minute after it was raised, so
+  "completed" at 5:48 was correct. A second request for the same service gets
+  the short closing line, not the full briefing, because `briefed_services` is
+  once per conversation. "okayy" after a handover still gets the holding line.
+  `selfcheck_flows.py` is **778 assertions**; `smoke_nodes.py` is **222 checks**.
 
 - **2026-10-08** - **Resolving a ticket in the dashboard wiped the bot's memory,
   and asking for an update on finished work started it again.** The agency
