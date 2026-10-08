@@ -484,6 +484,7 @@ because the lead is opened early and the ticket is created much later.
 | A complaint is told the wait, the number to call and its reference - and never "anything else?" | `app/graph/complaint.py` (+ `ticket_creator` for the number) | The agency's own example reply, word for word. Fixed wording, because it carries a promised time and a phone number the guards strip from model output, and a reference that only exists after the ticket insert. `COMPLAINT_RESPONSE_TIME` / `COMPLAINT_URGENT_PHONE` in `ticket.py`, one place. |
 | "I want to lodge a complaint" is not filed as the complaint | `complaint.states_a_complaint` | Filed as `complaint_detail` it would close the collection on the opening turn with an empty ticket. |
 | A client asking to hear about a service is answered in full before being asked anything | `info_collector.enquiry_overview_due` + `templates.ENQUIRY_OVERVIEW_NOTE` | "find out more about direct hire process and costs" got the intake questions presented as "the process" and "timing depends on the case". The router, the retriever and the collector read one predicate. Timeline (each route labelled), steps, government costs apart from our fee, who can hire, the terms - or that our agent will take them through - then the first question on its own line. Only before the collection starts, never on a parked topic, never a bare price question. |
+| One helper's details never become another helper's | `info_collector.nationality_carries` / `nationality_for_turn` + `_history_since` (`collected_since`) | `nationality` is portable for a hiring client (the nationality they want) and NOT across a switch into or out of `passport_renewal`/`home_leave`, where it is one helper's. Read by the collector's reset AND by `rag_retriever`, which runs before the reset. The extractor reads history only from the message that started the current request, on every turn after a switch, not just the switch turn. |
 | One salesperson per client conversation, and the portal inbox never loses a hand-assigned owner | `assignment.resolve_agent` (`_portal_owner`) + `claim_portal_owner` | A ticket goes to whoever owns the chat in the portal before the round robin is asked; the bot only ever FILLS an empty `wp_chat_conversations.assigned_user_id` (the IS NULL is in the UPDATE itself). `to_human` used to set it unconditionally, and the ordinary ticket path (`log_escalation`) never set it at all. Profile ↔ portal login is `cb_agent_portal_users`, ours, not `wp_chat_users.profile_id`, theirs. |
 | ...searched for the whole service, with the filter kept whatever money words it contains | `rag_retriever.ENQUIRY_OVERVIEW_QUERY` / `_service_filter` | "costs" dropped the service filter, and the wider search returned a no-agency comparison that told the client the permit and bond were theirs to do. 12 rows, never widened - plus `ENQUIRY_OVERVIEW_EXTRA_QUERIES`, a separate search per service for a question the agency named that the shared query cannot reach (direct hire's failed medical ranks 21st under it). |
 
@@ -1438,6 +1439,51 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-08** - **A home leave for one helper was answered with another
+  helper's name and nationality.** Conversation 3766: a passport renewal for
+  "thrity degree" (Indonesian), then *"i want to know about home leave service
+  because my helper want to home"*.
+  - The overview quoted the Indonesian route ($250, about 2 weeks).
+  - "yoyo" was answered *"when is thrity degree planning to travel"*.
+  - The closing briefing used the Indonesian route for a helper whose
+    nationality nobody had asked.
+
+  Read from the checkpoint, three causes:
+  (A) **`nationality` is portable across a service switch**, right for a
+  hiring client (2026-09-02) and wrong where it is ONE helper's. It is now
+  dropped on a switch into or out of `passport_renewal`/`home_leave`
+  (`nationality_carries`). Asking costs one question; the wrong route is the
+  wrong price, the wrong lead time and the wrong documents (a Filipino home
+  leave needs her ORIGINAL passport).
+  (B) **`rag_retriever` runs before that reset**, so its nationality filter and
+  `_known_nationality` still saw "Indonesian". `nationality_for_turn` is now
+  the one reader for both nodes.
+  (C) **The extractor got the full history on every turn after the switch.** Only
+  the switch turn was blanked (the 2026-09 "Mui Hui" fix), so on "yoyo" it found
+  "my helper name is thrity degree" and filed that. `collected_since`, the
+  client's first line on the switch turn, persisted like `collected_service`,
+  cuts the extractor's history to the current request. If the marker is not in
+  view, the old request is out of the window anyway, so the whole history goes.
+  (D) **And my own 2026-10-07 overview change cleared the route note.** Even
+  with retrieval unfiltered (Filipino and Indonesian rows both in), the overview
+  wrote "For an Indonesian helper", because the passport renewal was a few
+  messages up. `OVERVIEW_ROUTE_NOTE` brings the rule back in the overview's own
+  words: every route labelled, never a nationality from earlier in the
+  conversation.
+  **Verified:** the four turns replayed read-only from the checkpoint saved
+  before them, twice.
+  - The overview gives Filipino 4 weeks/$400 and Indonesian 2 weeks/$250,
+    labelled.
+  - "yoyo" is filed as yoyo, and the nationality is asked.
+  - After "philippines" the closing uses the Filipino route: 4 weeks, original
+    passport, itinerary.
+
+  Eleven assertions; five faults injected, five red. One of the five was added
+  after the first pass: the cut was asserted as a function and not as CALLED.
+  **Noticed, NOT changed:** that Filipino closing briefing says "our agent will
+  confirm the exact fee" although $400 is held - the §9.27 shape on home leave.
+  `selfcheck_flows.py` is **758 assertions**.
 
 - **2026-10-08** - **A dead pooled database connection silenced the bot on a
   greeting.** Conversation 3766: idle from 09:38 to 10:06 UTC, then "hey there"

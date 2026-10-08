@@ -317,6 +317,10 @@ class ConversationState(TypedDict, total=False):
     collected_info: Annotated[dict[str, Any], _merge_dict]
     # Which service collected_info belongs to, so a switch can clear it.
     collected_service: str | None
+    # The client's first line on the turn that switched collected_service, so
+    # the extractor reads only the history since then. Persists like
+    # collected_service; deliberately absent from _TURN_RESET.
+    collected_since: str | None
     missing_field_keys: list[str]
     # How many times each field has actually been asked, cleared on a service
     # switch alongside collected_info.

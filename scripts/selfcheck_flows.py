@@ -340,6 +340,28 @@ def _overview_retrieval_has_medical() -> bool:
     return any(m.get("id") == "med" for m in out.get("rag_matches") or [])
 
 
+_ic = importlib.import_module("app.graph.nodes.info_collector")
+
+
+def _switch_marker():
+    """Run the real info_collector wrapper with the collection itself stubbed."""
+    import asyncio
+
+    async def fake_collect(state):
+        return {"collected_service": "home_leave"}
+
+    real = _ic._collect
+    _ic._collect = fake_collect
+    try:
+        out = asyncio.run(_ic.info_collector({
+            "service_type": "home_leave", "collected_service": "passport_renewal",
+            "contact_type": "employer", "incoming_text": "i want to know about home leave\nthanks",
+        }))
+    finally:
+        _ic._collect = real
+    return out.get("collected_since")
+
+
 import app.services.assignment as _asg
 import app.services.handover as _hov
 
@@ -4971,6 +4993,36 @@ rows = [
                 lambda: _asg.map_to_portal_user("sales1")), 9),
  ("to_human no longer sets the portal owner unconditionally",
   "patch[\"assigned_user_id\"]" in _pathlib.Path(_hov.__file__).read_text(encoding="utf-8"), False),
+ # 2026-10-08, conversation 3766: a passport renewal for one helper, then a
+ # home leave for ANOTHER - quoted on the first helper's Indonesian route, and
+ # her name re-read from the old request's history.
+ ("a helper's nationality does not carry from a passport renewal to a home leave",
+  _ic.nationality_carries("passport_renewal", "home_leave"), False),
+ ("...nor from either into another service",
+  (_ic.nationality_carries("home_leave", "renewal"), _ic.nationality_carries("new_hiring", "passport_renewal")), (False, False)),
+ ("...while a hiring client's nationality still carries to a salary question (2026-09-02)",
+  _ic.nationality_carries("new_hiring", "salary_enquiry"), True),
+ ("...and within one service nothing changes",
+  _ic.nationality_carries("home_leave", "home_leave"), True),
+ ("retrieval and the collector read the SAME nationality for the turn",
+  _ic.nationality_for_turn({"service_type": "home_leave", "collected_service": "passport_renewal",
+                            "contact_type": "employer", "collected_info": {"nationality": "Indonesian"},
+                            "incoming_text": "i want to know about home leave"}), None),
+ ("...and a nationality named in the message still wins",
+  _ic.nationality_for_turn({"service_type": "home_leave", "collected_service": "passport_renewal",
+                            "contact_type": "employer", "collected_info": {"nationality": "Indonesian"},
+                            "incoming_text": "home leave for my filipino helper"}), "PH"),
+ ("the extractor reads history only from the message that started this request",
+  _ic._history_since("Client: my helper name is thrity degree\nYou: ok\nClient: home leave please\nYou: name?",
+                     "home leave please"), "Client: home leave please\nYou: name?"),
+ ("...and the collector actually hands the extractor that cut history",
+  'extraction_state["history_text"] = _history_since(' in _pathlib.Path(_ic.__file__).read_text(encoding="utf-8"), True),
+ ("...and the whole history when that message is no longer in view",
+  _ic._history_since("Client: a\nYou: b", "gone"), "Client: a\nYou: b"),
+ ("the switch turn records where the new request began",
+  _switch_marker(), "i want to know about home leave"),
+ ("an overview of a route-split service with no nationality gives every route, not one",
+  "answer_first += OVERVIEW_ROUTE_NOTE" in _pathlib.Path(_ic.__file__).read_text(encoding="utf-8"), True),
  ("the checkpoint pool tests a connection before handing it out (conversation 3766, 2026-10-08)",
   "        check=check," in _pathlib.Path(g.__file__).read_text(encoding="utf-8"), True),
  ("both handover paths claim the owner (the ticket path used to set none at all)",

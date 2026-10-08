@@ -762,9 +762,18 @@ def _known_nationality(state: ConversationState) -> str | None:
     briefing would have deferred a fee we hold. Section 9.8, one definition
     read by two callers, found by using the second one.
     """
-    return lead_service.nationality_in_play(
-        state.get("collected_info"), state.get("incoming_text")
-    )
+    return nationality_for_turn(state)
+
+
+def nationality_for_turn(state: ConversationState) -> str | None:
+    """nationality_in_play, minus a nationality that belongs to the PREVIOUS
+    request's helper (see nationality_carries). rag_retriever and this node
+    both read it; both run before the collector's switch reset has dropped it."""
+    collected = dict(state.get("collected_info") or {})
+    resolved = ticket_service.resolve_service(state.get("service_type"), effective_contact_type(state))
+    if not nationality_carries(state.get("collected_service"), resolved):
+        collected.pop("nationality", None)
+    return lead_service.nationality_in_play(collected, state.get("incoming_text"))
 
 
 def _is_first_contact(state: ConversationState) -> bool:
@@ -2736,7 +2745,89 @@ async def _open_lead_early(
     }
 
 
+# Services whose `nationality` field is ONE HELPER's nationality - the passport
+# being renewed, the embassy she flies home through - not the nationality a
+# client is looking for. It stays portable everywhere else (2026-09-02: a hiring
+# client who said "Filipino" must not be asked it again for a salary question),
+# but never across a switch into or out of one of these, because the next
+# request can be about a different helper.
+#
+# Live, conversation 3766, 2026-10-08: a passport renewal for "thrity degree"
+# (Indonesian), then "i want to know about home leave service because my helper
+# want to home". `nationality` carried over, so the home leave was quoted on the
+# Indonesian route - $250, about 2 weeks, copies only - for a helper named Yoyo
+# whose nationality nobody had asked. A Filipino helper's is $400, about 4
+# weeks, and her ORIGINAL passport. Asking costs one question; guessing quotes
+# the wrong price, the wrong date and the wrong documents.
+_HELPER_SPECIFIC_NATIONALITY = frozenset({"passport_renewal", "home_leave"})
+
+
+# The overview turn replaces the route notes (they forbid quoting a timeline the
+# overview must give), so it carries the route rule in its own words. Live,
+# conversation 3766, 2026-10-08: with the nationality correctly unknown and
+# both the Filipino and Indonesian rows retrieved, the home-leave overview
+# still answered "For an Indonesian helper ... $250" - the Indonesian
+# passport renewal for ANOTHER helper was a few messages up.
+OVERVIEW_ROUTE_NOTE = (
+    f"{chr(10)}{chr(10)}This service differs by the helper's nationality - the documents, the "
+    "lead time and the fee - and you have not been told THIS helper's "
+    "nationality. A nationality mentioned earlier in the conversation may be "
+    "about a different helper: do not use it. Give each route the records "
+    "describe, each labelled with its nationality, or only what is true for "
+    "all of them - never one route as though it were hers. Then ask which "
+    "country she is from."
+)
+
+
+def nationality_carries(old_service: str | None, new_service: str | None) -> bool:
+    """Whether the `nationality` collected under old_service still holds under
+    new_service. One rule, read by the collector's switch reset AND by
+    rag_retriever, which runs BEFORE the reset: replayed, the home-leave
+    overview was still searched and written on the Indonesian route although
+    the collector had correctly dropped the nationality a node later."""
+    if not old_service or not new_service or old_service == new_service:
+        return True
+    return not ({old_service, new_service} & _HELPER_SPECIFIC_NATIONALITY)
+
+
+def _history_since(history: str, marker: str | None) -> str:
+    """The transcript from the client's message that started this request on.
+
+    Live, the same conversation: the extractor was handed the whole history on
+    the turn after the switch, which still held "my helper name is thrity
+    degree" from the passport renewal, and filed THAT as the home-leave helper's
+    name when the client answered "yoyo". The switch turn itself was already
+    given no history (case_id="Mui Hui", above); this is the same rule for every
+    turn after it. A marker not found - redacted, or scrolled out of the
+    window - means the old request is out of view anyway, so the whole history
+    is returned.
+    """
+    if not history or not marker:
+        return history or ""
+    lines = history.splitlines()
+    target = f"Client: {marker}".strip()
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].strip() == target:
+            return "\n".join(lines[i:])
+    return history
+
+
+def _first_line(text: str | None) -> str:
+    return next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
+
+
 async def info_collector(state: ConversationState) -> dict[str, Any]:
+    """Records where a new request began, then collects (`_collect`)."""
+    contact_type = effective_contact_type(state)
+    service_type = ticket_service.resolve_service(state.get("service_type"), contact_type)
+    switched = bool(service_type) and bool(state.get("collected_service")) and state["collected_service"] != service_type
+    result = await _collect(state)
+    if switched and result.get("collected_service") == service_type:
+        result = {**result, "collected_since": _first_line(state.get("incoming_text"))}
+    return result
+
+
+async def _collect(state: ConversationState) -> dict[str, Any]:
     # §3 and the routing rule: a helper looking for work produces intent
     # new_hiring exactly as an employer does, and must not be asked an
     # employer's questions.
@@ -2768,6 +2859,10 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             key: value
             for key, value in everything.items()
             if key in _PORTABLE_ACROSS_SERVICES and str(value or "").strip()
+            and not (
+                key == "nationality"
+                and not nationality_carries(state.get("collected_service"), service_type)
+            )
         }
         if switched
         else {}
@@ -2796,6 +2891,10 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
         # as a brand-new conversation gets EXTRACTION_USER's own
         # "(no earlier messages)" fallback.
         extraction_state["history_text"] = ""
+    else:
+        extraction_state["history_text"] = _history_since(
+            state.get("history_text") or "", state.get("collected_since")
+        )
     extracted = await _extract(extraction_state, service_type, asked)
 
     # Anything we already know goes in before the gap analysis, so it is never
@@ -3612,6 +3711,7 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
     # this instruction says to give - labelled, for each route.
     overview = enquiry_overview_due(state)
     if overview:
+        nat_known = _known_nationality(state)
         answer_first = ENQUIRY_OVERVIEW_NOTE + FEE_ANSWER_NOTE
         if ticket_service.fee_varies_by_nationality(service_type):
             nat = lead_service.nationality_in_play(
@@ -3622,6 +3722,8 @@ async def info_collector(state: ConversationState) -> dict[str, Any]:
             elif not ticket_service.fee_is_known_for(service_type, nat):
                 answer_first += FEE_NOT_HELD_FOR_NATIONALITY_NOTE
         small_ticket_note = purpose_note = nationality_note = location_note = ""
+        if _ROUTE_BY_NATIONALITY.get(service_type or "") and not nat_known:
+            answer_first += OVERVIEW_ROUTE_NOTE
         logger.info(
             "Conversation %s: client asked to hear about %s - answering in full "
             "before the first question",

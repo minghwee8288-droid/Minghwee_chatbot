@@ -9,7 +9,11 @@ from typing import Any
 from app.config import settings
 from app.graph.guards import asks_about_price, last_bot_line
 from app.services import kb_rules
-from app.graph.nodes.info_collector import briefs_on_this_turn, enquiry_overview_due
+from app.graph.nodes.info_collector import (
+    briefs_on_this_turn,
+    enquiry_overview_due,
+    nationality_for_turn,
+)
 from app.graph.state import (
     AGENCY_INFO_INTENT,
     ConversationState,
@@ -614,7 +618,10 @@ def _nationality(state: ConversationState) -> str | None:
     employer) narrow the same way. 'none' is what nationality_code() returns
     for "no preference", which is not a filter — it is the absence of one.
     """
-    return nationality_in_play(state.get("collected_info"), state.get("incoming_text"))
+    # This node runs BEFORE the collector's switch reset, so on the turn a
+    # client moves to another helper's request the old helper's nationality is
+    # still in collected_info. One reader for both nodes.
+    return nationality_for_turn(state)
 
 
 async def _with_overview_extras(
