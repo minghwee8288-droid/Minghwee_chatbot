@@ -721,10 +721,15 @@ can still be tagged a candidate.
 
 Ordered by what will hurt first.
 
-1. **Assignment is unseeded.** `cb_round_robin_state` is empty and all 6 `wp_chat_users`
-   rows have `profile_id = NULL`. Every ticket is created unassigned and the portal cannot
-   show an owner. `scripts/seed_assignment.sql` exists but needs two business decisions
-   first: which consultants receive leads, and the portal-to-profile mapping.
+1. **Half seeded (2026-10-08).** The round robin is live: every active `sales` profile
+   (Dan, Geraldine, Shirley) via `scripts/sql/assignment_001_round_robin_sales.sql`, so
+   tickets now get an owner. **Still open:** all 16 `wp_chat_users` rows have
+   `profile_id = NULL`, so `handover.map_to_portal_user` finds nothing and the WhatsApp
+   portal's chat list shows no owner. That column is the portal's; it needs their go-ahead.
+   The same mapping would let `_conversation_agent` respect an owner the PORTAL set
+   (`wp_chat_conversations.assigned_user_id`), which today it ignores - it reads only
+   earlier bot tickets. `scripts/seed_assignment.sql` is stale (old ids); its section 1
+   is superseded by assignment_001.
 2. **English-only safety nets, now that Claire replies in any language.**
    `ASSAULT_PATTERNS` — and therefore `emergency_override` in `webhook.py`, the
    out-of-hours path — will not fire on a harm report in Hindi or Burmese. The LLM
@@ -1230,11 +1235,11 @@ at a time.
   and Woodlands genuinely gone, or never existed?** The prompt claimed all three; the
   database, the Client Service Agreement and their own brief all say one office. The
   bot now says one. If there are others, their addresses are one row each.
-- **Which consultants receive new leads**, and how the 6 `wp_chat_users` rows map to
-  profiles (§9.1). 18 of the 20 `sales` profiles are `@growwstacks.com` development
-  accounts. **And: Shirley is in the portal's *sales* department but her platform
-  archetype is `admin`, which is the assault-escalation target — should she also take
-  ordinary leads?**
+- ~~**Which consultants receive new leads**~~ **ANSWERED 2026-10-08**: every active
+  salesperson in `profiles`, in turn, one salesperson per client conversation. Built.
+  (The tenant now holds exactly three `sales` profiles, all `@minghwee.com`, Shirley
+  among them; the development accounts and her `admin` archetype noted here before are
+  gone.) **Still open:** permission to set `wp_chat_users.profile_id` (§9.1).
 - **The medical insurance minimum** (§9.14). Three figures in the knowledge base and the
   bot may quote any of them.
 - **The Settling-In Programme window.** Their flow says seven days; MOM's requirement for
@@ -1436,6 +1441,29 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-08** - **Tickets get an owner: the round robin is every active
+  salesperson.** The agency's rule: all salespeople in `profiles` take leads and
+  complaints in turn, and one salesperson handles one client's whole conversation.
+  `cb_round_robin_state` had been EMPTY since launch, so `cb_get_next_agent()`
+  returned nothing and 7 of 8 chatbot tickets were unassigned (only the assault
+  ticket, which goes to the admin, had an owner). No code change: the stickiness
+  half already exists (`assignment._conversation_agent`, fed `conversation_id` by
+  `ticket_creator`).
+  `scripts/sql/assignment_001_round_robin_sales.sql` is a re-runnable SYNC rather
+  than a seed:
+  - an active sales profile with no row gets one;
+  - a row whose profile stopped being an active salesperson is switched off, never
+    deleted;
+  - it refuses to commit an empty rotation;
+  - the tenant is read from branch `CT`, so no tenant id sits in this public repo.
+
+  The table has no unique constraint on (tenant, profile), so the insert uses
+  NOT EXISTS rather than `ON CONFLICT`.
+  Dry-run on production in a rolled-back transaction, then applied: Dan,
+  Geraldine, Shirley, sort order 1-3, next agent Dan. A second run changed
+  nothing. **Re-run it whenever the sales team changes.**
+  The portal half is still open: §9.1.
 
 - **2026-10-08** - **kb-admin: Thomas (Ming Hwee) is an approver, and the docs now
   say editing is ON in production.**
