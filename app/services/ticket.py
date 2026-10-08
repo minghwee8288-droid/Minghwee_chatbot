@@ -1575,6 +1575,17 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             "When is she planning to travel, and when would she be back?",
             max_asks=2,
         ),
+        # Agency, 2026-10-08: "in home leave bot not asking for the reason for
+        # the leave". It decides how the case is handled - a family emergency
+        # is urgent, and the knowledge base has its own row on arranging home
+        # leave urgently - and it is on the embassy paperwork. Asked once.
+        Field(
+            "leave_reason",
+            "reason for the leave",
+            "What is the reason for her leave - her regular home leave, or "
+            "something like a family matter?",
+            max_asks=1,
+        ),
     ],
     # No _case_id() here, deliberately. A passport renewal is opened by the
     # employer, not by anyone holding a reference number, and the client's
@@ -2693,6 +2704,41 @@ async def recent_for_conversation(conversation_id: int, *, limit: int = 3) -> li
     return result.data or []
 
 
+async def helpers_on_conversation(conversation_id: int, *, limit: int = 10) -> list[dict[str, str]]:
+    """Helpers this client has named on earlier tickets, newest first.
+
+    The other half of "check whether the employer has a helper before" (agency,
+    2026-10-08): `placements` is empty on the live database today, so for most
+    clients the helpers they have told us about are the only ones we know.
+    Offered for confirmation, never filled in silently - a client with two
+    helpers asking about one of them is exactly the 2026-10-08 home-leave
+    defect, the other way round.
+    """
+    try:
+        result = await db.execute(
+            db.table(TABLE)
+            .select("captured_info, created_at")
+            .eq("conversation_id", conversation_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+        )
+    except Exception:  # noqa: BLE001 - a nicety; never break the turn over it
+        logger.exception("Could not read ticket helpers for conversation %s", conversation_id)
+        return []
+    helpers: list[dict[str, str]] = []
+    for row in result.data or []:
+        details = ((row.get("captured_info") or {}).get("details") or {})
+        name = str(details.get("helper_name") or "").strip()
+        if not name or name.lower() in {"not provided", UNANSWERED.lower()}:
+            continue
+        helper = {"helper_name": name[:300]}
+        nationality = str(details.get("nationality") or details.get("helper_nationality") or "").strip()
+        if nationality:
+            helper["nationality"] = nationality[:100]
+        helpers.append(helper)
+    return helpers
+
+
 # Statuses a ticket must be in to still be "live" — eligible to be matched
 # against, blocked on, or merged into. resolved/closed are immutable history:
 # nothing here ever looks at them, so nothing here can ever touch them.
@@ -2893,6 +2939,7 @@ _DETAIL_LABELS = {
     "permit_expiry": "Work permit expires",
     "passport_expiry": "Passport expires",
     "leave_dates": "Travel dates",
+    "leave_reason": "Reason for the leave",
     "employer_consent": "Employer consent",
     # The candidate's own half of the matching form. Every heading says whose
     # answer it is, because a consultant reads this ticket beside an employer's

@@ -1003,6 +1003,35 @@ async def _process_locked(
         conversation.get("matched_employer_id")
     )
 
+    # Every helper we know this client has - a live placement, or one they
+    # named on an earlier ticket - so a helper service CONFIRMS her ("Is this
+    # home leave for Yoyo, or another helper?") instead of asking for a name
+    # we already hold. Agency, 2026-10-08. Placements first (a harder fact),
+    # then tickets newest first; three at most, one entry per name.
+    known_helpers: list[dict[str, str]] = []
+    if contact_type == "employer":
+        seen_names: set[str] = set()
+        for helper in [
+            *await contact_service.get_placement_helpers(conversation.get("matched_employer_id")),
+            *await ticket_service.helpers_on_conversation(conversation["id"]),
+        ]:
+            key = helper["helper_name"].strip().lower()
+            if key not in seen_names:
+                seen_names.add(key)
+                known_helpers.append(helper)
+        known_helpers = known_helpers[:3]
+
+    # How long since anything was said on this thread, so "welcome back" is
+    # said after a real break and not ten minutes into a conversation. The
+    # history excludes this batch, so its last row is the one before it.
+    hours_since_last_message = None
+    if history:
+        try:
+            last_at = datetime.fromisoformat(str(history[-1]["created_at"]).replace("Z", "+00:00"))
+            hours_since_last_message = round((datetime.now(timezone.utc) - last_at).total_seconds() / 3600, 2)
+        except (KeyError, TypeError, ValueError):
+            hours_since_last_message = None
+
     # The name on their FILE, which is not the same as the name WhatsApp
     # reports - see contact.get_record_name. Read per turn for the same reason
     # as the two above: a name added in the portal this morning must count this
@@ -1043,6 +1072,8 @@ async def _process_locked(
         "matched_cases": matched_cases,
         "prior_hires": prior_hires,
         "placed_helper": placed_helper,
+        "known_helpers": known_helpers,
+        "hours_since_last_message": hours_since_last_message,
         "record_name": record_name or "",
         "recent_tickets": recent_tickets,
         # Lead columns do not exist on wp_chat_conversations, so an open lead is

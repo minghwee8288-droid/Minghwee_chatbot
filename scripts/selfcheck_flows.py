@@ -3866,7 +3866,7 @@ rows = [
  # only her name and the travel dates, so there was nothing to route on.
  ("home leave asks which country she is from",
   [f.key for f in t.SERVICE_FIELDS["home_leave"]],
-  ["full_name", "helper_name", "nationality", "leave_dates"]),
+  ["full_name", "helper_name", "nationality", "leave_dates", "leave_reason"]),
  ("the nationality carries over from another enquiry",
   "nationality" in ico._PORTABLE_ACROSS_SERVICES, True),
  ("home leave is route-split by nationality",

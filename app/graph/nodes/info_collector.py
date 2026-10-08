@@ -248,6 +248,7 @@ _COLLECTION_PURPOSE = {
     # submission being right first time, so the reason says that instead.
     "direct_hiring": "so her application goes to MOM complete and correct the first time",
     "replacement": "so the right person picks this up and we find a suitable replacement",
+    "home_leave": "so we can prepare the right embassy documents and arrange it in time",
     "transfer_employer": "so we can shortlist transfer helpers who actually fit",
     # The helper's own transfer. Six questions about her permit, her employer's
     # consent and her availability is exactly the march this note exists for,
@@ -1071,7 +1072,10 @@ def _known_fields(
     # which has no helper_name, and never a candidate flow, where the contact is
     # the helper and matched_employer_id is None.
     placed = state.get("placed_helper")
-    if isinstance(placed, dict):
+    # ...but on the services that CONFIRM a helper (agency, 2026-10-08) she is
+    # offered, not assumed: one placement on file does not mean this request
+    # is about her. confirmed_helper() fills these once the client says so.
+    if isinstance(placed, dict) and service_type not in HELPER_CONFIRM_SERVICES:
         for field_key, value in placed.items():
             text = str(value or "").strip()
             if not text:
@@ -2080,13 +2084,19 @@ RECORD_NAME_NOTE = (
 # constant rather than an inline string so selfcheck_flows.py can assert its
 # two halves: that it DOES refer to the last enquiry, and that it does not
 # read their file back at them. See the note at the call site.
-RETURNING_NOTE = (
+RETURNING_HIRED_NOTE = (
     "\n\nOur own records show they have hired a helper through us before, so "
-    "that is already established and you must never ask it. Open by welcoming "
-    "them back, by name if you know it.\n\n"
-    "If the notes above show a previous enquiry, refer to it in the same "
-    "breath — what it was about, in a few words — and ask whether this is a "
-    "follow-up on that or something new. It is the difference between being "
+    "that is already established and you must never ask it."
+)
+RETURNING_NOTE = (
+    "\n\nThis client has dealt with us before and is back after a break. Open "
+    "by welcoming them back, by name if you know it - before anything else, "
+    "including your question.\n\n"
+    "If their message already says what they want, go straight to it after "
+    "the welcome - do not ask whether it is a follow-up. Only if it does not, "
+    "and the notes above show a previous enquiry, refer to that enquiry in the "
+    "same breath — what it was about, in a few words — and ask whether this is "
+    "a follow-up on that or something new. It is the difference between being "
     "remembered and being processed, and they have told us so.\n\n"
     "ONE enquiry, the most recent, and only what it was about. Do not give "
     "them dates, do not tell them how many times they have hired, and do not "
@@ -2779,6 +2789,123 @@ OVERVIEW_ROUTE_NOTE = (
 )
 
 
+# Services about a helper the client ALREADY employs, where a helper we know
+# them to have is offered for confirmation instead of asking her name. Agency,
+# 2026-10-08: "it should firstly check that the employer have the helper
+# before, then bot should confirm by asking by name - you want home leave
+# service for this employee or someone else". Not direct_hiring (her name
+# there is a NEW helper they have chosen) and not new_hiring or a candidate
+# flow (no existing helper at all).
+HELPER_CONFIRM_SERVICES = frozenset(
+    {"home_leave", "passport_renewal", "renewal", "replacement", "insurance", "transfer_employer"}
+)
+
+# "Welcome back" after a real break only (agency's choice, 2026-10-08): ten
+# minutes into a conversation it reads as though we lost track of them.
+WELCOME_BACK_AFTER_HOURS = 6
+
+_AFFIRMS_HELPER = re.compile(
+    r"^\W*(?:yes|yeah|yep|yup|ya|yah|correct|right|that'?s\s+right|exactly|same|"
+    r"same\s+one|that\s+one|her|for\s+her|it\s+is|it'?s\s+her)\b[\w\s,.!']*$",
+    re.IGNORECASE,
+)
+_DENIES_HELPER = re.compile(
+    r"\b(?:no|not|nope|another|other|different|someone\s+else|new)\b", re.IGNORECASE
+)
+
+
+# How the service is named inside the confirmation question ("Is this home
+# leave for Yoyo?"). SERVICE_LABELS is written about the client in the third
+# person ("home leave for their helper") and reads wrongly said TO them.
+_CONFIRM_LABELS = {
+    "home_leave": "home leave",
+    "passport_renewal": "passport renewal",
+    "renewal": "work permit renewal",
+    "replacement": "replacement",
+    "insurance": "insurance",
+    "transfer_employer": "transfer",
+}
+
+
+def known_helpers_for(state: ConversationState, service_type: str | None) -> list[dict[str, Any]]:
+    """The helpers to offer on this service, or none."""
+    if service_type not in HELPER_CONFIRM_SERVICES:
+        return []
+    return [h for h in (state.get("known_helpers") or []) if str(h.get("helper_name") or "").strip()]
+
+
+def confirmed_helper(
+    state: ConversationState,
+    service_type: str | None,
+    previous: dict[str, Any],
+    asked: dict[str, int],
+    extracted: dict[str, Any],
+) -> dict[str, Any] | None:
+    """The known helper the client has just confirmed, if they have.
+
+    Only after we offered (helper_name asked once, with helpers to offer).
+    A known name written in the reply wins; then the extractor's value if it
+    IS a known name; then a bare yes - only when exactly one was offered, or
+    "yes" would be a guess between them. Anything with a no/another in it is
+    not a confirmation, so "no, another helper" asks her name next.
+    """
+    helpers = known_helpers_for(state, service_type)
+    if not helpers or str(previous.get("helper_name") or "").strip() or not asked.get("helper_name"):
+        return None
+    text = (state.get("incoming_text") or "").strip()
+    lowered = text.lower()
+    for helper in helpers:
+        name = helper["helper_name"].strip().lower()
+        if re.search(rf"(?<!\w){re.escape(name)}(?!\w)", lowered):
+            return helper
+    value = str(extracted.get("helper_name") or "").strip().lower()
+    for helper in helpers:
+        if value and value == helper["helper_name"].strip().lower():
+            return helper
+    # They named somebody we do not know: that is the "another helper" answer,
+    # however it is phrased ("it is for maria" must not confirm Yoyo).
+    if value and not _BARE_YES_NO.match(value):
+        return None
+    if len(helpers) == 1 and _AFFIRMS_HELPER.match(text) and not _DENIES_HELPER.search(text):
+        return helpers[0]
+    return None
+
+
+def helper_confirm_note(helpers: list[dict[str, Any]], service_label: str) -> str:
+    names = [h["helper_name"].strip() for h in helpers]
+    listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " or " + names[-1]
+    return (
+        f"\n\nDo NOT ask for the helper's name. We already know this client's helper"
+        f"{'' if len(names) == 1 else 's'}: {listed}. Confirm instead - ask whether this "
+        f"{service_label} is for {listed}, or for another helper (for example: "
+        f'"Is this {service_label} for {names[0]}, or for another helper?"). Write the '
+        "name exactly as given. The question MUST end by offering another helper - "
+        "never offer only the names we know, because a client asking about a "
+        "different or new helper has to be able to say so. If they say it is for "
+        "someone else, the next message asks her name."
+    )
+
+
+def existing_client(state: ConversationState) -> bool:
+    """Someone we have dealt with before: on our file, placed with, an
+    earlier lead, an earlier ticket, or a helper we know they have."""
+    return bool(
+        str(state.get("record_name") or "").strip()
+        or _prior_hires(state)
+        or isinstance(state.get("matched_lead"), dict)
+        or state.get("recent_tickets")
+        or state.get("known_helpers")
+    )
+
+
+def after_a_break(state: ConversationState) -> bool:
+    hours = state.get("hours_since_last_message")
+    try:
+        return hours is not None and float(hours) >= WELCOME_BACK_AFTER_HOURS
+    except (TypeError, ValueError):
+        return False
+
+
 def nationality_carries(old_service: str | None, new_service: str | None) -> bool:
     """Whether the `nationality` collected under old_service still holds under
     new_service. One rule, read by the collector's switch reset AND by
@@ -2905,6 +3032,30 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         for key, value in _known_fields(state, service_type).items()
         if key in allowed_keys and not str(previous.get(key) or "").strip()
     }
+    # The client has just confirmed a helper we offered: her name, and what we
+    # hold about her, go in - the name OVER the extractor's value (which may be
+    # "yes"), the rest UNDER the client's own words like any other known fact.
+    confirmed = confirmed_helper(state, service_type, previous, asked, extracted)
+    if confirmed:
+        placed = state.get("placed_helper")
+        if isinstance(placed, dict) and str(placed.get("helper_name") or "").strip().lower() == confirmed["helper_name"].strip().lower():
+            confirmed = {**placed, **confirmed}
+        for key, value in confirmed.items():
+            if key not in allowed_keys or str(previous.get(key) or "").strip():
+                continue
+            text = str(value or "").strip()
+            if key == "nationality":
+                text = _NATIONALITY_NAMES.get(text, text)
+            if key == "helper_name":
+                extracted = {**extracted, key: text}
+            else:
+                known.setdefault(key, text)
+        logger.info(
+            "Conversation %s: client confirmed their helper %s for %s",
+            state.get("conversation_id"),
+            confirmed["helper_name"],
+            service_type,
+        )
     if known:
         logger.info(
             "Conversation %s: filling %s from the conversation instead of asking",
@@ -3042,11 +3193,17 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     # The opening-turn test is the same one purpose_note uses, so this still
     # says it ONCE per collection rather than every turn - which is what the
     # `known` test was doing the work of before.
+    # 2026-10-08, the agency: "if user is existing ... it should firstly greet
+    # welcome back". Widened from "placed with us" to anyone we have dealt with
+    # (existing_client) - `placements` is empty live today, so the old test
+    # welcomed nobody back - and narrowed to after a real break, their own
+    # choice: mid-conversation it reads as though we lost track of them.
     returning_note = ""
     if (
-        _prior_hires(state)
+        existing_client(state)
+        and after_a_break(state)
         and not recognised_note
-        and ("first_time_hire" in known or not any(asked.values()))
+        and not any(asked.values())
     ):
         # Widened 2026-09-09. It used to forbid ALL detail ("no details of who,
         # when or how many, we are not showing them their file") - written to
@@ -3062,7 +3219,7 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         # previous-enquiry block in the system prompt is the only source; there
         # is nothing to reference when it is empty, and inventing one is worse
         # than a plain welcome.
-        returning_note = RETURNING_NOTE
+        returning_note = (RETURNING_HIRED_NOTE if _prior_hires(state) else "") + RETURNING_NOTE
 
     # Their name is on their file, and nothing above is going to use it.
     #
@@ -3798,6 +3955,15 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             if previous_answered
             else ""
         )
+        # A helper we know they have is CONFIRMED, not asked for - on the first
+        # ask only. If they say it is someone else, the second ask is the
+        # field's own plain question.
+        offer = known_helpers_for(state, service_type)
+        helper_note = (
+            helper_confirm_note(offer, _CONFIRM_LABELS.get(service_type, label))
+            if next_field.key == "helper_name" and offer and not asked.get("helper_name")
+            else ""
+        )
         instruction = (
             COLLECTOR_INSTRUCTION.format(
                 service_label=label,
@@ -3805,6 +3971,7 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
                 field_guidance=_field_guidance(service_type, collected, next_field),
                 previous_message=previous or "(this is your first message)",
             )
+            + helper_note
             + dropped_note
             + intro_note
             + recognised_note

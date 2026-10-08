@@ -484,6 +484,8 @@ because the lead is opened early and the ticket is created much later.
 | A complaint is told the wait, the number to call and its reference - and never "anything else?" | `app/graph/complaint.py` (+ `ticket_creator` for the number) | The agency's own example reply, word for word. Fixed wording, because it carries a promised time and a phone number the guards strip from model output, and a reference that only exists after the ticket insert. `COMPLAINT_RESPONSE_TIME` / `COMPLAINT_URGENT_PHONE` in `ticket.py`, one place. |
 | "I want to lodge a complaint" is not filed as the complaint | `complaint.states_a_complaint` | Filed as `complaint_detail` it would close the collection on the opening turn with an empty ticket. |
 | A client asking to hear about a service is answered in full before being asked anything | `info_collector.enquiry_overview_due` + `templates.ENQUIRY_OVERVIEW_NOTE` | "find out more about direct hire process and costs" got the intake questions presented as "the process" and "timing depends on the case". The router, the retriever and the collector read one predicate. Timeline (each route labelled), steps, government costs apart from our fee, who can hire, the terms - or that our agent will take them through - then the first question on its own line. Only before the collection starts, never on a parked topic, never a bare price question. |
+| A helper we know the client has is CONFIRMED by name, never asked for and never assumed | `info_collector.HELPER_CONFIRM_SERVICES` + `helper_confirm_note` / `confirmed_helper` + webhook `known_helpers` | Known = live placements, then helpers named on this number's earlier tickets (`placements` is empty live, so the tickets are usually all we have). First ask only: "Is this home leave for Yoyo, or for another helper?". A known name or a lone yes fills her name and what we hold about her; an unknown name or a "no/another" is the other helper. A single placed helper is no longer filled in silently on these services. Not direct_hiring (a NEW helper). |
+| "Welcome back" after a break, to anyone we have dealt with | `info_collector.existing_client` + `after_a_break` (`WELCOME_BACK_AFTER_HOURS` 6, webhook `hours_since_last_message`) | Was: placements only (none live) and on every new collection. Agency's choice, 2026-10-08: only after a real break. A client whose message already says what they want is not asked "follow-up or something new?". |
 | One helper's details never become another helper's | `info_collector.nationality_carries` / `nationality_for_turn` + `_history_since` (`collected_since`) | `nationality` is portable for a hiring client (the nationality they want) and NOT across a switch into or out of `passport_renewal`/`home_leave`, where it is one helper's. Read by the collector's reset AND by `rag_retriever`, which runs before the reset. The extractor reads history only from the message that started the current request, on every turn after a switch, not just the switch turn. |
 | One salesperson per client conversation, and the portal inbox never loses a hand-assigned owner | `assignment.resolve_agent` (`_portal_owner`) + `claim_portal_owner` | A ticket goes to whoever owns the chat in the portal before the round robin is asked; the bot only ever FILLS an empty `wp_chat_conversations.assigned_user_id` (the IS NULL is in the UPDATE itself). `to_human` used to set it unconditionally, and the ordinary ticket path (`log_escalation`) never set it at all. Profile ↔ portal login is `cb_agent_portal_users`, ours, not `wp_chat_users.profile_id`, theirs. |
 | ...searched for the whole service, with the filter kept whatever money words it contains | `rag_retriever.ENQUIRY_OVERVIEW_QUERY` / `_service_filter` | "costs" dropped the service filter, and the wider search returned a no-agency comparison that told the client the permit and bond were theirs to do. 12 rows, never widened - plus `ENQUIRY_OVERVIEW_EXTRA_QUERIES`, a separate search per service for a question the agency named that the shared query cannot reach (direct hire's failed medical ranks 21st under it). |
@@ -1439,6 +1441,55 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-08** - **An existing client is welcomed back and asked to CONFIRM
+  their helper; home leave asks the reason.** The agency, after the home-leave
+  test above: *"if user is existing ... it should firstly greet welcome back
+  ... it should firstly check that the employer have the helper before then
+  bot should confirm like by asking by name - you want home leave service for
+  this employee or someone else ... also in home leave bot not asking for the
+  reason for the leave"*. Two choices were theirs and were asked: welcome back
+  only after a break (6 h), and the confirmation on every helper service.
+  (A) **Known helpers.** `contact.get_placement_helpers` (every live placement
+  naming a candidate, not just exactly one) and `ticket.helpers_on_conversation`
+  (helpers named on this number's earlier tickets), merged in the webhook
+  (placements first, deduped, three at most) as `known_helpers`. Read live:
+  `placements` has **0 rows** today, so the tickets are what makes this work.
+  (B) **Confirmed, not assumed.** On `HELPER_CONFIRM_SERVICES` the first
+  helper_name ask is *"Is this home leave for yoyo, thrity degree or choral, or
+  for another helper?"*. The note requires the "another helper" ending, which
+  run 1 of 2 dropped before that line was added; after it, 3 of 3.
+  `confirmed_helper` reads the reply in this order:
+  - a known name in the reply wins;
+  - then the extractor's value, if it IS a known name;
+  - an unknown name is the other helper ("it is for maria" must not confirm
+    Yoyo);
+  - a lone yes counts only when one helper was offered.
+
+  The confirmed helper's name goes OVER the extractor's value (which may be
+  "yes") and her nationality UNDER the client's own words. A single placed
+  helper is no longer silently filled on these services.
+  (C) **Welcome back** for `existing_client` (on file, placed, a lead, an
+  earlier ticket, or a known helper) when `hours_since_last_message` >= 6, on
+  the opening turn. `RETURNING_HIRED_NOTE` carries the "never ask if they hired
+  before" half only for a placement client. And a client whose message already
+  says what they want is not asked "follow-up or something new?".
+  (D) **`leave_reason`** on home leave, asked once, after the dates, with a
+  `_COLLECTION_PURPOSE` line now that it is five questions.
+  **Verified:** replayed read-only through the real model on 3766 with its real
+  known helpers and a 10-hour gap:
+  - "Welcome back, VD", the overview, then the confirmation;
+  - "for thrity degree" fills her name AND Indonesian (from her ticket);
+  - the dates, then *"is this her regular home leave or is she travelling
+    because of a family matter?"*;
+  - the Indonesian closing with $250, and "I'm sorry to hear that her father is
+    unwell".
+
+  Eight smoke states; six faults injected, six red.
+  **Noticed, NOT changed:** `helper_from_us` still says "placed by us" off a
+  single placement before the client confirms which helper. It cannot fire
+  while `placements` is empty.
+  `smoke_nodes.py` is **216 checks**; `selfcheck_flows.py` is 758.
 
 - **2026-10-08** - **A home leave for one helper was answered with another
   helper's name and nationality.** Conversation 3766: a passport renewal for

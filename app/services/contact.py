@@ -513,6 +513,41 @@ async def get_placed_helper(employer_id: str | None) -> dict[str, str] | None:
     return helper or None
 
 
+async def get_placement_helpers(employer_id: str | None) -> list[dict[str, str]]:
+    """Every helper on this employer's live placements that names a candidate.
+
+    Unlike get_placed_helper this does not stop at one: these are OFFERED to
+    the client to confirm ("Is this for Liza, or another helper?"), never
+    filled in silently, so naming four is a question, not a guess. Name and
+    nationality only - the passport expiry stays with get_placed_helper, which
+    is the one place it is read.
+    """
+    if not employer_id:
+        return []
+    try:
+        placements = await db.select_many(
+            "placements", "candidate_id,archived_at", employer_id=employer_id
+        )
+        helpers: list[dict[str, str]] = []
+        for row in placements:
+            if row.get("archived_at") or not row.get("candidate_id"):
+                continue
+            candidate = await db.select_one(
+                "candidates", "full_name,nationality", id=row["candidate_id"]
+            )
+            name = str((candidate or {}).get("full_name") or "").strip()
+            if name:
+                helper = {"helper_name": name[:300]}
+                nationality = str((candidate or {}).get("nationality") or "").strip()
+                if nationality:
+                    helper["nationality"] = nationality[:100]
+                helpers.append(helper)
+        return helpers
+    except Exception:  # noqa: BLE001 - a nicety; never break the reply over it
+        logger.exception("Placement helpers lookup failed for employer %s", employer_id)
+        return []
+
+
 async def identify(phone: str) -> dict[str, Any]:
     """Resolve a WhatsApp number to a platform record.
 

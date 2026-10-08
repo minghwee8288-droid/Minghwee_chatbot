@@ -257,6 +257,13 @@ class ConversationState(TypedDict, total=False):
     # whenever there is any doubt. There is NO passport data in the database to
     # go with it — see contact.get_placed_helper.
     placed_helper: dict[str, Any] | None
+    # Every helper we know this client has (live placements, then helpers named
+    # on their earlier tickets), offered for CONFIRMATION by the helper
+    # services - never filled in silently. Set by the webhook each turn.
+    known_helpers: list[dict[str, Any]]
+    # Hours since the last message on the thread before this turn; None for a
+    # first message. "Welcome back" is said only after a real break.
+    hours_since_last_message: float | None
     # Their last few cb_tickets rows (newest first), shown to a returning
     # employer's prompt so it can flag a topic that looks different from what
     # they raised before instead of silently starting a fresh collection.
