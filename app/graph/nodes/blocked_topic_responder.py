@@ -203,6 +203,29 @@ NEW_SERVICE_HANDOVER = (
 )
 
 
+# New information about the parked request whose generated reply was a repeat
+# of the last holding line. The repeat guard used to turn it into silence -
+# live (4551, 2026-10-08) a change of requirement and budget got no reply and
+# the client asked "are you there or missed something?". Two wordings, so the
+# second detail in a row is not answered word for word.
+NOTED_REPLIES = (
+    "Noted, I've added that for our agent.",
+    "Thanks, I've passed that on to our agent as well.",
+)
+
+
+def adds_information(message: str) -> bool:
+    """Something the client told us, as opposed to an acknowledgement, a
+    sign-off, a chase or a check that we are there."""
+    body = (message or "").strip()
+    return bool(body) and not (
+        is_pure_acknowledgement(body)
+        or is_closing(body)
+        or _CHASING_STATUS.search(body)
+        or _DIRECT_ADDRESS.search(body)
+    )
+
+
 # These go to the client verbatim, without passing through the guards that vet
 # generated text. Saying a live agent will pick it up is now required (rule 2);
 # what mentions_handover() still catches is a promise the office has not made —
@@ -215,6 +238,7 @@ for _name, _canned in (
     ("PROBE_REPLY", PROBE_REPLY),
     ("NEW_SERVICE_HANDOVER", NEW_SERVICE_HANDOVER),
     ("NEW_SERVICE_REPLY", NEW_SERVICE_REPLY),
+    *((f"NOTED_REPLIES[{i}]", r) for i, r in enumerate(NOTED_REPLIES)),
 ):
     assert not mentions_handover(_canned), (
         f"{_name} names a colleague or promises a specific time, which rule 2a "
@@ -783,6 +807,20 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
                 ticket.get("ticket_number"),
             )
             return {"reply": PROBE_REPLY, "needs_handover": False}
+        if adds_information(message):
+            recent = recent_bot_lines(state.get("history_text", ""), count=2)
+            noted = next(
+                (r for r in NOTED_REPLIES if not any(near_duplicate(r, line) for line in recent)),
+                None,
+            )
+            if noted:
+                logger.info(
+                    "Conversation %s: new information on parked topic %r - noted, "
+                    "rather than silence after a repeated holding line",
+                    state.get("conversation_id"),
+                    topic_key,
+                )
+                return {"reply": noted, "needs_handover": False}
         logger.info(
             "Conversation %s: blocked-topic reply repeats what we just said — staying quiet",
             state.get("conversation_id"),

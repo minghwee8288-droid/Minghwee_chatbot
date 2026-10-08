@@ -1458,6 +1458,27 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-10-08** - **After the new-hire handover: a changed requirement got no
+  reply, and the holding reply started asking questions.** The rest of
+  conversation 4551 (before the entry below was deployed). "I need another child
+  care rather than a house help so my budget for this is only 300 to 400" got
+  nothing; the client wrote "Hello are you there or missed something?". Not the
+  rationing rule - `_is_asking` already answers anything that is not an
+  acknowledgement - but the repeat guard: the generated reply was another "a
+  live agent is handling..." and was swallowed as a repeat. New information now
+  gets a fixed `NOTED_REPLIES` line in that case (two wordings, vetted at
+  import); an acknowledgement still gets silence. The holding instruction no
+  longer asks questions of its own ("What is your child's main care routine?"
+  went out on the parked hire). And "okayy" is now an acknowledgement: its two
+  letters were too few for the elongation readings, so it was answered with the
+  holding line (here and on 3766); `_DOUBLED_LAST` adds the reading.
+  **Verified:** the five turns replayed 3 times on the rebuilt state: every
+  message carrying information answered, the requirement change acknowledged
+  each time, "ok" silent. Three faults injected, three red - after the first
+  attempt showed the rationing change was redundant (it was reverted) and that
+  the prompt line had no check.
+  `selfcheck_flows.py` is **788 assertions**; `smoke_nodes.py` is **227 checks**.
+
 - **2026-10-08** - **A new hire, tested end to end (conversation 4551): faster
   replies, an invented rest-day answer, and the talk after the handover.**
   (A) **Latency.** Read from the message timestamps and checkpoints: about 22 s

@@ -84,12 +84,22 @@ def _words(text: str) -> list[str]:
 # word carries three identical letters in a row, so neither form can turn a
 # real word into an acknowledgement that was not one.
 _ELONGATED = re.compile(r"(.)\1{2,}", re.IGNORECASE)
+_DOUBLED_LAST = re.compile(r"([a-z])\1\b", re.IGNORECASE)
 
 
 def _unstretched(text: str) -> list[str]:
     """The message as written, plus its de-elongated readings."""
     body = text or ""
-    forms = [body, _ELONGATED.sub(r"\1\1", body), _ELONGATED.sub(r"\1", body)]
+    # ...plus a doubled LAST letter: "okayy" (live, 4551 and 3766, 2026-10-08)
+    # has only two, so neither reading above touched it and it was answered
+    # with the holding line. Only a word's final letter, so "good" and "all"
+    # are untouched; and it only ever ADDS a reading.
+    forms = [
+        body,
+        _ELONGATED.sub(r"\1\1", body),
+        _ELONGATED.sub(r"\1", body),
+        _DOUBLED_LAST.sub(r"\1", body),
+    ]
     seen: list[str] = []
     for form in forms:
         if form not in seen:

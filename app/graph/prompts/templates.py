@@ -504,6 +504,9 @@ Never name the agent and never promise a time, and never mention tickets or syst
 If they are the helper herself, be warm and reassuring — this matters to her."""
 
 
+# "Do not ask them any question about it": live (4551, 2026-10-08) this reply
+# started an intake of its own on a parked hire, asking about a child's care
+# routine after the agent already had the request.
 BLOCKED_TOPIC_INSTRUCTION = """The client has just said something about {service_label}. The \
 team is already looking into that one specifically and it is not resolved yet.
 
@@ -513,7 +516,8 @@ Do NOT answer it, do NOT give any figures, dates, decisions or new details about
 NOT promise a specific time.
 
 If what they just said is new information — a detail, a correction, a follow-up question — \
-acknowledge that you have noted it rather than treating the message as just a check-in.
+acknowledge that you have noted it rather than treating the message as just a check-in. \
+Do not ask them any question about it: our agent will take the details from here.
 
 Never name the agent handling it and never mention tickets or systems. You may offer to help \
 with anything else in the meantime. Maximum two short sentences."""

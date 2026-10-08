@@ -1715,6 +1715,17 @@ CASES = [
                       "connect with you shortly. In the meantime, is there anything else I can help you with?",
       "blocked_topics": {"new_hiring": {"ticket_id": 1, "ticket_number": "CB-2026-0031"}},
       "_forbid_reply": "which service"}),
+    # ...and a change to the request whose reply repeats the last holding line
+    # is noted, not swallowed by the repeat guard (4551: no reply at all).
+    ("blocked_topic_responder", "...and new information is never answered with silence",
+     {"intent": "new_hiring", "service_type": "new_hiring",
+      "incoming_text": "I need another child care rather than a house help so my budget for this is only 300 to 400",
+      "history_text": "Client: all of this\nYou: A live agent is handling your new helper enquiry and will "
+                      "connect with you shortly.",
+      "blocked_topics": {"new_hiring": {"ticket_id": 1, "ticket_number": "CB-2026-0031",
+                                        "captured_info": {"follow_ups": [{"message": "all of this"}]}}},
+      "_stub_reply": "A live agent is handling your new helper enquiry and will connect with you shortly.",
+      "_expect_reply": "Noted"}),
     ("blocked_topic_responder", "process question, parked",
      {"intent": "process_question", "service_type": "new_hiring",
       "incoming_text": "what is the full process for hiring a helper",
