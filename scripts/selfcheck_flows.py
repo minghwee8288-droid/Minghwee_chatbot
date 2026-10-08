@@ -4971,6 +4971,8 @@ rows = [
                 lambda: _asg.map_to_portal_user("sales1")), 9),
  ("to_human no longer sets the portal owner unconditionally",
   "patch[\"assigned_user_id\"]" in _pathlib.Path(_hov.__file__).read_text(encoding="utf-8"), False),
+ ("the checkpoint pool tests a connection before handing it out (conversation 3766, 2026-10-08)",
+  "        check=check," in _pathlib.Path(g.__file__).read_text(encoding="utf-8"), True),
  ("both handover paths claim the owner (the ticket path used to set none at all)",
   _pathlib.Path(_hov.__file__).read_text(encoding="utf-8").count("claim_portal_owner("), 2),
  ("...and the process row describes the process, not our intake questions",

@@ -1439,6 +1439,28 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-10-08** - **A dead pooled database connection silenced the bot on a
+  greeting.** Conversation 3766: idle from 09:38 to 10:06 UTC, then "hey there"
+  went unanswered twice. The server log: the checkpoint read
+  (`aget_tuple`) got a pooled connection the database had already terminated
+  ("terminating connection due to administrator command"). The graph raised,
+  `_fail_over_to_human` set `human_active`, and the second message was dropped as
+  "still with a human". Not reproducible from the saved state alone: the same
+  turn replayed fine, which is what pointed at infrastructure.
+  The checkpoint pool now has `check=AsyncConnectionPool.check_connection`. Each
+  checkout runs a `SELECT 1`, and a dead connection is replaced instead of
+  handed out.
+  **Reproduced, not reasoned:** `pg_terminate_backend` on a pooled connection
+  gives the server's exact error without the check and a normal query with it.
+  The bot's own `_build_checkpointer()` pool reads the 3766 checkpoint after the
+  kill, and fails again with the check removed. (Cutting the socket client-side
+  was tried first and is not a faithful test: psycopg never marks that
+  connection BAD.) The pool's own discard log fired AFTER the failure, which is
+  why the default pool did not save the turn. `selfcheck_flows.py` is **747
+  assertions**.
+  **Not changed:** a connection dying in the MIDDLE of a turn still fails over.
+  Retrying a turn is unsafe once a node has written (a ticket, a lead).
+
 - **2026-10-08** - **The portal inbox shows the ticket's salesperson, and the bot
   never takes a chat off someone the portal team assigned.** The second half of
   the round-robin change below, finishing §9.1.

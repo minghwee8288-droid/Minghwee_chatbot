@@ -307,11 +307,24 @@ async def _build_checkpointer() -> Any:
 
     from app.graph.checkpointer import CbAsyncPostgresSaver
 
+    # Every connection is tested before it is handed out, and a dead one is
+    # replaced instead of being used. Live, conversation 3766, 2026-10-08: the
+    # thread sat idle for 28 minutes, the server terminated the pooled
+    # connection ("terminating connection due to administrator command"), the
+    # next turn's checkpoint read got that dead connection, the graph raised,
+    # and the failover silenced the bot on a client who had only said "hey
+    # there". Reproduced by pg_terminate_backend on a pooled connection: the
+    # same error without the check, a normal query with it. One "SELECT 1" per
+    # checkout is the cost.
+    check = getattr(AsyncConnectionPool, "check_connection", None)
+    if check is None:
+        logger.error("psycopg_pool has no check_connection (needs >= 3.2) - dead pooled connections will not be replaced")
     _pool = AsyncConnectionPool(
         conninfo=settings.supabase_db_url,
         min_size=1,
         max_size=10,
         open=False,
+        check=check,
         kwargs={
             "autocommit": True,
             # Supabase's transaction pooler cannot handle prepared statements.
