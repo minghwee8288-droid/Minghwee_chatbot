@@ -2943,12 +2943,61 @@ def _first_line(text: str | None) -> str:
     return next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
 
 
+def _was_delivered(question: str, history: str) -> bool:
+    """Whether a reply we wrote reached the client: it is in the transcript."""
+    first = " ".join(_first_line(question).split())[:60]
+    return not first or first in " ".join((history or "").split())
+
+
+def _undelivered_question(state: ConversationState, switched: bool) -> str | None:
+    """The field whose question was asked last turn and never SENT.
+
+    Live, conversation 3766, 2026-10-08: the reason-for-leave question was
+    written while the client was still typing ("from indonasia", then "sorry
+    from myanmar"). The webhook HOLDS such a reply so the next pass answers
+    both messages at once - so it was never sent - but the ask had already
+    been counted. leave_reason is asked once, so the next turn filed it as
+    "not provided" and closed the request without the client ever seeing the
+    question. A question that is not in the transcript was not asked.
+    """
+    last = state.get("last_question")
+    if switched or not isinstance(last, dict):
+        return None
+    key = str(last.get("key") or "")
+    if not key or not (state.get("asked_field_counts") or {}).get(key):
+        return None
+    if _was_delivered(str(last.get("text") or ""), state.get("history_text") or ""):
+        return None
+    return key
+
+
 async def info_collector(state: ConversationState) -> dict[str, Any]:
-    """Records where a new request began, then collects (`_collect`)."""
+    """Records where a new request began, uncounts a question that was never
+    sent, then collects (`_collect`)."""
     contact_type = effective_contact_type(state)
     service_type = ticket_service.resolve_service(state.get("service_type"), contact_type)
     switched = bool(service_type) and bool(state.get("collected_service")) and state["collected_service"] != service_type
+    unsent = _undelivered_question(state, switched)
+    if unsent:
+        logger.info(
+            "Conversation %s: the question for '%s' was never sent (held while the "
+            "client was typing) - not counting it as asked",
+            state.get("conversation_id"),
+            unsent,
+        )
+        asked = dict(state.get("asked_field_counts") or {})
+        asked[unsent] = max(0, int(asked.get(unsent) or 0) - 1)
+        state = {**state, "asked_field_counts": asked}
     result = await _collect(state)
+    if unsent:
+        # asked_field_counts is SUMMED by its reducer, so the correction is
+        # persisted as a -1 alongside whatever this turn counts.
+        counts = dict(result.get("asked_field_counts") or {})
+        if not counts.get(RESET_KEY):
+            counts[unsent] = int(counts.get(unsent) or 0) - 1
+            result = {**result, "asked_field_counts": counts}
+    if "last_question" not in result:
+        result = {**result, "last_question": None}
     if switched and result.get("collected_service") == service_type:
         result = {**result, "collected_since": _first_line(state.get("incoming_text"))}
     return result
@@ -4056,6 +4105,9 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             "missing_field_keys": [field.key for field in missing],
             "info_complete": False,
             "reply": reply,
+            # What was just asked, so the next turn can tell whether it was
+            # ever SENT - see _uncount_undelivered_question.
+            "last_question": {"key": next_field.key, "text": reply},
             "needs_handover": bool(state.get("needs_handover")),
             # Said once - _merge_unique accumulates, _TURN_RESET leaves it
             # alone. Recorded ONLY when the reply is not the bare fallback,

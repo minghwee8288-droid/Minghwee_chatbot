@@ -1073,6 +1073,7 @@ async def _process_locked(
         "prior_hires": prior_hires,
         "placed_helper": placed_helper,
         "known_helpers": known_helpers,
+        "completed_topics": await ticket_service.completed_topics_for_conversation(conversation["id"]),
         "hours_since_last_message": hours_since_last_message,
         "record_name": record_name or "",
         "recent_tickets": recent_tickets,

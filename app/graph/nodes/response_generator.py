@@ -53,6 +53,7 @@ from app.graph.state import (
     MEDIA_INTENT,
     TICKET_ONLY_INTENTS,
     ConversationState,
+    effective_contact_type,
 )
 from app.services import handover as handover_service
 from app.services import ticket as ticket_service
@@ -200,6 +201,37 @@ def _clean(reply: str) -> tuple[str, bool]:
     return text, needs_human
 
 
+# A status question about work our team has already finished. Live,
+# conversation 3766, 2026-10-08: with Yoyo's home leave resolved in the
+# dashboard, "is there any update on yoyos home leave" restarted the intake and
+# raised a duplicate ticket, and asked again it was told "I'll check the latest
+# update with our team and come back to you" - which nobody would. The bot has
+# no access to WHAT was done, only that it is finished, so that is all it says.
+COMPLETED_REQUEST_INSTRUCTION = (
+    "The client is asking for an update on their {service} request ({ticket}). "
+    "Our team has marked that request as completed. Tell them so plainly, in one "
+    "or two sentences: our team has completed it, and if anything about it is "
+    "still outstanding or has changed, they can tell you what and you will pass "
+    "it on. Do not say you will check or come back to them, do not start asking "
+    "questions about it, and do not describe what was done - you do not know."
+)
+
+
+def completed_request(state: ConversationState) -> dict[str, Any] | None:
+    """The finished ticket a STATUS question is about, if its topic's latest
+    ticket is resolved/closed and nothing on it is open. Read by the router
+    (answer it, do not collect) and by this node (say it is finished)."""
+    if (state.get("intent") or "") != "case_enquiry":
+        return None
+    key = ticket_service.topic_key_for(
+        state.get("service_type"), effective_contact_type(state), state.get("intent")
+    )
+    if not key or key in (state.get("blocked_topics") or {}):
+        return None
+    done = (state.get("completed_topics") or {}).get(key)
+    return {**done, "topic": key} if isinstance(done, dict) else None
+
+
 async def response_generator(state: ConversationState) -> dict[str, Any]:
     intent = state.get("intent") or "other"
     # Varied, so the four separate ways this turn can end up saying "I'll check"
@@ -240,6 +272,18 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         )
 
     instruction = instruction_template.format(handover_token=HANDOVER_TOKEN)
+    finished = completed_request(state)
+    if finished:
+        instruction = COMPLETED_REQUEST_INSTRUCTION.format(
+            service=ticket_service.service_label(finished["topic"]),
+            ticket=finished.get("ticket_number") or "on file",
+        )
+        logger.info(
+            "Conversation %s: status question about %s, which our team has completed (%s)",
+            state.get("conversation_id"),
+            finished["topic"],
+            finished.get("ticket_number"),
+        )
 
     # Rule 1, on the one turn it applies to. Appended AFTER the template is
     # chosen, so it survives whichever specialised instruction won above -
@@ -470,6 +514,8 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         intent not in CHITCHAT_INTENTS
         and asks_something(state.get("incoming_text", ""))
         and not state.get("case_summary")
+        # A finished request is answered from the ticket, not the records.
+        and not finished
         and float(state.get("rag_best_score") or 0.0) < settings.rag_soft_floor
     )
     # Acknowledged, then passed to a person: the bot cannot open an attachment,

@@ -185,7 +185,32 @@ export default function TicketDetailDrawer({
     if (ticket.conversation_id !== null && ticket.conversation_id !== undefined) {
       const wasClosed = TICKET_CLOSED_STATUSES.has(ticket.status || '');
       const isClosed = TICKET_CLOSED_STATUSES.has(selectedStatus);
-      if (wasClosed !== isClosed) {
+      // ...but only when THIS was the last open ticket on the conversation.
+      // A 'resolved' conversation is a finished one: the bot starts a fresh
+      // thread on the client's next message and forgets everything collected.
+      // Live, conversation 3766 (2026-10-08): resolving one home-leave ticket
+      // while two others were still open wiped the thread, so "is there any
+      // update on yoyos home leave" restarted the intake and raised a
+      // duplicate ticket.
+      let otherOpen = false;
+      if (isClosed && !wasClosed) {
+        const { data: openTickets, error: openError } = await supabaseClient
+          .from('cb_tickets')
+          .select('id')
+          .eq('conversation_id', ticket.conversation_id)
+          .in('status', ['open', 'in_progress'])
+          .neq('id', ticket.id)
+          .limit(1);
+        if (openError) {
+          // Unknown is treated as "others may be open": leaving the
+          // conversation open costs nothing, wiping it costs the memory.
+          console.error('Open-ticket check failed', openError);
+          otherOpen = true;
+        } else {
+          otherOpen = Boolean(openTickets && openTickets.length);
+        }
+      }
+      if (wasClosed !== isClosed && !otherOpen) {
         const { error: conversationError } = await supabaseClient
           .from('wp_chat_conversations')
           .update({ status: isClosed ? 'resolved' : 'open' })

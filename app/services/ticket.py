@@ -2704,6 +2704,48 @@ async def recent_for_conversation(conversation_id: int, *, limit: int = 3) -> li
     return result.data or []
 
 
+async def completed_topics_for_conversation(conversation_id: int) -> dict[str, dict[str, Any]]:
+    """Topics whose LATEST ticket on this conversation a human has resolved or
+    closed, keyed like open_topics_for_conversation.
+
+    So a status question about finished work is answered as finished. Live,
+    conversation 3766, 2026-10-08: CB-2026-0026 (Yoyo's home leave) was
+    resolved in the dashboard, the client asked "is there any update on yoyos
+    home leave", and the bot started the home-leave questions again and raised
+    CB-2026-0027 for the same request - then, asked again, promised to "check
+    the latest update with our team and come back", which nobody would.
+    """
+    try:
+        result = await db.execute(
+            db.table(TABLE)
+            .select("ticket_number, status, updated_at, captured_info")
+            .eq("conversation_id", conversation_id)
+            .order("updated_at", desc=True)
+            .limit(20)
+        )
+    except Exception:  # noqa: BLE001 - a nicety; never break the turn over it
+        logger.exception("Could not read completed tickets for conversation %s", conversation_id)
+        return {}
+    completed: dict[str, dict[str, Any]] = {}
+    seen: set[str] = set()
+    for row in result.data or []:
+        info = row.get("captured_info") or {}
+        keys = [info.get("topic_key"), *(info.get("also_topics") or [])]
+        for key in [k for k in keys if k]:
+            if key in seen:
+                continue
+            # The newest ticket on a topic decides it: an open one means the
+            # topic is parked, not finished.
+            seen.add(key)
+            if row.get("status") not in OPEN_STATUSES:
+                completed[key] = {
+                    "ticket_number": row.get("ticket_number"),
+                    "status": row.get("status"),
+                    "updated_at": row.get("updated_at"),
+                }
+    return completed
+
+
 async def helpers_on_conversation(conversation_id: int, *, limit: int = 10) -> list[dict[str, str]]:
     """Helpers this client has named on earlier tickets, newest first.
 

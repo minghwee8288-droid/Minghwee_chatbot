@@ -264,6 +264,11 @@ class ConversationState(TypedDict, total=False):
     # Hours since the last message on the thread before this turn; None for a
     # first message. "Welcome back" is said only after a real break.
     hours_since_last_message: float | None
+    # Topics whose latest ticket on this conversation is resolved or closed
+    # ({topic_key: {ticket_number, status, updated_at}}). Set by the webhook
+    # each turn, so a status question about finished work is answered as
+    # finished instead of restarting the intake.
+    completed_topics: dict[str, dict[str, Any]]
     # Their last few cb_tickets rows (newest first), shown to a returning
     # employer's prompt so it can flag a topic that looks different from what
     # they raised before instead of silently starting a fresh collection.
@@ -328,6 +333,10 @@ class ConversationState(TypedDict, total=False):
     # the extractor reads only the history since then. Persists like
     # collected_service; deliberately absent from _TURN_RESET.
     collected_since: str | None
+    # The question the collector asked last turn ({"key", "text"}), so the next
+    # turn can tell whether it was ever SENT - a reply held while the client
+    # was still typing never is, and must not count as asked.
+    last_question: dict[str, Any] | None
     missing_field_keys: list[str]
     # How many times each field has actually been asked, cleared on a service
     # switch alongside collected_info.

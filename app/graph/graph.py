@@ -16,7 +16,7 @@ from app.graph.nodes.handover_executor import handover_executor
 from app.graph.nodes.info_collector import enquiry_overview_due, info_collector
 from app.graph.nodes.intent_classifier import intent_classifier
 from app.graph.nodes.rag_retriever import rag_retriever
-from app.graph.nodes.response_generator import response_generator
+from app.graph.nodes.response_generator import completed_request, response_generator
 from app.graph.nodes.ticket_creator import ticket_creator
 from app.graph.state import (
     CANDIDATE_INTENT,
@@ -128,6 +128,12 @@ def route_after_rag(state: ConversationState) -> str:
     # and the only one that will not re-escalate a topic a human already owns.
     if _blocked_topic(state):
         return "blocked_topic_responder"
+
+    # "Any update on Yoyo's home leave?" about a request our team has already
+    # completed is answered as completed - never re-collected into a duplicate
+    # ticket (conversation 3766, 2026-10-08). See completed_request.
+    if completed_request(state):
+        return "response_generator"
 
     # "Tell me about direct hire - the process and the costs" opens a service.
     # The collector answers it in full and THEN asks its first question, even

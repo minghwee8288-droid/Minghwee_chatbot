@@ -484,6 +484,9 @@ because the lead is opened early and the ticket is created much later.
 | A complaint is told the wait, the number to call and its reference - and never "anything else?" | `app/graph/complaint.py` (+ `ticket_creator` for the number) | The agency's own example reply, word for word. Fixed wording, because it carries a promised time and a phone number the guards strip from model output, and a reference that only exists after the ticket insert. `COMPLAINT_RESPONSE_TIME` / `COMPLAINT_URGENT_PHONE` in `ticket.py`, one place. |
 | "I want to lodge a complaint" is not filed as the complaint | `complaint.states_a_complaint` | Filed as `complaint_detail` it would close the collection on the opening turn with an empty ticket. |
 | A client asking to hear about a service is answered in full before being asked anything | `info_collector.enquiry_overview_due` + `templates.ENQUIRY_OVERVIEW_NOTE` | "find out more about direct hire process and costs" got the intake questions presented as "the process" and "timing depends on the case". The router, the retriever and the collector read one predicate. Timeline (each route labelled), steps, government costs apart from our fee, who can hire, the terms - or that our agent will take them through - then the first question on its own line. Only before the collection starts, never on a parked topic, never a bare price question. |
+| A status question about finished work is answered as finished | `response_generator.completed_request` + `COMPLETED_REQUEST_INSTRUCTION`, routed by `graph.route_after_rag`; webhook `completed_topics` | A topic whose LATEST ticket on the conversation is resolved/closed, asked about with `case_enquiry`, gets "our team has completed it - tell me if anything is outstanding". Never re-collected into a duplicate ticket, never "I'll check and come back". Exempt from the weak-retrieval handover. A NEW request for the same service still collects. |
+| A question that was never SENT is not counted as asked | `info_collector._undelivered_question` (`last_question`) | A reply held while the client is still typing is never delivered, but its ask was counted, so a `max_asks=1` field was filed "not provided" unseen. The next turn checks the transcript and records -1 (the counts are summed). |
+| Resolving one ticket does not close a conversation with others open | `portal-ui/.../TicketDetailDrawer.jsx` | A `resolved` conversation is a finished one: the bot starts a fresh thread on the next message and forgets everything collected. |
 | A helper we know the client has is CONFIRMED by name, never asked for and never assumed | `info_collector.HELPER_CONFIRM_SERVICES` + `helper_confirm_note` / `confirmed_helper` + webhook `known_helpers` | Known = live placements, then helpers named on this number's earlier tickets (`placements` is empty live, so the tickets are usually all we have). First ask only: "Is this home leave for Yoyo, or for another helper?". A known name or a lone yes fills her name and what we hold about her; an unknown name or a "no/another" is the other helper. A single placed helper is no longer filled in silently on these services. Not direct_hiring (a NEW helper). |
 | "Welcome back" after a break, to anyone we have dealt with | `info_collector.existing_client` + `after_a_break` (`WELCOME_BACK_AFTER_HOURS` 6, webhook `hours_since_last_message`) | Was: placements only (none live) and on every new collection. Agency's choice, 2026-10-08: only after a real break. A client whose message already says what they want is not asked "follow-up or something new?". |
 | One helper's details never become another helper's | `info_collector.nationality_carries` / `nationality_for_turn` + `_history_since` (`collected_since`) | `nationality` is portable for a hiring client (the nationality they want) and NOT across a switch into or out of `passport_renewal`/`home_leave`, where it is one helper's. Read by the collector's reset AND by `rag_retriever`, which runs before the reset. The extractor reads history only from the message that started the current request, on every turn after a switch, not just the switch turn. |
@@ -1441,6 +1444,52 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-08** - **Resolving a ticket in the dashboard wiped the bot's memory,
+  and asking for an update on finished work started it again.** The agency
+  resolved CB-2026-0026 (Yoyo's home leave) in the dashboard and kept testing.
+  Read from the checkpoints, three separate defects:
+  (A) **The dashboard closed the whole conversation.** `TicketDetailDrawer`
+  set `wp_chat_conversations.status = 'resolved'` whenever any ticket was
+  resolved, with CB-0023 and CB-0025 still open. A resolved conversation makes
+  `conversation.get_or_create` mint a fresh LangGraph thread on the next
+  message, so the thread changed at 11:04 and again at 11:06, each time losing
+  everything collected. It now resolves the conversation only when no other
+  ticket on it is open or in progress, and treats a failed check as "others may
+  be open".
+  (B) **A status question about finished work re-ran the intake.** "is there
+  any update on yoyos home leave" (`case_enquiry`, `home_leave`) fell through to
+  the collector, which asked the nationality again and raised **CB-2026-0027**
+  for the same request. Asked again on the next fresh thread, it got "I'll check
+  the latest update with our team and come back to you", which nobody would.
+  `completed_topics_for_conversation` reads, per topic, the LATEST ticket on
+  the conversation; a status question on a topic whose latest ticket is
+  resolved/closed goes to `response_generator` with
+  `COMPLETED_REQUEST_INSTRUCTION`. The bot does not know WHAT was done, only
+  that it is finished, so that is all it says. It is exempt from the
+  weak-retrieval handover, which would otherwise replace it with a holding line.
+  (C) **CB-0027 recorded the leave reason as "not provided" though the client
+  never saw the question.** It WAS written, at 11:05:14, while the client was
+  still typing ("from indonasia" then "sorry from myanmar"). The webhook holds
+  such a reply so the next pass answers both, and the ask had already been
+  counted. `leave_reason` is asked once, so the next turn filed it unanswered
+  and closed. The collector now remembers what it asked (`last_question`). If
+  that question is not in the transcript, the ask is uncounted on the next
+  turn; `asked_field_counts` is summed, so a -1 persists.
+  **Verified:** the real status question, replayed read-only on 3766's own
+  state with its real tickets, 4 runs of 4 (*"Our team has completed Yoyo's
+  home leave request. If anything is still outstanding or has changed, please
+  tell me what it is and I'll pass it on."*), with no ticket and no write. Seven
+  new checks; five faults injected, five red. The dashboard builds.
+  **Noticed, NOT changed:**
+  - "hey my worker want to go home" while Yoyo's ticket was open got the
+    holding line about Yoyo, but it may be a different helper. That is the
+    parked-topic shape of §9.10.
+  - The away message at 4:31 PM is the WhatsApp Business setting (§9 waiting
+    list).
+  - The smoke suite's defaults-vs-table comparison can show "N states differ"
+    when the clock's minute rolls over between its two passes. Seen once, then
+    3 of 3 clean.
 
 - **2026-10-08** - **An existing client is welcomed back and asked to CONFIRM
   their helper; home leave asks the reason.** The agency, after the home-leave
