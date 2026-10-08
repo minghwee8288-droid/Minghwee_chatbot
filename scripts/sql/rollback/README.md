@@ -49,3 +49,9 @@ All six were dry-run on TEST (2026-09-30) in one transaction that ended in ROLLB
 
 The 012 -> 009 set was dry-run on TEST (2026-10-01) in one transaction that ended in
 ROLLBACK, and 009's refusal was proved with a document present.
+
+## Access rows
+
+- **`rollback_kb_admin_users_thomas.sql`** undoes `kb_admin_users_thomas.sql`. It
+  switches that one `cb_kb_admin_users` row off (`active = false`) and deletes
+  nothing. Independent of the 014 -> 001 chain above.

@@ -51,6 +51,8 @@ prompt produced clean output on one run and rule-breaking output on the next.
 ## 2. Repo map
 
 ```
+prompt.md            client-facing guide to EVERY prompt the bot uses, quoted from
+                     the code. Changing a prompt in app/ means updating it too.
 app/
   main.py            FastAPI app, lifespan, startup validation, CORS
   config.py          ALL settings (pydantic-settings, lru_cached — restart to reload)
@@ -132,8 +134,13 @@ kb-admin/            Next.js knowledge-base tool (Documents, Rows, Rules, Test a
                      neither). A trigger audits any OTHER write to the live table as
                      external_*. Editor env vars (kb-admin/.env.example):
                      KB_ADMIN_DB_PASSWORD_EDITOR (or _FILE), KB_ADMIN_EMBEDDING_API_KEY,
-                     KB_ADMIN_EMBEDDING_BASE_URL - ALL absent = read-only, as on Vercel
-                     today. No service-role or LLM key. Test a question calls the bot's
+                     KB_ADMIN_EMBEDDING_BASE_URL - ALL absent = read-only.
+                     **Editing is ON in production**: all three are set on Vercel
+                     (since 2026-09-30), and approvers publish and retire live from
+                     the site. Access (cb_kb_admin_users, 2026-10-08): Mahin and Thomas
+                     (Ming Hwee) approver, Ratna editor, Vaidik viewer; rows are
+                     added only by a reviewed SQL file (kb_admin_users_*.sql).
+                     No service-role or LLM key. Test a question calls the bot's
                      POST /admin/preview. See kb-admin/README.md; `npm run selfcheck`
                      before any change; `npm run dev:test` runs it against TEST.
                      RULES: the loader skips (and reports) every row tagged
@@ -1430,6 +1437,24 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-10-08** - **kb-admin: Thomas (Ming Hwee) is an approver, and the docs now
+  say editing is ON in production.**
+  (A) **`scripts/sql/kb_admin_users_thomas.sql`** adds one `cb_kb_admin_users` row:
+  his Supabase Auth id, `approver`, active. It finds the account by id (the email
+  is kept out of this public repo), refuses unless that id is one `@minghwee.com`
+  auth account with no access row yet, and touches no other row. Applied on the
+  user's go-word via `apply_sql.py --expect-ref qizcnyuzgylzoyfvymfo`. Before it,
+  a read-only check: the id matched the email, there was no row, and the three
+  Growwstacks rows were Vaidik viewer, Mahin approver, Ratna editor. After it the
+  same read shows his row as an active approver and the three others unchanged.
+  Rollback: `rollback/rollback_kb_admin_users_thomas.sql` sets `active = false` on
+  his row only.
+  (B) **Correction: kb-admin on Vercel production is not read-only.** The three
+  editor env vars have been set since 2026-09-30, and Mahin published a Q&A that
+  day and published and retired a document on 2026-10-05 through the live site.
+  Several entries said otherwise (the repo map, 2026-09-30 (E), and session 3
+  (F)); the map now states it, and the two log lines carry a correction note.
+
 - **2026-10-08** - **The direct-hire overview left out "what if she fails the
   medical", which the agency had asked for by name.** Read from the live
   checkpoint after the 2026-10-07 deploy (conversation 3766): the enquiry
@@ -1715,7 +1740,8 @@ Append here, newest first. One entry per behavioural change.
   - **SQL:** `kb_admin_009`-`014` (+ a rollback file each), **applied to TEST
     only**. Production has 001-008 and none of 009-014. Applying them needs an
     explicit go-word, the same pre-check/export/re-export routine as 008, and
-    Vercel's editor env vars stay unset until then.
+    Vercel's editor env vars stay unset until then. *(Wrong when written: the
+    editor env vars had been set on Vercel since 2026-09-30 - see 2026-10-08.)*
   - **Sixteen editor functions** (`kb-admin/lib/access.ts` `WRITE_FUNCTIONS`):
     - the six Q&A ones (004, 008);
     - the nine from 011: doc upload, stage, edit_chunk, mark_checked, publish,
@@ -1920,7 +1946,8 @@ Append here, newest first. One entry per behavioural change.
   editor, Vaidik viewer (unchanged).
   (E) **Vercel stays read-only until the editor env vars are set there.** With none
   set the editor is off. With some set it is still off, and the start-up log names
-  what is missing.
+  what is missing. *(They were set the same day; editing has been ON in production
+  since 2026-09-30 - see 2026-10-08.)*
   (F) **A rollback file exists for each of 001-006**, dry-run on TEST in one
   rolled-back transaction. 001's only verifies that Phase 1 is intact. 003's refuses
   while history exists, and 002's while any editor/approver row exists. **They are
