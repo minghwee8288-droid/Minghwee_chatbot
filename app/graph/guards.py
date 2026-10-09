@@ -722,7 +722,7 @@ def asks_for_documents(text: str) -> bool:
 
 
 _ASKS_FOR_PROCESS = re.compile(
-    r"\bprocess\b|\bprocedure\b|\bsteps?\b|\bstages?\b|\bphases?\b"
+    r"\bprocess(?:es)?\b|\bprocedures?\b|\bsteps?\b|\bstages?\b|\bphases?\b"
     r"|\bwalk\s+me\s+through\b|\bstep[-\s]?by[-\s]?step\b"
     r"|\bwhat\s+happens\b|\bhow\s+does\s+it\s+(?:work|go)\b"
     r"|\bwhat\s+(?:documents?|papers?|paperwork|forms?)\b"
@@ -742,12 +742,17 @@ _PROCESS_AS_VERB = re.compile(
 )
 
 
+# The plural counts: "can you explain to me the cost and the processes?" was
+# not read as a process question (conversation 26, 2026-10-09), so a
+# replacement enquiry skipped the explain-first path and either ignored the
+# question or dropped the intake question.
+#
 # A determiner in front of it makes "process" a noun whatever follows, which
 # is what separates "the process for hiring a helper" from "please process her
 # application". Tested first, so the verb exclusion below cannot claim it.
 _PROCESS_AS_NOUN = re.compile(
     r"\b(?:the|a|any|full|whole|entire|complete|further|next|overall|"
-    r"hiring|application|renewal|transfer)\s+process\b",
+    r"hiring|application|renewal|transfer)\s+process(?:es)?\b",
     re.IGNORECASE,
 )
 

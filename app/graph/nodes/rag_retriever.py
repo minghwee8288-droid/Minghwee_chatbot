@@ -582,6 +582,14 @@ def _service_filter(state: ConversationState) -> str | None:
     # session and a holding line in the next.
     if _subject_service(state) in kb_rules.fee_stated_services():
         return _aliased(_subject_service(state))
+    # A replacement keeps its own shelf on a money question too. Dropped, the
+    # search reached the NEW HIRE and TRANSFER packages' replacement-fee rows,
+    # and conversation 26 (2026-10-09) was told "$288" for a replacement before
+    # we knew whether we placed the helper or when - the fee applies only to a
+    # helper we placed less than 6 months ago (replacement_package_fee_due,
+    # which fetches those rows itself on the closing briefing).
+    if _subject_service(state) == "replacement":
+        return "replacement"
 
     if _MONEY_TALK.search(state.get("incoming_text") or ""):
         return None
@@ -790,7 +798,7 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
         # Never widened: the whole point of the filter on this turn is that a
         # wider search reaches rows about some other way of hiring.
         pass
-    elif service in kb_rules.fee_stated_services() and fee_question:
+    elif (service in kb_rules.fee_stated_services() or service == "replacement") and fee_question:
         logger.info(
             "Retrieval under service=%s scored %.3f but it is a price question on a "
             "service that states its own fee - not widening, so another service's "

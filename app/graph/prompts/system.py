@@ -436,6 +436,36 @@ def _case_block(case: dict[str, Any] | None) -> str:
     )
 
 
+# What a replacement costs, on every replacement turn that is not the closing
+# briefing of one we can price. Agency, 2026-10-09: the package replacement fee
+# applies only to a helper we placed less than 6 months ago; anything else is
+# confirmed by our agent. Live the same day, conversation 26 opened "I'd like to
+# look for a replacement helper - can you explain the cost?" and was told
+# "$288, covering 2 replacements within 6 months" - a transfer package's fee,
+# before we knew whether we placed the helper or when. No figure here, ever:
+# the figures belong to a package we have not established.
+REPLACEMENT_COST_BLOCK = (
+    "--- The cost of a replacement ---\n"
+    "We hold no fixed price for a replacement on its own. If the helper being "
+    "replaced was placed by Ming Hwee less than 6 months ago, the replacement "
+    "falls under the package she came with, which includes 2 replacements "
+    "within 6 months for a replacement and documentation fee. Otherwise our "
+    "agent confirms the cost. If they ask what a replacement costs, explain "
+    "exactly that, give NO figure, and say our agent will confirm the exact "
+    "cost. Never quote a new hire's or a transfer's fees as the price of a "
+    "replacement."
+)
+
+
+def _replacement_cost_block(state: dict[str, Any]) -> str:
+    if (state.get("service_type") or "") != "replacement":
+        return ""
+    # Imported here: info_collector imports this module.
+    from app.graph.nodes.info_collector import replacement_package_fee_due
+
+    return "" if replacement_package_fee_due(state) else REPLACEMENT_COST_BLOCK
+
+
 def build_system_prompt(
     state: dict[str, Any] | None = None,
     *,
@@ -514,6 +544,10 @@ def build_system_prompt(
     case_block = _case_block(state.get("case_summary"))
     if case_block:
         sections.append(case_block.strip())
+
+    replacement_cost = _replacement_cost_block(state)
+    if replacement_cost:
+        sections.append(replacement_cost)
 
     if rag_context:
         sections.append("--- Our records ---\n" + rag_context)

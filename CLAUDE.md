@@ -490,7 +490,7 @@ because the lead is opened early and the ticket is created much later.
 | A finished collection is never filed twice | `info_collector.finished_collection` + `asks_for_service_again`, routed by `graph.route_after_rag`; `state.restarted_topics` | Nothing else clears a collection: an open ticket parks it, and resolving the ticket handed the old answers back to the next collector turn, which filed them again (CB-2026-0028, 0030). Finished = topic completed, nothing left unasked, not already restarted for that ticket. Only a turn that names or asks for the service reopens it, and then it starts clean like a switch; the marker stops the new collection being mistaken for the old. |
 | A helper's details are known in full and can be asked about | `webhook.merge_known_helpers` + `system.known_helpers_line` (response_generator only) | One entry per name, details merged across tickets: a renewal ticket, which never asks nationality, hid "Filipino" from her direct-hire ticket. Kept off the collector's prompt: it cost the closing briefing its heading 2 runs of 6. |
 | A closing briefing has the service's own fee row | `rag_retriever._with_briefing_cost` / `_briefing_cost_due` | A one-row cost search on the briefing turn, same filters, for a service in `fee_stated_services` and a nationality we hold a fee for. The ten briefing rows were all process and timing, so "$695" was deferred to an agent (section 9.27's shape). |
-| A replacement is priced only inside the package period | `info_collector.replacement_package_fee_due` + `rag_retriever._with_replacement_fees` + `REPLACEMENT_PACKAGE_FEE_NOTE` | Agency's choice, 2026-10-09. A helper WE placed (record, or the client's plain yes) under 6 months ago: quote the package's replacement and documentation fee ($238 / $288 / $328 new hire, $288 transfer), labelled where the package is unknown, and lift the cost guard for that message. Anything else (outside 6 months, not ours, a tenure we cannot read) still defers. The rows are filed under new_hiring and transfer, so they are fetched separately. |
+| A replacement is priced only inside the package period | `info_collector.replacement_package_fee_due` + `rag_retriever._with_replacement_fees` + `REPLACEMENT_PACKAGE_FEE_NOTE` | Agency's choice, 2026-10-09. A helper WE placed (record, or the client's plain yes) under 6 months ago: quote the package's replacement and documentation fee ($238 / $288 / $328 new hire, $288 transfer), labelled where the package is unknown, and lift the cost guard for that message. Anything else (outside 6 months, not ours, a tenure we cannot read) still defers. The rows are filed under new_hiring and transfer, so they are fetched separately. Every other replacement turn keeps the `replacement` filter on a money question and carries `system.REPLACEMENT_COST_BLOCK` (the rule, no figure). |
 | A helper's own home leave is told her fee | `HELPER_HOME_LEAVE_BRIEFING_NOTE` / `HELPER_OWN_LEAVE_NOTE` | The fee for her nationality ($250 ID, $400 PH), with our agent going through it with her employer; never who pays. Myanmar still defers. |
 | A question that was never SENT is not counted as asked | `info_collector._undelivered_question` (`last_question`) | A reply held while the client is still typing is never delivered, but its ask was counted, so a `max_asks=1` field was filed "not provided" unseen. The next turn checks the transcript and records -1 (the counts are summed). |
 | Resolving one ticket does not close a conversation with others open | `portal-ui/.../TicketDetailDrawer.jsx` | A `resolved` conversation is a finished one: the bot starts a fresh thread on the next message and forgets everything collected. |
@@ -1461,6 +1461,35 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-09** - **A replacement enquiry was told "$288" before we knew anything
+  about the helper.** Conversation 26: "I'd like to look for a replacement helper.
+  Can you explain to me the cost and the processes?" was answered "For a transfer
+  helper from the Philippines or Indonesia, the replacement and documentation fee
+  is approximately $288". That is a transfer package's fee, quoted to a client
+  whose helper we had not established as ours, nor how long she had been there.
+  Reproduced from a fresh number. Three causes:
+  - **The filter dropped.** "cost" drops the service filter for a service
+    whose fee we do not state, so retrieval reached the new-hire and transfer
+    replacement-fee rows. A replacement now keeps its own shelf, and is never
+    widened, on a price question.
+  - **No cost rule.** `REPLACEMENT_COST_BLOCK` in the system prompt, on every
+    replacement turn except a closing briefing we can price. The package
+    (2 replacements within 6 months, for a replacement and documentation fee)
+    applies only if we placed her less than 6 months ago, and otherwise our
+    agent confirms. No figure.
+  - **"processes" was not a process question.** `asks_for_process` matched only
+    the singular, so the message missed the explain-first path. 2 runs of 4
+    ignored the question and 2 dropped the intake question.
+
+  **Verified:** 4 runs of 4 answer the timeline, the steps and the cost rule
+  with no figure, then ask the name. Four faults injected, four red, after two
+  were first green: the test phrases were caught by the other pattern too.
+  **Not explained here: the reply was sent twice (6:19 and 6:20 PM) for one
+  inbound message.** Only one inbound row exists. The likeliest cause is a
+  restart (deploy) between the two deliveries of one webhook: the replay guard
+  is in memory. Not confirmed without the server log.
+  `selfcheck_flows.py` is **803 assertions**; `smoke_nodes.py` is 238 checks.
 
 - **2026-10-09** - **"No" to "anything else I should note down?" was asked again.**
   Conversation 26, Thomas testing a new hire: his "No" to the house-rules

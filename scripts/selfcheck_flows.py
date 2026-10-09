@@ -5260,6 +5260,26 @@ rows = [
       "new_hiring", {"additional_notes": v, "helper_profile": v},
       {"additional_notes": 1, "helper_profile": 1})[0]], ("No", "nope", "Yes"))),
   [[], [], ["helper_profile", "additional_notes"]]),
+ # 2026-10-09, conversation 26: "explain to me the cost and the processes"
+ # for a replacement was told "$288" - a transfer package's fee - because the
+ # money word dropped the replacement filter, and the plural "processes" kept
+ # it off the explain-first path.
+ ("'the processes' is a process question, and 'processes her papers' is not",
+  [_guards.asks_for_process(m) for m in (
+      "Can you explain to me the cost and the processes?", "what are your processes",
+      "what are the processes for a replacement",
+      "what are the procedures", "he processes her papers")],
+  [True, True, True, True, False]),
+ ("a replacement keeps its own shelf on a money question",
+  importlib.import_module("app.graph.nodes.rag_retriever")._service_filter(
+      {"service_type": "replacement", "intent": "replacement",
+       "incoming_text": "how much does a replacement cost?", "history_text": ""}),
+  "replacement"),
+ ("...and every replacement turn is given the cost rule with no figure in it",
+  (bool(_sys._replacement_cost_block({"service_type": "replacement"})),
+   any(ch.isdigit() and ch != "6" and ch != "2" for ch in _sys.REPLACEMENT_COST_BLOCK),
+   bool(_sys._replacement_cost_block({"service_type": "new_hiring"}))),
+  (True, False, False)),
  ("a helper's own home leave is told the fee for her nationality",
   "the fee the records state for HER nationality" in tpl.HELPER_HOME_LEAVE_BRIEFING_NOTE
   and "no figure" not in tpl.HELPER_OWN_LEAVE_NOTE, True),
