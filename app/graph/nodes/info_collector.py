@@ -1788,6 +1788,15 @@ _BARE_YES_NO = re.compile(
     r"^\W*(?:yes|yeah|yep|yup|ya|sure|ok|okay|no|nope|nah)\W*$",
     re.IGNORECASE,
 )
+# ...but a bare NO to a question asking whether there is ANY of something is a
+# whole answer: "Anything else I should note down?" -> "No" means nothing else.
+# Live, 2026-10-09 (conversation 26): that "No" was read as not answering a
+# question that "was not a yes-or-no one", so the bot asked again for the
+# detail, or wrote "if there are no other house rules ... we can leave this
+# optional detail out" with no question in it. Measured 3 runs of 4 before.
+# A bare YES to the same question still says nothing and is still followed up.
+_BARE_NO = re.compile(r"^\W*(?:no|nope|nah|none|nothing)\W*$", re.IGNORECASE)
+_ASKS_FOR_ANY = re.compile(r"^\W*(?:any(?:thing|one)?|(?:is|are)\s+there)\b", re.IGNORECASE)
 
 
 # An address that parses but is almost certainly mistyped. Live, same round:
@@ -1844,6 +1853,7 @@ def _unfinished(
             asked.get(field.key, 0) <= min(field.max_asks, MAX_ASKS_PER_FIELD)
             and _BARE_YES_NO.match(value)
             and not _yes_no_question(field.question)
+            and not (_BARE_NO.match(value) and _ASKS_FOR_ANY.match(field.question))
         ):
             note = (
                 f'\n\nThey answered "{value}", which does not tell you anything '

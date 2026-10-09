@@ -5252,6 +5252,14 @@ rows = [
       {"collected_info": {"nationality": "Filipino"}},
       {})],
   ["ID", None, None, None]),
+ # 2026-10-09, conversation 26: "No" to "Anything else I should note down?"
+ # was re-asked as though it answered nothing. A bare no to an "any...?"
+ # question is a whole answer; a bare yes still says nothing.
+ ("a bare 'No' to an 'anything else?' question closes it",
+  list(map(lambda v: [f.key for f in ico._unfinished(
+      "new_hiring", {"additional_notes": v, "helper_profile": v},
+      {"additional_notes": 1, "helper_profile": 1})[0]], ("No", "nope", "Yes"))),
+  [[], [], ["helper_profile", "additional_notes"]]),
  ("a helper's own home leave is told the fee for her nationality",
   "the fee the records state for HER nationality" in tpl.HELPER_HOME_LEAVE_BRIEFING_NOTE
   and "no figure" not in tpl.HELPER_OWN_LEAVE_NOTE, True),

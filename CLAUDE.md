@@ -292,7 +292,7 @@ because the lead is opened early and the ticket is created much later.
 | A service that states its own fee is not widened | `_service_filter` (`FEE_STATED_SERVICES` first) | Widening returned the **work permit** fee ($695) inside a **passport** renewal ($450). A wrong price is worse than a vague one. |
 | An undecidable gate only re-asks where the gates cover the whole answer | `info_collector._gates_are_exhaustive` | `requirement`'s gates are childcare/eldercare; "general housework" is a real option opening neither, and was blanked and re-asked three times. |
 | A trailing "are there" is a statement | `info_collector._ASKS_SOMETHING` (anchored) | "6 bedroom and 6 bathrooms are there" read as a question and drew a promise to come back with an answer. |
-| A bare yes/no does not close a question that is not yes/no | `_BARE_YES_NO` + `_YES_NO_QUESTION` | "Yes" closed "Any preference on her age or experience?". `<=` on the ask count, since both affected fields are `max_asks=1`. |
+| A bare yes/no does not close a question that is not yes/no | `_BARE_YES_NO` + `_YES_NO_QUESTION` | "Yes" closed "Any preference on her age or experience?". `<=` on the ask count, since both affected fields are `max_asks=1`. ...but a bare NO to an "any...?" / "anything else?" question is a whole answer (`_BARE_NO` + `_ASKS_FOR_ANY`, 2026-10-09). |
 | An adjective or an imperative does not hide the question on a parked topic | `blocked_topic_responder._GENERAL_INFO` | "what is the **further** process" and "tell me the process" both fell through, so a home leave with the process in the KB was handed to a human. The same shape as the missing "the" below. |
 | A parked topic still answers a bare price question | `blocked_topic_responder._GENERAL_INFO` | "Ok what is cost" needed "what is **the** cost" to match, so a $450 answer was handed to a human. |
 | The widening retry cannot undo the fee filter | `rag_retriever._PRICE_QUESTION` + `FEE_STATED_SERVICES` | Below the floor it dropped the filter and reached $695 inside a $450 service. Timing questions still widen. |
@@ -1461,6 +1461,26 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-09** - **"No" to "anything else I should note down?" was asked again.**
+  Conversation 26, Thomas testing a new hire: his "No" to the house-rules
+  question got "Got it - if there are no other house rules or preferences, we
+  can leave this optional detail out" with no next question. The rule that
+  re-asks a bare yes/no only treats a question as yes/no when it opens with an
+  auxiliary verb, and `additional_notes` opens with "Anything", so "No" was
+  read as answering nothing. The collector was told to ask for the detail
+  again, and the model either re-asked it or wrote a non-question.
+  Reproduced 3 runs of 4.
+  A bare no / nope / nah / none / nothing to an "any... / anything... /
+  is there / are there" question now closes it. A bare yes is still followed
+  up, which is what the rule was written for (2026-09-08).
+  **Verified:** 4 runs of 4 go straight to the next question. One assertion;
+  the fault injected, red.
+  **Not a bot defect: the "Hi, I'm Claire" at the end of his screenshot.** I
+  reset conversation 26 at 10:10-10:11 UTC while he was still testing, to
+  remove the "Lee" test records. His next "yes" arrived on a fresh thread with
+  no history. Check that a number is idle before resetting it.
+  `selfcheck_flows.py` is **800 assertions**.
 
 - **2026-10-09** - **Fees in the closing message: the helper's own home leave
   and the replacement.** The agency: "we have inserted fees and cost for every
