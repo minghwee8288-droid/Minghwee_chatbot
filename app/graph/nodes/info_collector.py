@@ -50,6 +50,7 @@ from app.graph.prompts.templates import (
     HELPER_OWN_PASSPORT_NOTE,
     HELPER_PASSPORT_BRIEFING_NOTE,
     OWN_PASSPORT_NOTE,
+    REPLACEMENT_PACKAGE_FEE_NOTE,
     UNPLACEABLE_NATIONALITY_NOTE,
     CANDIDATE_BRIEFING_NOTE,
     HOME_LEAVE_TICKET_NOTE,
@@ -768,6 +769,89 @@ def _known_nationality(state: ConversationState) -> str | None:
     read by two callers, found by using the second one.
     """
     return nationality_for_turn(state)
+
+
+# A replacement is priced only where the agency gave us a price for it: the
+# "replacement and documentation fee" of the package the helper came with,
+# which covers 2 replacements within 6 months (filed under new_hiring and
+# transfer, per nationality). Agency, 2026-10-09, asked how the replacement
+# closing should treat cost: quote that fee when the helper being replaced was
+# placed by us less than 6 months ago, and defer everything else to our agent.
+# Both tests FAIL TOWARDS DEFERRING: a tenure we cannot read, or an origin that
+# is not plainly ours, quotes nothing - a package fee quoted to a client whose
+# helper is outside the package is a price they will be held to.
+_REPLACEMENT_PERIOD_MONTHS = 6
+_TENURE = re.compile(
+    r"(\d+(?:\.\d+)?|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+    r"\s*(days?|weeks?|wks?|months?|mths?|mos?|years?|yrs?)\b",
+    re.IGNORECASE,
+)
+_TENURE_WORDS = {
+    "a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+    "twelve": 12,
+}
+_PLACED_BY_US = re.compile(
+    r"placed by us|ming\s*hwee|minghwee|through you|from you|by you|your agency|\byes\b",
+    re.IGNORECASE,
+)
+_NOT_PLACED_BY_US = re.compile(
+    r"\bno\b|\bnot\b|elsewhere|another|other agency|different|direct",
+    re.IGNORECASE,
+)
+
+
+def months_with_us(value: object) -> float | None:
+    """How long the helper has been with them, in months, or None if unclear.
+
+    The longest span named wins, so "1 year and 2 months" is not read as two
+    months. Anything we cannot read plainly is None, never a guess.
+    """
+    best = None
+    for amount, unit in _TENURE.findall(str(value or "")):
+        number = _TENURE_WORDS.get(amount.lower())
+        if number is None:
+            number = float(amount)
+        unit = unit.lower()
+        months = (
+            number / 30 if unit.startswith("d")
+            else number / 4.33 if unit.startswith("w")
+            else number * 12 if unit.startswith("y")
+            else number
+        )
+        best = months if best is None else max(best, months)
+    return best
+
+
+def placed_by_us(value: object) -> bool:
+    """The helper being replaced came through Ming Hwee - from our records
+    ("from Ming Hwee - placed by us") or the client's own plain yes."""
+    text = str(value or "")
+    return bool(_PLACED_BY_US.search(text)) and not _NOT_PLACED_BY_US.search(text)
+
+
+def replacement_package_fee_due(state: ConversationState) -> bool:
+    """A replacement inside the package replacement period: we may quote its
+    replacement and documentation fee. Read by the retriever (to fetch those
+    rows) and by the closing briefing (to quote them and lift the cost guard)."""
+    if (state.get("service_type") or "") != "replacement":
+        return False
+    collected = state.get("collected_info") or {}
+    if not placed_by_us(collected.get("helper_from_us")):
+        return False
+    months = months_with_us(collected.get("helper_tenure"))
+    return months is not None and months < _REPLACEMENT_PERIOD_MONTHS
+
+
+def replaced_helper_nationality(state: ConversationState) -> str | None:
+    """The PH/ID/MM code of the helper being REPLACED - from our placement
+    record only. Never the nationality wanted for the new helper, which is a
+    different person and does not decide the package fee."""
+    placed = state.get("placed_helper")
+    if not isinstance(placed, dict):
+        return None
+    code = lead_service.nationality_code(placed.get("nationality"))
+    return code if code in ("PH", "ID", "MM") else None
 
 
 def nationality_for_turn(state: ConversationState) -> str | None:
@@ -3693,6 +3777,15 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
                 f"that our agent will confirm the cost for {_whose}, and "
                 "carry on with the timing and the process."
             )
+        # A replacement inside the package period has a price we hold - the
+        # package's replacement and documentation fee. See
+        # replacement_package_fee_due; outside it the fee is still deferred.
+        if replacement_package_fee_due({**state, "collected_info": collected}):
+            briefing_note += REPLACEMENT_PACKAGE_FEE_NOTE.format(
+                nationality=_NATIONALITY_NAMES.get(
+                    replaced_helper_nationality(state) or "", "not known"
+                )
+            )
         # Home leave only: book the ticket now and send us a copy, so the agent
         # who picks the case up can submit the embassy paperwork against
         # confirmed dates instead of waiting for them. Agency, 2026-09-17.
@@ -4287,7 +4380,12 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         # were relying on the prompt alone for the rule the agency gave by name
         # on 2026-09-04. The same "wired into two paths and never the third"
         # shape as `blocked_topic_responder` on 2026-09-10.
-        withhold_cost=service_type in kb_rules.cost_withheld_services(),
+        #
+        # Lifted for a replacement inside its package period (2026-10-09): that
+        # fee is one the agency gave us, and the package wording ("the package
+        # includes 2 replacements") is exactly what the guard swaps out.
+        withhold_cost=service_type in kb_rules.cost_withheld_services()
+        and not replacement_package_fee_due({**state, "collected_info": collected}),
     )
 
     # A briefing that was generated and then discarded by a guard leaves the

@@ -13,6 +13,8 @@ from app.graph.nodes.info_collector import (
     briefs_on_this_turn,
     enquiry_overview_due,
     nationality_for_turn,
+    replaced_helper_nationality,
+    replacement_package_fee_due,
 )
 from app.graph.state import (
     AGENCY_INFO_INTENT,
@@ -654,10 +656,43 @@ async def _with_overview_extras(
 BRIEFING_COST_QUERY = "how much does it cost"
 
 
+# A replacement's price is the package's replacement and documentation fee,
+# and those rows are filed under new_hiring and transfer - never reachable
+# from the replacement shelf. Searched there, one query each.
+REPLACEMENT_FEE_QUERIES = (
+    ("new_hiring", "What is the replacement fee for a new hire?"),
+    ("transfer", "What is the replacement fee for a transfer helper?"),
+)
+
+
+async def _with_replacement_fees(
+    matches: list[dict], state: ConversationState, contact: str | None
+) -> list[dict]:
+    """The briefing set plus the package replacement-fee rows, filtered to the
+    replaced helper's nationality when our records give it, else all three."""
+    nationality = replaced_helper_nationality(state)
+    seen = {m.get("id") or m.get("question") for m in matches}
+    out = list(matches)
+    for service, query in REPLACEMENT_FEE_QUERIES:
+        found = await rag.search(
+            query, service_type=service, contact_type=contact,
+            nationality=nationality,
+            match_count=1 if nationality or service == "transfer" else 3,
+        )
+        for row in found:
+            key = row.get("id") or row.get("question")
+            if key not in seen and "replacement" in (row.get("question") or "").lower():
+                seen.add(key)
+                out.append(row)
+    return out
+
+
 def _briefing_cost_due(state: ConversationState, nationality: str | None) -> bool:
     """A closing briefing for a service whose price we state, for a
     nationality we hold one for."""
     service_key = state.get("service_type") or ""
+    if service_key == "replacement":
+        return replacement_package_fee_due(state)
     if service_key in ticket_service.CANDIDATE_SERVICES:
         return False
     if service_key not in kb_rules.fee_stated_services():
@@ -711,7 +746,10 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
     if overview:
         matches = await _with_overview_extras(matches, service, contact, nationality)
     elif briefing and _briefing_cost_due(state, nationality):
-        matches = await _with_briefing_cost(matches, state, service, contact, nationality)
+        if (state.get("service_type") or "") == "replacement":
+            matches = await _with_replacement_fees(matches, state, contact)
+        else:
+            matches = await _with_briefing_cost(matches, state, service, contact, nationality)
     best = rag.best_similarity(matches)
 
     # A service filter can starve a question the knowledge base can answer.

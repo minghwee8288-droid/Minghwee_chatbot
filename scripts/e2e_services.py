@@ -163,8 +163,16 @@ def _asked_field(before: dict, after: dict, collected: dict | None = None) -> st
     return (unanswered or changed or [None])[0]
 
 
-async def run_service(service: str, opener: str, show: bool) -> dict:
-    """One whole conversation. Returns the transcript plus what was collected."""
+async def run_service(
+    service: str, opener: str, show: bool,
+    extra_state: dict | None = None, answers: dict | None = None,
+) -> dict:
+    """One whole conversation. Returns the transcript plus what was collected.
+
+    `extra_state` overrides the brand-new-number defaults below - e.g. a
+    client we have placed a helper with (prior_hires, placed_helper).
+    `answers` overrides ANSWERS for this run only."""
+    scripted = {**ANSWERS, **(answers or {})}
     state = {
         "conversation_id": 1,
         "phone": "6590000001",
@@ -180,6 +188,7 @@ async def run_service(service: str, opener: str, show: bool) -> dict:
         "briefed_services": [],
         "history_text": "",
         "blocked_topics": [],
+        **(extra_state or {}),
     }
     transcript: list[tuple[str, str]] = []
     said = opener
@@ -203,7 +212,11 @@ async def run_service(service: str, opener: str, show: bool) -> dict:
             print(f"    CLIENT: {said}")
             print(f"    CLAIRE: {reply}\n")
 
-        state["history_text"] += f"client: {said}\nbot: {reply}\n"
+        # message.format_history's own labels. Written any other way,
+        # last_bot_line finds nothing, so the answer-to-our-question rule and
+        # Claire's "already introduced" test are both switched off and the walk
+        # grades a conversation that cannot happen (2026-09-18 (L), 2026-10-09).
+        state["history_text"] += f"Client: {said}\nYou: {reply}\n"
         if out.get("info_complete"):
             break
 
@@ -213,11 +226,11 @@ async def run_service(service: str, opener: str, show: bool) -> dict:
             # It asked nothing we can identify — answer neutrally and move on.
             said = "ok"
             continue
-        if field not in ANSWERS:
+        if field not in scripted:
             unscripted.append(field)
             said = "yes"
             continue
-        said = ANSWERS[field]
+        said = scripted[field]
 
     return {
         "service": service,

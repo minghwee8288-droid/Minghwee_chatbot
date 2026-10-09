@@ -5215,6 +5215,46 @@ rows = [
   [u["set"]["answer"][:40] for u in lsn.UPDATES
    if u["where"]["question"] == "What is the process for a direct hire?"
    and "We take her full name and contact number" in u["set"]["answer"]], []),
+ # 2026-10-09: a replacement is priced at the package's replacement and
+ # documentation fee when WE placed the helper less than 6 months ago, and
+ # deferred otherwise (agency's choice). Both readings fail towards deferring.
+ ("a replacement's tenure is read in months, and an unclear one is not guessed",
+  [ico.months_with_us(v) for v in ("its been since 7 months", "4 months", "a year",
+                                   "five months", "2 years", "since last march", "")],
+  [7.0, 4.0, 12, 5, 24, None, None]),
+ ("...and only a helper plainly placed by us counts as ours",
+  [ico.placed_by_us(v) for v in ("from Ming Hwee - placed by us", "yes we hired her through you",
+                                 "hired elsewhere - no placement on record",
+                                 "placed with us before - this helper not matched on file",
+                                 "no, from another agency", "not through you",
+                                 "yes but from another agency, not Ming Hwee", "")],
+  [True, True, False, False, False, False, False, False]),
+ ("...so the package fee is due inside 6 months of our placement, and nowhere else",
+  [ico.replacement_package_fee_due({"service_type": s, "collected_info": {
+      "helper_from_us": f, "helper_tenure": m}}) for s, f, m in (
+      ("replacement", "from Ming Hwee - placed by us", "4 months"),
+      ("replacement", "from Ming Hwee - placed by us", "7 months"),
+      ("replacement", "from Ming Hwee - placed by us", "6 months"),
+      ("replacement", "hired elsewhere - no placement on record", "4 months"),
+      ("replacement", "from Ming Hwee - placed by us", "not sure"),
+      ("renewal", "from Ming Hwee - placed by us", "4 months"))],
+  [True, False, False, False, False, False]),
+ ("...the retriever fetches the package fee rows exactly then",
+  [importlib.import_module("app.graph.nodes.rag_retriever")._briefing_cost_due(
+      {"service_type": "replacement", "collected_info": {
+          "helper_from_us": "from Ming Hwee - placed by us", "helper_tenure": m}}, None)
+   for m in ("4 months", "7 months")],
+  [True, False]),
+ ("...and the replaced helper's nationality comes from our record, never the new one wanted",
+  [ico.replaced_helper_nationality(s) for s in (
+      {"placed_helper": {"helper_name": "A", "nationality": "Indonesian"}},
+      {"placed_helper": {"helper_name": "A"}, "collected_info": {"nationality": "Filipino"}},
+      {"collected_info": {"nationality": "Filipino"}},
+      {})],
+  ["ID", None, None, None]),
+ ("a helper's own home leave is told the fee for her nationality",
+  "the fee the records state for HER nationality" in tpl.HELPER_HOME_LEAVE_BRIEFING_NOTE
+  and "no figure" not in tpl.HELPER_OWN_LEAVE_NOTE, True),
 ]
 bad = 0
 for label, got, want in rows:

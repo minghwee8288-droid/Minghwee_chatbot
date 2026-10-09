@@ -490,6 +490,8 @@ because the lead is opened early and the ticket is created much later.
 | A finished collection is never filed twice | `info_collector.finished_collection` + `asks_for_service_again`, routed by `graph.route_after_rag`; `state.restarted_topics` | Nothing else clears a collection: an open ticket parks it, and resolving the ticket handed the old answers back to the next collector turn, which filed them again (CB-2026-0028, 0030). Finished = topic completed, nothing left unasked, not already restarted for that ticket. Only a turn that names or asks for the service reopens it, and then it starts clean like a switch; the marker stops the new collection being mistaken for the old. |
 | A helper's details are known in full and can be asked about | `webhook.merge_known_helpers` + `system.known_helpers_line` (response_generator only) | One entry per name, details merged across tickets: a renewal ticket, which never asks nationality, hid "Filipino" from her direct-hire ticket. Kept off the collector's prompt: it cost the closing briefing its heading 2 runs of 6. |
 | A closing briefing has the service's own fee row | `rag_retriever._with_briefing_cost` / `_briefing_cost_due` | A one-row cost search on the briefing turn, same filters, for a service in `fee_stated_services` and a nationality we hold a fee for. The ten briefing rows were all process and timing, so "$695" was deferred to an agent (section 9.27's shape). |
+| A replacement is priced only inside the package period | `info_collector.replacement_package_fee_due` + `rag_retriever._with_replacement_fees` + `REPLACEMENT_PACKAGE_FEE_NOTE` | Agency's choice, 2026-10-09. A helper WE placed (record, or the client's plain yes) under 6 months ago: quote the package's replacement and documentation fee ($238 / $288 / $328 new hire, $288 transfer), labelled where the package is unknown, and lift the cost guard for that message. Anything else (outside 6 months, not ours, a tenure we cannot read) still defers. The rows are filed under new_hiring and transfer, so they are fetched separately. |
+| A helper's own home leave is told her fee | `HELPER_HOME_LEAVE_BRIEFING_NOTE` / `HELPER_OWN_LEAVE_NOTE` | The fee for her nationality ($250 ID, $400 PH), with our agent going through it with her employer; never who pays. Myanmar still defers. |
 | A question that was never SENT is not counted as asked | `info_collector._undelivered_question` (`last_question`) | A reply held while the client is still typing is never delivered, but its ask was counted, so a `max_asks=1` field was filed "not provided" unseen. The next turn checks the transcript and records -1 (the counts are summed). |
 | Resolving one ticket does not close a conversation with others open | `portal-ui/.../TicketDetailDrawer.jsx` | A `resolved` conversation is a finished one: the bot starts a fresh thread on the next message and forgets everything collected. |
 | A helper we know the client has is CONFIRMED by name, never asked for and never assumed | `info_collector.HELPER_CONFIRM_SERVICES` + `helper_confirm_note` / `confirmed_helper` + webhook `known_helpers` | Known = live placements, then helpers named on this number's earlier tickets (`placements` is empty live, so the tickets are usually all we have). First ask only: "Is this home leave for Yoyo, or for another helper?". A known name or a lone yes fills her name and what we hold about her; an unknown name or a "no/another" is the other helper. A single placed helper is no longer filled in silently on these services. Not direct_hiring (a NEW helper). |
@@ -1459,6 +1461,59 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-09** - **Fees in the closing message: the helper's own home leave
+  and the replacement.** The agency: "we have inserted fees and cost for every
+  service ... but bot didn't tell cost and fees in any service flow", with two
+  screenshots. All seven flows were walked end to end first (read-only):
+  - **Already quoting:** new hire ($1,428), transfer ($1,688), work permit
+    renewal ($695), passport renewal ($450), and the employer's home leave
+    ($400).
+  - **Deferring by design:** direct hire. The KB holds no direct-hire agency
+    fee at all.
+  - **The two screenshots:**
+    - **The helper's own home leave** said "the fee is settled with your
+      employer" with no figure, because my 2026-10-08 note said so. Now: the
+      fee for her nationality, then that our agent goes through it with her
+      employer, never who pays. 3 runs of 3 at $250 (ID), $400 (PH), and
+      Myanmar still defers.
+    - **Replacement** was in `cost_withheld`, and the agency gave no
+      replacement-service fee. The only replacement figures we hold are the
+      package's replacement and documentation fee (2 replacements within 6
+      months), filed under new_hiring/transfer. Their choice: quote that fee
+      when we placed the helper less than 6 months ago, and defer otherwise.
+      The decision is in code, `replacement_package_fee_due`, and fails
+      towards deferring. The retriever fetches the rows from those two shelves.
+      The cost guard is lifted for that one message: the package wording is
+      exactly what `quotes_hiring_package_cost` swaps out. The replaced
+      helper's nationality comes only from our placement record, never from
+      the nationality wanted for the new one.
+
+  **Measured, 2 runs each:**
+  - ours, 4 months, Indonesian: $288;
+  - ours, 7 months (the screenshot's case): defers;
+  - a new number: defers;
+  - ours with no nationality on record: the fees labelled, 5 runs of 6.
+
+  Six faults injected, six red, after two were first GREEN. Neither check had
+  a phrase that exercised the fault (a positive plus a negation; a nationality
+  on file with no placement).
+
+  **Harness bug fixed: `scripts/e2e_services.py` wrote history as "client:/bot:".**
+  `last_bot_line` reads "You:", so the answer rule and Claire's "already
+  introduced" test were off in every walk. That is the 2026-09-18 (L) lesson
+  again. One walk drifted a transfer onto `new_hiring` retrieval and deferred
+  its fee, which looked like a bot defect and was not one. The harness also
+  takes per-run `answers` and `extra_state`; mutating the shared ANSWERS from
+  parallel runs gave a "7 months" walk the "4 months" answer.
+
+  **Noticed, NOT changed:**
+  - A Myanmar helper's own home leave was told "approximately 2 weeks", and we
+    hold no Myanmar home-leave timeline (section 9 waiting list).
+  - A replacement asked about cost AFTER the handover still defers (the parked
+    path is untouched).
+
+  `selfcheck_flows.py` is **799 assertions**; `smoke_nodes.py` is **238 checks**.
 
 - **2026-10-08** - **A replacement reason that mentioned past complaints was
   filed as a complaint.** The agency's test: asked "Could you share the reason

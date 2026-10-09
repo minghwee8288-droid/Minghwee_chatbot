@@ -836,7 +836,67 @@ CASES = [
                              "leave_reason": 1, "employer_name": 1, "employer_contact": 1},
       "briefed_services": [],
       "_stub_extraction": {"employer_contact": "91234567"},
-      "_expect_prompt": "THIS CLOSING MESSAGE GOES TO THE HELPER HERSELF"}),
+      "_expect_prompt": "THIS CLOSING MESSAGE GOES TO THE HELPER HERSELF",
+      "_forbid_prompt": "COST: no figure at all"}),
+    # ...and it TELLS her the fee we hold for her nationality (agency,
+    # 2026-10-09: "the fee is settled with your employer" went out with no
+    # figure on an Indonesian leave we price at $250).
+    ("info_collector", "a helper's own home leave briefing quotes her fee",
+     {"intent": "home_leave", "service_type": "home_leave", "contact_type": "employer",
+      "incoming_text": "his number is 91234567",
+      "history_text": "You: What is Mr Tan's phone number?",
+      "flagged_once": ["helper_home_leave"],
+      "collected_info": {"full_name": "Ratna", "helper_name": "Ratna", "requested_by": "helper",
+                         "nationality": "Indonesian", "leave_dates": "next week for a month",
+                         "leave_reason": "family emergency", "employer_name": "Mr Tan"},
+      "asked_field_counts": {"full_name": 1, "nationality": 1, "leave_dates": 1,
+                             "leave_reason": 1, "employer_name": 1, "employer_contact": 1},
+      "briefed_services": [],
+      "_stub_extraction": {"employer_contact": "91234567"},
+      "_expect_prompt": "the fee the records state for HER nationality"}),
+    # A replacement of a helper WE placed less than 6 months ago is inside the
+    # package's replacement period, and its replacement and documentation fee
+    # is quoted (agency, 2026-10-09). The stub is the package wording the cost
+    # guard catches, so this also proves the guard is lifted for it.
+    ("info_collector", "a replacement inside the package period quotes its fee",
+     {"intent": "replacement", "service_type": "replacement", "contact_type": "employer",
+      "incoming_text": "someone more experienced with kids",
+      "history_text": "You: What are you looking for in the replacement helper?",
+      "prior_hires": 1,
+      "placed_helper": {"helper_name": "Hungama", "nationality": "Indonesian"},
+      "rag_context": "Q: What is the replacement fee for a new hire from Indonesia?\n"
+                     "A: The package includes 2 replacements within 6 months, and the "
+                     "replacement and documentation fee is $288.",
+      "collected_info": {"full_name": "Pogo", "helper_name": "Hungama",
+                         "helper_tenure": "4 months", "reason": "rude",
+                         "current_helper_exit": "not decided", "timeline": "ASAP"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1, "helper_tenure": 1,
+                             "reason": 1, "current_helper_exit": 1, "timeline": 1,
+                             "replacement_preferences": 1},
+      "briefed_services": [],
+      "_stub_extraction": {"replacement_preferences": "more experienced with kids"},
+      "_stub_reply": "Here is everything for replacing Hungama:\n\nThe package includes "
+                     "2 replacements within 6 months, and the replacement and "
+                     "documentation fee is $288.\n\nI've passed everything to our team, "
+                     "and a live agent will connect with you shortly.",
+      "_expect_reply": "$288",
+      "_expect_prompt": "THE COST SECTION, FOR THIS REPLACEMENT"}),
+    # ...and at 7 months it is outside the period: no package fee note.
+    ("info_collector", "a replacement outside the package period defers its fee",
+     {"intent": "replacement", "service_type": "replacement", "contact_type": "employer",
+      "incoming_text": "someone more experienced with kids",
+      "history_text": "You: What are you looking for in the replacement helper?",
+      "prior_hires": 1,
+      "placed_helper": {"helper_name": "Hungama", "nationality": "Indonesian"},
+      "collected_info": {"full_name": "Pogo", "helper_name": "Hungama",
+                         "helper_tenure": "its been since 7 months", "reason": "rude",
+                         "current_helper_exit": "not decided", "timeline": "ASAP"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1, "helper_tenure": 1,
+                             "reason": 1, "current_helper_exit": 1, "timeline": 1,
+                             "replacement_preferences": 1},
+      "briefed_services": [],
+      "_stub_extraction": {"replacement_preferences": "more experienced with kids"},
+      "_forbid_prompt": "THE COST SECTION, FOR THIS REPLACEMENT"}),
     # ...and it is home leave's note, not every briefing's. A passport renewal
     # has no flight in it at all.
     #

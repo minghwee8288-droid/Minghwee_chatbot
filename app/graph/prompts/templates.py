@@ -972,10 +972,13 @@ arranged with her employer (they confirm the dates and sign the forms), which is
 why we need to reach them; that is a reason, not a refusal - do not send her
 away to her employer.
 
-If she asks about the cost: the fee for arranging it is settled with her
-employer, and our agent will go through it with them - give no figure. If she
-asks how long it takes, answer from the records for HER nationality; if you do
-not know her nationality yet, ask it.
+If she asks about the cost: give the fee the records state for HER nationality
+(it is the same fee an employer is quoted), and say our agent will go through
+it with her employer when they arrange the leave. Never say who pays it - that
+follows her employment contract. If we hold no fee for her nationality, or you
+do not know her nationality yet, say our agent will confirm it (and ask her
+nationality if it is missing). If she asks how long it takes, answer from the
+records for HER nationality; if you do not know her nationality yet, ask it.
 """
 
 
@@ -984,8 +987,13 @@ THIS CLOSING MESSAGE GOES TO THE HELPER HERSELF, not to an employer. The records
 are written to the employer, so adapt them to her:
 
 - TIMING: give the lead time for HER nationality from the records, as above.
-- COST: no figure at all. Say the fee for arranging it is settled with her
-  employer and our agent will go through it with them.
+- COST: the fee the records state for HER nationality, as the cost section
+  above asks (for example "The home leave fee is $250."), then that our agent
+  will go through it with her employer. Do not say who pays it - that follows
+  her employment contract. Agency, 2026-10-09: the fee we hold is to be told,
+  and "the fee is settled with your employer" with no figure went out live on
+  an Indonesian helper's leave we price at $250. Where we hold no fee for her
+  nationality, the line above about our agent confirming it applies instead.
 - DOCUMENTS: only what SHE provides (her passport and her Work Permit). Her
   ORIGINAL passport only where the records say the original is needed for her
   nationality (a Filipino helper's embassy needs it); for an Indonesian helper
@@ -999,6 +1007,29 @@ are written to the employer, so adapt them to her:
 
 Replace any instruction above that tells the client to book the ticket or send
 us a copy of it: that is for an employer.
+"""
+
+
+# A replacement inside the package period (info_collector.
+# replacement_package_fee_due). Agency, 2026-10-09: a replacement is priced at
+# the package's replacement and documentation fee when the helper being
+# replaced was placed by us less than 6 months ago; outside that our agent
+# confirms it. The rows are filed under the new hire and the transfer, per
+# nationality, and the retriever adds them to this turn's records.
+REPLACEMENT_PACKAGE_FEE_NOTE = """
+
+THE COST SECTION, FOR THIS REPLACEMENT: the helper being replaced was placed by
+us less than 6 months ago, so this replacement falls under the package she came
+with, which includes 2 replacements within 6 months. Quote the REPLACEMENT AND
+DOCUMENTATION FEE the records above give for that package, and say the
+insurance and the third-party processing fees are charged again on the
+replacement. The helper being replaced is from: {nationality}. If the records
+give the fee for more than one nationality, or for both a new hire and a
+transfer helper, and you cannot tell which applies to her, give each figure
+labelled (for example "$238 for a Filipino new hire, $288 for a transfer
+helper") - never pick one and never add them up. Never quote a new hire's or a
+transfer's AGENCY fee as the price of a replacement. Then say our agent will
+confirm which applies. This replaces the instruction to defer the fee.
 """
 
 
