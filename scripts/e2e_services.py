@@ -114,6 +114,9 @@ ANSWERS = {
     "nationality": "Filipino",
     "religion": "I am Catholic",
     "leave_dates": "she wants to go in December for three weeks",
+    # home_leave asks the reason since 2026-10-08; without an answer here the
+    # run reported it as a field the harness "does not know".
+    "leave_reason": "it is her regular yearly home leave",
     "passport_expiry": "in 4 months",
     "insurance_need": "for my helper",
     "policy_expiry": "next month",
@@ -359,20 +362,19 @@ def grade(result: dict) -> list[tuple[str, bool, str]]:
     if service == "renewal":
         add("three questions, no more (2026-09-09)",
             len(result["collected"]) <= 4, str(sorted(result["collected"])))
-        # The overview turn is deterministic; whether the MODEL uses what it
-        # is given is not. It produces the sentence on roughly two runs in
-        # four, and when it does not the client gets the plain question, which
-        # is what they got on every run before this was fixed. So the check
-        # is on the half we control - that the turn fires at all - and the
-        # model's use of it is reported rather than graded, because a check
-        # that fails half the time on correct code is noise.
-        overview_turn = ico.briefs_on_this_turn("renewal", {"f": 1})
-        add("the overview turn happens at all (_SMALL_TICKET_SERVICES)",
-            overview_turn)
-        said_it = _carries_an_overview(every[1] if len(every) > 1 else "")
-        print(f"    note  the overview sentence "
-              f"{'appeared' if said_it else 'did NOT appear'} this run "
-              f"(model-dependent, roughly 2 runs in 4)")
+        # Renewal has been in BRIEFING_AFTER since 2026-09-17, and a service
+        # that briefs at the END never also gets the opening overview
+        # (prompt.md entry 21). This used to assert the overview turn fires,
+        # which became false by design and failed on every run. The checks
+        # are now the closing briefing instead: the deterministic half (no
+        # overview turn) and what the closing message must carry.
+        add("no opening overview - it briefs at the end (prompt.md 21)",
+            not ico.briefs_on_this_turn("renewal", {"f": 1}))
+        add("the briefing is the CLOSING message (BRIEFING_AFTER)",
+            "work permit" in last.lower() and len(last) > 300, f"{len(last)} chars")
+        add("timeline and cost are both there",
+            any(w in last.lower() for w in ("day", "week", "month"))
+            and ("$" in last or "agent will confirm" in last.lower()))
 
     if service == "home_leave":
         add("asks which country she is from (2026-09-08)",
