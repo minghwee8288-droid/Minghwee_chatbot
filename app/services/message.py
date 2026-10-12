@@ -86,6 +86,28 @@ def _body_key(phone: str | None, body: str | None) -> tuple[str, str]:
     return (digits_only(phone or ""), " ".join((body or "").split()).lower())
 
 
+# The last reply we sent each number, newest last, for the smart debounce: an
+# answer to a question we just asked is complete even when it is one word
+# (webhook.debounce_delay). In memory, like the rest of this module's caches:
+# after a restart nothing is remembered and the ordinary rule applies.
+_LAST_BOT_REPLY: "OrderedDict[str, str]" = OrderedDict()
+_LAST_BOT_REPLY_MAX = 2000
+
+
+def remember_bot_reply(phone: str | None, body: str | None) -> None:
+    key = digits_only(phone or "")
+    if not key or not body:
+        return
+    _LAST_BOT_REPLY[key] = body
+    _LAST_BOT_REPLY.move_to_end(key)
+    while len(_LAST_BOT_REPLY) > _LAST_BOT_REPLY_MAX:
+        _LAST_BOT_REPLY.popitem(last=False)
+
+
+def last_bot_reply(phone: str | None) -> str:
+    return _LAST_BOT_REPLY.get(digits_only(phone or ""), "")
+
+
 def mark_body_sent_by_bot(phone: str | None, body: str | None) -> None:
     """Record what we are about to say, before we say it."""
     key = _body_key(phone, body)
@@ -446,6 +468,7 @@ async def send_bot_reply(conversation: dict[str, Any], body: str) -> dict[str, A
 
     message_id = whapi.extract_message_id(response)
     mark_sent_by_bot(message_id)
+    remember_bot_reply(phone, body)
     row = await _insert_ignoring_duplicates(
         {
             "conversation_id": conversation_id,

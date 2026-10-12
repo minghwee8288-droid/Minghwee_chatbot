@@ -21,7 +21,12 @@ from fastapi import APIRouter, BackgroundTasks, Request, Response, status
 from app import timing
 from app.config import settings
 from app.graph.graph import run_turn
-from app.graph.guards import near_duplicate, recent_bot_lines
+from app.graph.guards import (
+    answering_our_question,
+    greeting_only,
+    near_duplicate,
+    recent_bot_lines,
+)
 from app.graph.nodes.handover_executor import ASSAULT_FALLBACK_REPLY
 from app.graph.nodes.intent_classifier import confirm_harm, matches_assault_keywords
 from app.services import assignment as assignment_service
@@ -1277,8 +1282,35 @@ def looks_complete(message: IncomingMessage) -> bool:
     return text.rstrip().endswith("?") or len(text.split()) >= _COMPLETE_MIN_WORDS
 
 
+# A reply that trails off is still being typed, even as an answer: "Filipino,"
+# / "my mum and" / "yes but..." are the start of a longer thought.
+_TRAILS_OFF = re.compile(r"(?:,|\b(?:and|or|but|also)|\u2026|\.\.\.)\s*$", re.IGNORECASE)
+
+
+def answers_our_question(message: IncomingMessage) -> bool:
+    """A reply to the question our last message asked (2026-10-12, Step 1c).
+
+    The base rule gave the short wait to only 30% of the e2e client's messages,
+    because an answer to our own question is usually short - "Filipino",
+    "condo", "5 people" - and short reads as unfinished. When we have just
+    asked something, a short reply IS the whole answer. Two exceptions keep the
+    full wait: a bare greeting, and a reply that trails off (_TRAILS_OFF).
+    Uses guards.answering_our_question, the graph's own test, on our last reply
+    flattened to one line (the question usually closes a multi-line message).
+    """
+    if not settings.debounce_after_our_question:
+        return False
+    body = (message.body or "").strip()
+    previous = message_service.last_bot_reply(message.customer_number)
+    if not body or not previous or greeting_only(body) or _TRAILS_OFF.search(body):
+        return False
+    return answering_our_question("You: " + " ".join(previous.split()), body)
+
+
 def debounce_delay(message: IncomingMessage) -> float:
-    if settings.smart_debounce and looks_complete(message):
+    if settings.smart_debounce and (
+        looks_complete(message) or answers_our_question(message)
+    ):
         return settings.debounce_short_seconds
     return settings.debounce_seconds
 

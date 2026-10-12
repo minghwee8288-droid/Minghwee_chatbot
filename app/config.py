@@ -148,6 +148,10 @@ class Settings(BaseSettings):
     # the LAST message decides which wait applies. False = always the full wait.
     smart_debounce: bool = True
     debounce_short_seconds: float = 2.5
+    # ...and a reply to the question our last message asked counts as complete
+    # however short, unless it is a bare greeting or trails off (",", "and",
+    # "or", "but", "also", "..."). False = the rule above only.
+    debounce_after_our_question: bool = True
 
     # "typing..." shown from the moment a message passes the gates, refreshed
     # until the reply goes out (app/whapi/typing.py). False switches it off.

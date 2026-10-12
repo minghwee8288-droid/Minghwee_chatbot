@@ -2583,7 +2583,12 @@ async def _timing_checks() -> list[tuple[str, bool]]:
              patch.object(_wh.conversation_service, "touch_inbound", new=none), \
              patch.object(_wh, "_schedule_read_receipt", new=lambda *a: None), \
              patch.object(_wh, "_should_identify", new=lambda *a: False), \
-             patch.object(_wh, "_already_processed", new=lambda *a: False),              patch.object(_wh.debouncer, "add", new=none):
+             patch.object(_wh, "_already_processed", new=lambda *a: False), \
+             patch.object(_wh.typing_indicator, "start", new=none), \
+             patch.object(_wh.debouncer, "add", new=none):
+            # typing_indicator.start is stubbed: unstubbed it read production
+            # and sent a REAL Whapi presence to this test's number on every
+            # run (found 2026-10-12 via a flaky check it disturbed).
             _timing._received.pop(message.whapi_message_id, None)
             await _wh.handle_inbound(message)
 
@@ -2714,6 +2719,9 @@ async def _step1b_checks() -> list[tuple[str, bool]]:
 
     results: list[tuple[str, bool]] = []
 
+    async def send_text_1c(to, body, typing_time=0):
+        return {"message": {"id": "out-1c"}}
+
     def msg(body, mid="m1", kind="text", transcript=None):
         m = IncomingMessage(
             whapi_message_id=mid, chat_id="", customer_number="+6590000124",
@@ -2772,12 +2780,18 @@ async def _step1b_checks() -> list[tuple[str, bool]]:
          patch.object(_settings, "typing_refresh_seconds", 0.02):
         _typing._keepers["+6590000124"] = asyncio.create_task(
             _typing._keep_alive("+6590000124"))
-        await asyncio.sleep(0.01)
+        # Wait for the first "typing" rather than a fixed 10 ms: under load the
+        # task can start late (flaked 1 run in 6 with a fixed sleep).
+        for _ in range(100):
+            if presences:
+                break
+            await asyncio.sleep(0.01)
         await _typing.stop("+6590000124", clear=False)
-        await asyncio.sleep(0.05)
+        at_stop = list(presences)
+        await asyncio.sleep(0.1)   # five refresh intervals
     results.append(("typing: a sent reply stops it without a 'pause'",
-                    "pause" not in presences and not _typing.active("+6590000124")
-                    and presences.count("typing") == 1))
+                    at_stop[:1] == ["typing"] and presences == at_stop
+                    and not _typing.active("+6590000124")))
 
     # A turn that finished while start() was still deciding never shows it.
     async def slow_topics(*a, **k):
@@ -2810,6 +2824,7 @@ async def _step1b_checks() -> list[tuple[str, bool]]:
          patch.object(_wh, "emergency_override", new=AsyncMock(return_value=False)), \
          patch.object(_wh, "acknowledge_direct_address", new=AsyncMock()), \
          patch.object(_wh, "_already_processed", new=lambda *a: False), \
+         patch.object(_settings, "typing_indicator", True), \
          patch.object(_wh.typing_indicator, "start", new=record_start), \
          patch.object(_wh.debouncer, "add", new=AsyncMock()):
         await _wh.handle_inbound(msg("I need a helper please", mid="agent-1"))
@@ -2828,6 +2843,7 @@ async def _step1b_checks() -> list[tuple[str, bool]]:
          patch.object(_wh, "_schedule_read_receipt", new=lambda *a: None), \
          patch.object(_wh, "_should_identify", new=lambda *a: False), \
          patch.object(_wh, "_already_processed", new=lambda *a: False), \
+         patch.object(_settings, "typing_indicator", True), \
          patch.object(_wh.typing_indicator, "start", new=record_start), \
          patch.object(_wh.debouncer, "add", new=AsyncMock()):
         await _wh.handle_inbound(msg("I need a helper please", mid="gate-1"))
@@ -2870,6 +2886,38 @@ async def _step1b_checks() -> list[tuple[str, bool]]:
          patch.object(_settings, "debounce_seconds", 6.0):
         results.append(("debounce: SMART_DEBOUNCE off -> always the full wait",
                         _wh.debounce_delay(complete[0]) == 6.0))
+
+    # Step 1c: a short answer to the question we just asked is complete.
+    asked = "Thanks, Vaidik.\nWhich country is she from?"
+    said = "Thanks, we have noted her country."
+    answers = [msg("Filipino"), msg("condo"), msg("5 people"), msg("yes")]
+    trailing = [msg("Filipino,"), msg("my mum and"), msg("yes but"),
+                msg("also"), msg("not sure or"), msg("well…"), msg("hmm...")]
+    with patch.object(_settings, "smart_debounce", True), \
+         patch.object(_settings, "debounce_seconds", 6.0), \
+         patch.object(_settings, "debounce_short_seconds", 2.5):
+        _msg._LAST_BOT_REPLY.clear()
+        with patch.object(_msg.whapi, "send_text", new=send_text_1c), \
+             patch.object(_msg, "_insert_ignoring_duplicates", new=AsyncMock()), \
+             patch.object(_msg.conversation_service, "touch_outbound", new=AsyncMock()):
+            await _msg.send_bot_reply({"id": 77, "customer_number": "6590000124"}, asked)
+        results.append(("debounce: the reply we sent is what is remembered",
+                        _msg.last_bot_reply("+6590000124") == asked))
+        results.append(("debounce: a short answer to our question gets the short wait",
+                        all(_wh.debounce_delay(m) == 2.5 for m in answers)))
+        results.append(("debounce: a bare greeting after our question waits in full",
+                        _wh.debounce_delay(msg("hi")) == 6.0
+                        and _wh.debounce_delay(msg("Hello 👋")) == 6.0))
+        results.append(("debounce: a reply that trails off waits in full",
+                        all(_wh.debounce_delay(m) == 6.0 for m in trailing)))
+        _msg.remember_bot_reply("6590000124", said)
+        results.append(("debounce: after a statement, a short reply still waits in full",
+                        _wh.debounce_delay(msg("Filipino")) == 6.0))
+        _msg.remember_bot_reply("6590000124", asked)
+        with patch.object(_settings, "debounce_after_our_question", False):
+            results.append(("debounce: DEBOUNCE_AFTER_OUR_QUESTION off -> full wait",
+                            _wh.debounce_delay(msg("Filipino")) == 6.0))
+        _msg._LAST_BOT_REPLY.clear()
 
     async def burst(messages, gaps, delay_for):
         flushed: list[tuple[float, int]] = []
@@ -3647,11 +3695,46 @@ async def _pass(rules):
     return results
 
 
+def _refuse_real_whapi() -> list[str]:
+    """Refuse - and record - any real HTTP request to Whapi for the whole run.
+
+    Every Whapi call here is meant to be stubbed. One was not (the typing
+    indicator spawned by the real handle_inbound) and it sent a real presence
+    request on every run, unseen until it disturbed another check. Guarded at
+    httpx itself so a call nobody thought to stub is caught, not just the ones
+    a test knows about; other hosts pass through untouched.
+    """
+    import httpx as _httpx
+    from urllib.parse import urlparse
+
+    from app.config import settings as _settings
+
+    whapi_host = urlparse(_settings.whapi_base_url).hostname or "gate.whapi.cloud"
+    seen: list[str] = []
+    original = _httpx.AsyncClient.send
+
+    async def guarded(self, request, *args, **kwargs):
+        if request.url.host == whapi_host:
+            seen.append(f"{request.method} {request.url.path}")
+            raise _httpx.ConnectError("smoke_nodes: real Whapi request refused",
+                                      request=request)
+        return await original(self, request, *args, **kwargs)
+
+    _httpx.AsyncClient.send = guarded
+    return seen
+
+
 async def main() -> int:
     from dataclasses import replace
 
     from app.services import kb_rules
 
+    real_whapi = _refuse_real_whapi()
+    # Off for the whole run; the typing checks switch it on for themselves. Left
+    # on, every check that drives the real handle_inbound - several, with real
+    # allowlisted numbers - started a real indicator (2026-10-12).
+    from app.config import settings as _settings
+    _settings.typing_indicator = False
     failures = 0
     for label, ok in await _lid_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  webhook  {label:44}")
@@ -3688,6 +3771,11 @@ async def main() -> int:
     ok = bool(changed)
     print(f"  {'PASS' if ok else 'FAIL'}  rules  a wrong rule (direct_hiring stated) is "
           f"SEEN by the comparison: {len(changed)} state(s) changed {changed[:3]}")
+    failures += not ok
+
+    ok = not real_whapi
+    print(f"  {'PASS' if ok else 'FAIL'}  safety  no real Whapi request was made "
+          f"by any check {real_whapi[:3] if real_whapi else ''}")
     failures += not ok
 
     print("\nALL PASS" if not failures else f"\n{failures} FAILED")

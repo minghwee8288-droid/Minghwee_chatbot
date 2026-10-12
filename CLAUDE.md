@@ -486,7 +486,7 @@ because the lead is opened early and the ticket is created much later.
 | The loader never overwrites the KB Admin UI | `load_service_notes._ui_owned` + `metadata.managed_by` | Every row is `loader` or `ui`. All four write paths (ROWS, UPDATES, TEXT_REPLACEMENTS, RETIRED) skip and report a `ui` row — without it the first loader run after the UI went live would silently undo the client's edits, because three of the four find their targets by searching. Proved by RUNNING the loader against a stub DB holding one, in `selfcheck_kb_prep.py`. |
 | Nobody without the preview key learns anything from the preview route | `main.create_app` + `admin.require_preview_key` + `selfcheck_kb_prep.py` | No secret: the route is not registered (404, absent from the schema). With one, the key is a route dependency and the body is NOT a declared parameter - FastAPI decodes a declared body before dependencies, so malformed JSON answered 422 to anyone. 422 is now only ever seen by a key holder. Rate-limited, one at a time, 32 KB cap. Proved over HTTP, eight faults injected, eight red. |
 | "typing..." is shown only where a reply is coming, and never outlives the turn | `app/whapi/typing.py` + `webhook` (`handle_inbound` start, stop after send and in `process_batch`'s `finally`) | Started only past every gate, and not for a message `needs_no_reply` would leave unanswered or a chat with a parked topic. A late start (the turn finished while it was still deciding) is refused, so it cannot reappear after the reply. Best effort throughout: a presence call never delays or fails a turn. |
-| A client who has finished does not wait the full debounce | `webhook.debounce_delay` / `looks_complete` + `MessageDebouncer(delay_for=)` | "?", 6+ words or a transcribed voice note -> `DEBOUNCE_SHORT_SECONDS`; a greeting, a fragment or bare media -> `DEBOUNCE_SECONDS`. The newest message decides and every message restarts the timer, so "hi" / "I need" / a full sentence is still one reply. |
+| A client who has finished does not wait the full debounce | `webhook.debounce_delay` / `looks_complete` + `MessageDebouncer(delay_for=)` | "?", 6+ words or a transcribed voice note -> `DEBOUNCE_SHORT_SECONDS`; a greeting, a fragment or bare media -> `DEBOUNCE_SECONDS`. The newest message decides and every message restarts the timer, so "hi" / "I need" / a full sentence is still one reply. A short answer to our own question ("Filipino") is complete too, unless it is a greeting or trails off. |
 | A stuck LLM call is cut, retried once, and never retried a third time | `llm.LLM_TIMEOUTS` + `_invoke_with_timeout` | Limits several times the measured p90 per purpose; the client's own retries are off under them; a 400-class error is not retried. |
 | The timing line never costs a reply and never carries a client's words | `app/timing.py` + `smoke_nodes.py` (`_timing_checks`) | Every entry point swallows its own errors, the line holds the conversation id, durations and TABLE names only, and `TURN_TIMING_LOG=false` makes every hook return at once. Asserted through the real `_process_locked`, `handle_inbound` and `send_bot_reply` with I/O stubbed; eight faults injected, eight red. |
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
@@ -695,6 +695,11 @@ Easy to get wrong:
   - `SMART_DEBOUNCE` (true) + `DEBOUNCE_SHORT_SECONDS` (2.5) — a message that
     ends with "?", has 6+ words or is a transcribed voice note waits the short
     time; anything else waits `DEBOUNCE_SECONDS` (6 on the server now).
+  - `DEBOUNCE_AFTER_OUR_QUESTION` (true) — a reply to the question our last
+    message asked also gets the short wait, however short, unless it is a bare
+    greeting or trails off ("," / and / or / but / also / "..."). Our last reply
+    per number is held in memory (`message.last_bot_reply`), so after a restart
+    the rule above applies until we have sent something.
   - `TYPING_INDICATOR` (true), `TYPING_REFRESH_SECONDS` (20),
     `TYPING_MAX_SECONDS` (120) — `app/whapi/typing.py`.
   - `SHORT_SEND_TYPING` (true) + `SEND_TYPING_SECONDS` (0.5) — how long Whapi
@@ -1497,6 +1502,25 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-12** - **A short answer to our own question no longer waits the full
+  debounce** (Step 1c, `DEBOUNCE_AFTER_OUR_QUESTION`). Step 1b's rule gave the
+  short wait to only 30% of the e2e client's messages, because the commonest
+  reply - an answer to the question we just asked - is short ("Filipino",
+  "condo", "5 people"). When our last reply asked something, any reply is
+  complete except a bare greeting or one that trails off ("Filipino," / "my mum
+  and" / "yes but..."). Tested with `guards.answering_our_question`, the graph's
+  own definition, on our last reply flattened to one line. Six checks, six
+  faults red.
+  **And a smoke-test defect, found because it made a check flaky:** since Step 1b
+  every check that drives the real `handle_inbound` also spawned the real typing
+  indicator, which read production and sent a REAL Whapi presence ("typing") to
+  that check's number - two of them real allowlisted testers' numbers - on every
+  run, about forty runs. No message was sent, only the indicator, for as long as
+  the test process lived. `smoke_nodes.py` now switches the indicator off for the
+  run (the typing checks switch it on for themselves) and refuses any real
+  request to the Whapi host at the httpx level, with a check that none was made;
+  deleting the switch-off turns that check red. `smoke_nodes.py` is **284 checks**.
 
 - **2026-10-12** - **Five changes to the wait, each behind its own switch** (§7).
   (A) **"typing..." from the moment a message is accepted** (`app/whapi/typing.py`,
