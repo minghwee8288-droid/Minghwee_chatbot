@@ -194,6 +194,10 @@ async def run_service(
         **(extra_state or {}),
     }
     transcript: list[tuple[str, str]] = []
+    # Which field each reply was asking, turn for turn (None when it asked
+    # nothing identifiable), so a check can grade a question against its own
+    # field - see reason_overlap.
+    asked_keys: list[str | None] = []
     said = opener
     unscripted: list[str] = []
 
@@ -225,6 +229,7 @@ async def run_service(
 
         field = _asked_field(before, state.get("asked_field_counts"),
                              state.get("collected_info"))
+        asked_keys.append(field)
         if field is None:
             # It asked nothing we can identify — answer neutrally and move on.
             said = "ok"
@@ -243,7 +248,69 @@ async def run_service(
         "turns": len(transcript),
         "unscripted": unscripted,
         "service_type": state.get("service_type"),
+        "asked_keys": asked_keys,
     }
+
+
+# Words too common to show that a reply carries the REASON for a question.
+_REASON_STOPWORDS = frozenset(
+    "that this with what your they them their there have from will would "
+    "before after about which where when while since every also into only "
+    "some such just more most each than then were been being does should "
+    "could".split()
+)
+
+
+def _reason_words(text: str) -> set[str]:
+    """Content words, cut to five letters so expectation/expectations match."""
+    return {
+        word[:5]
+        for word in re.findall(r"[a-z]+", text.lower())
+        if len(word) >= 4 and word not in _REASON_STOPWORDS
+    }
+
+
+def reason_overlap(field_key: str, reply: str) -> set[str]:
+    """Words of a field's _WHY_WE_ASK reason that the reply also uses.
+
+    Words of the field's own written question and label are removed first, so
+    the question alone can never count as giving the reason.
+
+    This replaced a fixed phrase list ("we ask", "so we", "so that we", "helps
+    us") on 2026-10-12. The 2026-09-22 register rule tells the model to name
+    what we DO with an answer, which is not those phrases, so a reply that gave
+    every reason ("To set clear expectations with her before she accepts...")
+    failed, and run to run the check passed or failed by luck. Grading against
+    the field's own reason measures what the rule asks for.
+    """
+    return reason_distinctive_words(field_key) & _reason_words(reply)
+
+
+def reason_distinctive_words(field_key: str) -> set[str]:
+    """The reason's content words minus those of the field's question and label."""
+    reason = ico._WHY_WE_ASK.get(field_key, "")
+    field = next(
+        (f for flist in ticket_service.SERVICE_FIELDS.values() for f in flist
+         if f.key == field_key),
+        None,
+    )
+    asked_words = _reason_words(
+        f"{getattr(field, 'question', '')} {getattr(field, 'label', '')}"
+    )
+    return _reason_words(reason) - asked_words
+
+
+# How many words of the reason a reply must share to count as giving it: two,
+# or one when the reason has only three distinctive words left once the
+# question's own are removed. Measured 2026-10-12: with the reasons removed from
+# the prompt every field scored 0; with them, every field scored 2 or more
+# except additional_notes, whose reason has three distinctive words and which
+# scored 1 on "...agreed with the helper beforehand".
+REASON_MIN_OVERLAP = 2
+
+
+def reason_needed(field_key: str) -> int:
+    return 1 if len(reason_distinctive_words(field_key)) <= 3 else REASON_MIN_OVERLAP
 
 
 def _carries_an_overview(message: str) -> bool:
@@ -388,9 +455,18 @@ def grade(result: dict) -> list[tuple[str, bool, str]]:
         # what _COLLECTION_PURPOSE exists to make it say.
         add("says WHY it is about to ask a lot (_COLLECTION_PURPOSE)",
             any(w in first.lower() for w in _PURPOSE_WORDS), first[:90])
+        # Every asked field that has a _WHY_WE_ASK reason must carry it,
+        # graded against that field's own reason (see reason_overlap).
+        reasoned = [
+            (key, reply) for key, reply in zip(result.get("asked_keys", []), every)
+            if key in ico._WHY_WE_ASK
+        ]
+        bare = [key for key, reply in reasoned
+                if len(reason_overlap(key, reply)) < reason_needed(key)]
         add("the intrusive questions explain themselves (_WHY_WE_ASK)",
-            any(w in joined.lower() for w in
-                ("we ask", "so we", "so that we", "helps us")))
+            bool(reasoned) and not bare,
+            f"no reason given for: {', '.join(bare)}" if bare
+            else ("none of them was asked" if not reasoned else ""))
 
     if service == "transfer_employer":
         # The direction has to be ESTABLISHED before the branch opens - not
