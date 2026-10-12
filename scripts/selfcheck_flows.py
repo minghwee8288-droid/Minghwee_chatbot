@@ -340,6 +340,33 @@ def _overview_retrieval_has_medical() -> bool:
     return any(m.get("id") == "med" for m in out.get("rag_matches") or [])
 
 
+def _followup_records(incoming, intent="general_question") -> list[str]:
+    """Run rag_retriever on conversation 4443's follow-up with the search
+    stubbed: only a query that carries her previous message finds the rights
+    row, as live (the follow-up alone matched nothing)."""
+    import asyncio
+
+    async def fake_search(query, **kw):
+        if "know my rights" in query:
+            return [{"id": "rights", "question": "What are my rights?", "similarity": 0.56}]
+        return []
+
+    real = rr.rag.search
+    rr.rag.search = fake_search
+    try:
+        out = asyncio.run(rr.rag_retriever({
+            "intent": intent, "contact_type": "candidate",
+            "detected_contact_type": "candidate",
+            "history_text": "Client: hello\nYou: Hi, I'm Claire. How can I help you?\n"
+                            "Client: i am helper i want to know my rights\n"
+                            "You: I've passed this to our team.",
+            "incoming_text": incoming,
+        }))
+    finally:
+        rr.rag.search = real
+    return [m.get("id") for m in out.get("rag_matches") or []]
+
+
 _ic = importlib.import_module("app.graph.nodes.info_collector")
 
 
@@ -5063,6 +5090,31 @@ rows = [
   sorted(rr.ENQUIRY_OVERVIEW_EXTRA_QUERIES), ["direct_hiring"]),
  ("...and the retriever actually RUNS it: the medical row reaches the overview's records",
   _overview_retrieval_has_medical(), True),
+ # 2026-10-12, conversation 4443: "i am helper i want to know my rights" was
+ # turned into a registration, searched as "(candidate registration)" and
+ # handed to a live agent; her follow-up matched nothing at all.
+ ("a helper asking a QUESTION is not made a job seeker for saying who she is",
+  ic._is_jobseeker("i am helper i want to know my rights", "general_question"), False),
+ ("...but 'i am a helper' with nothing else asked still registers her",
+  [m for m in ("i am a helper", "i am a maid") if not ic._is_jobseeker(m, "other")], []),
+ ("...and asking for work outright is a job seeker whatever the model said",
+  ic._is_jobseeker("i am a helper and i need a job", "general_question"), True),
+ ("...and 'i am a helper' reads her as a helper, so retrieval uses her shelf",
+  ic._detected_contact_type("general_question", None, "i am helper i want to know my rights"),
+  "candidate"),
+ ("...while 'i am a helper's employer' is not her speaking",
+  bool(ic._JOBSEEKER_SELF_ID.search("i am a helper's employer")), False),
+ ("the helper-rights summary row exists, for her side of the desk only",
+  [(r["contact_type"], r["service_type"]) for r in lsn.ROWS
+   if r["question"] == "What are my rights as a domestic helper in Singapore?"],
+  [("candidate", "general")]),
+ ("a follow-up pointing back at her previous question searches WITH it",
+  _followup_records("But you have that in your knowledge base so please provide me with the rights to that"),
+  ["rights"]),
+ ("...but a follow-up that points at nothing is searched on its own",
+  _followup_records("what about salary"), []),
+ ("...and never on a greeting",
+  _followup_records("thanks for that", intent="greeting"), []),
  # 2026-10-08: one salesperson per client conversation, and the portal inbox
  # shows the same person - without ever taking a chat off someone the portal
  # team assigned by hand.

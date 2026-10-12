@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 from app.config import settings
-from app.graph.guards import asks_about_price, last_bot_line
+from app.graph.guards import asks_about_price, last_bot_line, last_client_line
 from app.services import kb_rules
 from app.graph.nodes.info_collector import (
     briefs_on_this_turn,
@@ -18,6 +18,7 @@ from app.graph.nodes.info_collector import (
 )
 from app.graph.state import (
     AGENCY_INFO_INTENT,
+    KB_QUESTION_INTENTS,
     ConversationState,
     effective_contact_type,
 )
@@ -27,6 +28,9 @@ from app.services import ticket as ticket_service
 from app.services.lead import EMPLOYER_LEAD_SERVICES, nationality_code, nationality_in_play
 
 logger = logging.getLogger(__name__)
+
+# A message that points back at something said before it - see rag_retriever.
+_REFERS_BACK = re.compile(r"\b(?:that|this|those|these|it|them)\b", re.IGNORECASE)
 
 # Flows only an employer runs - see _retrieval_audience.
 _EMPLOYER_ONLY_FLOWS = (EMPLOYER_LEAD_SERVICES - {"fee_enquiry", "salary_enquiry"}) | {
@@ -824,6 +828,38 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
                 wider_best,
             )
             matches, best = wider, wider_best
+
+    # A follow-up whose subject is in the client's previous message. Live
+    # 2026-10-12, conversation 4443: "i am helper i want to know my rights" was
+    # followed by "But you have that in your knowledge base so please provide
+    # me with the rights to that", which on its own matches NOTHING (0.000) and
+    # raised a ticket. Only when this message found nothing above the floor,
+    # only for a question, and only when it points back ("that", "it"...); the
+    # same filters, and the joined result is kept only if it scores better.
+    incoming = state.get("incoming_text") or ""
+    if (
+        best < settings.rag_soft_floor
+        and not briefing
+        and state.get("intent") in (KB_QUESTION_INTENTS | {"other"})
+        and _REFERS_BACK.search(incoming)
+    ):
+        previous = last_client_line(state.get("history_text") or "")
+        if previous:
+            joined = await rag.search(
+                f"{previous}\n{incoming}",
+                service_type=service,
+                contact_type=contact,
+                nationality=nationality,
+            )
+            joined_best = rag.best_similarity(joined)
+            if joined_best > best:
+                logger.info(
+                    "Follow-up scored %.3f on its own; with the previous message %.3f "
+                    "- using the joined result",
+                    best,
+                    joined_best,
+                )
+                matches, best = joined, joined_best
 
     return {
         "rag_matches": matches,

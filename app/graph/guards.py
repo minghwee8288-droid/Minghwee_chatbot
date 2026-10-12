@@ -514,6 +514,14 @@ def last_bot_line(history_text: str) -> str:
     return lines[0] if lines else ""
 
 
+def last_client_line(history_text: str) -> str:
+    """The client's most recent message before this turn (history excludes it)."""
+    for line in reversed((history_text or "").splitlines()):
+        if line.startswith("Client:"):
+            return line[7:].strip()
+    return ""
+
+
 def recent_bot_lines(history_text: str, count: int = 3) -> list[str]:
     """The bot's last few messages, most recent first."""
     found: list[str] = []

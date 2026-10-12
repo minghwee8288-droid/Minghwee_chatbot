@@ -2084,6 +2084,34 @@ ROWS += [
             "it with you properly."
         ),
     },
+    # Live 2026-10-12, conversation 4443: "i am helper i want to know my
+    # rights" was handed to a live agent. The rights are all in the knowledge
+    # base, one per row (27.1 salary, 27.2 rest day, 27.3 passport, 27.4 food,
+    # 27.5 room, 27.6 phone, 27.9 transfer, 27.10, Section E), and NO row
+    # answers the question as a whole: "what are my rights" scored 0.396 on
+    # its best row, under the floor. This row restates their facts and adds
+    # none - each line below is in one of those rows.
+    {
+        "service_type": "general",
+        "contact_type": "candidate",
+        "nationality": "all",
+        "section_heading": "Helper - your rights in Singapore",
+        "question": "What are my rights as a domestic helper in Singapore?",
+        "answer": (
+            "Your main rights are: your full salary every month, by the date "
+            "in your contract; one rest day every week, and at least one real "
+            "day off every month that cannot be swapped for money; keeping "
+            "your own passport; enough food, three meals a day, that you can "
+            "eat; a proper place to sleep with privacy and at least 7 hours of "
+            "sleep at night; your own phone and contact with your family; and "
+            "fair treatment - no one may hit, threaten, abuse or touch you. "
+            "You can also ask to transfer to a new employer if it really "
+            "cannot work. If something is wrong, talk to your employer first, "
+            "then WhatsApp Ming Hwee at +65 6534 2277 and we will help you. "
+            "MOM can also help, on 1800-339-5505. In an emergency call the "
+            "police on 999 or an ambulance on 995."
+        ),
+    },
 ]
 
 

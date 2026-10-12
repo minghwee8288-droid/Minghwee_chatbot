@@ -502,6 +502,8 @@ because the lead is opened early and the ticket is created much later.
 | A helper's details are known in full and can be asked about | `webhook.merge_known_helpers` + `system.known_helpers_line` (response_generator only) | One entry per name, details merged across tickets: a renewal ticket, which never asks nationality, hid "Filipino" from her direct-hire ticket. Kept off the collector's prompt: it cost the closing briefing its heading 2 runs of 6. |
 | A closing briefing has the service's own fee row | `rag_retriever._with_briefing_cost` / `_briefing_cost_due` | A one-row cost search on the briefing turn, same filters, for a service in `fee_stated_services` and a nationality we hold a fee for. The ten briefing rows were all process and timing, so "$695" was deferred to an agent (section 9.27's shape). |
 | A replacement is priced only inside the package period | `info_collector.replacement_package_fee_due` + `rag_retriever._with_replacement_fees` + `REPLACEMENT_PACKAGE_FEE_NOTE` | Agency's choice, 2026-10-09. A helper WE placed (record, or the client's plain yes) under 6 months ago: quote the package's replacement and documentation fee ($238 / $288 / $328 new hire, $288 transfer), labelled where the package is unknown, and lift the cost guard for that message. Anything else (outside 6 months, not ours, a tenure we cannot read) still defers. The rows are filed under new_hiring and transfer, so they are fetched separately. Every other replacement turn keeps the `replacement` filter on a money question and carries `system.REPLACEMENT_COST_BLOCK` (the rule, no figure). |
+| A helper who says who she is and asks a question is answered, not registered | `intent_classifier._is_jobseeker` (`KB_QUESTION_INTENTS`) + `_detected_contact_type` (self-ID -> candidate) | "i am helper i want to know my rights" was forced to `candidate_registration`, searched as "(candidate registration)" (employer hiring rows on top) and handed over (conversation 4443). Self-ID alone, or asking for work, still registers her. The rights summary row (`load_service_notes`, general + candidate) answers the question as a whole. |
+| A follow-up that points back is searched with the question before it | `rag_retriever` (`_REFERS_BACK` + `guards.last_client_line`) | Only when this message found nothing above the floor, only for a question (or `other`), only on "that/it/this...", same filters, kept only if better. |
 | A helper's own home leave is told her fee | `HELPER_HOME_LEAVE_BRIEFING_NOTE` / `HELPER_OWN_LEAVE_NOTE` | The fee for her nationality ($250 ID, $400 PH), with our agent going through it with her employer; never who pays. Myanmar still defers. |
 | A question that was never SENT is not counted as asked | `info_collector._undelivered_question` (`last_question`) | A reply held while the client is still typing is never delivered, but its ask was counted, so a `max_asks=1` field was filed "not provided" unseen. The next turn checks the transcript and records -1 (the counts are summed). |
 | Resolving one ticket does not close a conversation with others open | `portal-ui/.../TicketDetailDrawer.jsx` | A `resolved` conversation is a finished one: the bot starts a fresh thread on the next message and forgets everything collected. |
@@ -1502,6 +1504,36 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-12** - **"i am helper i want to know my rights" was handed to a live
+  agent.** Conversation 4443, read from the checkpoint:
+  - **The job-seeker override made her question a registration.** The model
+    called it `general_question`; "I am a helper" forced
+    `candidate_registration`. Retrieval then tagged it "(candidate registration)",
+    which puts the employer's hiring rows on top (0.540 against the helper rows'
+    0.529), and the reply handed over. Self-ID with a question intent now keeps
+    the question, and self-ID reads the sender as a candidate, so her search uses
+    her shelf. "i am a helper" alone and "i need a job" still register her.
+    "i am a helper's employer" is not her speaking.
+  - **No row answered "what are my rights" as a whole.** The facts are in nine
+    rows (27.1-27.10, Section E); the best scored 0.396. One summary row
+    (general + candidate) restates them, adding nothing. Loaded to production:
+    every column of every row exported before and after, 409 -> 410, nothing
+    else changed; a second loader run writes 0.
+  - **Her follow-up matched nothing** ("But you have that in your knowledge base
+    so please provide me with the rights to that", 0.000) and raised a ticket. A
+    question that found nothing and points back ("that", "it"...) is searched
+    again with her previous message.
+
+  **Verified:** replayed read-only through the real graph, 2 runs each: her
+  message answered with the rights both times; "can my employer keep my
+  passport" answered from its own row; both registration controls unchanged.
+  "what are my rights" from an unknown number asks whether she is a helper,
+  which is reasonable. One follow-up run of two was still handed over with the
+  records found (0.535), most likely the repeat guard on a near-identical answer;
+  with her first message answered, that follow-up no longer arises. Seven faults
+  injected, seven red.
+  `selfcheck_flows.py` is **812 assertions**; `smoke_nodes.py` is 284 checks.
 
 - **2026-10-12** - **A short answer to our own question no longer waits the full
   debounce** (Step 1c, `DEBOUNCE_AFTER_OUR_QUESTION`). Step 1b's rule gave the

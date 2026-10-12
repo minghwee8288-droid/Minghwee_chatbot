@@ -18,6 +18,7 @@ from app.graph.prompts.templates import (
 from app.graph.state import (
     ALL_INTENTS,
     CANDIDATE_INTENT,
+    KB_QUESTION_INTENTS,
     MEDIA_INTENT,
     SERVICE_INTENTS,
     TICKET_ONLY_INTENTS,
@@ -165,7 +166,8 @@ _JOBSEEKER_ASKS_FOR_WORK = re.compile(
 )
 
 _JOBSEEKER_SELF_ID = re.compile(
-    r"\bi\s*(?:'m|\s+am)\s+(?:a\s+)?(?:maid|helper|domestic\s+worker)\b",
+    # The lookahead keeps "i am a helper's employer" out: that is the employer.
+    r"\bi\s*(?:'m|\s+am)\s+(?:a\s+)?(?:maid|helper|domestic\s+worker)\b(?!\s*'s\b)",
     re.IGNORECASE,
 )
 
@@ -194,12 +196,20 @@ def _is_jobseeker(message: str, intent: str) -> bool:
     day, the model returns `candidate_registration` by itself for "i am a
     maid", "i am a helper looking for work" and "i am a maid and i need a job",
     and the override already skips an intent it has classified that way.
+
+    The same holds for a QUESTION. Live 2026-10-12, conversation 4443: "i am
+    helper i want to know my rights" was a general_question to the model and
+    this override made it candidate_registration. Retrieval then tagged it
+    "(candidate registration)", which pulls the employer's hiring rows to the
+    top (0.540 against the helper's own rows at 0.529), and she was handed to
+    a live agent for something the helper-rights rows answer. She is a helper
+    already, asking a question - not a job seeker.
     """
     if _JOBSEEKER_ASKS_FOR_WORK.search(message):
         return True
     if not _JOBSEEKER_SELF_ID.search(message):
         return False
-    return intent not in SERVICE_INTENTS
+    return intent not in SERVICE_INTENTS and intent not in KB_QUESTION_INTENTS
 
 
 # Enquiries that ride along inside a bigger service request rather than
@@ -462,6 +472,11 @@ def _detected_contact_type(intent: str, raw: Any, message: str = "") -> str | No
     # helper asking to be transferred is the half of "transfer" that the
     # fallback gets wrong, and she says so in the first person.
     if intent == "transfer" and _HELPER_SPEAKING.search(message or ""):
+        return "candidate"
+    # "I am a helper" says who is speaking whatever she goes on to ask. Kept
+    # as a QUESTION (see _is_jobseeker), her turn has no candidate intent to
+    # say so, and retrieval would search without her audience.
+    if _JOBSEEKER_SELF_ID.search(message or ""):
         return "candidate"
     value = str(raw or "").strip().lower()
     if value in _CONTACT_TYPES:
