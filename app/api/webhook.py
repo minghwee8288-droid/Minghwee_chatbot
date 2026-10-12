@@ -18,6 +18,7 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response, status
 
+from app import timing
 from app.config import settings
 from app.graph.graph import run_turn
 from app.graph.guards import near_duplicate, recent_bot_lines
@@ -653,6 +654,7 @@ async def handle_inbound(message: IncomingMessage) -> None:
         await acknowledge_direct_address(conversation, message.text_for_llm, phone)
         return
 
+    timing.mark_received(message.whapi_message_id)
     await debouncer.add(message)
 
 
@@ -881,9 +883,11 @@ async def process_batch(phone: str, messages: list[IncomingMessage]) -> None:
         for attempt in range(_MAX_PASSES):
             if not pending:
                 break
-            await _process_locked(
-                phone, pending, allow_hold=attempt < _MAX_PASSES - 1
-            )
+            # One timing line per pass that reaches the graph (app/timing.py).
+            with timing.turn(None):
+                await _process_locked(
+                    phone, pending, allow_hold=attempt < _MAX_PASSES - 1
+                )
             pending = _dedupe(await debouncer.drain(phone))
 
 
@@ -963,7 +967,18 @@ async def _process_locked(
         logger.info("Conversation %s taken over — dropping batch", conversation["id"])
         return
 
-    combined = "\n".join(m.text_for_llm for m in messages if m.text_for_llm).strip()
+    # Timing (app/timing.py): how long the client had been waiting when this
+    # pass started - since their LAST message is the debounce, since their
+    # FIRST is everything before the graph had even begun.
+    timing.note("conversation_id", conversation["id"])
+    received = timing.received_at([m.whapi_message_id for m in messages])
+    if received:
+        started_at = time.time()
+        timing.note("debounce_ms", (started_at - max(received)) * 1000)
+        timing.note("waited_before_start_ms", (started_at - min(received)) * 1000)
+    timing.note("messages", len(messages))
+
+    combined ="\n".join(m.text_for_llm for m in messages if m.text_for_llm).strip()
     if not combined:
         return
     combined = redact_nric(combined, context=f"conversation:{conversation['id']}")
@@ -1108,12 +1123,14 @@ async def _process_locked(
         "media_items": media_items,
     }
 
+    timing.phase("graph")
     try:
         result = await run_turn(thread_id, payload)
     except Exception:  # noqa: BLE001 - a broken turn must not leave the client hanging
         logger.exception("Graph execution failed for conversation %s", conversation["id"])
         await _fail_over_to_human(conversation)
         return
+    timing.phase("send")
 
     reply = (result.get("reply") or "").strip()
     if not reply:
@@ -1199,6 +1216,10 @@ async def _process_locked(
     except WhapiError:
         await _fail_over_to_human(conversation)
         return
+    timing.note("sent", True)
+    if received:
+        # The whole wait, from the client's first message to our reply leaving.
+        timing.note("client_to_reply_ms", (time.time() - min(received)) * 1000)
 
     intent_patch = {
         "intent": result.get("intent"),

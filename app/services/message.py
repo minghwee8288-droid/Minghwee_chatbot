@@ -13,6 +13,7 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Any
 
+from app import timing
 from app.config import settings
 from app.db.supabase import db
 from app.services import conversation as conversation_service
@@ -430,7 +431,9 @@ async def send_bot_reply(conversation: dict[str, Any], body: str) -> dict[str, A
     # arrive before this call returns. See _SENT_BODIES.
     mark_body_sent_by_bot(phone, body)
     try:
-        response = await whapi.send_text(phone, body, typing_time=typing_time)
+        # Includes the typing indicator Whapi holds the message for.
+        with timing.step("whapi.send"):
+            response = await whapi.send_text(phone, body, typing_time=typing_time)
     except WhapiError:
         logger.exception("Failed to deliver bot reply on conversation %s", conversation_id)
         raise

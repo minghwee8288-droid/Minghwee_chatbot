@@ -10,6 +10,7 @@ from functools import lru_cache
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from app import timing
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,8 @@ async def complete(
     # is charged to the same budget, so the headroom is added here rather than
     # every call site having to know the model is a reasoning one.
     budget = max_tokens + settings.resolved_reasoning_headroom
-    response = await get_llm(temperature, budget, json_mode).ainvoke(messages)
+    with timing.step(timing.llm_step_name() if timing.active() else ""):
+        response = await get_llm(temperature, budget, json_mode).ainvoke(messages)
     content = response.content
     if isinstance(content, list):  # some providers return content parts
         content = "".join(part.get("text", "") for part in content if isinstance(part, dict))

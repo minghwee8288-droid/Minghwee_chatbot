@@ -82,6 +82,9 @@ app/
       templates.py   (504) per-node task instructions, extraction, assault verify
   readonly.py        read-only mode for one request (POST /admin/preview): every DB
                      write and every RPC but the KB search refused, Whapi refused
+  timing.py          one TURN_TIMING JSON log line per turn: phases, LLM calls by
+                     node/purpose, DB calls by table, RAG, send. Ids and ms only
+                     (scripts/latency_report.py prints p50/p90; TURN_TIMING_LOG=false)
   api/admin.py       POST /admin/preview — the real graph on a test question, writes
                      nothing; 404 unless ADMIN_PREVIEW_SECRET is set
   services/
@@ -478,6 +481,7 @@ because the lead is opened early and the ticket is created much later.
 | A document publish never strands the imported version, and the impact check ranks as the bot does | `kb_admin_014` (`kb_admin__doc_record_baseline`, `kb_admin_match_live`) + `kb-admin/lib/retrieval.ts` + `scripts/check_rerank_parity.py` | The first publish over an imported document records its live rows (in no batch) as a superseded baseline batch - same ids, text and vectors - so the unchanged `kb_admin_doc_restore` can switch them back on; afterwards only `is_active`, `metadata` (managed_by ui, restored_by_batch) and `updated_at` differ. "Now" in the impact check is the bot's exact live search, and the TS port of `_drop_non_evidence` / `_drop_internal` / `_enforce_row_floor` / `_rerank` must match Python exactly (5,000 generated cases). Chunks are embedded as `section_heading + "\n" + content`. 009-014 are on TEST and production (2026-10-05). |
 | The loader never overwrites the KB Admin UI | `load_service_notes._ui_owned` + `metadata.managed_by` | Every row is `loader` or `ui`. All four write paths (ROWS, UPDATES, TEXT_REPLACEMENTS, RETIRED) skip and report a `ui` row — without it the first loader run after the UI went live would silently undo the client's edits, because three of the four find their targets by searching. Proved by RUNNING the loader against a stub DB holding one, in `selfcheck_kb_prep.py`. |
 | Nobody without the preview key learns anything from the preview route | `main.create_app` + `admin.require_preview_key` + `selfcheck_kb_prep.py` | No secret: the route is not registered (404, absent from the schema). With one, the key is a route dependency and the body is NOT a declared parameter - FastAPI decodes a declared body before dependencies, so malformed JSON answered 422 to anyone. 422 is now only ever seen by a key holder. Rate-limited, one at a time, 32 KB cap. Proved over HTTP, eight faults injected, eight red. |
+| The timing line never costs a reply and never carries a client's words | `app/timing.py` + `smoke_nodes.py` (`_timing_checks`) | Every entry point swallows its own errors, the line holds the conversation id, durations and TABLE names only, and `TURN_TIMING_LOG=false` makes every hook return at once. Asserted through the real `_process_locked`, `handle_inbound` and `send_bot_reply` with I/O stubbed; eight faults injected, eight red. |
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
 | Claire introduces herself in her first message, however many our TEAM sent before it | `guards.claire_has_spoken` + `message.format_history` ("Agent:") + the stage line in `build_system_prompt` | Agent messages were rendered "You:", so a thread full of them read as Claire's own and she never said who she was (conversation 26, 2026-10-07). Only a "You:" line is her. Every node's first-contact test reads the one predicate. |
 | A complaint is its own topic, raised whatever was being collected | `intent_classifier._COMPLAINT` + `ticket.COMPLAINT` | "Hi / I want to lodge a complaint" was glued to the direct-hire intake in progress and raised nothing. Keyword override like `_MISSING_HELPER`; a pay/leave `dispute_salary` the model recognised keeps its flow. While one is being taken down, what the client says next belongs to it unless they drop it ("never mind"). High priority, never merged, filed under `dispute_salary`. |
@@ -676,6 +680,9 @@ Easy to get wrong:
   ~22 s reply (measured on conversation 4551, 2026-10-08). 3 is the
   recommendation: a reply written while they are still typing is held anyway
   (`debouncer.has_pending`), so a short debounce does not split answers.
+- `TURN_TIMING_LOG` (default **true**) — write the per-turn `TURN_TIMING` line
+  (`app/timing.py`). False switches it off completely; nothing reads it but
+  `scripts/latency_report.py`.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1378,6 +1385,7 @@ python scripts/seed_case_testdata.py   # the ONLY selfcheck that writes. Creates
                                        #   a --keep run. Never touches a row it did not
                                        #   create.
 python scripts/watch_conversation.py --follow
+docker compose logs chatbot | python scripts/latency_report.py   # p50/p90 per step
 
 python scripts/unsilence_conversation.py --list       # stood-down threads the bot should own
 python scripts/unsilence_conversation.py +6591234567  # put the bot back, thread KEPT
@@ -1468,6 +1476,31 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-12** - **Each turn now logs how long every step took.** The agency's
+  complaint is the wait, and until now it had only been estimated from message
+  timestamps (2026-10-08). `app/timing.py` opens a turn around each pass of
+  `process_batch` and writes one `TURN_TIMING {...}` JSON line: the setup / graph /
+  send phases, every LLM call by node and purpose (classify, harm_check, extract,
+  reply, rewrite...), every database call by method and TABLE, `rag.embed` and
+  `rag.search`, `whapi.send`, and the client's wait (debounce, and first message
+  to reply sent). No message text, no phone number. `scripts/latency_report.py`
+  prints p50/p90 from a log. `TURN_TIMING_LOG=false` switches it off. The hooks
+  sit at the doors every call already passes through (`Database.execute`/`rpc`,
+  `llm.complete`), so a new caller is timed without touching it; the collector's
+  rewrite retry is the one call site that names itself, because it shares a
+  function with the first attempt. Ten `smoke_nodes.py` checks run the real
+  `_process_locked`, `handle_inbound` and `send_bot_reply` with I/O stubbed; eight
+  faults injected, eight red - after three were first GREEN because the test
+  stubbed out the very code it was checking (it called `mark_received` itself,
+  replaced `send_bot_reply`, and a crash was not counted as red).
+  **Baseline**, 73 turns of the seven e2e conversations, read-only against
+  production from a developer machine (so network times are not the server's):
+  graph p50 6.6 s / p90 8.7 s, setup reads p50 1.25 s. The graph is four calls in
+  series - classify 1.8 s, RAG 1.45 s (of which the embedding is 1.2 s), extract
+  1.3 s, reply 1.7 s. Not measured: the debounce (a setting) and the send (needs a
+  real send). Re-measure on the server after deploy.
+  `smoke_nodes.py` is **248 checks**.
 
 - **2026-10-12** - **`.claude/settings.json` is no longer tracked** (§9.7). It is a
   Claude Code permission allowlist, so it records whole commands, and six of them

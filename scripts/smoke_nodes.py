@@ -2495,6 +2495,192 @@ RUNNERS = {
 }
 
 
+async def _timing_checks() -> list[tuple[str, bool]]:
+    """The per-turn timing line (app/timing.py), through the real webhook turn.
+
+    Runs webhook._process_locked with the database, the graph and Whapi
+    stubbed, and reads the TURN_TIMING line it logs. What has to hold: one line
+    per turn that reached the graph, every phase and step labelled, no message
+    text and no phone number in it, nothing at all when TURN_TIMING_LOG is
+    off, and a failure inside the timing code never costs the client a reply.
+    """
+    import json as _json
+    import logging as _logging
+    import types
+    from datetime import datetime, timezone
+
+    from app import timing as _timing
+    from app.api import webhook as _wh
+    from app.config import settings as _settings
+    from app.db.supabase import db as _db
+    from app.graph import llm as _llm
+    from app.whapi.parser import IncomingMessage
+
+    phone, text = "+6590000123", "my secret words about Maria"
+    lines: list[str] = []
+
+    class _Capture(_logging.Handler):
+        def emit(self, record):
+            msg = record.getMessage()
+            if msg.startswith(_timing.LOG_PREFIX):
+                lines.append(msg)
+
+    class _FakeChat:
+        async def ainvoke(self, messages):
+            return types.SimpleNamespace(content="ok")
+
+    class _FakeQuery:
+        http_method = "GET"
+        path = "/rest/v1/cb_tickets"
+
+        def execute(self):
+            return types.SimpleNamespace(data=[], count=None)
+
+    # An LLM call made from a function that looks, to the labeller, exactly
+    # like the classifier node.
+    node_globals = {"__name__": "app.graph.nodes.intent_classifier", "_llm": _llm}
+    exec(
+        "async def intent_classifier():\n"
+        "    return await _llm.complete('system', 'user')\n",
+        node_globals,
+    )
+    classify = node_globals["intent_classifier"]
+
+    async def graph(thread_id, payload):
+        await classify()
+        await _db.execute(_FakeQuery())
+        return {"reply": "Hello, how can I help?"}
+
+    conversation = {"id": 4242, "customer_number": phone, "bot_status": "bot_active",
+                    "langgraph_thread_id": "t-4242", "contact_type": "unknown"}
+    message = IncomingMessage(
+        whapi_message_id="timing-1", chat_id="", customer_number=phone, customer_name="",
+        body=text, message_type="text", from_me=False,
+        timestamp=datetime.now(timezone.utc),
+    )
+    sent: list[str] = []
+
+    # The REAL send_bot_reply runs; only Whapi and its own writes are stubbed,
+    # so a send that is not timed inside message.py shows up here.
+    async def send_text(to, body, **kwargs):
+        sent.append(body)
+        return {"message": {"id": "out-1"}}
+
+    async def receive():
+        """The real handle_inbound, up to the debouncer, so the receipt time is
+        recorded the way production records it."""
+        none = AsyncMock(return_value=None)
+        with patch.object(_wh.conversation_service, "get_by_phone",
+                          new=AsyncMock(return_value=None)), \
+             patch.object(_wh, "may_engage", new=AsyncMock(return_value=(True, "ok"))), \
+             patch.object(_wh.conversation_service, "get_or_create",
+                          new=AsyncMock(return_value=(dict(conversation), False))), \
+             patch.object(_wh.message_service, "store_incoming", new=none), \
+             patch.object(_wh.conversation_service, "touch_inbound", new=none), \
+             patch.object(_wh, "_schedule_read_receipt", new=lambda *a: None), \
+             patch.object(_wh, "_should_identify", new=lambda *a: False), \
+             patch.object(_wh, "_already_processed", new=lambda *a: False),              patch.object(_wh.debouncer, "add", new=none):
+            _timing._received.pop(message.whapi_message_id, None)
+            await _wh.handle_inbound(message)
+
+    def stubs(run_turn=graph):
+        none = AsyncMock(return_value=None)
+        empty = AsyncMock(return_value=[])
+        return [
+            patch.object(_wh.conversation_service, "get_by_phone",
+                         new=AsyncMock(return_value=dict(conversation))),
+            patch.object(_wh.message_service, "get_history", new=empty),
+            patch.object(_wh.ticket_service, "recent_for_conversation", new=empty),
+            patch.object(_wh.lead_service, "find_by_phone", new=none),
+            patch.object(_wh.contact_service, "count_prior_hires",
+                         new=AsyncMock(return_value=0)),
+            patch.object(_wh.contact_service, "get_placed_helper", new=none),
+            patch.object(_wh.contact_service, "get_placement_helpers", new=empty),
+            patch.object(_wh.ticket_service, "helpers_on_conversation", new=empty),
+            patch.object(_wh.contact_service, "get_record_name", new=none),
+            patch.object(_wh.contact_service, "get_cases", new=empty),
+            patch.object(_wh.ticket_service, "open_topics_for_conversation", new=empty),
+            patch.object(_wh.ticket_service, "completed_topics_for_conversation",
+                         new=empty),
+            patch.object(_wh, "run_turn", new=run_turn),
+            patch.object(_wh.debouncer, "has_pending", new=AsyncMock(return_value=False)),
+            patch.object(_wh.message_service.whapi, "send_text", new=send_text),
+            patch.object(_wh.message_service, "_insert_ignoring_duplicates", new=none),
+            patch.object(_wh.message_service.conversation_service, "touch_outbound",
+                         new=none),
+            patch.object(_wh.conversation_service, "update", new=none),
+            patch.object(_llm, "get_llm", new=lambda *a, **k: _FakeChat()),
+        ]
+
+    async def one_turn(run_turn=graph):
+        lines.clear()
+        sent.clear()
+        handler = _Capture()
+        timing_logger = _logging.getLogger("app.timing")
+        level = timing_logger.level
+        timing_logger.setLevel(_logging.INFO)
+        timing_logger.addHandler(handler)
+        try:
+            from contextlib import ExitStack
+
+            with ExitStack() as stack:
+                for p in stubs(run_turn):
+                    stack.enter_context(p)
+                await receive()
+                # The same wrapper process_batch puts around each pass.
+                with _timing.turn(None):
+                    await _wh._process_locked(phone, [message], allow_hold=False)
+        finally:
+            timing_logger.removeHandler(handler)
+            timing_logger.setLevel(level)
+        return lines[:], sent[:]
+
+    results = []
+    got, out = await one_turn()
+    line = got[0] if got else ""
+    data = _json.loads(line[len(_timing.LOG_PREFIX):]) if line else {}
+    steps = data.get("steps", {})
+    results.append(("timing: one line for a turn that reached the graph",
+                    len(got) == 1 and bool(out)))
+    results.append(("timing: setup, graph and send phases all timed",
+                    set(data.get("phases", {})) >= {"setup", "graph", "send"}))
+    results.append(("timing: the LLM call is labelled by node and purpose",
+                    "llm.intent_classifier.classify" in steps))
+    results.append(("timing: the database call is labelled by table",
+                    "db.GET.cb_tickets" in steps))
+    results.append(("timing: the WhatsApp send is timed",
+                    "whapi.send" in steps))
+    results.append(("timing: the client's wait is measured (debounce + whole)",
+                    "debounce_ms" in data and "client_to_reply_ms" in data))
+    results.append(("timing: no message text and no phone number in the line",
+                    bool(line) and "secret" not in line.lower() and "Maria" not in line
+                    and "90000123" not in line and data.get("conversation_id") == 4242))
+
+    with patch.object(_settings, "turn_timing_log", False):
+        got, out = await one_turn()
+    results.append(("timing: TURN_TIMING_LOG off -> no line, reply still sent",
+                    not got and bool(out)))
+
+    # Contained means the turn neither loses its reply NOR raises: an escape
+    # here would end process_batch's loop and skip the client's next pass.
+    escaped = False
+    with patch.object(_timing, "_emit", side_effect=RuntimeError("boom")):
+        try:
+            got, out = await one_turn()
+        except Exception:  # noqa: BLE001
+            escaped, out = True, sent[:]
+    results.append(("timing: a failure in the timing code is contained",
+                    bool(out) and not escaped))
+
+    async def no_reply(thread_id, payload):
+        return {"reply": ""}
+
+    got, out = await one_turn(no_reply)
+    results.append(("timing: a turn with nothing sent still logs, without 'sent'",
+                    len(got) == 1 and '"sent"' not in got[0]))
+    return results
+
+
 async def _lid_checks() -> list[tuple[str, bool]]:
     """The webhook's LID resolution, with Whapi stubbed.
 
@@ -3128,6 +3314,9 @@ async def main() -> int:
 
     failures = 0
     for label, ok in await _lid_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  webhook  {label:44}")
+        failures += not ok
+    for label, ok in await _timing_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  webhook  {label:44}")
         failures += not ok
 

@@ -15,7 +15,7 @@ from typing import Any, Callable, TypeVar
 import httpx
 from supabase import Client, create_client
 
-from app import readonly
+from app import readonly, timing
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -102,9 +102,14 @@ class Database:
             )
             return SimpleNamespace(data=[], count=None)
         attempts = _READ_RETRIES + 1 if is_read else 1
+        step_name = (
+            f"db.{str(getattr(query, 'http_method', '?')).upper()}."
+            f"{timing.table_of(getattr(query, 'path', ''))}"
+        ) if timing.active() else ""
         for attempt in range(1, attempts + 1):
             try:
-                return await run_sync(query.execute)
+                with timing.step(step_name):
+                    return await run_sync(query.execute)
             except _DISCONNECTED as exc:
                 if attempt == attempts:
                     raise
@@ -192,7 +197,8 @@ class Database:
         if readonly.active() and function_name not in readonly.READ_RPCS:
             readonly.record("RPC", function_name)
             return None
-        result = await run_sync(lambda: self.client.rpc(function_name, params or {}).execute())
+        with timing.step(f"db.rpc.{function_name}"):
+            result = await run_sync(lambda: self.client.rpc(function_name, params or {}).execute())
         return result.data
 
     async def healthcheck(self) -> bool:

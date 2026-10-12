@@ -28,6 +28,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+from app import timing
 from app.config import settings
 from app.db.supabase import db
 from app.utils import redact_nric
@@ -97,6 +98,7 @@ def get_embedding_client() -> AsyncOpenAI:
     return AsyncOpenAI(**kwargs)
 
 
+@timing.timed("rag.embed")
 async def embed_query(text: str) -> list[float]:
     client = get_embedding_client()
     response = await client.embeddings.create(
@@ -333,6 +335,7 @@ async def _labelled_filter(
     return None if widen_when_unknown else catch_all
 
 
+@timing.timed("rag.search")
 async def search(
     query: str,
     *,

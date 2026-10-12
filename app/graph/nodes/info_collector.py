@@ -38,6 +38,7 @@ from app.graph.guards import (
     strip_repeated_opener,
     ungrounded_figures,
 )
+from app import timing
 from app.graph.llm import complete, complete_json
 from app.services import kb_rules
 from app.graph.nodes.intent_classifier import _WANTS_SERVICE, _named_service
@@ -4606,12 +4607,13 @@ async def _write(
             "Do not begin with the same words you began that message with — vary how "
             "you open, or open with nothing at all and just ask."
         )
-        retry = await complete(
-            build_system_prompt(prompt_state, extra_instructions=retry_instruction),
-            user_prompt,
-            temperature=0.6,
-            max_tokens=140,
-        )
+        with timing.purpose("rewrite"):
+            retry = await complete(
+                build_system_prompt(prompt_state, extra_instructions=retry_instruction),
+                user_prompt,
+                temperature=0.6,
+                max_tokens=140,
+            )
         retry = clamp_reply(
             strip_handover_talk(strip_meta_commentary(retry.strip().strip('"'))),
             max_sentences=2,

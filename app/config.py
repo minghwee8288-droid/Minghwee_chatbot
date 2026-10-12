@@ -141,6 +141,10 @@ class Settings(BaseSettings):
     # turns again. process_batch()'s mid-turn fold-in and the near-duplicate
     # repeat guard absorb some of that, but not a genuinely slow typist.
     debounce_seconds: float = 2.0
+    # One JSON log line per turn with how long each step took (app/timing.py,
+    # read by scripts/latency_report.py). No message text, no phone number.
+    # False switches it off entirely; nothing else depends on it.
+    turn_timing_log: bool = True
 
     # --- RAG ---
     # Calibrated against cb_knowledge_base_updated (270 chunks) with
