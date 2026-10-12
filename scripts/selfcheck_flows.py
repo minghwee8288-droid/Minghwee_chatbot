@@ -5115,6 +5115,24 @@ rows = [
   _followup_records("what about salary"), []),
  ("...and never on a greeting",
   _followup_records("thanks for that", intent="greeting"), []),
+ # "cover all 10 rights" - the agency, 2026-10-12, on Module 27.
+ ("the rights row lists all ten rights of Module 27, numbered 1 to 10",
+  [n for n in range(1, 11) if f"\n{n}. " not in "\n" + lsn._HELPER_RIGHTS_ANSWER], []),
+ ("...including the three the first version left out",
+  [w for w in ("Placement loan", "Safety", "Protection") if w not in lsn._HELPER_RIGHTS_ANSWER], []),
+ ("...with the current WhatsApp number, never Module 27's old one",
+  ("6534 2277" in lsn._HELPER_RIGHTS_ANSWER, "8011" in lsn._HELPER_RIGHTS_ANSWER), (True, False)),
+ ("...and the live row is corrected to it, not just a fresh load",
+  [u["set"].get("answer") == lsn._HELPER_RIGHTS_ANSWER for u in lsn.UPDATES
+   if u["where"]["question"] == "What are my rights as a domestic helper in Singapore?"], [True]),
+ ("a question about her rights as a whole is answered as a list",
+  [m for m in ("i am helper i want to know my rights", "what are my rights",
+               "what rights do helpers have", "tell me my basic rights")
+   if not _guards.asks_for_rights(m)], []),
+ ("...but one right, or the word 'right', is not",
+  [m for m in ("can my employer keep my passport", "is this the right form",
+               "you are right", "how many days off do i get")
+   if _guards.asks_for_rights(m)], []),
  # 2026-10-08: one salesperson per client conversation, and the portal inbox
  # shows the same person - without ever taking a chat off someone the portal
  # team assigned by hand.

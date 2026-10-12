@@ -417,6 +417,20 @@ Answer as a short ordered list, grounded ONLY in our records above:
 If our records above do not actually set out the process for what they asked, do not improvise one. Say you will confirm the details and come back to them, and start that reply with the exact token {handover_token} on its own first line."""
 
 
+# A helper asking for her rights as a whole (2026-10-12, conversation 4443).
+# The agency asked for all ten as a list; squeezed into the two-sentence answer
+# she got seven in one long sentence.
+RIGHTS_INSTRUCTION = """The client is a helper asking what her rights are. Answer as a numbered list, grounded ONLY in our records above:
+
+- One short sentence first, on its own line, ending in a colon, saying this is her rights - in your own words.
+- Then EVERY right our records list, one numbered line each, in the records' order, each on its own line with a real line break. Do not drop, merge or summarise any of them away: she asked for all of them.
+- Keep each line short and simple - she may not read English easily.
+- Close on a sentence, never on a numbered line: who to contact if something is wrong, with the number exactly as the records give it.
+- Do not add a right, a figure or a number that is not in the records above. Do not tell her what she must not do - she asked what she is owed.
+
+If our records above do not set out her rights, do not improvise them. Say you will confirm and come back to her, and start that reply with the exact token {handover_token} on its own first line."""
+
+
 
 # Rule 1's introduction, repeated in the instruction that wins on this turn.
 #

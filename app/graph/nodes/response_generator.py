@@ -13,6 +13,7 @@ from app.graph.guards import (
     asks_about_price,
     asks_again,
     asks_for_process,
+    asks_for_rights,
     clamp_reply,
     claire_has_spoken,
     greeting_only,
@@ -46,6 +47,7 @@ from app.graph.prompts.templates import (
     HANDOVER_TOKEN,
     PROCESS_INSTRUCTION,
     RESPONDER_INSTRUCTION,
+    RIGHTS_INSTRUCTION,
 )
 from app.graph.state import (
     AGENCY_INFO_INTENT,
@@ -266,6 +268,19 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
             state.get("conversation_id"),
         )
         instruction_template = PROCESS_INSTRUCTION
+    # A helper's rights as a whole: ten of them, as a list (2026-10-12). Rides
+    # on the stepped answer's length and formatting allowances below.
+    rights_question = bool(
+        (state.get("rag_context") or "").strip()
+        and asks_for_rights(state.get("incoming_text") or "")
+    )
+    if rights_question:
+        logger.info(
+            "Conversation %s: rights question with records - answering as a list",
+            state.get("conversation_id"),
+        )
+        instruction_template = RIGHTS_INSTRUCTION
+        process_question = True
 
     # An unrecognised number whose type we still cannot read: find out who they
     # are before running any workflow, since the workflow depends on it.
@@ -401,7 +416,8 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
             system_prompt,
             user_prompt,
             temperature=0.45,
-            max_tokens=420 if process_question else 120,
+            # Ten rights, several with two sentences, need more than eight steps.
+            max_tokens=700 if rights_question else 420 if process_question else 120,
         )
     except Exception:  # noqa: BLE001 - never leave the client without an answer
         logger.exception("Response generation failed on conversation %s", state.get("conversation_id"))
@@ -461,9 +477,13 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         # Eight steps plus an opening line and a closing offer. clamp_reply no
         # longer counts a "1." marker as a sentence of its own, so this is eight
         # actual steps rather than four.
+        # The rights list: ten lines (four of them two sentences), an opening
+        # line, the contact sentences and, on first contact, the introduction.
         reply = clamp_reply(
             reply,
-            max_sentences=10
+            max_sentences=22
+            if rights_question
+            else 10
             if process_question
             else 3
             if first_message

@@ -68,6 +68,10 @@ STEPPED_REPLY = (
     "Happy to go into any of those in more detail."
 )
 
+# The helper-rights summary row's own text: ten numbered rights and the
+# contact line (scripts/load_service_notes.py).
+from scripts.load_service_notes import _HELPER_RIGHTS_ANSWER as _HELPER_RIGHTS  # noqa: E402
+
 CASES = [
     ("info_collector", "first contact", {}),
     ("info_collector", "mid-conversation", {"history_text": "client: hi\nbot: Hello",
@@ -757,6 +761,26 @@ CASES = [
       "rag_best_score": 0.5, "rag_matches": [{"question": "x", "similarity": 0.5}], "rag_context": "x",
       "_stub_reply": "Choral is Filipino.",
       "_expect_prompt": "choral (Filipino)"}),
+    # 2026-10-12, conversation 4443: her rights went out as one sentence of
+    # seven. All ten, as a list, and none cut off by the clamp.
+    ("response_generator", "a helper asking her rights gets every right as a list",
+     {"intent": "general_question", "contact_type": "candidate",
+      "incoming_text": "i am helper i want to know my rights",
+      "history_text": "Client: hello\nYou: Hi, I'm Claire, Ming Hwee's AI assistant. How can I help you?",
+      "rag_best_score": 0.56, "rag_matches": [{"question": "x", "similarity": 0.56}],
+      "rag_context": _HELPER_RIGHTS,
+      "_stub_reply": "These are your rights as a helper in Singapore:\n" + _HELPER_RIGHTS,
+      "_expect_prompt": "EVERY right our records list",
+      "_expect_reply": "10. Transfer",
+      "_expect_state": {"needs_handover": False}}),
+    ("response_generator", "...while one right asked about is not given the whole list",
+     {"intent": "general_question", "contact_type": "candidate",
+      "incoming_text": "can my employer keep my passport",
+      "history_text": "Client: hello\nYou: Hi, I'm Claire, Ming Hwee's AI assistant. How can I help you?",
+      "rag_best_score": 0.64, "rag_matches": [{"question": "x", "similarity": 0.64}],
+      "rag_context": "Your passport belongs to YOU. You should keep it.",
+      "_stub_reply": "No, your passport belongs to you and you keep it.",
+      "_forbid_prompt": "EVERY right our records list"}),
     ("response_generator", "...while an ordinary status question is not told that",
      {"intent": "case_enquiry", "service_type": "home_leave",
       "incoming_text": "is there any update on yoyos home leave",

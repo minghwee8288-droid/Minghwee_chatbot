@@ -503,6 +503,7 @@ because the lead is opened early and the ticket is created much later.
 | A closing briefing has the service's own fee row | `rag_retriever._with_briefing_cost` / `_briefing_cost_due` | A one-row cost search on the briefing turn, same filters, for a service in `fee_stated_services` and a nationality we hold a fee for. The ten briefing rows were all process and timing, so "$695" was deferred to an agent (section 9.27's shape). |
 | A replacement is priced only inside the package period | `info_collector.replacement_package_fee_due` + `rag_retriever._with_replacement_fees` + `REPLACEMENT_PACKAGE_FEE_NOTE` | Agency's choice, 2026-10-09. A helper WE placed (record, or the client's plain yes) under 6 months ago: quote the package's replacement and documentation fee ($238 / $288 / $328 new hire, $288 transfer), labelled where the package is unknown, and lift the cost guard for that message. Anything else (outside 6 months, not ours, a tenure we cannot read) still defers. The rows are filed under new_hiring and transfer, so they are fetched separately. Every other replacement turn keeps the `replacement` filter on a money question and carries `system.REPLACEMENT_COST_BLOCK` (the rule, no figure). |
 | A helper who says who she is and asks a question is answered, not registered | `intent_classifier._is_jobseeker` (`KB_QUESTION_INTENTS`) + `_detected_contact_type` (self-ID -> candidate) | "i am helper i want to know my rights" was forced to `candidate_registration`, searched as "(candidate registration)" (employer hiring rows on top) and handed over (conversation 4443). Self-ID alone, or asking for work, still registers her. The rights summary row (`load_service_notes`, general + candidate) answers the question as a whole. |
+| A helper's rights go out as a list of all ten | `guards.asks_for_rights` + `templates.RIGHTS_INSTRUCTION` + `_HELPER_RIGHTS_ANSWER` | Agency, 2026-10-12: "cover all 10 rights" (Module 27: salary, rest day, passport, food, room, phone, placement loan, safety, protection from harassment, transfer). A rights question with records gets the list instruction and room for it (22 sentences, 700 tokens); one right asked about ("can my employer keep my passport") stays short. Plural "rights" only. |
 | A follow-up that points back is searched with the question before it | `rag_retriever` (`_REFERS_BACK` + `guards.last_client_line`) | Only when this message found nothing above the floor, only for a question (or `other`), only on "that/it/this...", same filters, kept only if better. |
 | A helper's own home leave is told her fee | `HELPER_HOME_LEAVE_BRIEFING_NOTE` / `HELPER_OWN_LEAVE_NOTE` | The fee for her nationality ($250 ID, $400 PH), with our agent going through it with her employer; never who pays. Myanmar still defers. |
 | A question that was never SENT is not counted as asked | `info_collector._undelivered_question` (`last_question`) | A reply held while the client is still typing is never delivered, but its ask was counted, so a `max_asks=1` field was filed "not provided" unseen. The next turn checks the transcript and records -1 (the counts are summed). |
@@ -1504,6 +1505,25 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-12** - **A helper's rights: all ten, as a numbered list.** The agency,
+  on the fix below: Module 27 has ten rights and the reply gave seven, in one
+  long sentence. The summary row now lists all ten in the module's order (the
+  placement loan, safety and protection from harassment were missing), with the
+  current WhatsApp number - Module 27 itself still carries the old one, so it
+  must not be re-uploaded as it is. A question about her rights as a whole
+  (`asks_for_rights`, plural "rights" beside my/her/what/helper's...) with
+  records gets `RIGHTS_INSTRUCTION`: every right, one numbered line each, a
+  lead-in and a contact line, and the room for it (22 sentences, 700 tokens).
+  One right asked about stays a short answer from its own row.
+  **Loaded to production:** every column exported before and after, 410 rows,
+  one changed (that row's answer, content, embedding, updated_at); a second
+  loader run corrects 0.
+  **Verified:** replayed read-only, 2 runs each: her message and her follow-up
+  both get all ten, numbered; the passport question stays one sentence; "what
+  are my rights" from an unknown number still asks whether she is a helper.
+  Five faults injected, five red (one of them the clamp cutting the list at 10).
+  `selfcheck_flows.py` is **818 assertions**; `smoke_nodes.py` is **286 checks**.
 
 - **2026-10-12** - **"i am helper i want to know my rights" was handed to a live
   agent.** Conversation 4443, read from the checkpoint:

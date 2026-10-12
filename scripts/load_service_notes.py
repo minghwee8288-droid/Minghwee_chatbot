@@ -1730,6 +1730,32 @@ ROWS: list[dict[str, Any]] = [
 # What the employer provides for a transfer. One string, read by the ROWS entry
 # below and by the UPDATES entry that corrected the live row, so a fresh load
 # and a corrected one cannot disagree.
+# The helper's ten rights, from Module 27 (Helper Rights). One line each, in
+# the module's order; every fact is in that module's own rows. Shared by the
+# row and its UPDATES entry, so a fresh load and a corrected one agree.
+_HELPER_RIGHTS_ANSWER = (
+    "1. Salary: your full salary every month, by the date in your contract, "
+    "with nothing taken that is not in the contract.\n"
+    "2. Rest day: one day off every week, and at least one real day off every "
+    "month that cannot be swapped for money.\n"
+    "3. Passport: it belongs to you, and you keep it.\n"
+    "4. Food: three meals a day, enough to eat, and food you can eat.\n"
+    "5. Room and sleep: a mattress, privacy, and at least 7 hours of sleep at "
+    "night.\n"
+    "6. Phone: your own phone, and you can talk to your family.\n"
+    "7. Placement loan: a copy of what you signed, your balance whenever you "
+    "ask, no more taken than you agreed, and your full salary once it is paid "
+    "off. Owing money never takes away your rights.\n"
+    "8. Safety: no one may hit, hurt or threaten you. In an emergency call the "
+    "police on 999.\n"
+    "9. Protection: no one may touch you, ask you for sex or pressure you. That "
+    "is a crime, never your fault, and you will not lose your job for telling us.\n"
+    "10. Transfer: you can ask to move to a new employer. You are paid until "
+    "your last working day, and salary already owed is still paid.\n"
+    "If something is wrong, talk to your employer, then WhatsApp Ming Hwee at "
+    "+65 6534 2277. MOM can help on 1800-339-5505."
+)
+
 _TRANSFER_DOCS_FROM_EMPLOYER = (
     "It depends which side of the transfer you are on. If you are taking the "
     "helper on, we need a copy of your NRIC or IC and proof of income - either "
@@ -2090,27 +2116,17 @@ ROWS += [
     # 27.5 room, 27.6 phone, 27.9 transfer, 27.10, Section E), and NO row
     # answers the question as a whole: "what are my rights" scored 0.396 on
     # its best row, under the floor. This row restates their facts and adds
-    # none - each line below is in one of those rows.
+    # none - each line below is in one of those rows. All TEN rights of
+    # Module 27 (agency, 2026-10-12: "cover all 10 rights"); the first version
+    # had seven and left out the loan, harassment and safety. Kept under
+    # rag_max_chunk_chars (1200), or format_context cuts the last ones off.
     {
         "service_type": "general",
         "contact_type": "candidate",
         "nationality": "all",
         "section_heading": "Helper - your rights in Singapore",
         "question": "What are my rights as a domestic helper in Singapore?",
-        "answer": (
-            "Your main rights are: your full salary every month, by the date "
-            "in your contract; one rest day every week, and at least one real "
-            "day off every month that cannot be swapped for money; keeping "
-            "your own passport; enough food, three meals a day, that you can "
-            "eat; a proper place to sleep with privacy and at least 7 hours of "
-            "sleep at night; your own phone and contact with your family; and "
-            "fair treatment - no one may hit, threaten, abuse or touch you. "
-            "You can also ask to transfer to a new employer if it really "
-            "cannot work. If something is wrong, talk to your employer first, "
-            "then WhatsApp Ming Hwee at +65 6534 2277 and we will help you. "
-            "MOM can also help, on 1800-339-5505. In an emergency call the "
-            "police on 999 or an ambulance on 995."
-        ),
+        "answer": _HELPER_RIGHTS_ANSWER,
     },
 ]
 
@@ -2660,6 +2676,13 @@ ROWS += [
 ]
 
 UPDATES: list[dict[str, Any]] = [
+    {
+        # Loaded 2026-10-12 with seven rights; the agency asked for all ten.
+        "where": {"question": "What are my rights as a domestic helper in Singapore?",
+                  "service_type": "general"},
+        "reason": "the agency asked for all ten rights of Module 27, not seven",
+        "set": {"answer": _HELPER_RIGHTS_ANSWER},
+    },
     {
         # "Last part info bots can void this info, as Er looking for Transfer
         # helper" / "okay, can exclude the 4th point" - the agency, 2026-09-28,

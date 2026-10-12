@@ -794,6 +794,25 @@ def asks_for_process(text: str) -> bool:
     return bool(_ASKS_FOR_PROCESS.search(body))
 
 
+# A question about a helper's rights AS A WHOLE. Live 2026-10-12, conversation
+# 4443: "i am helper i want to know my rights" was answered in one long
+# sentence of seven rights, because only a process or documents question may
+# run past two sentences. The agency asked for all ten as a list. "rights" on
+# its own, beside my/her/your/what/helper, so "can my employer keep my
+# passport" (one right, its own row) stays a short answer.
+_ASKS_FOR_RIGHTS = re.compile(
+    r"\b(?:my|her|your|our|their|what|which|the|helpers?'?s?|maids?'?s?|workers?'?s?)"
+    # Plural only: "is this the right form" is not a rights question.
+    r"\s+(?:basic\s+|main\s+|legal\s+)?rights\b",
+    re.IGNORECASE,
+)
+
+
+def asks_for_rights(text: str) -> bool:
+    """Whether the client is asking for a helper's rights as a whole."""
+    return bool(_ASKS_FOR_RIGHTS.search(text or ""))
+
+
 # The client telling us they have already asked, or that we never answered.
 #
 # Live, 2026-09-18 12:05: a work permit renewal collected four fields, raised a
