@@ -12,3 +12,8 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# Claude Code local settings: permission allowlists record full commands,
+# which have carried the webhook secret and phone numbers (CLAUDE.md 9.7).
+.claude/settings.json
+.claude/settings.local.json

@@ -765,7 +765,14 @@ Ordered by what will hurt first.
    out of order with its number, `insert_numbered`'s retry re-proposes the same taken
    number five times and then raises.
 7. **Webhook secret committed in plaintext** in `.claude/settings.json` (git-tracked).
-   Needs rotating and scrubbing from history.
+   **Untracked and ignored 2026-10-12** (see the change log); the code never read it
+   from there - `WHAPI_WEBHOOK_SECRET` comes from `.env` only. **Still open: it is in
+   git history (commit 6fdf826 onward) and is the value production uses today, so it
+   must be ROTATED** on the server `.env` and in the portal's Whapi webhook URL.
+   Rotation, not a history rewrite, is what closes it: a public repo's old commits
+   live on in forks and caches. The reset-ui built-in password is in the same state
+   (`reset-ui/lib/env.ts`, by the client's request) - set `RESET_UI_PASSWORD` on its
+   Vercel project before anything removes the default.
 8. **Duplicated, divergent constants.** `EMPLOYER_LEAD_SERVICES` /
    `CANDIDATE_LEAD_SERVICES` are defined in both `lead.py` and `ticket_creator.py` and
    **disagree**; the `ticket_creator.py` copies are dead. `_lead_name` duplicates
@@ -1461,6 +1468,20 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-12** - **`.claude/settings.json` is no longer tracked** (§9.7). It is a
+  Claude Code permission allowlist, so it records whole commands, and six of them
+  carried the live webhook secret in a URL and a tester's phone number. Removed from
+  the index, not from history; the local copy had those six entries scrubbed. The
+  repo's `.gitignore` did NOT cover `.claude/` at all (only a developer's global git
+  ignore covered `settings.local.json`), which is how it was committed; both files
+  are now named explicitly. No code read the file, so no behaviour changes. A full
+  history scan (all 207 commits, the literal value of every `.env` key plus key,
+  JWT, DB-URL and webhook patterns) found two credentials: the webhook secret, and
+  reset-ui's built-in password (§9.7). Neither was rotated here. **A history scan
+  must use `git log -p --no-textconv`**: with textconv on, a .docx in history aborts
+  the dump part way ("unable to read files to diff") and the scan silently searches
+  a third of the repo - the first pass reported the webhook secret absent.
 
 - **2026-10-09** - **A replacement enquiry was told "$288" before we knew anything
   about the helper.** Conversation 26: "I'd like to look for a replacement helper.
