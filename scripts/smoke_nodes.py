@@ -2559,6 +2559,10 @@ async def _timing_checks() -> list[tuple[str, bool]]:
         timestamp=datetime.now(timezone.utc),
     )
     sent: list[str] = []
+    stops: list[bool] = []
+
+    async def record_stop(phone, *, clear):
+        stops.append(clear)
 
     # The REAL send_bot_reply runs; only Whapi and its own writes are stubbed,
     # so a send that is not timed inside message.py shows up here.
@@ -2610,6 +2614,7 @@ async def _timing_checks() -> list[tuple[str, bool]]:
                          new=none),
             patch.object(_wh.conversation_service, "update", new=none),
             patch.object(_llm, "get_llm", new=lambda *a, **k: _FakeChat()),
+            patch.object(_wh.typing_indicator, "stop", new=record_stop),
         ]
 
     async def one_turn(run_turn=graph):
@@ -2636,10 +2641,14 @@ async def _timing_checks() -> list[tuple[str, bool]]:
         return lines[:], sent[:]
 
     results = []
+    stops.clear()
     got, out = await one_turn()
+    stopped_after_send = list(stops)
     line = got[0] if got else ""
     data = _json.loads(line[len(_timing.LOG_PREFIX):]) if line else {}
     steps = data.get("steps", {})
+    results.append(("typing: the webhook stops it right after the reply is sent",
+                    stopped_after_send == [False]))
     results.append(("timing: one line for a turn that reached the graph",
                     len(got) == 1 and bool(out)))
     results.append(("timing: setup, graph and send phases all timed",
@@ -2678,6 +2687,337 @@ async def _timing_checks() -> list[tuple[str, bool]]:
     got, out = await one_turn(no_reply)
     results.append(("timing: a turn with nothing sent still logs, without 'sent'",
                     len(got) == 1 and '"sent"' not in got[0]))
+    return results
+
+
+async def _step1b_checks() -> list[tuple[str, bool]]:
+    """The five 2026-10-12 latency changes, each through its real code path.
+
+    Typing indicator (app/whapi/typing.py), smart debounce (webhook.
+    debounce_delay + MessageDebouncer), the shorter pause at send
+    (message.send_bot_reply), the embedding cache (rag.embed_query) and the
+    per-call LLM timeout (llm.complete). Network and database stubbed.
+    """
+    import types
+    from datetime import datetime, timezone
+
+    from app.api import webhook as _wh
+    from app.config import settings as _settings
+    from app.graph import llm as _llm
+    import importlib
+    _rr = importlib.import_module("app.graph.nodes.rag_retriever")
+    from app.services import message as _msg
+    from app.services import rag as _rag
+    from app.whapi import typing as _typing
+    from app.whapi.debouncer import MessageDebouncer
+    from app.whapi.parser import IncomingMessage
+
+    results: list[tuple[str, bool]] = []
+
+    def msg(body, mid="m1", kind="text", transcript=None):
+        m = IncomingMessage(
+            whapi_message_id=mid, chat_id="", customer_number="+6590000124",
+            customer_name="", body=body, message_type=kind, from_me=False,
+            timestamp=datetime.now(timezone.utc),
+        )
+        m.transcript = transcript
+        return m
+
+    # --- 1. typing indicator -------------------------------------------------
+    presences: list[str] = []
+
+    async def fake_presence(to, presence):
+        presences.append(presence)
+        return True
+
+    async def typing_case(*, history=(), open_topics=(), text="I need a helper",
+                          wait=0.05, setting=True):
+        presences.clear()
+        _typing._keepers.clear()
+        _typing._stopped_at.clear()
+        with patch.object(_typing.whapi, "send_presence", new=fake_presence), \
+             patch.object(_settings, "typing_indicator", setting), \
+             patch.object(_settings, "typing_refresh_seconds", 0.02), \
+             patch("app.services.ticket.open_topics_for_conversation",
+                   new=AsyncMock(return_value=dict.fromkeys(open_topics, 1))), \
+             patch("app.services.message.get_history",
+                   new=AsyncMock(return_value=list(history))):
+            await _typing.start("+6590000124", 77, text, "m1")
+            await asyncio.sleep(wait)
+            running = _typing.active("+6590000124")
+            shown = list(presences)
+            await _typing.stop("+6590000124", clear=True)
+        return running, shown, list(presences)
+
+    running, shown, after = await typing_case(wait=0.07)
+    results.append(("typing: shown at once for a message that will be answered",
+                    running and shown[:1] == ["typing"]))
+    results.append(("typing: refreshed while the turn runs",
+                    shown.count("typing") >= 2))
+    results.append(("typing: a turn that sent nothing clears it ('pause')",
+                    after[-1:] == ["pause"] and not _typing.active("+6590000124")))
+
+    statement = [{"direction": "outbound", "is_bot": True,
+                  "body": "Your helper's permit is renewed.", "created_at": "x"}]
+    _, shown, _ = await typing_case(history=statement, text="ok thanks")
+    results.append(("typing: not shown when the bot will stay silent", not shown))
+    _, shown, _ = await typing_case(open_topics=("renewal",))
+    results.append(("typing: not shown on a parked chat", not shown))
+    _, shown, _ = await typing_case(setting=False)
+    results.append(("typing: TYPING_INDICATOR off -> never shown", not shown))
+
+    # Stopped after a reply: no 'pause' (the reply clears it), no keep-alive.
+    presences.clear()
+    with patch.object(_typing.whapi, "send_presence", new=fake_presence), \
+         patch.object(_settings, "typing_refresh_seconds", 0.02):
+        _typing._keepers["+6590000124"] = asyncio.create_task(
+            _typing._keep_alive("+6590000124"))
+        await asyncio.sleep(0.01)
+        await _typing.stop("+6590000124", clear=False)
+        await asyncio.sleep(0.05)
+    results.append(("typing: a sent reply stops it without a 'pause'",
+                    "pause" not in presences and not _typing.active("+6590000124")
+                    and presences.count("typing") == 1))
+
+    # A turn that finished while start() was still deciding never shows it.
+    async def slow_topics(*a, **k):
+        await _typing.stop("+6590000124", clear=False)   # the reply goes out
+        return {}
+
+    presences.clear()
+    _typing._keepers.clear()
+    with patch.object(_typing.whapi, "send_presence", new=fake_presence), \
+         patch("app.services.ticket.open_topics_for_conversation", new=slow_topics), \
+         patch("app.services.message.get_history", new=AsyncMock(return_value=[])):
+        await _typing.start("+6590000124", 77, "I need a helper", "m1")
+    results.append(("typing: never started after the reply already went out",
+                    not presences and not _typing.active("+6590000124")))
+
+    # The webhook starts it only past the gates: a paused (agent) chat never.
+    started: list[str] = []
+
+    async def record_start(phone, *a, **k):
+        started.append(phone)
+
+    conversation = {"id": 77, "customer_number": "+6590000124",
+                    "bot_status": "human_active", "langgraph_thread_id": "t"}
+    with patch.object(_wh.conversation_service, "get_by_phone",
+                      new=AsyncMock(return_value=dict(conversation))), \
+         patch.object(_wh, "may_engage", new=AsyncMock(return_value=(True, "ok"))), \
+         patch.object(_wh, "maybe_return_to_bot",
+                      new=AsyncMock(return_value=dict(conversation))), \
+         patch.object(_wh, "_is_paused_for_agent", new=lambda c: True), \
+         patch.object(_wh, "emergency_override", new=AsyncMock(return_value=False)), \
+         patch.object(_wh, "acknowledge_direct_address", new=AsyncMock()), \
+         patch.object(_wh, "_already_processed", new=lambda *a: False), \
+         patch.object(_wh.typing_indicator, "start", new=record_start), \
+         patch.object(_wh.debouncer, "add", new=AsyncMock()):
+        await _wh.handle_inbound(msg("I need a helper please", mid="agent-1"))
+        await asyncio.sleep(0)
+    results.append(("typing: never started where a human agent is active",
+                    not started))
+
+    conversation["bot_status"] = "bot_active"
+    with patch.object(_wh.conversation_service, "get_by_phone",
+                      new=AsyncMock(return_value=None)), \
+         patch.object(_wh, "may_engage", new=AsyncMock(return_value=(True, "ok"))), \
+         patch.object(_wh.conversation_service, "get_or_create",
+                      new=AsyncMock(return_value=(dict(conversation), False))), \
+         patch.object(_wh.message_service, "store_incoming", new=AsyncMock()), \
+         patch.object(_wh.conversation_service, "touch_inbound", new=AsyncMock()), \
+         patch.object(_wh, "_schedule_read_receipt", new=lambda *a: None), \
+         patch.object(_wh, "_should_identify", new=lambda *a: False), \
+         patch.object(_wh, "_already_processed", new=lambda *a: False), \
+         patch.object(_wh.typing_indicator, "start", new=record_start), \
+         patch.object(_wh.debouncer, "add", new=AsyncMock()):
+        await _wh.handle_inbound(msg("I need a helper please", mid="gate-1"))
+        await asyncio.sleep(0)
+    results.append(("typing: started by the webhook once the gates pass",
+                    started == ["+6590000124"]))
+
+    stops: list[bool] = []
+
+    async def record_stop(phone, *, clear):
+        stops.append(clear)
+
+    async def turn_raises(*a, **k):
+        raise RuntimeError("the turn broke")
+
+    for body in (AsyncMock(), turn_raises):
+        with patch.object(_wh, "_process_locked", new=body),              patch.object(_wh.debouncer, "drain", new=AsyncMock(return_value=[])),              patch.object(_wh.typing_indicator, "stop", new=record_stop):
+            try:
+                await _wh.process_batch("+6590000125", [msg("hi", "pb1")])
+            except RuntimeError:
+                pass
+    results.append(("typing: cleared when a batch ends, even when the turn raises",
+                    stops == [True, True]))
+
+    # --- 2. smart debounce ---------------------------------------------------
+    with patch.object(_settings, "smart_debounce", True), \
+         patch.object(_settings, "debounce_seconds", 6.0), \
+         patch.object(_settings, "debounce_short_seconds", 2.5):
+        # "how much?" is the short question: two words, complete by its "?" alone.
+        complete = [msg("how much?"), msg("how much is a passport renewal?"),
+                    msg("I want to renew my helper permit"),
+                    msg("", kind="voice", transcript="I need a helper for my mum")]
+        unfinished = [msg("hi"), msg("hello"), msg("I need"), msg("for my"),
+                      msg("", kind="image")]
+        results.append(("debounce: a complete message gets the short wait",
+                        all(_wh.debounce_delay(m) == 2.5 for m in complete)))
+        results.append(("debounce: a greeting, fragment or bare media waits in full",
+                        all(_wh.debounce_delay(m) == 6.0 for m in unfinished)))
+    with patch.object(_settings, "smart_debounce", False), \
+         patch.object(_settings, "debounce_seconds", 6.0):
+        results.append(("debounce: SMART_DEBOUNCE off -> always the full wait",
+                        _wh.debounce_delay(complete[0]) == 6.0))
+
+    async def burst(messages, gaps, delay_for):
+        flushed: list[tuple[float, int]] = []
+        began = asyncio.get_running_loop().time()
+
+        async def handler(phone, batch):
+            flushed.append((asyncio.get_running_loop().time() - began, len(batch)))
+
+        d = MessageDebouncer(0.30, handler, delay_for)
+        for m, gap in zip(messages, gaps):
+            await asyncio.sleep(gap)
+            await d.add(m)
+        await asyncio.sleep(0.6)
+        return flushed
+
+    def quick(m):  # the real rule, at test speed: 0.30 s full, 0.05 s short
+        return 0.05 if _wh.looks_complete(m) else 0.30
+
+    flushed = await burst([msg("hi", "b1"), msg("I need", "b2"),
+                           msg("a helper for my mother please", "b3")],
+                          [0, 0.1, 0.1], quick)
+    results.append(("debounce: a burst of three quick messages -> one reply",
+                    len(flushed) == 1 and flushed[0][1] == 3))
+    results.append(("debounce: the timer restarts, and the last message's wait applies",
+                    bool(flushed) and 0.22 <= flushed[0][0] < 0.40))
+    flushed = await burst([msg("what does a transfer cost?", "c1"), msg("for my", "c2")],
+                          [0, 0.02], quick)
+    results.append(("debounce: a fragment after a question waits in full again",
+                    len(flushed) == 1 and flushed[0][0] >= 0.30))
+
+    # --- 3. the pause at send ------------------------------------------------
+    sent_typing: list[float] = []
+
+    async def send_text(to, body, typing_time=0):
+        sent_typing.append(typing_time)
+        return {"message": {"id": "out-9"}}
+
+    conv = {"id": 77, "customer_number": "+6590000124"}
+    long_reply = "x" * 120
+    for setting in (True, False):
+        with patch.object(_msg.whapi, "send_text", new=send_text), \
+             patch.object(_msg, "_insert_ignoring_duplicates", new=AsyncMock()), \
+             patch.object(_msg.conversation_service, "touch_outbound", new=AsyncMock()), \
+             patch.object(_settings, "short_send_typing", setting), \
+             patch.object(_settings, "send_typing_seconds", 0.5):
+            await _msg.send_bot_reply(conv, long_reply)
+    results.append(("send: the reply is held at most 0.5 s",
+                    sent_typing[0] == 0.5))
+    results.append(("send: SHORT_SEND_TYPING off -> the old 2 s for a long reply",
+                    sent_typing[1] == 2))
+
+    # --- 4. the embedding cache ---------------------------------------------
+    calls: list[str] = []
+
+    class _Emb:
+        class embeddings:  # noqa: N801
+            @staticmethod
+            async def create(model, input, dimensions):
+                calls.append(input)
+                return types.SimpleNamespace(
+                    data=[types.SimpleNamespace(embedding=[0.1] * dimensions)])
+
+    fixed = [
+        f"{_rr.OVERVIEW_QUERY}\n({_rr._readable_service('insurance')})",
+        f"{_rr.ENQUIRY_OVERVIEW_QUERY}\n({_rr._readable_service('direct_hiring')})",
+        f"{_rr.BRIEFING_QUERY_BY_SERVICE.get('renewal', _rr.BRIEFING_QUERY)}"
+        f"\n({_rr._readable_service('renewal')})",
+        f"{_rr.BRIEFING_QUERY}\n({_rr._readable_service('home_leave')})",
+    ]
+    for size in (256, 0):
+        calls.clear()
+        _rag._EMBED_CACHE.clear()
+        with patch.object(_rag, "get_embedding_client", new=lambda: _Emb), \
+             patch.object(_settings, "embed_cache_size", size):
+            for q in fixed + fixed:
+                await _rag.embed_query(q)
+        if size:
+            results.append(("embed cache: the fixed overview and briefing queries hit it",
+                            len(calls) == len(fixed)))
+        else:
+            results.append(("embed cache: EMBED_CACHE_SIZE=0 -> every query embedded",
+                            len(calls) == 2 * len(fixed)))
+    calls.clear()
+    _rag._EMBED_CACHE.clear()
+    with patch.object(_rag, "get_embedding_client", new=lambda: _Emb), \
+         patch.object(_settings, "embed_cache_size", 2):
+        for q in ("a", "b", "c", "a"):
+            await _rag.embed_query(q)
+    results.append(("embed cache: size-limited, oldest out first",
+                    len(_rag._EMBED_CACHE) == 2 and calls == ["a", "b", "c", "a"]))
+    _rag._EMBED_CACHE.clear()
+
+    # --- 5. LLM timeout and one fast retry ----------------------------------
+    attempts: list[str] = []
+    llm_args: list[tuple] = []
+
+    class _SlowThenFast:
+        def __init__(self, behaviour):
+            self.behaviour = behaviour
+
+        async def ainvoke(self, messages):
+            kind = self.behaviour[len(attempts)] if len(attempts) < len(self.behaviour) else "ok"
+            attempts.append(kind)
+            if kind == "slow":
+                await asyncio.sleep(1.0)
+            if kind == "bad":
+                raise ValueError("a 400 - not worth retrying")
+            return types.SimpleNamespace(content="done")
+
+    async def run_llm(behaviour, setting=True):
+        attempts.clear()
+        llm_args.clear()
+
+        def fake_get_llm(*args, **kwargs):
+            llm_args.append(args)
+            return _SlowThenFast(behaviour)
+
+        with patch.object(_llm, "get_llm", new=fake_get_llm), \
+             patch.object(_settings, "llm_call_timeouts", setting), \
+             patch.dict(_llm.LLM_TIMEOUTS, {"reply": 0.05}):
+            try:
+                return await _llm.complete("s", "u"), None
+            except Exception as exc:  # noqa: BLE001
+                return None, exc
+
+    # Called from this module, so its purpose is the function name; give it
+    # the reply limit explicitly.
+    from app import timing as _timing
+    with _timing.purpose("reply"):
+        out, err = await run_llm(["slow", "ok"])
+        results.append(("llm: a stuck call is abandoned and retried once",
+                        out == "done" and attempts == ["slow", "ok"]))
+        out, err = await run_llm(["slow", "slow"])
+        results.append(("llm: two stuck calls fail - never a third attempt",
+                        out is None and attempts == ["slow", "slow"]))
+        out, err = await run_llm(["bad"])
+        results.append(("llm: a non-transient error is not retried",
+                        isinstance(err, ValueError) and attempts == ["bad"]))
+        out, err = await run_llm(["ok"])
+        results.append(("llm: the client's own retries are off under the limit",
+                        bool(llm_args) and llm_args[0][-2:] == (0.05, 0)))
+        out, err = await run_llm(["ok"], setting=False)
+        results.append(("llm: LLM_CALL_TIMEOUTS off -> the old 45 s, two retries",
+                        out == "done" and llm_args and len(llm_args[0]) == 3))
+    results.append(("llm: every limit is several times its measured p90",
+                    all(_llm.LLM_TIMEOUTS[k] >= 4 * p90 for k, p90 in
+                        {"classify": 2.0, "extract": 1.6, "reply": 2.7,
+                         "rewrite": 1.8}.items())))
     return results
 
 
@@ -3318,6 +3658,9 @@ async def main() -> int:
         failures += not ok
     for label, ok in await _timing_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  webhook  {label:44}")
+        failures += not ok
+    for label, ok in await _step1b_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  latency  {label:44}")
         failures += not ok
 
     off = await _pass(kb_rules.DEFAULTS)

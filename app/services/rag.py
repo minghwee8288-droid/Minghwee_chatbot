@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import OrderedDict
 from functools import lru_cache
 from typing import Any
 
@@ -98,12 +99,26 @@ def get_embedding_client() -> AsyncOpenAI:
     return AsyncOpenAI(**kwargs)
 
 
+# Query embeddings already computed, newest last (2026-10-12). The embedding
+# was 1.2 s of every turn's 1.45 s RAG step (TURN_TIMING baseline), and the
+# overview and briefing queries are fixed strings, so the same text is embedded
+# again and again. Keyed on the model and size as well as the text, so a model
+# change can never serve a stale vector. EMBED_CACHE_SIZE=0 switches it off.
+_EMBED_CACHE: "OrderedDict[tuple[str, int, str], list[float]]" = OrderedDict()
+
+
 @timing.timed("rag.embed")
 async def embed_query(text: str) -> list[float]:
+    clean = redact_nric(text, context="embedding")[:8000]
+    key = (settings.embedding_model, settings.embedding_dimensions, clean)
+    if settings.embed_cache_size > 0 and key in _EMBED_CACHE:
+        _EMBED_CACHE.move_to_end(key)
+        timing.add("rag.embed_cache_hit", 0.0)
+        return list(_EMBED_CACHE[key])
     client = get_embedding_client()
     response = await client.embeddings.create(
         model=settings.embedding_model,
-        input=redact_nric(text, context="embedding")[:8000],
+        input=clean,
         dimensions=settings.embedding_dimensions,
     )
     vector = response.data[0].embedding
@@ -115,6 +130,10 @@ async def embed_query(text: str) -> list[float]:
             f"{settings.embedding_dimensions} — this will not match "
             f"{KB_TABLE}.embedding"
         )
+    if settings.embed_cache_size > 0:
+        _EMBED_CACHE[key] = list(vector)
+        while len(_EMBED_CACHE) > settings.embed_cache_size:
+            _EMBED_CACHE.popitem(last=False)
     return vector
 
 

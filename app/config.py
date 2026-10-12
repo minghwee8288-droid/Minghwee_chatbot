@@ -141,6 +141,34 @@ class Settings(BaseSettings):
     # turns again. process_batch()'s mid-turn fold-in and the near-duplicate
     # repeat guard absorb some of that, but not a genuinely slow typist.
     debounce_seconds: float = 2.0
+    # Smart debounce (2026-10-12): a message that looks COMPLETE - ends with
+    # "?", has 6+ words, or is a transcribed voice note - waits only this long
+    # for more. Anything else (a greeting, a fragment, media with no text)
+    # still waits debounce_seconds. The timer restarts on every message, and
+    # the LAST message decides which wait applies. False = always the full wait.
+    smart_debounce: bool = True
+    debounce_short_seconds: float = 2.5
+
+    # "typing..." shown from the moment a message passes the gates, refreshed
+    # until the reply goes out (app/whapi/typing.py). False switches it off.
+    typing_indicator: bool = True
+    typing_refresh_seconds: float = 20.0
+    typing_max_seconds: float = 120.0
+
+    # How long Whapi holds a reply showing "typing" before delivering it. Was
+    # 1-2 s scaled to the reply's length, added to every reply; the indicator
+    # above now covers the wait. False = the old length-scaled 1-2 s.
+    short_send_typing: bool = True
+    send_typing_seconds: float = 0.5
+
+    # Remembered query embeddings (rag.embed_query). 0 switches it off.
+    embed_cache_size: int = 256
+
+    # A per-call LLM timeout by purpose with one immediate retry
+    # (llm.complete). False = the old single 45 s timeout and the OpenAI
+    # client's own two backed-off retries.
+    llm_call_timeouts: bool = True
+
     # One JSON log line per turn with how long each step took (app/timing.py,
     # read by scripts/latency_report.py). No message text, no phone number.
     # False switches it off entirely; nothing else depends on it.

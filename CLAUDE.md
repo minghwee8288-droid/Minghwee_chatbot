@@ -64,6 +64,7 @@ app/
     client.py        Whapi HTTP client, retries; recipients must be bare digits
     parser.py        payload -> IncomingMessage; signature verification
     debouncer.py     per-phone buffer, timer restarts on each message
+    typing.py        "typing..." from acceptance until the reply (presence API)
   graph/
     graph.py         (325) node wiring, routing, checkpointer, _TURN_RESET, run_turn
     state.py         ConversationState TypedDict + reducers + effective_contact_type
@@ -165,7 +166,10 @@ Whapi POST -> _accept (verify, 200 immediately, work in BackgroundTasks)
        transcription (voice -> text) BEFORE any gate, so safety sees the words
        may_engage()  -> allowlist -> bot_status -> agent grace window
        store, read receipt, identify contact
-       debouncer.add()  (2.0s, timer restarts per message)
+       typing indicator started (background; skipped if silent or parked)
+       debouncer.add()  (timer restarts per message; the newest message picks
+                        the wait: DEBOUNCE_SHORT_SECONDS if it looks complete,
+                        else DEBOUNCE_SECONDS)
   -> process_batch -> per-phone asyncio lock -> _process_locked
        redact NRIC, build ~20-key payload, run_turn(thread_id, payload)
        repeat guard (90s window) -> send_bot_reply
@@ -481,6 +485,9 @@ because the lead is opened early and the ticket is created much later.
 | A document publish never strands the imported version, and the impact check ranks as the bot does | `kb_admin_014` (`kb_admin__doc_record_baseline`, `kb_admin_match_live`) + `kb-admin/lib/retrieval.ts` + `scripts/check_rerank_parity.py` | The first publish over an imported document records its live rows (in no batch) as a superseded baseline batch - same ids, text and vectors - so the unchanged `kb_admin_doc_restore` can switch them back on; afterwards only `is_active`, `metadata` (managed_by ui, restored_by_batch) and `updated_at` differ. "Now" in the impact check is the bot's exact live search, and the TS port of `_drop_non_evidence` / `_drop_internal` / `_enforce_row_floor` / `_rerank` must match Python exactly (5,000 generated cases). Chunks are embedded as `section_heading + "\n" + content`. 009-014 are on TEST and production (2026-10-05). |
 | The loader never overwrites the KB Admin UI | `load_service_notes._ui_owned` + `metadata.managed_by` | Every row is `loader` or `ui`. All four write paths (ROWS, UPDATES, TEXT_REPLACEMENTS, RETIRED) skip and report a `ui` row — without it the first loader run after the UI went live would silently undo the client's edits, because three of the four find their targets by searching. Proved by RUNNING the loader against a stub DB holding one, in `selfcheck_kb_prep.py`. |
 | Nobody without the preview key learns anything from the preview route | `main.create_app` + `admin.require_preview_key` + `selfcheck_kb_prep.py` | No secret: the route is not registered (404, absent from the schema). With one, the key is a route dependency and the body is NOT a declared parameter - FastAPI decodes a declared body before dependencies, so malformed JSON answered 422 to anyone. 422 is now only ever seen by a key holder. Rate-limited, one at a time, 32 KB cap. Proved over HTTP, eight faults injected, eight red. |
+| "typing..." is shown only where a reply is coming, and never outlives the turn | `app/whapi/typing.py` + `webhook` (`handle_inbound` start, stop after send and in `process_batch`'s `finally`) | Started only past every gate, and not for a message `needs_no_reply` would leave unanswered or a chat with a parked topic. A late start (the turn finished while it was still deciding) is refused, so it cannot reappear after the reply. Best effort throughout: a presence call never delays or fails a turn. |
+| A client who has finished does not wait the full debounce | `webhook.debounce_delay` / `looks_complete` + `MessageDebouncer(delay_for=)` | "?", 6+ words or a transcribed voice note -> `DEBOUNCE_SHORT_SECONDS`; a greeting, a fragment or bare media -> `DEBOUNCE_SECONDS`. The newest message decides and every message restarts the timer, so "hi" / "I need" / a full sentence is still one reply. |
+| A stuck LLM call is cut, retried once, and never retried a third time | `llm.LLM_TIMEOUTS` + `_invoke_with_timeout` | Limits several times the measured p90 per purpose; the client's own retries are off under them; a 400-class error is not retried. |
 | The timing line never costs a reply and never carries a client's words | `app/timing.py` + `smoke_nodes.py` (`_timing_checks`) | Every entry point swallows its own errors, the line holds the conversation id, durations and TABLE names only, and `TURN_TIMING_LOG=false` makes every hook return at once. Asserted through the real `_process_locked`, `handle_inbound` and `send_bot_reply` with I/O stubbed; eight faults injected, eight red. |
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
 | Claire introduces herself in her first message, however many our TEAM sent before it | `guards.claire_has_spoken` + `message.format_history` ("Agent:") + the stage line in `build_system_prompt` | Agent messages were rendered "You:", so a thread full of them read as Claire's own and she never said who she was (conversation 26, 2026-10-07). Only a "You:" line is her. Every node's first-contact test reads the one predicate. |
@@ -683,6 +690,20 @@ Easy to get wrong:
 - `TURN_TIMING_LOG` (default **true**) — write the per-turn `TURN_TIMING` line
   (`app/timing.py`). False switches it off completely; nothing reads it but
   `scripts/latency_report.py`.
+- The 2026-10-12 latency switches, each independent and each `false`/`0` to
+  restore the old behaviour exactly:
+  - `SMART_DEBOUNCE` (true) + `DEBOUNCE_SHORT_SECONDS` (2.5) — a message that
+    ends with "?", has 6+ words or is a transcribed voice note waits the short
+    time; anything else waits `DEBOUNCE_SECONDS` (6 on the server now).
+  - `TYPING_INDICATOR` (true), `TYPING_REFRESH_SECONDS` (20),
+    `TYPING_MAX_SECONDS` (120) — `app/whapi/typing.py`.
+  - `SHORT_SEND_TYPING` (true) + `SEND_TYPING_SECONDS` (0.5) — how long Whapi
+    holds a reply showing "typing" before delivering it. Off is the old
+    `max(1, min(len // 25, 2))` seconds.
+  - `EMBED_CACHE_SIZE` (256) — query embeddings remembered by `rag.embed_query`.
+  - `LLM_CALL_TIMEOUTS` (true) — `llm.LLM_TIMEOUTS` per purpose with one
+    immediate retry; off is the old single 45 s timeout and the OpenAI
+    client's two backed-off retries.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1476,6 +1497,34 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-12** - **Five changes to the wait, each behind its own switch** (§7).
+  (A) **"typing..." from the moment a message is accepted** (`app/whapi/typing.py`,
+  Whapi `PUT /presences/{chat}`), refreshed every 20 s, cleared with `pause` when a
+  batch ends without a reply, and stopped after a reply (which clears it itself).
+  Not shown where the bot will say nothing (`needs_no_reply`), on a chat with a
+  parked topic, or where an agent is on the thread. Until now the only sign of life
+  was the read receipt, and Whapi's `typing_time` only covered the last second or
+  two before delivery.
+  (B) **Smart debounce.** A message that ends with "?", has 6+ words or is a voice
+  note waits `DEBOUNCE_SHORT_SECONDS` (2.5); anything else keeps `DEBOUNCE_SECONDS`.
+  The newest message decides and every message still restarts the timer, so a
+  burst of three is one reply (asserted). **Measured against the e2e client's own
+  messages, only 30% qualify**: an answer to our question is usually short
+  ("Filipino", "condo", "5 people") and so still waits the full time.
+  (C) **The pause at send** was `max(1, min(len // 25, 2))` seconds of Whapi
+  `typing_time` on every reply - 1.8 s on average over the 74 e2e replies, 2 s on
+  80% of them. Now 0.5 s; (A) covers what it was for.
+  (D) **`embed_query` cache** (256, oldest out first, keyed on model + size +
+  text): 20 of 73 embeddings were cache hits in the e2e run; RAG search p90 3.0 s
+  -> 2.1 s.
+  (E) **Per-purpose LLM timeout with one immediate retry**, several times each
+  measured p90 (`llm.LLM_TIMEOUTS`), the client's own retries off under it. Seen
+  live in the regression run: a classify stuck at 12 s was cut and retried, where
+  the old setting would have waited up to 45 s and retried twice more.
+  29 new `smoke_nodes.py` checks through the real code paths, twenty faults
+  injected, twenty red - after one was GREEN because the only test question was
+  also six words long. `smoke_nodes.py` is **277 checks**.
 
 - **2026-10-12** - **Each turn now logs how long every step took.** The agency's
   complaint is the wait, and until now it had only been estimated from message

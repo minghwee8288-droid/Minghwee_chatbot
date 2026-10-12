@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Optional
 
 from app.whapi.parser import IncomingMessage
 
@@ -20,8 +20,17 @@ Handler = Callable[[str, list[IncomingMessage]], Awaitable[None]]
 
 
 class MessageDebouncer:
-    def __init__(self, delay: float, handler: Handler) -> None:
+    def __init__(
+        self,
+        delay: float,
+        handler: Handler,
+        delay_for: Optional[Callable[[IncomingMessage], float]] = None,
+    ) -> None:
         self._delay = delay
+        # How long to wait after THIS message, when the wait depends on what
+        # it says (the smart debounce, webhook.debounce_delay). The newest
+        # message decides, because every message restarts the timer.
+        self._delay_for = delay_for
         self._handler = handler
         self._buffers: dict[str, list[IncomingMessage]] = {}
         self._timers: dict[str, asyncio.Task] = {}
@@ -35,11 +44,22 @@ class MessageDebouncer:
             existing = self._timers.get(phone)
             if existing and not existing.done():
                 existing.cancel()
-            self._timers[phone] = asyncio.create_task(self._flush_after_delay(phone))
+            self._timers[phone] = asyncio.create_task(
+                self._flush_after_delay(phone, self._wait_after(message))
+            )
 
-    async def _flush_after_delay(self, phone: str) -> None:
+    def _wait_after(self, message: IncomingMessage) -> float:
+        if self._delay_for is None:
+            return self._delay
         try:
-            await asyncio.sleep(self._delay)
+            return float(self._delay_for(message))
+        except Exception:  # noqa: BLE001 - a bad classifier must not drop a message
+            logger.debug("debounce delay_for failed; using the full wait", exc_info=True)
+            return self._delay
+
+    async def _flush_after_delay(self, phone: str, delay: float | None = None) -> None:
+        try:
+            await asyncio.sleep(self._delay if delay is None else delay)
         except asyncio.CancelledError:
             return  # A newer message arrived; that timer owns the flush now.
 

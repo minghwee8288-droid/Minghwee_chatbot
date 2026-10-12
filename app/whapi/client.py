@@ -334,6 +334,29 @@ class WhapiClient:
             payload["filename"] = filename
         return await self._post(f"/messages/{media_type}", payload)
 
+    async def send_presence(self, to: str, presence: str) -> bool:
+        """Show ("typing") or clear ("pause") the typing indicator in a chat.
+
+        PUT /presences/{chat}, Whapi's documented presence call. Best effort:
+        a presence is cosmetic, so it never raises and never retries - a turn
+        must not wait on it or fail because of it. Returns whether Whapi
+        accepted it.
+        """
+        try:
+            client = await self._get_client()
+            response = await client.put(
+                f"/presences/{self.recipient(to)}",
+                json={"presence": presence},
+                timeout=5.0,
+            )
+            if response.status_code >= 400:
+                logger.debug("Whapi presence %s -> %s", presence, response.status_code)
+                return False
+            return True
+        except Exception:  # noqa: BLE001 - cosmetic; read-only mode raises here too
+            logger.debug("Could not send presence %s", presence, exc_info=True)
+            return False
+
     async def mark_read(self, message_id: str) -> None:
         """Best-effort read receipt so the thread looks attended to."""
         try:

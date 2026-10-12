@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -9,6 +10,7 @@ from functools import lru_cache
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from openai import APIConnectionError, APITimeoutError, InternalServerError, RateLimitError
 
 from app import timing
 from app.config import settings
@@ -20,7 +22,11 @@ _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 
 @lru_cache(maxsize=16)
 def get_llm(
-    temperature: float = 0.4, max_tokens: int = 400, json_mode: bool = False
+    temperature: float = 0.4,
+    max_tokens: int = 400,
+    json_mode: bool = False,
+    timeout: float = 45,
+    max_retries: int = 2,
 ) -> ChatOpenAI:
     """Chat model via OpenRouter.
 
@@ -47,8 +53,8 @@ def get_llm(
         base_url=settings.openrouter_base_url,
         temperature=temperature,
         max_tokens=max_tokens,
-        timeout=45,
-        max_retries=2,
+        timeout=timeout,
+        max_retries=max_retries,
         # Mild penalties damp the repetition loops seen on long instruction-heavy
         # prompts. Kept low: high values make a small model incoherent, which is
         # worse than repetitive.
@@ -79,12 +85,76 @@ async def complete(
     # is charged to the same budget, so the headroom is added here rather than
     # every call site having to know the model is a reasoning one.
     budget = max_tokens + settings.resolved_reasoning_headroom
-    with timing.step(timing.llm_step_name() if timing.active() else ""):
-        response = await get_llm(temperature, budget, json_mode).ainvoke(messages)
+    step_name = timing.llm_step_name()
+    if settings.llm_call_timeouts:
+        response = await _invoke_with_timeout(
+            messages, temperature, budget, json_mode, step_name
+        )
+    else:
+        with timing.step(step_name if timing.active() else ""):
+            response = await get_llm(temperature, budget, json_mode).ainvoke(messages)
     content = response.content
     if isinstance(content, list):  # some providers return content parts
         content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
     return (content or "").strip()
+
+
+# How long each kind of call may take before it is abandoned and tried once
+# more. Set 2026-10-12 from the first TURN_TIMING baseline (73 turns, p90 /
+# max): classify 2.0 / 15.5 s, extract 1.6 / 2.1 s, reply 2.7 / 4.4 s,
+# rewrite 1.8 s. Each limit is several times its p90, so a normal call never
+# meets it; what it cuts is the stuck call, like the 15.5 s classify, which
+# under the old single 45 s timeout and the client's two backed-off retries
+# could hold a turn for over two minutes. A briefing reply is the longest
+# call we make, hence reply's margin.
+LLM_TIMEOUTS = {
+    "classify": 12.0,
+    "harm_check": 12.0,
+    "extract": 12.0,
+    "reply": 25.0,
+    "rewrite": 15.0,
+}
+LLM_DEFAULT_TIMEOUT = 30.0
+
+# Worth one immediate retry: the call timed out, never connected, was
+# rate-limited or hit a 5xx. A 400-class error would only fail again.
+_TRANSIENT = (
+    asyncio.TimeoutError,
+    APITimeoutError,
+    APIConnectionError,
+    RateLimitError,
+    InternalServerError,
+)
+
+
+def timeout_for(step_name: str) -> float:
+    """The limit for 'llm.<node>.<purpose>'."""
+    return LLM_TIMEOUTS.get(step_name.rsplit(".", 1)[-1], LLM_DEFAULT_TIMEOUT)
+
+
+async def _invoke_with_timeout(messages, temperature, budget, json_mode, step_name):
+    """One attempt, and one immediate retry on a transient failure.
+
+    The client's own retries are switched off (max_retries=0) so the limit
+    is the limit: two attempts, never more, and no hidden backoff.
+    """
+    limit = timeout_for(step_name)
+    llm = get_llm(temperature, budget, json_mode, limit, 0)
+    for attempt in (1, 2):
+        try:
+            with timing.step(step_name if timing.active() else ""):
+                return await asyncio.wait_for(llm.ainvoke(messages), timeout=limit)
+        except _TRANSIENT as exc:
+            if attempt == 2:
+                raise
+            logger.warning(
+                "%s failed after at most %.0fs (%s) - retrying once",
+                step_name,
+                limit,
+                type(exc).__name__,
+            )
+            timing.add(f"{step_name}.retry", 0.0)
+    raise RuntimeError("unreachable")  # pragma: no cover
 
 
 async def complete_json(

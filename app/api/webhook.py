@@ -34,6 +34,7 @@ from app.services import ticket as ticket_service
 from app.services import transcription as transcription_service
 from app.utils import redact_nric
 from app.whapi.client import WhapiError, whapi
+from app.whapi import typing as typing_indicator
 from app.whapi.debouncer import MessageDebouncer
 from app.whapi.parser import IncomingMessage, parse_webhook, verify_signature
 
@@ -655,6 +656,13 @@ async def handle_inbound(message: IncomingMessage) -> None:
         return
 
     timing.mark_received(message.whapi_message_id)
+    # "typing..." from now until the reply (app/whapi/typing.py). Off the
+    # message path: it reads two things to decide, and the message must not
+    # wait on a cosmetic.
+    if typing_indicator.enabled():
+        _spawn(typing_indicator.start(
+            phone, conversation_id, message.text_for_llm, message.whapi_message_id
+        ))
     await debouncer.add(message)
 
 
@@ -785,6 +793,7 @@ async def handle_outbound(message: IncomingMessage) -> None:
     # Agent detector: a human is on the thread, so the bot stands down and any
     # half-buffered client messages are dropped.
     await debouncer.flush_now(message.customer_number)
+    await typing_indicator.stop(message.customer_number, clear=True)
     await handover_service.agent_took_over(conversation)
     _remember_standdown(message.body, conversation["id"])
 
@@ -872,23 +881,29 @@ async def process_batch(phone: str, messages: list[IncomingMessage]) -> None:
         return
 
     async with lock:
-        pending = _dedupe(messages + await debouncer.drain(phone))
-        # A message that genuinely arrives after the reply is a new turn, so
-        # keep going until nothing is left. Bounded in case of a message storm.
-        #
-        # allow_hold lets a pass drop its reply when the client is still typing,
-        # so the next one answers everything together. The LAST pass is never
-        # allowed to: otherwise a client who keeps typing through all five gets
-        # silence, which is worse than a reply that is one message behind.
-        for attempt in range(_MAX_PASSES):
-            if not pending:
-                break
-            # One timing line per pass that reaches the graph (app/timing.py).
-            with timing.turn(None):
-                await _process_locked(
-                    phone, pending, allow_hold=attempt < _MAX_PASSES - 1
-                )
-            pending = _dedupe(await debouncer.drain(phone))
+        try:
+            pending = _dedupe(messages + await debouncer.drain(phone))
+            # A message that genuinely arrives after the reply is a new turn, so
+            # keep going until nothing is left. Bounded in case of a message storm.
+            #
+            # allow_hold lets a pass drop its reply when the client is still typing,
+            # so the next one answers everything together. The LAST pass is never
+            # allowed to: otherwise a client who keeps typing through all five gets
+            # silence, which is worse than a reply that is one message behind.
+            for attempt in range(_MAX_PASSES):
+                if not pending:
+                    break
+                # One timing line per pass that reaches the graph (app/timing.py).
+                with timing.turn(None):
+                    await _process_locked(
+                        phone, pending, allow_hold=attempt < _MAX_PASSES - 1
+                    )
+                pending = _dedupe(await debouncer.drain(phone))
+        finally:
+            # However the batch ended - a reply sent, nothing to say, taken over,
+            # an error - "typing..." must not outlive it. A no-op after a reply,
+            # which already stopped it.
+            await typing_indicator.stop(phone, clear=True)
 
 
 def _dedupe(messages: list[IncomingMessage]) -> list[IncomingMessage]:
@@ -1216,6 +1231,8 @@ async def _process_locked(
     except WhapiError:
         await _fail_over_to_human(conversation)
         return
+    # The reply clears the indicator on the client's phone; stop refreshing it.
+    await typing_indicator.stop(phone, clear=False)
     timing.note("sent", True)
     if received:
         # The whole wait, from the client's first message to our reply leaving.
@@ -1242,4 +1259,38 @@ async def _fail_over_to_human(conversation: dict[str, Any]) -> None:
         logger.exception("Failover handover failed for conversation %s", conversation.get("id"))
 
 
-debouncer = MessageDebouncer(settings.debounce_seconds, process_batch)
+# The smart debounce (2026-10-12). A client who has plainly finished - asked a
+# question, written a full sentence, sent a voice note - waits
+# DEBOUNCE_SHORT_SECONDS; a greeting, a fragment or bare media still waits
+# DEBOUNCE_SECONDS for the rest of the thought. Measured before it: the full
+# wait was 8 s of a ~22 s reply (2026-10-08), most of it on messages that were
+# already complete.
+_COMPLETE_MIN_WORDS = 6
+
+
+def looks_complete(message: IncomingMessage) -> bool:
+    if message.is_transcribed:
+        return True
+    text = (message.body or "").strip()
+    if not text:
+        return False  # media with no text: wait for the caption or the rest
+    return text.rstrip().endswith("?") or len(text.split()) >= _COMPLETE_MIN_WORDS
+
+
+def debounce_delay(message: IncomingMessage) -> float:
+    if settings.smart_debounce and looks_complete(message):
+        return settings.debounce_short_seconds
+    return settings.debounce_seconds
+
+
+# Tasks started and not awaited, kept so they are not garbage-collected mid-run.
+_BACKGROUND: set = set()
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _BACKGROUND.add(task)
+    task.add_done_callback(_BACKGROUND.discard)
+
+
+debouncer = MessageDebouncer(settings.debounce_seconds, process_batch, debounce_delay)

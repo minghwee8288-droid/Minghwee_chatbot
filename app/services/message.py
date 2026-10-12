@@ -426,6 +426,12 @@ async def send_bot_reply(conversation: dict[str, Any], body: str) -> dict[str, A
     # seconds on top of the debounce window and the graph run, and the client
     # reads that as the bot being slow, not as someone typing.
     typing_time = max(1, min(len(body) // 25, 2))
+    # ...and since 2026-10-12 a fixed half second at most: the indicator now
+    # runs from the moment the message is accepted (app/whapi/typing.py), so
+    # holding the finished reply back as well only adds to the wait.
+    # SHORT_SEND_TYPING=false restores the length-scaled pause above.
+    if settings.short_send_typing:
+        typing_time = settings.send_typing_seconds
     # Before the send, not after: a copy Whapi delivers but does not confirm
     # comes back as a from_me webhook with an id we never learn, and it can
     # arrive before this call returns. See _SENT_BODIES.
