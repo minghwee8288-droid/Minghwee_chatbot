@@ -21,6 +21,7 @@ employer's question just as well as one labelled for employers.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections import OrderedDict
@@ -107,14 +108,58 @@ def get_embedding_client() -> AsyncOpenAI:
 _EMBED_CACHE: "OrderedDict[tuple[str, int, str], list[float]]" = OrderedDict()
 
 
+# Step 1d: embeddings started ahead of the classifier (prefetch_query), keyed
+# like _EMBED_CACHE. embed_query takes one over - finished or still running -
+# instead of making a second call. Small: one or two per turn are in here.
+_PREFETCHED: "OrderedDict[tuple[str, int, str], asyncio.Task]" = OrderedDict()
+_PREFETCH_LIMIT = 16
+
+
+def _embed_key(text: str) -> tuple[tuple[str, int, str], str]:
+    clean = redact_nric(text, context="embedding")[:8000]
+    return (settings.embedding_model, settings.embedding_dimensions, clean), clean
+
+
+def prefetch_query(text: str) -> None:
+    """Start embedding `text` now; embed_query(text) later reuses it.
+
+    Best effort: a failed or unused prefetch costs one call and nothing else -
+    embed_query then embeds as it always did.
+    """
+    try:
+        if not (text or "").strip():
+            return
+        key, clean = _embed_key(text)
+        if key in _PREFETCHED or (settings.embed_cache_size > 0 and key in _EMBED_CACHE):
+            return
+        task = asyncio.get_running_loop().create_task(_embed_uncached(key, clean))
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())
+        _PREFETCHED[key] = task
+        while len(_PREFETCHED) > _PREFETCH_LIMIT:
+            _PREFETCHED.popitem(last=False)
+    except Exception:  # noqa: BLE001 - a prefetch must never cost a turn
+        logger.exception("Embedding prefetch could not be started")
+
+
 @timing.timed("rag.embed")
 async def embed_query(text: str) -> list[float]:
-    clean = redact_nric(text, context="embedding")[:8000]
-    key = (settings.embedding_model, settings.embedding_dimensions, clean)
+    key, clean = _embed_key(text)
     if settings.embed_cache_size > 0 and key in _EMBED_CACHE:
         _EMBED_CACHE.move_to_end(key)
         timing.add("rag.embed_cache_hit", 0.0)
         return list(_EMBED_CACHE[key])
+    task = _PREFETCHED.pop(key, None)
+    if task is not None:
+        try:
+            vector = await task
+            timing.add("rag.embed_prefetch_hit", 0.0)
+            return list(vector)
+        except Exception:  # noqa: BLE001 - fall through and embed it now
+            logger.warning("Embedding prefetch failed - embedding the query now")
+    return await _embed_uncached(key, clean)
+
+
+async def _embed_uncached(key: tuple[str, int, str], clean: str) -> list[float]:
     client = get_embedding_client()
     response = await client.embeddings.create(
         model=settings.embedding_model,

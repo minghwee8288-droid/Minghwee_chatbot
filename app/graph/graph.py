@@ -20,7 +20,7 @@ from app.graph.nodes.info_collector import (
     info_collector,
 )
 from app.graph.nodes.intent_classifier import intent_classifier
-from app.graph.nodes.rag_retriever import rag_retriever
+from app.graph.nodes.rag_retriever import _search_query, rag_retriever
 from app.graph.nodes.response_generator import completed_request, response_generator
 from app.graph.nodes.ticket_creator import ticket_creator
 from app.graph.state import (
@@ -33,6 +33,7 @@ from app.graph.state import (
     effective_contact_type,
 )
 from app.services import kb_rules
+from app.services import rag
 from app.services import ticket as ticket_service
 
 logger = logging.getLogger(__name__)
@@ -239,12 +240,31 @@ def route_after_collector(state: ConversationState) -> str:
     return "ticket_creator" if state.get("info_complete") else END
 
 
+# Step 1d: the search embedding starts at the same moment as the classifier.
+# Its query is built from the turn as it stands before classification - the
+# intent and service carry over from the previous turn - and the retriever only
+# reuses it if the query it builds afterwards is the same text. If the
+# classifier changed the service (or anything else the query reads), the
+# prefetched vector is simply not used and the real query is embedded as
+# before. False = the classifier runs alone, as before.
+PREFETCH_SEARCH_EMBEDDING = True
+
+
+async def _classify_with_prefetch(state: ConversationState) -> dict[str, Any]:
+    if PREFETCH_SEARCH_EMBEDDING and state.get("intent"):
+        try:
+            rag.prefetch_query(_search_query(state))
+        except Exception:  # noqa: BLE001 - a prefetch must never cost a turn
+            logger.exception("Could not predict the search query")
+    return await intent_classifier(state)
+
+
 # --- Construction ----------------------------------------------------------
 
 def build_graph(checkpointer: Any = None):
     builder = StateGraph(ConversationState)
 
-    builder.add_node("intent_classifier", intent_classifier)
+    builder.add_node("intent_classifier", _classify_with_prefetch)
     builder.add_node("rag_retriever", rag_retriever)
     builder.add_node("response_generator", response_generator)
     builder.add_node("info_collector", info_collector)

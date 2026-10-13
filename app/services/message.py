@@ -434,6 +434,11 @@ async def _insert_ignoring_duplicates(payload: dict[str, Any]) -> dict[str, Any]
         raise
 
 
+# Step 1d: no Whapi typing_time while the typing indicator is on. False = the
+# SHORT_SEND_TYPING / SEND_TYPING_SECONDS pause, as before.
+SEND_WITHOUT_TYPING_TIME = True
+
+
 async def send_bot_reply(conversation: dict[str, Any], body: str) -> dict[str, Any] | None:
     """Send a bot reply through Whapi and record it as ``is_bot = true``."""
     body = (body or "").strip()
@@ -454,6 +459,11 @@ async def send_bot_reply(conversation: dict[str, Any], body: str) -> dict[str, A
     # SHORT_SEND_TYPING=false restores the length-scaled pause above.
     if settings.short_send_typing:
         typing_time = settings.send_typing_seconds
+    # Step 1d: while our own indicator is running there is nothing for Whapi's
+    # typing_time to add - it only holds the finished reply back (whapi.send was
+    # still 1.4 s with 0.5 s asked for). 0 means the field is not sent at all.
+    if SEND_WITHOUT_TYPING_TIME and settings.typing_indicator:
+        typing_time = 0
     # Before the send, not after: a copy Whapi delivers but does not confirm
     # comes back as a from_me webhook with an id we never learn, and it can
     # arrive before this call returns. See _SENT_BODIES.

@@ -3370,6 +3370,30 @@ async def _step1b_checks() -> list[tuple[str, bool]]:
                     sent_typing[0] == 0.5))
     results.append(("send: SHORT_SEND_TYPING off -> the old 2 s for a long reply",
                     sent_typing[1] == 2))
+    # Step 1d: with the typing indicator on, Whapi is asked for no typing_time.
+    for omit in (True, False):
+        with patch.object(_msg.whapi, "send_text", new=send_text), \
+             patch.object(_msg, "_insert_ignoring_duplicates", new=AsyncMock()), \
+             patch.object(_msg.conversation_service, "touch_outbound", new=AsyncMock()), \
+             patch.object(_msg, "SEND_WITHOUT_TYPING_TIME", omit), \
+             patch.object(_settings, "typing_indicator", True), \
+             patch.object(_settings, "short_send_typing", True), \
+             patch.object(_settings, "send_typing_seconds", 0.5):
+            await _msg.send_bot_reply(conv, long_reply)
+    results.append(("send: indicator on -> no typing_time asked of Whapi",
+                    sent_typing[2] == 0))
+    results.append(("send: SEND_WITHOUT_TYPING_TIME off -> the 0.5 s again",
+                    sent_typing[3] == 0.5))
+    posted: list[dict] = []
+
+    async def _post(path, payload):
+        posted.append(dict(payload))
+        return {"message": {"id": "out-10"}}
+
+    with patch.object(_msg.whapi, "_post", new=_post):
+        await _msg.whapi.send_text("+6590000124", "hi", typing_time=0)
+    results.append(("send: typing_time 0 is left out of the request entirely",
+                    bool(posted) and "typing_time" not in posted[0]))
 
     # --- 4. the embedding cache ---------------------------------------------
     calls: list[str] = []
@@ -3411,6 +3435,94 @@ async def _step1b_checks() -> list[tuple[str, bool]]:
     results.append(("embed cache: size-limited, oldest out first",
                     len(_rag._EMBED_CACHE) == 2 and calls == ["a", "b", "c", "a"]))
     _rag._EMBED_CACHE.clear()
+
+    # --- 4b. the embedding started beside the classifier (Step 1d) ----------
+    class _SlowEmb:
+        class embeddings:  # noqa: N801
+            @staticmethod
+            async def create(model, input, dimensions):
+                calls.append(input)
+                await asyncio.sleep(0.05)
+                if input == "boom":
+                    raise RuntimeError("provider down")
+                return types.SimpleNamespace(
+                    data=[types.SimpleNamespace(embedding=[float(len(input))] * dimensions)])
+
+    for cache in (256, 0):
+        calls.clear()
+        _rag._EMBED_CACHE.clear()
+        _rag._PREFETCHED.clear()
+        with patch.object(_rag, "get_embedding_client", new=lambda: _SlowEmb), \
+             patch.object(_settings, "embed_cache_size", cache):
+            _rag.prefetch_query("same query")
+            await asyncio.sleep(0)
+            vec = await _rag.embed_query("same query")   # still in flight
+        results.append((f"prefetch: the same query, still running, is one call (cache {cache})",
+                        calls == ["same query"] and vec[0] == float(len("same query"))))
+    calls.clear()
+    _rag._EMBED_CACHE.clear()
+    _rag._PREFETCHED.clear()
+    with patch.object(_rag, "get_embedding_client", new=lambda: _SlowEmb):
+        _rag.prefetch_query("predicted query")
+        vec = await _rag.embed_query("the real query")
+    results.append(("prefetch: a different query is embedded itself, the prediction unused",
+                    "the real query" in calls and vec[0] == float(len("the real query"))))
+    calls.clear()
+    _rag._EMBED_CACHE.clear()
+    _rag._PREFETCHED.clear()
+    with patch.object(_rag, "get_embedding_client", new=lambda: _SlowEmb), \
+         patch.object(_settings, "embed_cache_size", 0):
+        _rag.prefetch_query("boom")
+        await asyncio.sleep(0.1)
+        try:
+            await _rag.embed_query("boom")
+            failed_over = False
+        except RuntimeError:
+            failed_over = calls == ["boom", "boom"]
+    results.append(("prefetch: a failed prefetch is retried by the search, never reused",
+                    failed_over))
+    _rag._PREFETCHED.clear()
+    _rag._EMBED_CACHE.clear()
+
+    # ...and the graph starts it with the retriever's own query, before the
+    # classifier, only with the switch on and a previous intent to predict from.
+    from app.graph import graph as _graph
+    started: list[str] = []
+    order: list[str] = []
+
+    async def _classify(state):
+        order.append("classify")
+        return {}
+
+    mid = {**BASE, "intent": "renewal", "service_type": "renewal",
+           "incoming_text": "in 3 weeks",
+           "history_text": "You: When does her work permit expire?",
+           "collected_info": {"full_name": "VD", "helper_name": "Devi"},
+           "asked_field_counts": {"full_name": 1, "helper_name": 1, "permit_expiry": 1}}
+    for on in (True, False):
+        started.clear()
+        order.clear()
+        with patch.object(_graph, "intent_classifier", new=_classify), \
+             patch.object(_graph.rag, "prefetch_query",
+                          new=lambda q: (started.append(q), order.append("prefetch"))), \
+             patch.object(_graph, "PREFETCH_SEARCH_EMBEDDING", on):
+            await _graph._classify_with_prefetch(mid)
+        if on:
+            results.append(("prefetch: started before the classifier, with the retriever's query",
+                            order == ["prefetch", "classify"]
+                            and started == [_rr._search_query(mid)]))
+        else:
+            results.append(("prefetch: PREFETCH_SEARCH_EMBEDDING off -> nothing started",
+                            not started and order == ["classify"]))
+    started.clear()
+    with patch.object(_graph, "intent_classifier", new=_classify), \
+         patch.object(_graph.rag, "prefetch_query", new=lambda q: started.append(q)):
+        await _graph._classify_with_prefetch({**mid, "intent": None})
+    results.append(("prefetch: nothing to predict from on a first message", not started))
+    from langgraph.checkpoint.memory import MemorySaver
+    node = _graph.build_graph(MemorySaver()).nodes["intent_classifier"]
+    results.append(("prefetch: the graph's classifier step is the one that starts it",
+                    getattr(node.bound, "afunc", None) is _graph._classify_with_prefetch))
 
     # --- 5. LLM timeout and one fast retry ----------------------------------
     attempts: list[str] = []

@@ -496,6 +496,8 @@ because the lead is opened early and the ticket is created much later.
 | A helper named earlier in the conversation is confirmed, not asked for again, after a switch | `info_collector.helpers_named_in` / `known_helpers_for` + `state.helpers_named` (`REMEMBER_NAMED_HELPERS`) | `helper_name` is dropped on a switch (rightly) and the webhook's ticket helpers are read only for a known employer. Never the client's own name (her own home leave or passport). |
 | A closing briefing is built from the briefing's own records, however many answers arrived at once | `info_collector` (`BRIEFING_FETCHES_ITS_OWN_RECORDS`) -> `rag_retriever.briefing_records` | The retriever runs before the extraction, so a briefing that falls due on THIS turn's answers was written from a search for the client's words. Live 2026-10-13: a renewal answered in one message deferred "the exact fee" where the answer is $695. Only fetched when the briefing was not already due before the turn. |
 | "(MDW)" never sits in front of a possessive | `guards.without_tag_before_possessive`, applied once in `graph.run_turn` (and the preview) behind `NO_TAG_BEFORE_POSSESSIVE` | "Devi lal singh (MDW)'s home leave" went out live. The style rule also says so; the code is the guarantee. |
+| A finished reply is not held back by Whapi | `message.send_bot_reply` (`SEND_WITHOUT_TYPING_TIME`) | With our own typing indicator running, no `typing_time` is sent: it only delayed delivery (whapi.send 1.4 s with 0.5 s asked). The channel's `/settings` holds no typing default. |
+| The search embedding starts beside the classifier, and is used only for the query the retriever actually builds | `graph._classify_with_prefetch` (`PREFETCH_SEARCH_EMBEDDING`) + `rag.prefetch_query` / `embed_query` | Predicted from the turn as it stands before classification (intent and service carry over). `embed_query` takes over a prefetch for the SAME text only, finished or still running; a different query (the classifier changed the service) is embedded as before, and a failed prefetch is retried, never reused. The canary is unchanged (cosine 1.000000 both ways). |
 | The timing line never costs a reply and never carries a client's words | `app/timing.py` + `smoke_nodes.py` (`_timing_checks`) | Every entry point swallows its own errors, the line holds the conversation id, durations and TABLE names only, and `TURN_TIMING_LOG=false` makes every hook return at once. Asserted through the real `_process_locked`, `handle_inbound` and `send_bot_reply` with I/O stubbed; eight faults injected, eight red. |
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
 | Claire introduces herself in her first message, however many our TEAM sent before it | `guards.claire_has_spoken` + `message.format_history` ("Agent:") + the stage line in `build_system_prompt` | Agent messages were rendered "You:", so a thread full of them read as Claire's own and she never said who she was (conversation 26, 2026-10-07). Only a "You:" line is her. Every node's first-contact test reads the one predicate. |
@@ -731,6 +733,9 @@ Easy to get wrong:
   Step 2c's two, each `False` for the Step 2b behaviour:
   `info_collector.BRIEFING_FETCHES_ITS_OWN_RECORDS`,
   `graph.NO_TAG_BEFORE_POSSESSIVE`.
+  Step 1d's two, each `False` for the Step 2c behaviour:
+  `message.SEND_WITHOUT_TYPING_TIME` (no Whapi `typing_time` while the
+  typing indicator is on), `graph.PREFETCH_SEARCH_EMBEDDING`.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1197,6 +1202,17 @@ Ordered by what will hurt first.
     the case fixed that day. Not changed: making the sticky rule yield to a
     named service switches `service_type` mid-collection, and what that does
     to the live collection has not been measured.
+37. **A new hire whose helper "has worked in Singapore before" is briefed as
+    a TRANSFER.** Phase 3 Step 5 item 10. Seen 2026-10-13 in the e2e: the
+    scripted answer "someone who has worked in Singapore before" is filed as
+    `hire_source` "Singapore experience" in some runs, and the closing
+    briefing then quotes "1 to 2 weeks for a transfer helper already in
+    Singapore" and defers the $1,428 agency fee (0 of 6 calls correct on that
+    prompt; 6 of 6 when the value is "Singapore"). It happens with Step 2c
+    switched off too (1 walk in 3). An ex-Singapore helper is hired from
+    overseas; a transfer means she is in Singapore now with another employer.
+    The briefing must take the transfer reading only when the client chose the
+    transfer option or said she is in Singapore now.
 31. **One `BOT_ALLOWED_NUMBERS` entry on the server looks malformed.** Seen in
     the startup log 2026-09-24: an entry of `+971` followed by only seven
     digits (ends `…9155`). It is too short for a UAE mobile and is most likely
@@ -1527,6 +1543,35 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-13** - **Step 1d: the send, the embeddings provider, and the search
+  started beside the classifier.**
+  (A) **whapi.send was 1.4 s with 0.5 s of typing asked for.** The only delay
+  Whapi applies is the `typing_time` we send: the channel's `GET /settings`
+  holds no typing default, and the docs give `typing_time` as "number,
+  seconds" with no default. With our own indicator running from acceptance
+  (2026-10-12), that pause only holds the finished reply back, so it is no
+  longer sent (`SEND_WITHOUT_TYPING_TIME`). No real message was sent to measure
+  it: re-read `whapi.send` in `latency_report.py` on the server after deploy.
+  A read-only `GET` to Whapi from a developer machine takes 0.9-1.3 s, which
+  is that machine's network, not the server's.
+  (B) **Embeddings, report only.** Through the bot's own client (OpenRouter,
+  `openai/text-embedding-3-small`, 1536), 20 calls from a developer machine:
+  p50 906 ms, p90 1,226 ms, one of 17 s. Direct OpenAI was NOT timed: there is
+  no OpenAI key in any env file here. Nothing switched.
+  (C) **The search embedding starts with the classifier.** The query is
+  predicted from the pre-classifier state (`intent` is not reset per turn) and
+  embedded in the background; `embed_query` reuses it only for the identical
+  text. In the e2e (the harness pointed at the graph's classifier step): 66
+  predictions, 49 used by the search with an embedding wait of p50 0 ms (about
+  1.1 s saved each, 55.6 s over the run); the rest were either already cached
+  or changed by the classifier ("(transfer)" -> "(new hiring)") and were
+  re-embedded. The retrieved rows cannot change: the vector is reused only for
+  the same text. Canary: cosine 1.000000, direct and via a prefetch.
+  **Verified:** eleven `smoke_nodes.py` checks; 8 faults injected, 8 red.
+  `smoke_nodes.py` is **333 checks**. E2E: 6 of 7 pass, 0 refusals; the one
+  failure (home leave's first message without the name question) is in the
+  original Phase 3 baseline too and passes on re-runs.
 
 - **2026-10-13** - **Step 2c: a renewal briefing quoted no fee, a $40 fee
   nobody asked about, and "(MDW)'s".** From the live phone test of Step 2b,
