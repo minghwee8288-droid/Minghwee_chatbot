@@ -2201,13 +2201,14 @@ It says our agent will confirm the cost and does not borrow another
 nationality's price. Since 13 October 2026 this is also checked automatically
 after the reply is written: a sentence quoting a fee for a nationality we hold
 no fee for, or quoting another nationality's fee, is replaced with the fixed
-sentence in the Appendix.
+sentence in the Appendix. The nationality is taken from the message, then the
+details collected, then the ticket already raised for this service.
 
 ### Prompt
 *(The ending is "her embassy" for passport renewal and home leave, and "her
 nationality" for other services.)*
 ```text
-We do NOT have a fee on record for a helper of this nationality. The records name a price for other nationalities; that price is theirs and not hers. Do not quote it, do not adapt it, and do not give a range. Say in one short sentence that our agent will confirm the cost for her embassy, and carry on with the timing and the process.
+We do NOT have a fee on record for a helper of this nationality. The records name a price for other nationalities; that price is theirs and not hers. Do not quote it, do not adapt it, and do not give a range. Say in one short sentence that our agent will confirm the cost for her embassy, and carry on with the timing and the process. With no figure there is nothing approximate: never call the cost approximate (Step 5 item 17).
 ```
 
 ---
@@ -2731,6 +2732,9 @@ above name a price for other nationalities; that price is theirs and not hers.
 Do not quote it, do not adapt it, and do not give a range. Say in one short
 sentence that our agent will confirm the cost for her, and answer the rest of
 what they asked - the timing and the process are unaffected.
+With no figure there is nothing approximate: never call the cost approximate.
+Say it like this: "Our agent will confirm the cost for a Myanmar helper's
+passport renewal."
 ```
 
 ---
@@ -3027,7 +3031,8 @@ client might receive.
 | Client says they want another service but does not name it | "Of course — which service can I help you with?" |
 | …and still does not name it after being asked | "Let me get a live agent onto that for you — they'll connect with you shortly." |
 | A price that must be quoted by a person was about to be given | "The cost depends on nationality, experience and how the package is put together, so I would rather one of our agents take you through the full breakdown than give you half a figure. I will get that arranged." |
-| A reply quoted a fee we do not hold for the helper's nationality, or another nationality's fee | "Our agent will confirm the exact fee based on your requirements." *(replaces only that sentence; the rest of the reply is sent as written)* |
+| A reply quoted a fee we do not hold for the helper's nationality, or called that cost "approximate" | "Our agent will confirm the cost for a Myanmar helper's passport renewal." *(the nationality and service are the ones in hand; replaces only that sentence, and is left out when the rest of the reply already says our agent will confirm the cost)* |
+| A reply quoted another nationality's fee, where we hold one for hers | "Our agent will confirm the exact fee based on your requirements." *(replaces only that sentence)* |
 | Backup if a reply about a parked topic cannot be written | "A live agent has this one and will connect with you shortly. Anything else I can help you with in the meantime?" |
 | Backup closing message | "Noted, thanks for the details. I've passed this to our team and a live agent will connect with you shortly. Anything else I can help you with?" |
 | Backup acknowledgement | "Got it. A live agent will pick this up and connect with you shortly. Is there anything else I can help with in the meantime?" |

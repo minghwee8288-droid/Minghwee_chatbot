@@ -71,7 +71,7 @@ from app.graph.state import (
 from app.graph.reference import add_reference
 from app.services import ticket as ticket_service
 from app.services.ticket import TICKET_SERVICE_TYPES, service_label
-from app.services.lead import nationality_in_play
+from app.services.lead import nationality_for_fee
 
 logger = logging.getLogger(__name__)
 
@@ -835,7 +835,10 @@ async def _respond(state: ConversationState) -> dict[str, Any]:
         reply, cut = guard_nationality_fee(
             reply,
             state.get("service_type"),
-            nationality_in_play(state.get("collected_info"), state.get("incoming_text")),
+            nationality_for_fee(
+                state.get("collected_info"), state.get("incoming_text"),
+                state.get("blocked_topics"), state.get("service_type"),
+            ),
             state.get("rag_context", ""),
             state.get("history_text", ""),
             matches=state.get("rag_matches") or (),

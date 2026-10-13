@@ -5442,7 +5442,7 @@ rows += [
  ("a Myanmar passport renewal never shows $450",
   _NF("For a Myanmar helper, the fee is approximately $450. It takes some weeks.",
       "passport_renewal", "MM", _PP_ROW)[0],
-  _guards.NATIONALITY_FEE_DEFERRAL + " It takes some weeks."),
+  _guards.nationality_fee_deferral("passport_renewal", "MM") + " It takes some weeks."),
  ("...nor a Myanmar home leave any fee at all, records or not",
   _nf_cut("The fee is $400.", "home_leave", "MM"), True),
  ("...while a Filipino and an Indonesian passport renewal still show $450",
@@ -5472,7 +5472,8 @@ rows += [
   (False, False, False)),
  ("only the cost sentence goes - a list item keeps its number, the rest stands",
   _NF("Here:\n1. The cost is $450.\n2. A copy of your NRIC", "passport_renewal", "MM")[0],
-  "Here:\n1. " + _guards.NATIONALITY_FEE_DEFERRAL + "\n2. A copy of your NRIC"),
+  "Here:\n1. " + _guards.nationality_fee_deferral("passport_renewal", "MM")
+  + "\n2. A copy of your NRIC"),
  ("...and a reply that already defers is not told it twice",
   _NF("It is $450 for Filipinos. Our agent will confirm the exact fee for her.",
       "passport_renewal", "MM")[0],
@@ -5486,6 +5487,62 @@ rows += [
  ("every path that grounds a reply also runs the nationality-fee guard",
   sorted(n for n, m in _NODES.items()
          if hasattr(m, "ungrounded_figures") and not hasattr(m, "guard_nationality_fee")), []),
+]
+
+
+# --- Phase 3 Step 4b (2026-10-13): the nationality comes from the message, then
+# the live collection, then the parked ticket - and "approximate" never goes
+# beside a cost that has no figure (Step 5 item 17).
+_TICKET_MM = {"passport_renewal": {"ticket_number": "CB-2026-0033",
+                                   "captured_info": {"details": {"nationality": "Myanmar"}}}}
+
+
+def _nff_ticket_off():
+    _lead.FEE_NATIONALITY_FROM_TICKET = False
+    try:
+        return _lead.nationality_for_fee({}, "how much is the fee", _TICKET_MM, "passport_renewal")
+    finally:
+        _lead.FEE_NATIONALITY_FROM_TICKET = True
+
+
+def _approx_off():
+    _guards.NO_APPROXIMATE_WITHOUT_FIGURE = False
+    try:
+        return _nf_cut("The fee is approximate and our agent will confirm it.",
+                       "passport_renewal", "MM")
+    finally:
+        _guards.NO_APPROXIMATE_WITHOUT_FIGURE = True
+
+
+rows += [
+ ("the fee nationality: the message, then the collection, then the parked ticket",
+  (_lead.nationality_for_fee({"nationality": "Myanmar"}, "and for a Filipino?",
+                             _TICKET_MM, "passport_renewal"),
+   _lead.nationality_for_fee({"nationality": "Indonesian"}, "how much is the fee",
+                             _TICKET_MM, "passport_renewal"),
+   _lead.nationality_for_fee({}, "how much is the fee", _TICKET_MM, "passport_renewal")),
+  ("PH", "ID", "MM")),
+ ("...and another topic's ticket is another helper",
+  _lead.nationality_for_fee({}, "how much is the fee", _TICKET_MM, "home_leave"), None),
+ ("FEE_NATIONALITY_FROM_TICKET off reads the message and collection only",
+  _nff_ticket_off(), None),
+ ("the live 3766 reply loses its $450, and is not told to confirm twice",
+  _NF("The fee is approximately $450 for a Myanmar helper. A live agent will confirm "
+      "the exact amount and connect with you shortly.", "passport_renewal", "MM", _PP_ROW)[0],
+  "A live agent will confirm the exact amount and connect with you shortly."),
+ ("...and where nothing else defers, says whose cost our agent confirms",
+  _NF("The fee is approximately $450 for a Myanmar helper. It takes some weeks.",
+      "passport_renewal", "MM", _PP_ROW)[0],
+  "Our agent will confirm the cost for a Myanmar helper's passport renewal. It takes some weeks."),
+ ("a cost with no figure is not 'approximate' where we hold no fee",
+  _NF("The fee for a Myanmar helper's passport renewal is approximate and our agent "
+      "will confirm the exact amount.", "passport_renewal", "MM")[0],
+  "Our agent will confirm the cost for a Myanmar helper's passport renewal."),
+ ("...while a timing 'approximately', and a held fee, are left alone",
+  (_nf_cut("It takes approximately 1 day once a slot is free.", "passport_renewal", "MM"),
+   _nf_cut("The fee is approximately $450.", "passport_renewal", "PH", _PP_ROW)),
+  (False, False)),
+ ("NO_APPROXIMATE_WITHOUT_FIGURE off leaves it", _approx_off(), False),
 ]
 bad = 0
 for label, got, want in rows:

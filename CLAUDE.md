@@ -323,7 +323,7 @@ because the lead is opened early and the ticket is created much later.
 | A fee is quoted for THIS service and THIS nationality, or not at all | `FEE_STATED_SERVICES` + `FEE_BY_NATIONALITY` + `_service_filter` | The agency's first rule of 2026-09-22: *"never answer a fee question using information from another service simply because the nationality or fee category is similar."* Six agency fees now sit in the KB - $1,688/$1,588/$1,288 for a transfer and $1,428/$1,188/$1,168 for a new hire - and membership of `FEE_STATED_SERVICES` is what KEEPS the service filter on a price question and REFUSES the widening retry, so a transfer question cannot reach a hire's fee. Both transfer keys are in it: the employer's is what `_subject_service` returns, the candidate's is what `_aliased()` rewrites it to. |
 | ...and the three we hold are not guessed between before we know which | `ticket.fee_varies_by_nationality` + `FEE_NEEDS_NATIONALITY_NOTE` | Measured: *"how much is the agency fee for a new hire?"* with no nationality settled returns ID at **0.688** and PH and MM at **0.679** - nine thousandths apart, all three correct for somebody. Whichever the model reaches for it is right one time in three and the client cannot tell which. The note offers a choice rather than forcing a question, because three labelled figures are a real answer and a client who has not chosen a nationality is often asking in order to choose. |
 | ...and a nationality we hold NO figure for is a different refusal | `fee_is_known_for` + `FEE_NOT_HELD_FOR_NATIONALITY_NOTE` | A Myanmar passport renewal is a service we price per nationality and hold no price for. Asking which nationality would be asking a question we already have the answer to, so that one defers to an agent instead. Two predicates because they answer two questions: *may we quote* and *is the nationality what stands in the way*. |
-| ...and both are enforced on the REPLY, not only asked for in the prompt | `guards.guard_nationality_fee` (`NATIONALITY_FEE_GUARD`), on all three reply paths | A Myanmar passport renewal was still quoted $450 about one run in ten (§9.28): the figure is in the records, so `ungrounded_figures` passed it. With the service and nationality known: no fee held for her (kb_rules) means no fee figure at all; a fee held means no figure the records or our own earlier messages give only to another nationality ($450 shared by PH and ID passes both). Only the cost sentence is replaced, with "Our agent will confirm the exact fee based on your requirements." Which nationalities have a fee is read through kb_rules; the figures are never in code - who owns one is read off the text (the nationality named nearest it, or the row's KB label). Salary, levy and bond sentences are left alone. English only. |
+| ...and both are enforced on the REPLY, not only asked for in the prompt | `guards.guard_nationality_fee` (`NATIONALITY_FEE_GUARD`), on all three reply paths | A Myanmar passport renewal was still quoted $450 about one run in ten (§9.28): the figure is in the records, so `ungrounded_figures` passed it. With the service and nationality known: no fee held for her (kb_rules) means no fee figure at all; a fee held means no figure the records or our own earlier messages give only to another nationality ($450 shared by PH and ID passes both). Only the cost sentence is replaced, with "Our agent will confirm the exact fee based on your requirements." Which nationalities have a fee is read through kb_rules; the figures are never in code - who owns one is read off the text (the nationality named nearest it, or the row's KB label). Salary, levy and bond sentences are left alone. English only. The nationality is `lead.nationality_for_fee`: the message, then the live collection, then the parked ticket's `captured_info.details` for the SAME service (Step 4b). Where none is held the replacement names her and the service ("Our agent will confirm the cost for a Myanmar helper's passport renewal."), a figure-free "approximate" cost sentence is replaced too (Step 5 item 17), and nothing is inserted where the reply already says our agent will confirm the fee, cost or amount. |
 | The fees are separate amounts and are never added into a total | `templates.FEE_ANSWER_NOTE` | Their rule 10. Found by running their own example 6: asked *"What are the fees for Indonesian new hire?"* with the $1,188 agency fee and all seven third-party figures correctly retrieved, the model ADDED THEM UP and wrote **$1,647** - a number in no record and not the sum of anything. `ungrounded_figures` binned the whole reply, so the guard worked and the client still lost the answer to a handover. |
 | A superseded fee table is retired from retrieval, never rewritten | `load_service_notes.RETIRED` (`is_active`) | Form A of the signed Client Service Agreement carries a blank form's illustrative amounts, and they WIN on the form's own words: *"what is the total service fee?"* returned **$1,568 at 0.648** against the correct Filipino row at 0.536, and *"what is the placement fee?"* returned **$4,225 at 0.687**. PART C is also a superseded copy of the Filipino third-party table - $340 against their $350, $200 against $250, $50 against $60. Retired via `is_active`, which `kb_hygiene.sql` already documents as the reversible way to do this: their signed agreement is not ours to rewrite (§9.25), and a superseded price is not ours to serve. |
 | One reader decides which nationality a conversation is about | `lead.nationality_in_play` | Three copies, and two had already diverged: the collector read `nationality` alone while retrieval read `preferred_nationality` too - so on a HIRING turn the filter narrowed on a preference the fee guard could not see. Invisible until the hiring fee became nationality-priced, at which point every hiring briefing would have deferred a fee we hold. §9.8, found by using the second caller. |
@@ -749,6 +749,9 @@ Easy to get wrong:
   `reference.REFERENCE_AS_SENTENCE`.
   Step 4's one, `False` for the Step 2e behaviour (the prompt note alone):
   `guards.NATIONALITY_FEE_GUARD`.
+  Step 4b's two, each `False` for the Step 4 behaviour:
+  `lead.FEE_NATIONALITY_FROM_TICKET` (the parked ticket as the third source),
+  `guards.NO_APPROXIMATE_WITHOUT_FIGURE` (Step 5 item 17).
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1188,7 +1191,8 @@ Ordered by what will hurt first.
 28. **FIXED 2026-10-13 (Phase 3 Step 4), see the change log:**
     `guards.guard_nationality_fee` now replaces the sentence on all three
     reply paths. The model still writes it about one run in ten (2 of 20 on
-    the first message); none reached a reply.
+    the first message); none reached a reply. On the PARKED path it writes it
+    far more often - 5 of 10 drafts on 3766's own turn (Step 4b) - all cut.
     **A Myanmar passport renewal is quoted $450 about one run in ten, on the
     first message.** Measured 2026-09-24 on `main` against the restored test
     copy: *"How much is passport renewal for my Myanmar helper?"*, 10 live runs,
@@ -1585,7 +1589,8 @@ behaviour behind one switch. Details of each step are in §11.
 | 2d | An update request on a parked topic gets the status, never "Noted" | `c34e48c` |
 | 3 | A message not mainly in English always gets the harm check | `cfc0618` |
 | 2e | The reference as the agency's sentence, in the reply's language | `ab4bd17` |
-| 4 | Nationality-fee guard: no other nationality's fee, no fee where none is held | see git log |
+| 4 | Nationality-fee guard: no other nationality's fee, no fee where none is held | `48f889f` |
+| 4b | Fee nationality from message, collection, then parked ticket; no "approximate" without a figure (item 17) | see git log |
 
 **Still to do, in order:** Step 5 (below), Step 6 (combined questions: propose pairs, stop before
 wiring), Step 7 (escalation audit, read-only, report outside the repo),
@@ -1652,10 +1657,42 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
     backticks, is not linkified); the formatting guards must allow exactly
     that one pattern. If no clean fix exists, report the options and change
     nothing.
+17. **DONE in Step 4b** (2026-10-13), for the case where we hold no fee: a
+    cost with no figure is never called "approximate"; the sentence is "Our
+    agent will confirm the cost for a Myanmar helper's passport renewal."
+    Elsewhere (a withheld service, a fee not on record for other reasons)
+    the prompt rule is unchanged.
 
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-13** - **Step 4b: the parked-topic fee test, and "approximate"
+  with no figure.** Live 17:30 IST, conversation 3766: a Myanmar passport
+  renewal, CB-2026-0033 raised (its closing had no figure), then "ok how much
+  is the fee" -> "The fee is approximately $450 for a Myanmar helper."
+  **The cause was the deploy, not the guard:** `48f889f` had not been pushed
+  (held on purpose), so `git pull` on the server fetched only `cdd57ca` and
+  the test ran without Step 4. Replayed read-only from that turn's
+  checkpoint, the Step 4 guard already cuts that exact sentence. A deploy
+  check before a phone test: `git log -1 origin/main` must show the commit.
+  Hardened anyway, as asked: `lead.nationality_for_fee` gives every path the
+  nationality from the message, then the live collection, then the parked
+  ticket's `captured_info.details` for the same service only
+  (`FEE_NATIONALITY_FROM_TICKET`). Step 5 item 17: where no fee is held, the
+  replacement names her and the service ("Our agent will confirm the cost for
+  a Myanmar helper's passport renewal."), a figure-free "the fee is
+  approximate" sentence is replaced too (`NO_APPROXIMATE_WITHOUT_FIGURE`),
+  the two "no fee held" prompt notes say so, and nothing is inserted where
+  the reply already says our agent will confirm the fee, cost or amount (the
+  replay showed "...confirm the cost... A live agent will confirm the exact
+  amount..."). **Verified:** 3766's last turn replayed 10 times through the
+  real graph and model - the model wrote $450 in 5 of 10 drafts on this
+  parked path, 0 of 10 replies carried a figure. 3 smoke states (the exact
+  case, the ticket-only case, the Filipino control) and 8 flows assertions;
+  20 faults injected (Step 4's 12 again plus 8), 20 red. `smoke_nodes.py`
+  is **413**, `selfcheck_flows.py` **846**. E2E 7 of 7, 0 refused writes,
+  no row count changed.
 
 - **2026-10-13** - **Step 4: one nationality's fee is never another's (§9.28).**
   "How much is passport renewal for my Myanmar helper?" was answered "$450"

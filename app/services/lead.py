@@ -135,6 +135,33 @@ def nationality_in_play(collected: dict | None, message: str | None = None) -> s
     return code if code and code != "none" else None
 
 
+# Step 4b's switch: False reads the message and the collection only.
+FEE_NATIONALITY_FROM_TICKET = True
+
+
+def nationality_for_fee(
+    collected: dict | None,
+    message: str | None = None,
+    blocked_topics: dict | None = None,
+    service: str | None = None,
+) -> str | None:
+    """The nationality a fee answer is about (Phase 3 Step 4b).
+
+    The message, then the live collection (both via nationality_in_play), then
+    the parked ticket for THIS service - its captured_info details. A parked
+    topic keeps its collection on the checkpoint today, so the third source is
+    for the turn where the collection has been reset (a switch, a fresh thread)
+    while the ticket still says whose fee it is. Only the same service's
+    ticket: another topic's helper is another helper.
+    """
+    found = nationality_in_play(collected, message)
+    if found or not service or not FEE_NATIONALITY_FROM_TICKET:
+        return found
+    ticket = (blocked_topics or {}).get(service) or {}
+    details = ((ticket.get("captured_info") or {}).get("details")) if isinstance(ticket, dict) else None
+    return nationality_in_play(details if isinstance(details, dict) else None)
+
+
 # §0: temperature is a fixed default, not something the bot judges. Sales sets
 # it once they have spoken to the client.
 DEFAULT_TEMPERATURE = "warm"

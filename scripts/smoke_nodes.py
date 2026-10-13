@@ -90,6 +90,8 @@ STEPPED_REPLY = (
 # contact line (scripts/load_service_notes.py).
 from scripts.load_service_notes import _HELPER_RIGHTS_ANSWER as _HELPER_RIGHTS  # noqa: E402
 from app.graph.guards import NATIONALITY_FEE_DEFERRAL  # noqa: E402
+# Where we hold no fee for her (Step 5 item 17): names her and the service.
+_MM_PASSPORT_DEFERRAL = "Our agent will confirm the cost for a Myanmar helper's passport renewal."
 
 # Step 4: the fee rows as the KB states them - the passport fee for two of the
 # three nationalities, and the new-hire agency fee for all three.
@@ -2585,7 +2587,7 @@ CASES = [
       "_stub_reply": "For a Myanmar helper, the passport renewal fee is approximately "
                      "$450. The appointment wait can take several weeks.",
       "_forbid_reply": "450",
-      "_expect_reply": NATIONALITY_FEE_DEFERRAL}),
+      "_expect_reply": _MM_PASSPORT_DEFERRAL}),
     ("response_generator", "...while a Filipino passport renewal still shows $450",
      {"intent": "fee_enquiry", "service_type": "passport_renewal",
       "incoming_text": "How much is passport renewal for my Filipino helper?",
@@ -2614,6 +2616,57 @@ CASES = [
       "rag_context": _NEW_HIRE_FEE_ROWS,
       "_stub_reply": "For an Indonesian new hire, the agency fee is $1,188.",
       "_expect_reply": "$1,188"}),
+    # --- Step 4b: the live 3766 turn, 2026-10-13 17:30 IST ---------------
+    # Passport renewal for Lwin Lwin, "Myanmar" given as an answer, CB-2026-0033
+    # raised, then "ok how much is the fee" -> "The fee is approximately $450
+    # for a Myanmar helper." The stub is that reply, word for word.
+    ("blocked_topic_responder", "3766: parked passport, Myanmar collected, 'how much is the fee' -> no figure",
+     {"intent": "fee_enquiry", "service_type": "passport_renewal",
+      "incoming_text": "ok how much is the fee",
+      "collected_info": {"full_name": "growwstacks", "helper_name": "lwin lwin",
+                         "nationality": "Myanmar", "passport_expiry": "next year"},
+      "history_text": "You: I've passed everything to our team, and a live agent will "
+                      "connect with you shortly.",
+      "rag_matches": [{"similarity": 0.55, "nationality": "all",
+                       "question": "How much does it cost to renew my helper's passport?",
+                       "answer": _PASSPORT_FEE_ROW, "chunk_type": "qa_pair"}],
+      "rag_context": _PASSPORT_FEE_ROW, "rag_best_score": 0.55,
+      "_stub_reply": "The fee is approximately $450 for a Myanmar helper. A live agent will "
+                     "confirm the exact amount and connect with you shortly.",
+      "_forbid_reply": "450",
+      # Its second sentence already defers, so the cost sentence goes without
+      # a second "confirm" in its place.
+      "_expect_reply": "A live agent will confirm the exact amount",
+      "blocked_topics": {"passport_renewal": {"ticket_number": "CB-2026-0033",
+                                              "captured_info": {"details": {"nationality": "Myanmar"}}}}}),
+    # ...and with the collection gone, the parked ticket still says whose fee it is.
+    ("blocked_topic_responder", "...and with only the ticket knowing she is Myanmar, still no figure",
+     {"intent": "fee_enquiry", "service_type": "passport_renewal",
+      "incoming_text": "ok how much is the fee",
+      "collected_info": {},
+      "history_text": "You: I've passed everything to our team.",
+      "rag_matches": [{"similarity": 0.55, "nationality": "all",
+                       "question": "How much does it cost to renew my helper's passport?",
+                       "answer": _PASSPORT_FEE_ROW, "chunk_type": "qa_pair"}],
+      "rag_context": _PASSPORT_FEE_ROW, "rag_best_score": 0.55,
+      "_stub_reply": "The fee is approximately $450 for her. A live agent will confirm it.",
+      "_forbid_reply": "450",
+      "blocked_topics": {"passport_renewal": {"ticket_number": "CB-2026-0033",
+                                              "captured_info": {"details": {"nationality": "Myanmar"}}}}}),
+    # The Filipino control on the same path: $450 is hers and goes out.
+    ("blocked_topic_responder", "...while a parked Filipino passport renewal still shows $450",
+     {"intent": "fee_enquiry", "service_type": "passport_renewal",
+      "incoming_text": "ok how much is the fee",
+      "collected_info": {"helper_name": "Ana", "nationality": "Filipino"},
+      "history_text": "You: I've passed everything to our team.",
+      "rag_matches": [{"similarity": 0.55, "nationality": "all",
+                       "question": "How much does it cost to renew my helper's passport?",
+                       "answer": _PASSPORT_FEE_ROW, "chunk_type": "qa_pair"}],
+      "rag_context": _PASSPORT_FEE_ROW, "rag_best_score": 0.55,
+      "_stub_reply": "The fee is approximately $450 for a Filipino helper.",
+      "_expect_reply": "$450",
+      "blocked_topics": {"passport_renewal": {"ticket_number": "CB-2026-0034",
+                                              "captured_info": {"details": {"nationality": "Filipino"}}}}}),
     # The closing briefing, which states a cost section by construction.
     ("info_collector", "a Myanmar passport briefing never shows $450",
      {"service_type": "passport_renewal", "intent": "passport_renewal",
@@ -2628,7 +2681,7 @@ CASES = [
       "history_text": "You: When does her current passport expire?",
       "_stub_reply": _MM_PASSPORT_BRIEFING_REPLY,
       "_forbid_reply": "450",
-      "_expect_reply": NATIONALITY_FEE_DEFERRAL}),
+      "_expect_reply": _MM_PASSPORT_DEFERRAL}),
     ("blocked_topic_responder", "a parked Myanmar passport renewal never shows $450",
      {"intent": "fee_enquiry", "service_type": "passport_renewal",
       "incoming_text": "how much is the fee?",
@@ -2641,7 +2694,7 @@ CASES = [
       "rag_best_score": 0.56,
       "_stub_reply": "For Lwin, the passport renewal fee is approximately $450.",
       "_forbid_reply": "450",
-      "_expect_reply": NATIONALITY_FEE_DEFERRAL,
+      "_expect_reply": _MM_PASSPORT_DEFERRAL,
       "blocked_topics": {"passport_renewal": {"ticket_id": 1,
                                               "ticket_number": "CB-2026-0040"}}}),
 

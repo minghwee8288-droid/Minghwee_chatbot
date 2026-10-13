@@ -1365,6 +1365,9 @@ above name a price for other nationalities; that price is theirs and not hers.
 Do not quote it, do not adapt it, and do not give a range. Say in one short
 sentence that our agent will confirm the cost for her, and answer the rest of
 what they asked - the timing and the process are unaffected.
+With no figure there is nothing approximate: never call the cost approximate.
+Say it like this: "Our agent will confirm the cost for a Myanmar helper's
+passport renewal."
 """
 
 

@@ -209,6 +209,32 @@ _MONEY = re.compile(r"(?:S\$|SGD\s?|\$)\s?(\d[\d,]*(?:\.\d+)?)", re.IGNORECASE)
 _NOT_OUR_FEE = re.compile(r"\b(?:salary|salaries|wages?|levy|levies|bond)\b", re.IGNORECASE)
 _NATIONALITY_CODES = frozenset({"PH", "ID", "MM"})
 
+# Step 5 item 17 (2026-10-13): where we hold no fee, the cost is not called
+# "approximate" - there is nothing to approximate. Its own switch.
+NO_APPROXIMATE_WITHOUT_FIGURE = True
+_APPROXIMATE_COST = re.compile(
+    r"\b(?:fees?|costs?|prices?|charges?)\b[^.!?]*\bapproximat\w*"
+    r"|\bapproximat\w*[^.!?]*\b(?:fees?|costs?|prices?|charges?)\b",
+    re.IGNORECASE,
+)
+_ALREADY_DEFERRED = re.compile(
+    r"\bconfirm the (?:exact )?(?:\w+ )?(?:fee|cost|amount|price)\b", re.IGNORECASE
+)
+_NATIONALITY_WORD = {"PH": "a Filipino", "ID": "an Indonesian", "MM": "a Myanmar"}
+_FEE_SERVICE_WORD = {
+    "passport_renewal": "passport renewal", "home_leave": "home leave",
+    "new_hiring": "new hire", "transfer": "transfer", "transfer_employer": "transfer",
+}
+
+
+def nationality_fee_deferral(service: str | None, nationality: str | None) -> str:
+    """'Our agent will confirm the cost for a Myanmar helper's passport renewal.'"""
+    who = _NATIONALITY_WORD.get(nationality or "")
+    what = _FEE_SERVICE_WORD.get(service or "")
+    if not who or not what:
+        return NATIONALITY_FEE_DEFERRAL
+    return f"Our agent will confirm the cost for {who} helper's {what}."
+
 
 def _money_norm(raw: str) -> str:
     """'$1,428' == 'S$1428' == '1428.00'."""
@@ -289,12 +315,22 @@ def guard_nationality_fee(
         return reply, []
     known = nationality in held
     owners = fee_owners(*sources, matches=matches) if known else {}
+    # Where we hold no fee for her, the deferral names her and the service
+    # (Step 5 item 17, the agency's wording); elsewhere the briefing's own.
+    deferral = NATIONALITY_FEE_DEFERRAL if known else nationality_fee_deferral(service, nationality)
 
     offending: list[tuple[int, int]] = []
     for start, end in _sentence_spans(reply):
         sentence = reply[start:end]
         figures = [_money_norm(m.group(1)) for m in _MONEY.finditer(sentence)]
-        if not figures or _NOT_OUR_FEE.search(sentence):
+        if not figures:
+            # Step 5 item 17: a cost with no figure is not "approximate". Live,
+            # 2026-10-13: "The fee for a Myanmar helper's passport renewal is
+            # approximate and our agent will confirm the exact amount."
+            if not known and NO_APPROXIMATE_WITHOUT_FIGURE and _APPROXIMATE_COST.search(sentence):
+                offending.append((start, end))
+            continue
+        if _NOT_OUR_FEE.search(sentence):
             continue
         if not known:
             offending.append((start, end))
@@ -304,22 +340,23 @@ def guard_nationality_fee(
         return reply, []
 
     cut = [reply[s:e].strip() for s, e in offending]
-    already_deferred = "confirm the exact fee" in reply.lower()
+    rest = reply
+    for start, end in reversed(offending):
+        rest = rest[:start] + rest[end:]
+    already_deferred = bool(_ALREADY_DEFERRED.search(rest))
     out = reply
     for index, (start, end) in reversed(list(enumerate(offending))):
         sentence = out[start:end]
         marker = re.match(r"\s*\d+\.\s+", sentence)
         keep = marker.group(0) if marker else ""
-        replacement = (
-            keep + NATIONALITY_FEE_DEFERRAL if index == 0 and not already_deferred else ""
-        )
+        replacement = keep + deferral if index == 0 and not already_deferred else ""
         out = out[:start] + replacement + out[end:]
     # A list item or line emptied by a removal goes with it.
     out = re.sub(r"(?m)^\s*\d+\.\s*$\n?", "", out)
     out = re.sub(r"[ \t]{2,}", " ", out)
     out = re.sub(r"(?m)^[ \t]+(?=\S)", "", out)
     out = re.sub(r"\n{3,}", "\n\n", out).strip()
-    return (out or NATIONALITY_FEE_DEFERRAL), cut
+    return (out or deferral), cut
 
 
 def ungrounded_figures(reply: str, *contexts: str) -> list[str]:

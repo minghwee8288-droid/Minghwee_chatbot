@@ -65,7 +65,7 @@ from app.graph.state import (
 )
 from app.services import handover as handover_service
 from app.services import ticket as ticket_service
-from app.services.lead import EMPLOYER_LEAD_SERVICES, nationality_in_play
+from app.services.lead import EMPLOYER_LEAD_SERVICES, nationality_for_fee, nationality_in_play
 
 logger = logging.getLogger(__name__)
 
@@ -567,7 +567,10 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         reply, cut = guard_nationality_fee(
             reply,
             state.get("service_type"),
-            nationality_in_play(state.get("collected_info"), state.get("incoming_text")),
+            nationality_for_fee(
+                state.get("collected_info"), state.get("incoming_text"),
+                state.get("blocked_topics"), state.get("service_type"),
+            ),
             context,
             state.get("history_text", ""),
             matches=state.get("rag_matches") or (),

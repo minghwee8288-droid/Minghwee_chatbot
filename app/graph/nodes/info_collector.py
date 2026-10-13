@@ -3871,7 +3871,9 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
                 "that price is theirs and not hers. Do not quote it, do not "
                 "adapt it, and do not give a range. Say in one short sentence "
                 f"that our agent will confirm the cost for {_whose}, and "
-                "carry on with the timing and the process."
+                "carry on with the timing and the process. With no figure "
+                "there is nothing approximate: never call the cost "
+                "approximate (Step 5 item 17)."
             )
         # A replacement inside the package period has a price we hold - the
         # package's replacement and documentation fee. See
@@ -4740,8 +4742,10 @@ async def _write(
     reply, cut = guard_nationality_fee(
         reply,
         prompt_state.get("service_type") or state.get("service_type"),
-        lead_service.nationality_in_play(
-            prompt_state.get("collected_info"), state.get("incoming_text")
+        lead_service.nationality_for_fee(
+            prompt_state.get("collected_info"), state.get("incoming_text"),
+            state.get("blocked_topics"),
+            prompt_state.get("service_type") or state.get("service_type"),
         ),
         state.get("rag_context", ""),
         state.get("history_text", ""),
