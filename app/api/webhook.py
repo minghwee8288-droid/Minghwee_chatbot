@@ -28,7 +28,11 @@ from app.graph.guards import (
     recent_bot_lines,
 )
 from app.graph.nodes.handover_executor import ASSAULT_FALLBACK_REPLY
-from app.graph.nodes.intent_classifier import confirm_harm, matches_assault_keywords
+from app.graph.nodes.intent_classifier import (
+    confirm_harm,
+    matches_assault_keywords,
+    non_english_harm_check_due,
+)
 from app.services import assignment as assignment_service
 from app.services import contact as contact_service
 from app.services import conversation as conversation_service
@@ -257,7 +261,9 @@ async def emergency_override(conversation: dict[str, Any], text: str) -> bool:
     and raises an urgent escalation, then stops. It does not take the thread
     over, so an agent arriving later is not fighting the bot for it.
     """
-    if not matches_assault_keywords(text):
+    # The keywords are English; a message that is not mainly English is
+    # checked whatever its words (Step 3, NON_ENGLISH_HARM_CHECK).
+    if not (matches_assault_keywords(text) or non_english_harm_check_due(text)):
         return False
     if not await confirm_harm(text):
         logger.info("Assault keywords on a stood-down thread, but verification disagreed")

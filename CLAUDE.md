@@ -69,6 +69,8 @@ app/
     graph.py         (325) node wiring, routing, checkpointer, _TURN_RESET, run_turn
     state.py         ConversationState TypedDict + reducers + effective_contact_type
     guards.py        (468) mechanical output safety — see §5
+    language.py      "is this mainly not English?" - script + function words,
+                     no model call; gates the non-English harm check
     closure.py       "say nothing" path (acknowledgements, closings)
     complaint.py     a complaint's fixed opening and closing (the wait, the number
                      to call, the ticket reference) - written here, not by the model
@@ -240,6 +242,7 @@ because the lead is opened early and the ticket is created much later.
 | Ticket survives a dead lead link | `ticket.create` retry | Drops `created_lead_id`, records `notes.lead_link_broken`. |
 | NRIC never reaches the LLM | `utils.redact_nric` | Applied to the batch text; the raw body is still stored in the DB. |
 | Assault: keyword override, no LLM confidence | `intent_classifier.ASSAULT_PATTERNS` | **English-only — see §9.** |
+| A message not mainly in English always gets the harm check | `language.mainly_non_english` + `intent_classifier.non_english_harm_check_due` (`NON_ENGLISH_HARM_CHECK`), in the classifier and `webhook.emergency_override` | Script first (Burmese, CJK, Indic...), then Bahasa/Tagalog/romanised-Hindi function words against English ones. Run beside the classifier, so it adds no wait; harm: true returns exactly what a keyword hit returns. Out of hours it is what lets a non-English report through the English keyword gate. |
 | A transfer is never asked the first-time-hire question | `intent_classifier._TRANSFER_PATTERN` | "transfer" beside maid/helper/employer/permit/service, or "change employer", forces `transfer`. Does not fire while another service is mid-collection. English-only (§9.2). |
 | A client is TOLD what we recognised, not just silently spared the question | `info_collector` (`recognised_note`) | Fires once, off `placed_helper`. Suppresses `returning_note`, which says the opposite. |
 | The channel is chosen before the address is asked for | `_WANTS_EMAIL` gate | `update_channel` first; `email` only if they picked email. |
@@ -739,6 +742,8 @@ Easy to get wrong:
   typing indicator is on), `graph.PREFETCH_SEARCH_EMBEDDING`.
   Step 2d's one, `False` for the Step 1d behaviour:
   `intent_classifier.CHASE_BEFORE_NOTE`.
+  Step 3's one, `False` for the Step 2d behaviour (English keywords only):
+  `intent_classifier.NON_ENGLISH_HARM_CHECK`.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -813,6 +818,11 @@ Ordered by what will hurt first.
    out-of-hours path — will not fire on a harm report in Hindi or Burmese. The LLM
    classifier still catches it, but the deterministic net is gone. Same for
    `HUMAN_REQUEST_PATTERNS`, `closure.py`, and the `blocked_topic_responder` regexes.
+   **The harm half is covered since 2026-10-13 (Phase 3 Step 3):** a message not
+   mainly in English always gets the harm check, in the graph and out of hours
+   (`NON_ENGLISH_HARM_CHECK`). Still English-only: the human-request, closure and
+   blocked-topic regexes, and a harm report in mixed English with none of the
+   keywords and no foreign function word.
 3. **§1B is enforced per-table.** `create_if_absent` calls `find_by_phone(phone, kind)`
    (one table) while the webhook looks up unscoped (both). One phone can end up with both
    an employer and a candidate lead, and the two paths disagree about whether a lead
@@ -1546,6 +1556,51 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-13** - **Step 3: the harm check for a message not mainly in
+  English.** The deterministic safety nets are English (section 9.2): "Majikan
+  saya memukul saya" (Bahasa, my employer hit me), "Sinaktan ako ng amo ko"
+  (Tagalog, my employer hurt me) and the Burmese for "my employer hits me"
+  match no keyword. Measured before the change, read-only on 3766's state: the
+  classifier alone escalated 14 of 14 such reports and 0 of 28 non-English
+  negatives - so in the graph the model was getting them right, with nothing
+  guaranteeing it - and on a thread an agent holds (`emergency_override`,
+  keyword-gated) none of them would have been answered at all.
+  `app/graph/language.py` decides "not mainly English" with no model call: a
+  non-Latin script making up 30% of the letters, or Bahasa / Malay / Tagalog /
+  romanised-Hindi function words outnumbering English ones. Such a message
+  always gets the existing harm check (prompt.md entry 10, unchanged), started
+  BESIDE the classifier and awaited after it; harm: true returns exactly what a
+  keyword hit returns. A model "assault" the check rejected is not checked a
+  second time. The out-of-hours override takes the same gate
+  (`NON_ENGLISH_HARM_CHECK`).
+  **Measured:** 14 of 14 positives and 0 of 28 negatives escalated (a salary
+  dispute, a rest-day question, greetings, thanks, a scolding, fee and home
+  leave questions, in Bahasa, Tagalog, Burmese, Chinese and Hindi), 2 runs
+  each through the real classifier and harm check. The classifier step on a
+  harm report went from p50 3.0 s to 1.7 s (the check used to run after it);
+  on a non-English negative 1.68 s -> 1.58 s, i.e. no added wait (harm check
+  p50 1.29 s beside classify 1.61 s). The full graph gives all three of the
+  step's messages the safety reply. On 30 days of real inbound traffic
+  (7,920 messages) the detector fires on 80 (1.0%): 34 by script, 46 by
+  function words, a few of them names in file names - one extra parallel
+  call each. It reads none of the e2e harness's 140 English lines as foreign.
+  **Verified:** 28 `smoke_nodes.py` checks (the detector both ways; the
+  classifier escalating when the model missed it, the check started before the
+  classifier returns, no escalation when it says no, no double check, no check
+  on English, the switch off; the override checking a non-English report and
+  not plain English). 8 faults injected, 8 red - after the switch-off fault was
+  GREEN because the checks patched the switch on themselves; they now read the
+  module's own value. `smoke_nodes.py` is **392 checks**. E2E 6 of 7, 0
+  refusals; the one failure (home leave's first message without the name
+  question) is in the original Phase 3 baseline, and the e2e is all English, so
+  the new check never ran in it.
+  **Seen and NOT changed:** the Bahasa safety reply came back in Malay ("Sila
+  pastikan... hubungi polis"), the Tagalog one in English (rule 12d: the
+  thread was in English and a short message does not switch it), and the
+  Burmese one addressed the thread's employer by name - the existing safety
+  reply, written by the model, on a test thread whose record name is the
+  employer's.
 
 - **2026-10-13** - **Step 2d: "ok can you tell me any updates on this" was
   filed as a note.** Live phone test of Step 1d, conversation 3766, 14:57-15:00

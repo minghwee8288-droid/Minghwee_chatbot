@@ -2924,6 +2924,109 @@ def _chase_checks() -> list[tuple[str, bool]]:
     return out
 
 
+# Step 3 (2026-10-13): the non-English harm net. The three messages the step
+# names come first in each list; the meaning is beside each one.
+_HARM_NON_ENGLISH = (
+    ("Majikan saya memukul saya", "Bahasa: my employer hit me"),
+    ("Sinaktan ako ng amo ko", "Tagalog: my employer hurt me"),
+    ("ကျွန်မရဲ့ အလုပ်ရှင်က "
+     "ကျွန်မကို ရိုက်တယ်",
+     "Burmese: my employer hits me"),
+)
+_SAFE_NON_ENGLISH = (
+    ("Majikan saya belum bayar gaji saya bulan ini", "Bahasa: salary not paid this month"),
+    ("Ilang araw ng pahinga ang meron ako bawat buwan?", "Tagalog: how many rest days a month?"),
+    ("Selamat pagi, apa kabar?", "Bahasa: good morning, how are you?"),
+)
+_ENGLISH = (
+    "my employer hit me", "any update?", "ok", "renewal fee", "she prefers window seat",
+    "Hi, I want to renew my helper's work permit", "Dan will call you tomorrow",
+)
+
+
+async def _harm_checks() -> list[tuple[str, bool]]:
+    """Run the classifier and the out-of-hours override with the model and the
+    harm check stubbed: who is checked, and what a confirmed check does."""
+    import importlib
+    from contextlib import nullcontext
+    ic = importlib.import_module("app.graph.nodes.intent_classifier")
+    lang = importlib.import_module("app.graph.language")
+    _wh = importlib.import_module("app.api.webhook")
+    out = []
+
+    for m, gloss in _HARM_NON_ENGLISH + _SAFE_NON_ENGLISH:
+        out.append((f"not mainly English: {gloss}", lang.mainly_non_english(m)))
+    for m in _ENGLISH:
+        out.append((f"English: {m[:30]}", not lang.mainly_non_english(m)))
+
+    async def classify(message, verdict, harm, off=False):
+        """The node's verdict and how often (and when) the harm check ran."""
+        seen = {"harm_calls": 0, "harm_started_before_classify_returned": False}
+        started = {"harm": False}
+
+        async def _harm(_msg):
+            started["harm"] = True
+            seen["harm_calls"] += 1
+            return harm
+
+        async def _model(*_a, **_k):
+            await asyncio.sleep(0)   # the real call yields while it waits
+            seen["harm_started_before_classify_returned"] = started["harm"]
+            return dict(verdict)
+
+        state = {"incoming_text": message, "history_text": "Client: hi\nYou: Hi, how can I help?",
+                 "conversation_id": "s3"}
+        # Only the switch-off case patches the switch: the others read the
+        # module's own value, so turning it off in the code turns these red.
+        with patch.object(ic, "confirm_harm", new=_harm), \
+             patch.object(ic, "complete_json", new=_model), \
+             (patch.object(ic, "NON_ENGLISH_HARM_CHECK", False) if off else nullcontext()):
+            result = await ic.intent_classifier(state)
+        return result, seen
+
+    missed = {"intent": "dispute_salary", "service_type": "dispute_salary",
+              "contact_type": "candidate", "confidence": 0.8}
+    for m, gloss in _HARM_NON_ENGLISH:
+        r, seen = await classify(m, missed, harm=True)
+        out.append((f"escalates although the model missed it: {gloss}",
+                    r.get("intent") == "dispute_assault" and r.get("service_type") == "dispute_assault"
+                    and seen["harm_calls"] == 1))
+    r, seen = await classify(_HARM_NON_ENGLISH[0][0], missed, harm=True)
+    out.append(("the harm check runs beside the classifier, not after it",
+                seen["harm_started_before_classify_returned"]))
+    for m, gloss in _SAFE_NON_ENGLISH:
+        r, seen = await classify(m, missed, harm=False)
+        out.append((f"not escalated when the check says no: {gloss}",
+                    r.get("intent") == "dispute_salary" and seen["harm_calls"] == 1))
+    said_assault = {"intent": "dispute_assault", "service_type": "dispute_assault",
+                    "contact_type": "candidate", "confidence": 0.9}
+    r, seen = await classify(_SAFE_NON_ENGLISH[0][0], said_assault, harm=False)
+    out.append(("a model 'assault' the check rejected is not checked twice",
+                r.get("intent") == "other" and seen["harm_calls"] == 1))
+    r, seen = await classify("my employer has not paid my salary", missed, harm=True)
+    out.append(("an English message costs no extra harm check",
+                r.get("intent") == "dispute_salary" and seen["harm_calls"] == 0))
+    r, seen = await classify(_HARM_NON_ENGLISH[0][0], missed, harm=True, off=True)
+    out.append(("switch off: keywords only, as before",
+                r.get("intent") == "dispute_salary" and seen["harm_calls"] == 0))
+
+    # The out-of-hours override (a thread an agent holds) checks it too.
+    async def override(message, off=False):
+        harm = AsyncMock(return_value=False)
+        with patch.object(_wh, "confirm_harm", new=harm), \
+             (patch.object(ic, "NON_ENGLISH_HARM_CHECK", False) if off else nullcontext()):
+            await _wh.emergency_override({"id": 1}, message)
+        return harm.await_count
+
+    for m, gloss in _HARM_NON_ENGLISH:
+        out.append((f"override checks a non-English report: {gloss}", await override(m) == 1))
+    out.append(("override: plain English with no keyword is not checked",
+                await override("any update on my helper?") == 0))
+    out.append(("override, switch off: keywords only, as before",
+                await override(_HARM_NON_ENGLISH[0][0], off=True) == 0))
+    return out
+
+
 async def _tag_checks() -> list[tuple[str, bool]]:
     """Step 2c: "(MDW)" never in front of a possessive, through run_turn."""
     from app.graph import graph as graph_module
@@ -4367,6 +4470,9 @@ async def main() -> int:
         failures += not ok
     for label, ok in _chase_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  chase  {label:44}")
+        failures += not ok
+    for label, ok in await _harm_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  safety  {label:44}")
         failures += not ok
 
     off = await _pass(kb_rules.DEFAULTS)

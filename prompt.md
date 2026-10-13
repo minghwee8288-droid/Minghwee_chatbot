@@ -691,6 +691,16 @@ It runs when intent detection says a message reports violence or danger, but
 none of the fixed safety keywords matched. It is a second opinion before the
 conversation is escalated as a safety case.
 
+It also runs on every message that is not mainly in English, whatever intent
+detection said (added 2026-10-13). The fixed safety keywords are English, so a
+message such as "Majikan saya memukul saya" (Bahasa: "my employer hit me")
+would otherwise rely on intent detection alone, and while an agent holds the
+conversation it would get no safety reply at all. If the answer is true, the
+message is treated exactly as a keyword match: the safety response in entry 63.
+"Not mainly English" is decided by the code with no model call, from the
+alphabet the message is written in and its small everyday words. The check runs
+at the same time as intent detection, so it adds no wait.
+
 ### Why is this prompt needed?
 A safety escalation is serious. It must not fire on an angry message or a
 salary dispute, and it must never miss a real report. This check focuses on

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
 
 from app.graph.closure import is_closing, is_pure_acknowledgement, needs_no_reply
 from app.graph.guards import answering_our_question
+from app.graph.language import mainly_non_english
 from app.graph.llm import complete_json
 from app.graph.prompts.templates import (
     ASSAULT_VERIFY_SYSTEM,
@@ -473,6 +475,23 @@ def matches_assault_keywords(text: str) -> bool:
     return bool(ASSAULT_PATTERNS.search(text) or HARM_SIGNALS.search(text))
 
 
+# Phase 3 Step 3 (2026-10-13). The keyword nets above are English-only
+# (section 9.2), and Claire answers in any language: "Majikan saya memukul
+# saya" (Bahasa: my employer hit me) matches neither, so in the graph its
+# escalation rested on the classifier alone, and on a thread an agent holds
+# (webhook.emergency_override) it got nothing at all. A message that is not
+# mainly English (app/graph/language.py: script, then function words) always
+# gets the harm check; harm: true routes exactly as a keyword hit does. In
+# the graph the check runs beside the classifier, so it adds no wait.
+# False = keywords only, as before.
+NON_ENGLISH_HARM_CHECK = True
+
+
+def non_english_harm_check_due(text: str) -> bool:
+    """Whether the harm check runs because the message is not mainly English."""
+    return NON_ENGLISH_HARM_CHECK and mainly_non_english(text or "")
+
+
 # Contact types the classifier may report. 'unclear' is a real answer — it is
 # what triggers the discovery question instead of a guess.
 _CONTACT_TYPES = {"employer", "candidate", "supplier", "partner"}
@@ -619,6 +638,12 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
         )
         return {"suppress_reply": True, "reply": ""}
 
+    # Started before the classifier and awaited after it (Step 3, above).
+    harm_check = (
+        asyncio.ensure_future(confirm_harm(message))
+        if non_english_harm_check_due(message) else None
+    )
+
     user_prompt = INTENT_USER.format(
         active_service=active_service or "none",
         contact_type=state.get("contact_type") or "unknown",
@@ -637,6 +662,25 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
             INTENT_SYSTEM, user_prompt, temperature=0.2, default=fallback
         )
 
+    if harm_check is not None:
+        try:
+            harmed = await harm_check
+        except Exception:  # noqa: BLE001 - fails open, as confirm_harm does
+            logger.exception("Non-English harm check failed - escalating")
+            harmed = True
+        if harmed:
+            logger.warning(
+                "Non-English message on conversation %s, harm check confirmed - "
+                "forcing escalation",
+                state.get("conversation_id"),
+            )
+            return {
+                "intent": "dispute_assault",
+                "service_type": "dispute_assault",
+                "intent_confidence": 1.0,
+                "intent_reasoning": "non-English harm check",
+            }
+
     intent = _coerce_intent(str(result.get("intent") or ""), result.get("service_type"))
 
     # An escalation pings an admin and sends the client an alarming "call 999"
@@ -646,7 +690,8 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
     # injection classified as dispute_assault at confidence 1.00 is what made
     # this necessary.
     if intent == "dispute_assault":
-        if not await confirm_harm(message):
+        # Already checked, and said no, when the message is not mainly English.
+        if harm_check is not None or not await confirm_harm(message):
             logger.warning(
                 "Model claimed assault but verification disagreed — treating as other: %r",
                 message[:160],
