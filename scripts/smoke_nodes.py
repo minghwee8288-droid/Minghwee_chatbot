@@ -2085,6 +2085,47 @@ CASES = [
       # CHASE_REPLY also ends "...shortly (reference ...)", so the reply alone
       # cannot tell the two paths apart.
       "_forbid_reply": "chasing them"}),
+    # Step 2d, 2026-10-13, conversation 3766 (CB-2026-0033), the live shape:
+    # "any update?" got a model-written holding line, then "ok can you tell me
+    # any updates on this" got "Noted, I've added that for our agent" - the
+    # model repeated its holding line and the repeat guard filed the update
+    # request as new information. It must get the status reply.
+    ("blocked_topic_responder", "an update request after a holding line gets the status, not 'Noted'",
+     {"intent": "case_enquiry", "service_type": "renewal",
+      "incoming_text": "ok can you tell me any updates on this",
+      "history_text": "Client: any update?\nYou: A live agent is already looking into Sharukkhan's "
+                      "Work Permit renewal and will connect with you shortly (reference CB-2026-0033). "
+                      "In the meantime, is there anything else I can help you with?",
+      "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033",
+                                     "captured_info": {"follow_ups": [{"message": "any update?"}]}}},
+      "_stub_reply": "A live agent is already looking into Sharukkhan's Work Permit renewal and will "
+                     "connect with you shortly. In the meantime, is there anything else I can help you with?",
+      "_expect_reply": "chasing them for you now",
+      "_forbid_reply": "Noted"}),
+    # ...and after a recognised holding line it is the chase branch, which a
+    # detail used to skip.
+    ("blocked_topic_responder", "...and after 'still checking' it is chased, not noted",
+     {"intent": "case_enquiry", "service_type": "renewal",
+      "incoming_text": "can you tell me any updates",
+      "history_text": "Client: any update?\nYou: Still checking on this with the team for you.",
+      "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033",
+                                     "captured_info": {"follow_ups": [{"message": "any update?"}]}}},
+      "_stub_reply": "Noted, I've added that for our agent.",
+      "_expect_reply": "chasing them for you now",
+      "_forbid_reply": "Noted"}),
+    # ...while a real detail in the same place is still noted.
+    ("blocked_topic_responder", "...while a real detail there is still noted",
+     {"intent": "renewal", "service_type": "renewal",
+      "incoming_text": "she prefers window seat",
+      "history_text": "Client: any update?\nYou: A live agent is already looking into Sharukkhan's "
+                      "Work Permit renewal and will connect with you shortly (reference CB-2026-0033). "
+                      "In the meantime, is there anything else I can help you with?",
+      "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033",
+                                     "captured_info": {"follow_ups": [{"message": "any update?"}]}}},
+      "_stub_reply": "A live agent is already looking into Sharukkhan's Work Permit renewal and will "
+                     "connect with you shortly. In the meantime, is there anything else I can help you with?",
+      "_expect_reply": "Noted",
+      "_forbid_reply": "chasing them"}),
     # A request for OTHER work handed to a person raises a NEW ticket, which
     # handover_executor numbers - so it must not carry the parked one's.
     ("blocked_topic_responder", "a handover for other work does not carry the parked topic's reference",
@@ -2842,6 +2883,45 @@ async def _reference_checks() -> list[tuple[str, bool]]:
     results.append(("reference: strip_handover_talk keeps it",
                     "(reference CB-2026-0142)" in _guards.strip_handover_talk(with_ref)))
     return results
+
+
+_UPDATE_REQUESTS = (
+    "ok can you tell me any updates on this", "any updates", "any updates?", "any news",
+    "any news?", "can you tell me any updates", "whats the status", "what is the status of this",
+    "update me", "please update me", "can you update me on this", "is there any update",
+    "what is the latest", "keep me updated", "tell me the status", "let me know the progress",
+    "how is it going", "have you heard anything", "what is happening with my case",
+    "status update please", "anything new?",
+)
+_REAL_NOTES = (
+    "she prefers window seat", "please note she prefers a window seat",
+    "also she prefers to fly on a weekend", "her flight is on 12 november",
+    "i heard back from her she is fine", "her status is single",
+)
+
+
+def _chase_checks() -> list[tuple[str, bool]]:
+    """Step 2d: an update request is a chase, never a detail to note (3766)."""
+    import importlib
+    ic = importlib.import_module("app.graph.nodes.intent_classifier")
+    btr = importlib.import_module("app.graph.nodes.blocked_topic_responder")
+    asked = "You: Do you mean her rest days?"
+    out = []
+    for m in _UPDATE_REQUESTS:
+        out.append((f"update request: {m[:34]}",
+                    ic.asks_for_an_update(m) and not ic.states_a_detail(m)
+                    and not btr.adds_information(m)
+                    and not btr.answers_our_question({"history_text": asked, "incoming_text": m})))
+    for m in _REAL_NOTES:
+        out.append((f"real note: {m[:34]}",
+                    not ic.asks_for_an_update(m) and ic.states_a_detail(m)
+                    and btr.adds_information(m)))
+    with patch.object(ic, "CHASE_BEFORE_NOTE", False):
+        out.append(("switch off: the plural is a detail again, as before",
+                    ic.states_a_detail("ok can you tell me any updates on this")
+                    and not ic.asks_for_an_update("any updates")
+                    and ic.asks_for_an_update("any update?")))
+    return out
 
 
 async def _tag_checks() -> list[tuple[str, bool]]:
@@ -4284,6 +4364,9 @@ async def main() -> int:
         failures += not ok
     for label, ok in await _tag_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  wording  {label:44}")
+        failures += not ok
+    for label, ok in _chase_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  chase  {label:44}")
         failures += not ok
 
     off = await _pass(kb_rules.DEFAULTS)

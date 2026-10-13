@@ -326,6 +326,42 @@ _CHASING_STATUS = re.compile(
     re.IGNORECASE,
 )
 
+# Step 2d (2026-10-13). An update request is a chase, however it is worded.
+# Live, conversation 3766 (CB-2026-0033): "any update?" got the status reply,
+# and "ok can you tell me any updates on this" got "Noted, I've added that for
+# our agent" - filed as a detail. "\bany\s+update\b" cannot match the plural,
+# and _ASKS_US is anchored at the start, which "ok" defeats, so the message
+# read as a statement. False = only _CHASING_STATUS counts, as before.
+CHASE_BEFORE_NOTE = True
+
+_ASKS_FOR_AN_UPDATE = re.compile(
+    r"\bany\s+(?:updates?|news|word|progress|feedback)\b"
+    r"|\bis\s+there\s+(?:an?\s+|any\s+)?(?:updates?|news|progress)\b"
+    r"|\bupdates?\s+(?:me|us)\b"
+    r"|\bupdates?\s+(?:on|about|regarding)\s+(?:this|that|it|my|the|her|his|our)\b"
+    r"|\b(?:give|send|tell|share|let)\s+(?:me|us)\s+(?:know\s+)?(?:an?\s+|any\s+|the\s+)?"
+    r"(?:latest\s+|current\s+)?(?:updates?|news|status|progress)\b"
+    r"|\bkeep\s+(?:me|us)\s+(?:updated|posted|informed)\b"
+    r"|\bwhat(?:'?s|\s+is)\s+(?:the\s+)?(?:latest|update|news)\b"
+    r"|\bwhat(?:'?s|\s+is)\s+happening\s+(?:with|on|to)\b"
+    r"|\bstatus\s+(?:update|of|on|check)\b"
+    r"|\bwhere\s+are\s+(?:we|things)\s+(?:on|with|at)\b"
+    r"|\bhow(?:'?s|\s+is)\s+(?:it|this|that|my|the|her)\b[^.?!]{0,30}"
+    r"\b(?:going|coming\s+along|progressing)\b"
+    r"|\banything\s+new\b"
+    r"|\b(?:have|did)\s+you\s+hear[d]?\s+(?:anything|back)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_for_an_update(message: str) -> bool:
+    """A chase or update request on the client's own case, with or without "?".
+    Read before a message is treated as a detail to note."""
+    body = message or ""
+    if _CHASING_STATUS.search(body):
+        return True
+    return CHASE_BEFORE_NOTE and bool(_ASKS_FOR_AN_UPDATE.search(body))
+
 
 # Step 2b (2026-10-13). A detail about a topic whose ticket is open stays on
 # that topic, unless the client clearly asks for a different service. Live,
@@ -366,7 +402,7 @@ def states_a_detail(message: str) -> bool:
     if (
         not body
         or _ASKS_US.search(body)
-        or _CHASING_STATUS.search(body)
+        or asks_for_an_update(body)
         or is_pure_acknowledgement(body)
         or is_closing(body)
     ):

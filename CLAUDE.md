@@ -493,6 +493,7 @@ because the lead is opened early and the ticket is created much later.
 | Every handover tells the client its ticket reference, inside the sentence it already has | `app/graph/reference.py` (`add_reference`) from `handover_executor` + `blocked_topic_responder` | The reply is written before the ticket exists, so the number is added afterwards: after "...to our team", else before the end of the live-agent sentence, else before the end of a sentence naming our agent; a reply with no such sentence is left alone, never given a new one. A message folded into an open ticket shows THAT ticket's number. Not on the safety reply (`SAFETY_REPLY_SHOWS_REFERENCE`, waiting on the agency). `ungrounded_figures` strips `guards.TICKET_REFERENCE` before reading figures. |
 | Every reply on a parked topic that mentions the agent carries that topic's reference | `blocked_topic_responder` (applied once at the node's exit, `REFERENCE_ON_EVERY_PARKED_REPLY`) + the sweep in `smoke_nodes._run_case` | Step 2b: the first chase after a handover went down the model-written holding line with no reference, while the canned chase had one. Not on `NEW_SERVICE_HANDOVER`: that raises a new ticket, which handover_executor numbers. |
 | A detail about a topic whose ticket is open stays on that topic | `intent_classifier.states_a_detail` + `DETAIL_STAYS_ON_PARKED_TOPIC`; the responder does not chase it | "also please note she prefers to fly on a weekend" was read as `home_leave` and opened a new intake beside open renewal CB-2026-0033. Naming another service, asking for something (anyone's want/need) or asking a question still switches; "please note"/"fyi" make it a detail even with a want in it. |
+| An update request on a parked topic gets the status, never "Noted" | `intent_classifier.asks_for_an_update` (`CHASE_BEFORE_NOTE`), read by `states_a_detail`, `adds_information`, `answers_our_question` and the responder's repeat path | "ok can you tell me any updates on this" was filed as a detail (live 3766, CB-2026-0033): `any\s+update\b` misses the plural and `_ASKS_US` is anchored at the start, which "ok" defeats. With or without "?". A real detail ("she prefers window seat") is still noted. |
 | A helper named earlier in the conversation is confirmed, not asked for again, after a switch | `info_collector.helpers_named_in` / `known_helpers_for` + `state.helpers_named` (`REMEMBER_NAMED_HELPERS`) | `helper_name` is dropped on a switch (rightly) and the webhook's ticket helpers are read only for a known employer. Never the client's own name (her own home leave or passport). |
 | A closing briefing is built from the briefing's own records, however many answers arrived at once | `info_collector` (`BRIEFING_FETCHES_ITS_OWN_RECORDS`) -> `rag_retriever.briefing_records` | The retriever runs before the extraction, so a briefing that falls due on THIS turn's answers was written from a search for the client's words. Live 2026-10-13: a renewal answered in one message deferred "the exact fee" where the answer is $695. Only fetched when the briefing was not already due before the turn. |
 | "(MDW)" never sits in front of a possessive | `guards.without_tag_before_possessive`, applied once in `graph.run_turn` (and the preview) behind `NO_TAG_BEFORE_POSSESSIVE` | "Devi lal singh (MDW)'s home leave" went out live. The style rule also says so; the code is the guarantee. |
@@ -736,6 +737,8 @@ Easy to get wrong:
   Step 1d's two, each `False` for the Step 2c behaviour:
   `message.SEND_WITHOUT_TYPING_TIME` (no Whapi `typing_time` while the
   typing indicator is on), `graph.PREFETCH_SEARCH_EMBEDDING`.
+  Step 2d's one, `False` for the Step 1d behaviour:
+  `intent_classifier.CHASE_BEFORE_NOTE`.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1543,6 +1546,32 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-13** - **Step 2d: "ok can you tell me any updates on this" was
+  filed as a note.** Live phone test of Step 1d, conversation 3766, 14:57-15:00
+  IST, renewal CB-2026-0033, read from its checkpoints (read-only). "any
+  update?" got the model-written holding line with the reference; the next
+  message got "Noted, I've added that for our agent (reference CB-2026-0033)."
+  Two gaps in the Step 2b detail rule: `_CHASING_STATUS`'s `any\s+update\b`
+  cannot match the plural, and `_ASKS_US` is anchored at the start, which "ok"
+  defeats - so `states_a_detail` was True and the chase branch was skipped.
+  The model then repeated its holding line, and the repeat path's
+  `adds_information` (same pattern) sent the note. Replayed 1 run in 3 before.
+  `asks_for_an_update` (`CHASE_BEFORE_NOTE`) recognises update requests with or
+  without "?" ("any updates", "any news", "update me", "can you update me on
+  this", "tell me the status", "keep me updated", "what is the latest", "how is
+  it going"...), and every reader of the old pattern on the note path uses it.
+  On the repeat path an update request gets the chase reply with the reference
+  (silence if it went out in the last three messages, as for any chase), ahead
+  of the note. Replayed 5 runs of 5 with a status reply and the reference
+  (4 chase reply, 1 model-written); "also please note she prefers a window
+  seat" is still noted, 2 of 2.
+  **Verified:** 21 update phrasings and 6 real notes, the switch off, and three
+  responder states (the live shape, after "still checking", a real note). 8
+  faults injected, 7 red; the green one (the chase branch's own reference
+  removed) is covered by the node's exit reference, and goes red with that off
+  too. `smoke_nodes.py` is **364 checks**. E2E 7 of 7, 0 refusals (it never
+  reaches a parked topic, so this cannot move it).
 
 - **2026-10-13** - **Step 1d: the send, the embeddings provider, and the search
   started beside the classifier.**

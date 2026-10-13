@@ -44,8 +44,10 @@ from app.graph.closure import is_closing, is_pure_acknowledgement
 # service in their own words". intent_classifier owns it; this node only reads it.
 from app.graph.nodes.intent_classifier import (
     _CHASING_STATUS,
+    CHASE_BEFORE_NOTE,
     DETAIL_STAYS_ON_PARKED_TOPIC,
     _named_service,
+    asks_for_an_update,
     states_a_detail,
 )
 # The same greeting the answering path sends, so the two cannot drift apart.
@@ -227,7 +229,7 @@ def adds_information(message: str) -> bool:
     return bool(body) and not (
         is_pure_acknowledgement(body)
         or is_closing(body)
-        or _CHASING_STATUS.search(body)
+        or asks_for_an_update(body)
         or _DIRECT_ADDRESS.search(body)
     )
 
@@ -480,7 +482,7 @@ def answers_our_question(state: ConversationState) -> bool:
     if "?" not in previous:
         return False
     message = (state.get("incoming_text") or "").strip()
-    return bool(message) and "?" not in message and not _CHASING_STATUS.search(message)
+    return bool(message) and "?" not in message and not asks_for_an_update(message)
 
 
 def _answerable(state: ConversationState) -> bool:
@@ -848,7 +850,25 @@ async def _respond(state: ConversationState) -> dict[str, Any]:
                 ticket.get("ticket_number"),
             )
             return {"reply": PROBE_REPLY, "needs_handover": False}
-        if adds_information(message):
+        # An update request is answered with the status, never noted (Step 2d,
+        # CHASE_BEFORE_NOTE). Live 3766: the model repeated the holding line it
+        # had just sent, and "ok can you tell me any updates on this" got
+        # "Noted, I've added that for our agent".
+        if CHASE_BEFORE_NOTE and asks_for_an_update(message):
+            if not any(
+                near_duplicate(CHASE_REPLY, line)
+                for line in recent_bot_lines(state.get("history_text", ""), count=3)
+            ):
+                logger.info(
+                    "Conversation %s: update request on parked topic %r repeated the holding "
+                    "line - sending the chase reply",
+                    state.get("conversation_id"), topic_key,
+                )
+                return {
+                    "reply": add_reference(CHASE_REPLY, ticket.get("ticket_number")),
+                    "needs_handover": False,
+                }
+        elif adds_information(message):
             recent = recent_bot_lines(state.get("history_text", ""), count=2)
             noted = next(
                 (r for r in NOTED_REPLIES if not any(near_duplicate(r, line) for line in recent)),
