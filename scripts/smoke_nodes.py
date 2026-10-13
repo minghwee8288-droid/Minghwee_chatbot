@@ -763,9 +763,31 @@ CASES = [
       "_expect_prompt": "choral (Filipino)"}),
     # 2026-10-12, conversation 4443: her rights went out as one sentence of
     # seven. All ten, as a list, and none cut off by the clamp.
-    ("response_generator", "a helper asking her rights gets every right as a list",
+    # 2026-10-13: "i want detailed rights message for helper in listed format
+    # properly" - a known helper gets Module 27 in detail, word for word.
+    ("response_generator", "a helper asking her rights gets the detailed message, word for word",
      {"intent": "general_question", "contact_type": "candidate",
       "incoming_text": "i am helper i want to know my rights",
+      "history_text": "Client: hello\nYou: Hi, I'm Claire, Ming Hwee's AI assistant. How can I help you?",
+      "rag_best_score": 0.56, "rag_matches": [{"question": "x", "similarity": 0.56}],
+      "rag_context": _HELPER_RIGHTS,
+      "_stub_reply": "SHOULD NOT BE SENT",
+      "_expect_reply": "7. Your placement loan",
+      "_forbid_reply": "SHOULD NOT BE SENT",
+      "_expect_state": {"needs_handover": False}}),
+    ("response_generator", "...and asked again right after it, she is pointed to it rather than sent nothing",
+     {"intent": "general_question", "contact_type": "candidate",
+      "incoming_text": "please provide me with my rights",
+      "history_text": "Client: i am helper i want to know my rights\n"
+                      "You: Here are your rights as a domestic helper in Singapore:",
+      "rag_best_score": 0.56, "rag_matches": [{"question": "x", "similarity": 0.56}],
+      "rag_context": _HELPER_RIGHTS,
+      "_stub_reply": "SHOULD NOT BE SENT",
+      "_expect_reply": "sent your full list of rights just above",
+      "_expect_state": {"needs_handover": False}}),
+    ("response_generator", "...while an unknown sender asking her rights gets the list from the records",
+     {"intent": "general_question", "contact_type": "unknown",
+      "incoming_text": "what are my rights",
       "history_text": "Client: hello\nYou: Hi, I'm Claire, Ming Hwee's AI assistant. How can I help you?",
       "rag_best_score": 0.56, "rag_matches": [{"question": "x", "similarity": 0.56}],
       "rag_context": _HELPER_RIGHTS,

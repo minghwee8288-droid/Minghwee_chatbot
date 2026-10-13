@@ -504,6 +504,7 @@ because the lead is opened early and the ticket is created much later.
 | A replacement is priced only inside the package period | `info_collector.replacement_package_fee_due` + `rag_retriever._with_replacement_fees` + `REPLACEMENT_PACKAGE_FEE_NOTE` | Agency's choice, 2026-10-09. A helper WE placed (record, or the client's plain yes) under 6 months ago: quote the package's replacement and documentation fee ($238 / $288 / $328 new hire, $288 transfer), labelled where the package is unknown, and lift the cost guard for that message. Anything else (outside 6 months, not ours, a tenure we cannot read) still defers. The rows are filed under new_hiring and transfer, so they are fetched separately. Every other replacement turn keeps the `replacement` filter on a money question and carries `system.REPLACEMENT_COST_BLOCK` (the rule, no figure). |
 | A helper who says who she is and asks a question is answered, not registered | `intent_classifier._is_jobseeker` (`KB_QUESTION_INTENTS`) + `_detected_contact_type` (self-ID -> candidate) | "i am helper i want to know my rights" was forced to `candidate_registration`, searched as "(candidate registration)" (employer hiring rows on top) and handed over (conversation 4443). Self-ID alone, or asking for work, still registers her. The rights summary row (`load_service_notes`, general + candidate) answers the question as a whole. |
 | A helper's rights go out as a list of all ten | `guards.asks_for_rights` + `templates.RIGHTS_INSTRUCTION` + `_HELPER_RIGHTS_ANSWER` | Agency, 2026-10-12: "cover all 10 rights" (Module 27: salary, rest day, passport, food, room, phone, placement loan, safety, protection from harassment, transfer). A rights question with records gets the list instruction and room for it (22 sentences, 700 tokens); one right asked about ("can my employer keep my passport") stays short. Plural "rights" only. |
+| A helper asking her rights gets the detailed Module 27 list, word for word | `app/graph/helper_rights.py` (`HELPER_RIGHTS_MESSAGE`) + `response_generator` | Agency, 2026-10-12: "detailed rights message ... in listed format properly". Fixed text, not a model reply: ~3,250 chars (kb-admin caps an entry at 1,200), bullets (`looks_like_document` bans them in model output), phone numbers that must arrive exact. Only for a known CANDIDATE asking about her rights as a whole; an unknown sender still gets the model's ten-line list or is asked who she is. Asked again right after it, she gets `RIGHTS_ALREADY_SENT` - the 90 s repeat guard would otherwise drop the resend and send nothing. Vetted at import (no old 8011 number, all ten sections, under 4,096). Edit it in code. |
 | A follow-up that points back is searched with the question before it | `rag_retriever` (`_REFERS_BACK` + `guards.last_client_line`) | Only when this message found nothing above the floor, only for a question (or `other`), only on "that/it/this...", same filters, kept only if better. |
 | A helper's own home leave is told her fee | `HELPER_HOME_LEAVE_BRIEFING_NOTE` / `HELPER_OWN_LEAVE_NOTE` | The fee for her nationality ($250 ID, $400 PH), with our agent going through it with her employer; never who pays. Myanmar still defers. |
 | A question that was never SENT is not counted as asked | `info_collector._undelivered_question` (`last_question`) | A reply held while the client is still typing is never delivered, but its ask was counted, so a `max_asks=1` field was filed "not provided" unseen. The next turn checks the transcript and records -1 (the counts are summed). |
@@ -1505,6 +1506,28 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-13** - **A helper asking her rights gets the detailed list from Module 27.**
+  The agency: "i want detailed rights message for helper in listed format properly
+  you check the text the i have give you". `app/graph/helper_rights.py` holds it:
+  the ten rights in the module's order, each with its sub-points as bullets (what
+  she is owed, what is "not OK", what to do), then the WhatsApp line and the
+  police / ambulance / MOM numbers. Every point is from the module; nothing added.
+  Module 27's old WhatsApp number is replaced by +65 6534 2277. Left out on
+  purpose: the module's "never do" list, the marriage and pregnancy rules (rules
+  for her, not rights) and the unfilled loan placeholder (§9.17).
+  Sent verbatim by `response_generator` when a known candidate asks about her
+  rights as a whole; Claire's introduction is prepended on first contact. Not a KB
+  entry: too long for kb-admin's 1,200-character limit, and the model drops points
+  and may not use bullets. The ten-line KB row stays for retrieval, for a parked
+  topic and for an unknown sender. If her next message asks again, she is pointed
+  to the list (`RIGHTS_ALREADY_SENT`): the webhook's repeat guard would drop an
+  identical resend and she would get nothing.
+  **Verified:** replayed read-only on conversation 4443's two messages, both get
+  the full list; six faults injected (never sent, sent to an unknown sender, the
+  absconding warning, the loan balance right, the old number, the already-sent
+  pointer), six red. `selfcheck_flows.py` is **823 assertions**; `smoke_nodes.py`
+  is **288 checks**.
 
 - **2026-10-12** - **A helper's rights: all ten, as a numbered list.** The agency,
   on the fix below: Module 27 has ten rights and the reply gave seven, in one

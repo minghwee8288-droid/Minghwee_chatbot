@@ -31,6 +31,11 @@ from app.graph.guards import (
     ungrounded_figures,
     without_greeting,
 )
+from app.graph.helper_rights import (
+    HELPER_RIGHTS_MESSAGE,
+    RIGHTS_ALREADY_SENT,
+    rights_already_sent,
+)
 from app.graph.llm import complete
 from app.services import kb_rules
 from app.graph.prompts.system import IDENTITY, build_system_prompt, known_helpers_line
@@ -281,6 +286,26 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         )
         instruction_template = RIGHTS_INSTRUCTION
         process_question = True
+
+    # ...and when we know it is a HELPER asking, she gets the detailed message
+    # word for word (app/graph/helper_rights.py) - the agency asked for the
+    # detail of Module 27 (2026-10-13), which a model reply would drop. An
+    # unknown sender stays on the model path above: "what are my rights" may be
+    # an employer's question.
+    if (
+        asks_for_rights(state.get("incoming_text") or "")
+        and effective_contact_type(state) == "candidate"
+    ):
+        logger.info(
+            "Conversation %s: helper asked for her rights - sending the detailed list",
+            state.get("conversation_id"),
+        )
+        reply = HELPER_RIGHTS_MESSAGE
+        if rights_already_sent(last_bot_line(state.get("history_text") or "")):
+            reply = RIGHTS_ALREADY_SENT
+        elif not claire_has_spoken(state.get("history_text") or ""):
+            reply = "Hi, I'm Claire, Ming Hwee's AI assistant.\n\n" + reply
+        return {"reply": reply, "needs_handover": False}
 
     # An unrecognised number whose type we still cannot read: find out who they
     # are before running any workflow, since the workflow depends on it.

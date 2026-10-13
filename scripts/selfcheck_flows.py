@@ -311,6 +311,13 @@ _dh_keys = [f.key for f in t.SERVICE_FIELDS["direct_hiring"]]
 _dh_at = lambda k: _dh_keys.index(k) if k in _dh_keys else -1
 import app.graph.graph as g
 rr = importlib.import_module("app.graph.nodes.rag_retriever")
+_HR = importlib.import_module("app.graph.helper_rights")
+
+
+def _read(rel: str) -> str:
+    """A repo file's text, for checks on wiring rather than behaviour."""
+    from pathlib import Path
+    return (Path(__file__).resolve().parents[1] / rel).read_text(encoding="utf-8")
 
 
 def _overview_retrieval_has_medical() -> bool:
@@ -5129,6 +5136,24 @@ rows = [
   [m for m in ("i am helper i want to know my rights", "what are my rights",
                "what rights do helpers have", "tell me my basic rights")
    if not _guards.asks_for_rights(m)], []),
+ # 2026-10-13: the detailed message a known helper gets, checked against
+ # Module 27's own text section by section.
+ ("the detailed rights message has all ten sections, numbered 1 to 10",
+  [n for n in range(1, 11) if f"\n{n}. " not in _HR.HELPER_RIGHTS_MESSAGE], []),
+ ("...carries each section's key facts from Module 27",
+  [f for f in ("within 7 days", "breakages", "ONE real day off", "cannot be changed to money",
+               "household safe", "3 meals a day", "no pork", "7 hours of sleep", "mattress",
+               "no phone ever", "copy of the loan paper", "balance at any time",
+               "Owing money does not take away", "999", "995", "locked in the house",
+               "never your fault", "will not lose your job", "last working day",
+               "absconding", "1800-339-5505", "+65 6534 2277")
+   if f not in _HR.HELPER_RIGHTS_MESSAGE], []),
+ ("...never Module 27's old WhatsApp number, and fits one WhatsApp message",
+  ("8011" in _HR.HELPER_RIGHTS_MESSAGE, len(_HR.HELPER_RIGHTS_MESSAGE) < 4096), (False, True)),
+ ("...never the unfilled loan placeholder or the 'never do' list (she asked what she is owed)",
+  [w for w in ("INSERT", "Do not steal", "go to jail") if w in _HR.HELPER_RIGHTS_MESSAGE], []),
+ ("...and the response generator sends it",
+  "HELPER_RIGHTS_MESSAGE" in _read("app/graph/nodes/response_generator.py"), True),
  ("...but one right, or the word 'right', is not",
   [m for m in ("can my employer keep my passport", "is this the right form",
                "you are right", "how many days off do i get")
