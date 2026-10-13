@@ -837,6 +837,104 @@ def without_tag_before_possessive(reply: str) -> str:
     return _TAG_BEFORE_POSSESSIVE.sub(r"\1", reply or "")
 
 
+# Phase 3 Step 5 item 15 (2026-10-13). In the Step 2e replay the model ended
+# an Indonesian chase with "天天彩票中奖" - a known glitch string, Chinese for a
+# lottery win - and no guard caught it: is_degenerate is weak on unspaced
+# scripts, and nothing else reads the script at all. Runs of letters in a
+# script that is neither the reply's main script nor one the client (or our
+# record of their name) wrote are removed; the glitch strings always are.
+# Latin is never removed: Claire, Ming Hwee, the address, a CB reference and
+# names written in Latin all stay in a Burmese or Chinese reply. Digits and
+# punctuation are not letters, so they are never touched either.
+# False = the reply goes out exactly as the node wrote it.
+STRAY_SCRIPT_GUARD = True
+
+GLITCH_STRINGS = ("天天彩票中奖",)
+
+# Script buckets. Han and kana are one bucket, so Japanese (kanji + kana) is
+# never cut against itself.
+_SCRIPT_BUCKETS = (
+    ("cjk", "぀-ヿ㐀-䶿一-鿿豈-﫿"),
+    ("hangul", "가-힯ᄀ-ᇿ"),
+    ("burmese", "က-႟"),
+    ("thai", "฀-๿"),
+    ("lao", "຀-໿"),
+    ("khmer", "ក-៿"),
+    ("devanagari", "ऀ-ॿ"),
+    ("bengali", "ঀ-৿"),
+    ("tamil", "஀-௿"),
+    ("telugu", "ఀ-౿"),
+    ("sinhala", "඀-෿"),
+    ("arabic", "؀-ۿ"),
+    ("hebrew", "֐-׿"),
+    ("cyrillic", "Ѐ-ӿ"),
+    ("greek", "Ͱ-Ͽ"),
+)
+_SCRIPT_CHAR = {name: re.compile(f"[{chars}]") for name, chars in _SCRIPT_BUCKETS}
+# A run: the script's letters with any spaces between them, so a stray phrase
+# goes whole and does not leave its spacing behind.
+_SCRIPT_RUN = {
+    name: re.compile(f"[{chars}](?:[{chars}\\s]*[{chars}])?")
+    for name, chars in _SCRIPT_BUCKETS
+}
+_LATIN_CHAR = re.compile(r"[A-Za-zÀ-ɏ]")
+
+
+def _scripts_in(text: str) -> set[str]:
+    found = {name for name, pat in _SCRIPT_CHAR.items() if pat.search(text or "")}
+    if _LATIN_CHAR.search(text or ""):
+        found.add("latin")
+    return found
+
+
+def _main_script(text: str) -> str | None:
+    counts = {name: len(pat.findall(text)) for name, pat in _SCRIPT_CHAR.items()}
+    counts["latin"] = len(_LATIN_CHAR.findall(text))
+    name, count = max(counts.items(), key=lambda kv: kv[1])
+    return name if count else None
+
+
+def _tidy_after_cut(text: str) -> str:
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"[ \t]+([.,!?;:])", r"\1", text)
+    text = re.sub(r"([.!?])[.,;:]+", r"\1", text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def without_stray_script(reply: str, *client_text: str) -> str:
+    """Remove glitch strings, and runs in a script that is neither the
+    reply's main script nor one in `client_text` (what the client wrote, and
+    the names we hold for them). Latin, digits and punctuation are never cut.
+    """
+    body = reply or ""
+    if not body:
+        return body
+    out = body
+    for glitch in GLITCH_STRINGS:
+        out = out.replace(glitch, "")
+    main = _main_script(out)
+    keep = _scripts_in(" ".join(t or "" for t in client_text)) | {"latin"}
+    if main:
+        keep.add(main)
+    for name, run in _SCRIPT_RUN.items():
+        if name not in keep:
+            out = run.sub("", out)
+    if out == body:
+        return body
+    out = _tidy_after_cut(out)
+    logger.warning("Stray-script guard cut %r from a reply",
+                   "".join(ch for ch in body if ch not in out)[:80])
+    return out
+
+
+def client_lines(history_text: str) -> list[str]:
+    """The client's own lines of a "Client:" / "You:" history."""
+    return [line.split(":", 1)[1] for line in (history_text or "").splitlines()
+            if line.startswith("Client:")]
+
+
 def strip_repeated_opener(reply: str, *previous: str) -> str:
     """Drop a filler opener already used in any of the recent messages.
 

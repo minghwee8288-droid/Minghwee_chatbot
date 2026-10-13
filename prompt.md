@@ -39,7 +39,8 @@ A few things to know before you start:
 - **Not every safeguard is a prompt.** Some rules are also checked
   automatically after the AI writes a reply. Examples: no made-up prices, no
   promised call-back times, no repeated questions, no more than two or three
-  sentences. Those checks are not prompts, so they are only mentioned where they
+  sentences, and no stray characters from an alphabet neither the reply nor
+  the client uses (2026-10-13). Those checks are not prompts, so they are only mentioned where they
   explain why a prompt is worded the way it is. Some messages are also sent word
   for word without the AI writing them. Those are listed in the Appendix.
 

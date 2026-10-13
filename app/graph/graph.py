@@ -10,6 +10,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from app.config import settings
+from app.graph import guards
 from app.graph.guards import answering_our_question, without_tag_before_possessive
 from app.graph.nodes.blocked_topic_responder import asks_general_info, blocked_topic_responder
 from app.graph.nodes.handover_executor import handover_executor
@@ -466,4 +467,22 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     # Step 2c: every node's reply passes here, so the tag is fixed once.
     if NO_TAG_BEFORE_POSSESSIVE and result.get("reply"):
         result["reply"] = without_tag_before_possessive(result["reply"])
+    # Step 5 item 15: stray-script glitches are cut once, here, for the same
+    # reason - every node's reply (and every fixed sentence added to it) has
+    # been written by now.
+    if guards.STRAY_SCRIPT_GUARD and result.get("reply"):
+        result["reply"] = guards.without_stray_script(
+            result["reply"], *stray_script_context(payload)
+        )
     return result
+
+
+def stray_script_context(payload: dict[str, Any]) -> list[str]:
+    """What the client wrote and the names we hold for them: scripts in these
+    are never cut from a reply."""
+    return [
+        payload.get("incoming_text") or "",
+        *guards.client_lines(payload.get("history_text") or ""),
+        payload.get("customer_name") or "",
+        payload.get("record_name") or "",
+    ]

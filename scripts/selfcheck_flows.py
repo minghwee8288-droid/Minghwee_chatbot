@@ -5544,6 +5544,47 @@ rows += [
   (False, False)),
  ("NO_APPROXIMATE_WITHOUT_FIGURE off leaves it", _approx_off(), False),
 ]
+
+# Phase 3 Step 5 item 15: the stray-script guard.
+_SS = _guards.without_stray_script
+_GLITCH = "天天彩票中奖"
+
+
+def _ss_switch_read_by_run_turn():
+    import inspect
+    from app.graph import graph as _g
+    from app.api import admin as _a
+    return ("STRAY_SCRIPT_GUARD" in inspect.getsource(_g.run_turn),
+            "STRAY_SCRIPT_GUARD" in inspect.getsource(_a))
+
+
+rows += [
+ ("stray script: the Step 2e glitch string goes from an Indonesian reply",
+  _SS("Nomor referensi Anda adalah CB-2026-0033." + _GLITCH, "ada update?"),
+  "Nomor referensi Anda adalah CB-2026-0033."),
+ ("...and always goes, even to a client writing Chinese",
+  _GLITCH in _SS("你好" + _GLITCH, "你好"), False),
+ ("...a stray Chinese run in an English reply goes, the reference stays",
+  _SS("Your renewal is with our agent 天天 now. Your reference number is "
+      "CB-2026-0033.", "any update?"),
+  "Your renewal is with our agent now. Your reference number is CB-2026-0033."),
+ ("...the reply's own script, Latin names, the address and digits stay",
+  _SS("我们的办公室在 101 Upper Cross Street, #03-54, "
+      "Singapore 058357。Claire", "办公室"),
+  "我们的办公室在 101 Upper Cross Street, #03-54, "
+  "Singapore 058357。Claire"),
+ ("...the reply's main script stays when this message is only 'ok'",
+  _SS("好的，我们会处理。Claire", "ok"),
+  "好的，我们会处理。Claire"),
+ ("...a name the client wrote in another script stays",
+  _SS("Hi 王小明, your reference is CB-2026-0033.", "", "王小明"),
+  "Hi 王小明, your reference is CB-2026-0033."),
+ ("...a numbered list keeps its lines",
+  _SS("Here are the steps:\n1. 好 Send documents\n2. Sign forms", "the process"),
+  "Here are the steps:\n1. Send documents\n2. Sign forms"),
+ ("...run once, for every node, in run_turn and in the preview",
+  _ss_switch_read_by_run_turn(), (True, True)),
+]
 bad = 0
 for label, got, want in rows:
     ok = got == want

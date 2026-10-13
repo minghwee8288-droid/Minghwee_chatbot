@@ -175,6 +175,7 @@ async def run_preview(body: PreviewRequest) -> dict[str, Any]:
 
     from app.graph import graph as graph_module
     from app.graph.graph import _TURN_RESET, build_graph
+    from app.graph import guards
     from app.graph.guards import without_tag_before_possessive
 
     await kb_rules.refresh()
@@ -223,6 +224,10 @@ async def run_preview(body: PreviewRequest) -> dict[str, Any]:
             reply = "" if result.get("suppress_reply") else (result.get("reply") or "")
             if graph_module.NO_TAG_BEFORE_POSSESSIVE:  # as run_turn does
                 reply = without_tag_before_possessive(reply)
+            if guards.STRAY_SCRIPT_GUARD and reply:  # as run_turn does
+                reply = guards.without_stray_script(
+                    reply, *graph_module.stray_script_context(payload)
+                )
             turns.append({
                 "message": text,
                 "reply": reply,

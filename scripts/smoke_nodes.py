@@ -3277,6 +3277,51 @@ async def _tag_checks() -> list[tuple[str, bool]]:
     return results
 
 
+async def _stray_script_checks() -> list[tuple[str, bool]]:
+    """Step 5 item 15: a stray-script glitch never leaves run_turn."""
+    from app.graph import graph as graph_module
+    from app.graph import guards as guards_module
+
+    glitch = "天天彩票中奖"
+    written = ("Permintaan Anda sedang ditangani agen kami. Nomor referensi Anda "
+               "adalah CB-2026-0033." + glitch)
+
+    class _Graph:
+        def __init__(self, reply):
+            self.reply = reply
+
+        async def ainvoke(self, *_a, **_kw):
+            return {"reply": self.reply}
+
+    payload = {"incoming_text": "ada update?",
+               "history_text": "Client: saya mau perpanjang izin kerja\nYou: Baik.",
+               "customer_name": "", "record_name": ""}
+    out = []
+    with patch.object(graph_module.kb_rules, "refresh", new=AsyncMock()):
+        with patch.object(graph_module, "get_graph", new=lambda: _Graph(written)):
+            got = (await graph_module.run_turn("t", payload))["reply"]
+            out.append(("stray script: run_turn cuts the Step 2e glitch",
+                        glitch not in got and got.endswith("CB-2026-0033.")))
+            with patch.object(guards_module, "STRAY_SCRIPT_GUARD", False):
+                got = (await graph_module.run_turn("t", payload))["reply"]
+            out.append(("stray script: STRAY_SCRIPT_GUARD off -> as written",
+                        got == written))
+        # A name the client wrote earlier, in Chinese, survives in an English reply.
+        named = "Hi 王小明, your reference number is CB-2026-0033."
+        with patch.object(graph_module, "get_graph", new=lambda: _Graph(named)):
+            got = (await graph_module.run_turn("t", {
+                "incoming_text": "any update?",
+                "history_text": "Client: my name is 王小明\nYou: Thanks."}))["reply"]
+            out.append(("stray script: the client's own Chinese name stays", got == named))
+        # A Burmese reply keeps Burmese, Claire and the reference; loses the CJK.
+        burmese = "မင်္ဂလာပါ Claire CB-2026-0033 " + glitch
+        with patch.object(graph_module, "get_graph", new=lambda: _Graph(burmese)):
+            got = (await graph_module.run_turn("t", {"incoming_text": "ဆရာ"}))["reply"]
+            out.append(("stray script: a Burmese reply keeps Burmese, Claire, the reference",
+                        got == burmese.replace(" " + glitch, "")))
+    return out
+
+
 async def _timing_checks() -> list[tuple[str, bool]]:
     """The per-turn timing line (app/timing.py), through the real webhook turn.
 
@@ -4663,6 +4708,9 @@ async def main() -> int:
         print(f"  {'PASS' if ok else 'FAIL'}  handover  {label:44}")
         failures += not ok
     for label, ok in await _tag_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  wording  {label:44}")
+        failures += not ok
+    for label, ok in await _stray_script_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  wording  {label:44}")
         failures += not ok
     for label, ok in _chase_checks():

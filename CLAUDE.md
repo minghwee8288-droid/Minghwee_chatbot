@@ -501,6 +501,7 @@ because the lead is opened early and the ticket is created much later.
 | A helper named earlier in the conversation is confirmed, not asked for again, after a switch | `info_collector.helpers_named_in` / `known_helpers_for` + `state.helpers_named` (`REMEMBER_NAMED_HELPERS`) | `helper_name` is dropped on a switch (rightly) and the webhook's ticket helpers are read only for a known employer. Never the client's own name (her own home leave or passport). |
 | A closing briefing is built from the briefing's own records, however many answers arrived at once | `info_collector` (`BRIEFING_FETCHES_ITS_OWN_RECORDS`) -> `rag_retriever.briefing_records` | The retriever runs before the extraction, so a briefing that falls due on THIS turn's answers was written from a search for the client's words. Live 2026-10-13: a renewal answered in one message deferred "the exact fee" where the answer is $695. Only fetched when the briefing was not already due before the turn. |
 | "(MDW)" never sits in front of a possessive | `guards.without_tag_before_possessive`, applied once in `graph.run_turn` (and the preview) behind `NO_TAG_BEFORE_POSSESSIVE` | "Devi lal singh (MDW)'s home leave" went out live. The style rule also says so; the code is the guarantee. |
+| No stray script reaches the client | `guards.without_stray_script`, applied once in `graph.run_turn` (and the preview) behind `STRAY_SCRIPT_GUARD` | The model ended an Indonesian reply with "天天彩票中奖" (Step 2e replay). `GLITCH_STRINGS` always go; a run of letters in a script that is neither the reply's main script nor one in the client's own lines or the names we hold for them goes too. Latin is never a cut script, so "Claire", "Ming Hwee", the address, a CB reference and Latin names survive in a Burmese or Chinese reply; digits and punctuation are not letters. Han and kana are one bucket. A cut is logged. |
 | A finished reply is not held back by Whapi | `message.send_bot_reply` (`SEND_WITHOUT_TYPING_TIME`) | With our own typing indicator running, no `typing_time` is sent: it only delayed delivery (whapi.send 1.4 s with 0.5 s asked). The channel's `/settings` holds no typing default. |
 | The search embedding starts beside the classifier, and is used only for the query the retriever actually builds | `graph._classify_with_prefetch` (`PREFETCH_SEARCH_EMBEDDING`) + `rag.prefetch_query` / `embed_query` | Predicted from the turn as it stands before classification (intent and service carry over). `embed_query` takes over a prefetch for the SAME text only, finished or still running; a different query (the classifier changed the service) is embedded as before, and a failed prefetch is retried, never reused. The canary is unchanged (cosine 1.000000 both ways). |
 | The timing line never costs a reply and never carries a client's words | `app/timing.py` + `smoke_nodes.py` (`_timing_checks`) | Every entry point swallows its own errors, the line holds the conversation id, durations and TABLE names only, and `TURN_TIMING_LOG=false` makes every hook return at once. Asserted through the real `_process_locked`, `handle_inbound` and `send_bot_reply` with I/O stubbed; eight faults injected, eight red. |
@@ -752,6 +753,8 @@ Easy to get wrong:
   Step 4b's two, each `False` for the Step 4 behaviour:
   `lead.FEE_NATIONALITY_FROM_TICKET` (the parked ticket as the third source),
   `guards.NO_APPROXIMATE_WITHOUT_FIGURE` (Step 5 item 17).
+  Step 5a's one, `False` for the Step 4b behaviour (the reply as the node
+  wrote it): `guards.STRAY_SCRIPT_GUARD`.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1590,7 +1593,8 @@ behaviour behind one switch. Details of each step are in §11.
 | 3 | A message not mainly in English always gets the harm check | `cfc0618` |
 | 2e | The reference as the agency's sentence, in the reply's language | `ab4bd17` |
 | 4 | Nationality-fee guard: no other nationality's fee, no fee where none is held | `48f889f` |
-| 4b | Fee nationality from message, collection, then parked ticket; no "approximate" without a figure (item 17) | see git log |
+| 4b | Fee nationality from message, collection, then parked ticket; no "approximate" without a figure (item 17) | `fc55045` |
+| 5a | Stray-script guard (item 15): glitch strings and foreign-script runs cut from the reply | see git log |
 
 **Still to do, in order:** Step 5 (below), Step 6 (combined questions: propose pairs, stop before
 wiring), Step 7 (escalation audit, read-only, report outside the repo),
@@ -1646,7 +1650,8 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 14. A client writing Bahasa Indonesia gets Indonesian, not Malay - from the
     client's words, never from nationality alone. Seen in Step 3 ("Sila
     pastikan... hubungi polis").
-15. **Top priority.** Stray-script guard: remove runs of characters in a script
+15. **DONE in Step 5a** (2026-10-13), `guards.without_stray_script`.
+    Stray-script guard: remove runs of characters in a script
     that is neither the reply's main script nor the client's, and always
     remove known glitch strings ("天天彩票中奖" ended an Indonesian reply in
     the Step 2e replay). Never strip names, the address, "Claire", CB
@@ -1666,6 +1671,38 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-13** - **Step 5a (item 15): a stray script never reaches the
+  client.** In the Step 2e replay the model ended an Indonesian chase with
+  "天天彩票中奖" - a known glitch string, Chinese for a lottery win - and
+  nothing caught it (`is_degenerate` is weak on unspaced scripts, and no other
+  guard reads the script). `guards.without_stray_script` runs once in
+  `graph.run_turn`, after the tag fix and so after every node and every fixed
+  sentence, and in the preview: `GLITCH_STRINGS` always go, and so does any run
+  of letters in a script that is neither the reply's main script nor one the
+  client wrote (this message, their earlier lines, the push and record names).
+  Latin is never cut, so "Claire", "Ming Hwee", the address, a CB reference
+  and names in Latin stay in a Burmese or Chinese reply; digits and
+  punctuation are not letters. Han and kana are one bucket, so Japanese is not
+  cut against itself. Spacing and a list's line breaks are tidied, not
+  flattened. `STRAY_SCRIPT_GUARD = False` restores the reply as written.
+  The exact glitched reply was not in any log, so the tests rebuild it.
+  **Verified:** 4 `smoke_nodes.py` checks through the real `run_turn` (the
+  glitch cut with the reference kept, switch off, a client's own Chinese name
+  kept, a Burmese reply keeping Burmese, Claire and the reference) and 8 flows
+  assertions. 9 faults injected, 9 red - after one was GREEN: removing Latin
+  from the keep-set is a no-op, because no Latin run pattern exists, so the
+  real fault (a Latin bucket added) was injected instead. Before the run, one
+  was seen to be unprovable: every "main script" case had the client writing
+  that script too, so an English-client/Chinese-reply case was added. Replayed
+  read-only through the real model: Indonesian, Burmese, Chinese, Tagalog and
+  English, 3 runs each, 24 replies - 0 changed (the Chinese office answer kept
+  the address, MRT exit and hours). `smoke_nodes.py` is **417**,
+  `selfcheck_flows.py` **854**. E2E 7 of 7, 0 refused writes,
+  no row count changed.
+  **Seen and NOT changed:** one of three Indonesian home-leave replies came
+  back in Malay ("betul", "anda"), which is item 14; a Tagalog question was
+  answered in English.
 
 - **2026-10-13** - **Step 4b: the parked-topic fee test, and "approximate"
   with no figure.** Live 17:30 IST, conversation 3766: a Myanmar passport
