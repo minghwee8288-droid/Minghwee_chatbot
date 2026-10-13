@@ -2198,7 +2198,10 @@ whose price we do not have.
 
 ### What does it make the chatbot do?
 It says our agent will confirm the cost and does not borrow another
-nationality's price.
+nationality's price. Since 13 October 2026 this is also checked automatically
+after the reply is written: a sentence quoting a fee for a nationality we hold
+no fee for, or quoting another nationality's fee, is replaced with the fixed
+sentence in the Appendix.
 
 ### Prompt
 *(The ending is "her embassy" for passport renewal and home leave, and "her
@@ -2719,7 +2722,7 @@ Another nationality's price must never be quoted as hers.
 
 ### What does it make the chatbot do?
 It says our agent will confirm the cost, and still answers the timing and
-process.
+process. The same automatic check as entry 44 applies to this answer.
 
 ### Prompt
 ```text
@@ -3024,6 +3027,7 @@ client might receive.
 | Client says they want another service but does not name it | "Of course — which service can I help you with?" |
 | …and still does not name it after being asked | "Let me get a live agent onto that for you — they'll connect with you shortly." |
 | A price that must be quoted by a person was about to be given | "The cost depends on nationality, experience and how the package is put together, so I would rather one of our agents take you through the full breakdown than give you half a figure. I will get that arranged." |
+| A reply quoted a fee we do not hold for the helper's nationality, or another nationality's fee | "Our agent will confirm the exact fee based on your requirements." *(replaces only that sentence; the rest of the reply is sent as written)* |
 | Backup if a reply about a parked topic cannot be written | "A live agent has this one and will connect with you shortly. Anything else I can help you with in the meantime?" |
 | Backup closing message | "Noted, thanks for the details. I've passed this to our team and a live agent will connect with you shortly. Anything else I can help you with?" |
 | Backup acknowledgement | "Got it. A live agent will pick this up and connect with you shortly. Is there anything else I can help with in the meantime?" |

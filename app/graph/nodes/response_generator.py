@@ -17,6 +17,7 @@ from app.graph.guards import (
     clamp_reply,
     claire_has_spoken,
     greeting_only,
+    guard_nationality_fee,
     holding_reply,
     is_degenerate,
     last_bot_line,
@@ -559,6 +560,25 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         )
         reply = fallback
         token_present = True
+    else:
+        # Grounded, and still another nationality's price - or a price where we
+        # hold none for hers (guards.guard_nationality_fee, Phase 3 Step 4).
+        # Only the cost sentence goes; the rest of the answer stands.
+        reply, cut = guard_nationality_fee(
+            reply,
+            state.get("service_type"),
+            nationality_in_play(state.get("collected_info"), state.get("incoming_text")),
+            context,
+            state.get("history_text", ""),
+            matches=state.get("rag_matches") or (),
+        )
+        if cut:
+            logger.warning(
+                "Conversation %s: reply quoted another nationality's fee (%r) - "
+                "deferring that sentence",
+                state.get("conversation_id"),
+                cut,
+            )
 
     # A markdown-formatted answer is the model writing from its own knowledge
     # rather than from the records — it produced a plumber directory complete

@@ -323,6 +323,7 @@ because the lead is opened early and the ticket is created much later.
 | A fee is quoted for THIS service and THIS nationality, or not at all | `FEE_STATED_SERVICES` + `FEE_BY_NATIONALITY` + `_service_filter` | The agency's first rule of 2026-09-22: *"never answer a fee question using information from another service simply because the nationality or fee category is similar."* Six agency fees now sit in the KB - $1,688/$1,588/$1,288 for a transfer and $1,428/$1,188/$1,168 for a new hire - and membership of `FEE_STATED_SERVICES` is what KEEPS the service filter on a price question and REFUSES the widening retry, so a transfer question cannot reach a hire's fee. Both transfer keys are in it: the employer's is what `_subject_service` returns, the candidate's is what `_aliased()` rewrites it to. |
 | ...and the three we hold are not guessed between before we know which | `ticket.fee_varies_by_nationality` + `FEE_NEEDS_NATIONALITY_NOTE` | Measured: *"how much is the agency fee for a new hire?"* with no nationality settled returns ID at **0.688** and PH and MM at **0.679** - nine thousandths apart, all three correct for somebody. Whichever the model reaches for it is right one time in three and the client cannot tell which. The note offers a choice rather than forcing a question, because three labelled figures are a real answer and a client who has not chosen a nationality is often asking in order to choose. |
 | ...and a nationality we hold NO figure for is a different refusal | `fee_is_known_for` + `FEE_NOT_HELD_FOR_NATIONALITY_NOTE` | A Myanmar passport renewal is a service we price per nationality and hold no price for. Asking which nationality would be asking a question we already have the answer to, so that one defers to an agent instead. Two predicates because they answer two questions: *may we quote* and *is the nationality what stands in the way*. |
+| ...and both are enforced on the REPLY, not only asked for in the prompt | `guards.guard_nationality_fee` (`NATIONALITY_FEE_GUARD`), on all three reply paths | A Myanmar passport renewal was still quoted $450 about one run in ten (§9.28): the figure is in the records, so `ungrounded_figures` passed it. With the service and nationality known: no fee held for her (kb_rules) means no fee figure at all; a fee held means no figure the records or our own earlier messages give only to another nationality ($450 shared by PH and ID passes both). Only the cost sentence is replaced, with "Our agent will confirm the exact fee based on your requirements." Which nationalities have a fee is read through kb_rules; the figures are never in code - who owns one is read off the text (the nationality named nearest it, or the row's KB label). Salary, levy and bond sentences are left alone. English only. |
 | The fees are separate amounts and are never added into a total | `templates.FEE_ANSWER_NOTE` | Their rule 10. Found by running their own example 6: asked *"What are the fees for Indonesian new hire?"* with the $1,188 agency fee and all seven third-party figures correctly retrieved, the model ADDED THEM UP and wrote **$1,647** - a number in no record and not the sum of anything. `ungrounded_figures` binned the whole reply, so the guard worked and the client still lost the answer to a handover. |
 | A superseded fee table is retired from retrieval, never rewritten | `load_service_notes.RETIRED` (`is_active`) | Form A of the signed Client Service Agreement carries a blank form's illustrative amounts, and they WIN on the form's own words: *"what is the total service fee?"* returned **$1,568 at 0.648** against the correct Filipino row at 0.536, and *"what is the placement fee?"* returned **$4,225 at 0.687**. PART C is also a superseded copy of the Filipino third-party table - $340 against their $350, $200 against $250, $50 against $60. Retired via `is_active`, which `kb_hygiene.sql` already documents as the reversible way to do this: their signed agreement is not ours to rewrite (§9.25), and a superseded price is not ours to serve. |
 | One reader decides which nationality a conversation is about | `lead.nationality_in_play` | Three copies, and two had already diverged: the collector read `nationality` alone while retrieval read `preferred_nationality` too - so on a HIRING turn the filter narrowed on a preference the fee guard could not see. Invisible until the hiring fee became nationality-priced, at which point every hiring briefing would have deferred a fee we hold. §9.8, found by using the second caller. |
@@ -746,6 +747,8 @@ Easy to get wrong:
   `intent_classifier.NON_ENGLISH_HARM_CHECK`.
   Step 2e's one, `False` for the bracket "(reference CB-...)" form:
   `reference.REFERENCE_AS_SENTENCE`.
+  Step 4's one, `False` for the Step 2e behaviour (the prompt note alone):
+  `guards.NATIONALITY_FEE_GUARD`.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1182,7 +1185,11 @@ Ordered by what will hurt first.
     query: renewal quoted $695 in 13 replays of 13. The new-hire case was not
     re-run, so leave this open until it is.
 
-28. **A Myanmar passport renewal is quoted $450 about one run in ten, on the
+28. **FIXED 2026-10-13 (Phase 3 Step 4), see the change log:**
+    `guards.guard_nationality_fee` now replaces the sentence on all three
+    reply paths. The model still writes it about one run in ten (2 of 20 on
+    the first message); none reached a reply.
+    **A Myanmar passport renewal is quoted $450 about one run in ten, on the
     first message.** Measured 2026-09-24 on `main` against the restored test
     copy: *"How much is passport renewal for my Myanmar helper?"*, 10 live runs,
     one reply *"For a Myanmar helper, the passport renewal fee is approximately
@@ -1578,9 +1585,9 @@ behaviour behind one switch. Details of each step are in §11.
 | 2d | An update request on a parked topic gets the status, never "Noted" | `c34e48c` |
 | 3 | A message not mainly in English always gets the harm check | `cfc0618` |
 | 2e | The reference as the agency's sentence, in the reply's language | `ab4bd17` |
+| 4 | Nationality-fee guard: no other nationality's fee, no fee where none is held | see git log |
 
-**Still to do, in order:** Step 4 (nationality-fee guard, Myanmar $450),
-Step 5 (below), Step 6 (combined questions: propose pairs, stop before
+**Still to do, in order:** Step 5 (below), Step 6 (combined questions: propose pairs, stop before
 wiring), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
 the webhook builds `known_helpers` only when `contact_type == "employer"`).
@@ -1649,6 +1656,42 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-13** - **Step 4: one nationality's fee is never another's (§9.28).**
+  "How much is passport renewal for my Myanmar helper?" was answered "$450"
+  about one run in ten. $450 is in the records as the Filipino and Indonesian
+  price, so `ungrounded_figures` passed it, and the only protection was
+  `FEE_NOT_HELD_FOR_NATIONALITY_NOTE`, a prompt instruction.
+  `guards.guard_nationality_fee` now runs on the reply in all three paths that
+  write one (`response_generator`, `info_collector._write` - last, so the
+  rewrite is covered - and `blocked_topic_responder`), with the service and
+  `lead.nationality_in_play`. Where kb_rules holds no fee for that
+  nationality on that service, no fee figure may go out; where it holds one,
+  no figure that the records or our own earlier messages give only to another
+  nationality. Only the offending sentence is replaced, with "Our agent will
+  confirm the exact fee based on your requirements." (the briefing note's own
+  wording since 2026-09-23); a list item keeps its number, and a reply that
+  already defers is not told twice. The guard holds no figures: which
+  nationalities have a fee comes from kb_rules, and who owns a figure is read
+  off the text (the nationality named nearest it in its sentence, or the KB
+  row's nationality label). Salary, levy and bond sentences are left alone.
+  `NATIONALITY_FEE_GUARD = False` restores the prompt-only behaviour.
+  **Verified, read-only against production through `run_preview`:** Myanmar
+  first message 20 runs - the model wrote $450 in 2, both cut, 0 replies with
+  a figure; the full six-turn Myanmar flow 20 runs (120 turns) - 0 replies
+  with a figure; Filipino passport renewal 5 of 5 still "$450". The
+  Indonesian new hire could not be replayed through the guard: "What are the
+  fees for Indonesian new hire?" is still classified `fee_enquiry` and
+  deferred whole (§9.30 EX6, unchanged), so that half is proved by the
+  smoke states only. 6 smoke states (all three paths, both rules, the
+  controls) and 15 flows assertions (including: the guard follows kb_rules,
+  holds no figure, and runs on every reply-writing path). 12 faults
+  injected, 12 red. `smoke_nodes.py` is **410 checks**, `selfcheck_flows.py`
+  **838**. E2E 7 of 7, 0 refused writes.
+  **A harness lesson:** the first replay counted 10 of 20 drafts with $450.
+  Concurrent runs shared one list, so each cut was charged to several runs;
+  logging every call gave 1 in 10. Attribute per run (a context variable)
+  before trusting a rate from a parallel replay.
 
 - **2026-10-13** - **Docs only.** §10a items 11 (ask once to confirm a known
   helper) and 16 (the reference shown as a phone link) filled in. The

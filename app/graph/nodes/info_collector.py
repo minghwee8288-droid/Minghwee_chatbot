@@ -22,6 +22,7 @@ from app.graph.guards import (
     asks_for_documents,
     asks_for_process,
     clamp_reply,
+    guard_nationality_fee,
     quotes_hiring_package_cost,
     is_degenerate,
     last_bot_line,
@@ -4728,7 +4729,27 @@ async def _write(
     # guard running first sees a reply that does not start with the name and
     # correctly leaves it alone. Measured: 0 of 3 caught before the swap, and
     # the guard was being called with the right name every time.
-    return strip_leading_name(
+    reply = strip_leading_name(
         strip_repeated_opener(reply, *recent_bot_lines(state.get("history_text", ""))),
         str((state.get("collected_info") or {}).get("full_name") or ""),
     )
+
+    # Another nationality's fee, or any fee where we hold none for hers
+    # (guards.guard_nationality_fee, Phase 3 Step 4). Last, so the rewrite
+    # above is covered too; only the cost sentence is replaced.
+    reply, cut = guard_nationality_fee(
+        reply,
+        prompt_state.get("service_type") or state.get("service_type"),
+        lead_service.nationality_in_play(
+            prompt_state.get("collected_info"), state.get("incoming_text")
+        ),
+        state.get("rag_context", ""),
+        state.get("history_text", ""),
+        matches=state.get("rag_matches") or (),
+    )
+    if cut:
+        logger.warning(
+            "Collector reply quoted another nationality's fee (%r) - deferring that sentence",
+            cut,
+        )
+    return reply

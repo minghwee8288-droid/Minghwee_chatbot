@@ -11,6 +11,9 @@ from __future__ import annotations
 import logging
 import re
 from difflib import SequenceMatcher
+from typing import Any
+
+from app.services import kb_rules
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +172,154 @@ def quotes_hiring_package_cost(reply: str) -> bool:
     make the bot evasive about facts a client is entitled to.
     """
     return bool(_PACKAGE_COST.search(reply or ""))
+
+
+# --- One nationality's fee is not another's (Phase 3 Step 4, 2026-10-13) ----
+#
+# Measured on main 2026-09-24 (section 9.28): "How much is passport renewal for
+# my Myanmar helper?" was answered "For a Myanmar helper, the passport renewal
+# fee is approximately $450" about one run in ten - the 2026-09-08 defect. On
+# that path the Myanmar protection was a PROMPT note
+# (FEE_NOT_HELD_FOR_NATIONALITY_NOTE) and nothing mechanical: $450 really is
+# in the retrieved records, as the Filipino and Indonesian price, so
+# ungrounded_figures passes it. Grounded is not the same as hers.
+#
+# Two rules, both keyed on the service and the nationality the turn is about:
+#   * we hold NO fee for this nationality on this service (kb_rules says so):
+#     no fee figure may go out at all;
+#   * we DO hold one: a figure the records (or our own earlier messages) give
+#     only to ANOTHER nationality may not go out. A figure two nationalities
+#     share ($450 PH and ID) is hers too and passes.
+# Only the offending sentence is replaced, with the deferral wording the
+# briefing note has used since 2026-09-23; the timing and the documents in
+# the rest of the reply are unaffected.
+#
+# Which nationalities have a fee is read through kb_rules and nowhere else.
+# The FIGURES are never written here: kb_rules holds the policy, not the
+# prices, so who owns a figure is read off the text the model was given - a
+# figure beside a nationality word, or inside a row the KB labels with one.
+NATIONALITY_FEE_GUARD = True
+
+NATIONALITY_FEE_DEFERRAL = "Our agent will confirm the exact fee based on your requirements."
+
+_MONEY = re.compile(r"(?:S\$|SGD\s?|\$)\s?(\d[\d,]*(?:\.\d+)?)", re.IGNORECASE)
+# Money that is not our fee for the service: what she is paid, the government
+# levy, the security bond. A sentence about one of those is left alone by both
+# rules - a Filipino salary floor beside an Indonesian budget is not a fee.
+_NOT_OUR_FEE = re.compile(r"\b(?:salary|salaries|wages?|levy|levies|bond)\b", re.IGNORECASE)
+_NATIONALITY_CODES = frozenset({"PH", "ID", "MM"})
+
+
+def _money_norm(raw: str) -> str:
+    """'$1,428' == 'S$1428' == '1428.00'."""
+    value = raw.replace(",", "").rstrip(".")
+    head, _, tail = value.partition(".")
+    return head if not tail.strip("0") else value
+
+
+def _sentence_spans(text: str) -> list[tuple[int, int]]:
+    """(start, end) of each sentence, list markers not counted as an end."""
+    masked = _LIST_MARKER.sub(lambda m: m.group(1) + " " + m.group(2), text)
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for m in re.finditer(r"(?<=[.!?])\s+|\n+", masked):
+        if m.start() > start:
+            spans.append((start, m.start()))
+        start = m.end()
+    if start < len(text):
+        spans.append((start, len(text)))
+    return spans
+
+
+def fee_owners(*sources: str, matches: Any = ()) -> dict[str, set[str]]:
+    """Figure -> the nationalities the text gives it to.
+
+    A figure belongs to the nationality named nearest to it in the same
+    sentence ("$450 for a Filipino helper", "Philippines $1,428"), and every
+    figure in a row the KB labels PH/ID/MM belongs to that nationality.
+    """
+    from app.services.lead import _NATIONALITY_NAMED  # lazy: lead imports the db
+
+    owners: dict[str, set[str]] = {}
+    for text in sources:
+        text = text or ""
+        for start, end in _sentence_spans(text):
+            sentence = text[start:end]
+            mentions = [
+                (m.start(), m.end(), code)
+                for pattern, code in _NATIONALITY_NAMED
+                for m in pattern.finditer(sentence)
+            ]
+            if not mentions:
+                continue
+            for money in _MONEY.finditer(sentence):
+                nearest = min(
+                    mentions,
+                    key=lambda n: min(abs(n[0] - money.end()), abs(money.start() - n[1])),
+                )
+                owners.setdefault(_money_norm(money.group(1)), set()).add(nearest[2])
+    for match in matches or ():
+        code = str((match or {}).get("nationality") or "").strip().upper()
+        if code not in _NATIONALITY_CODES:
+            continue
+        body = " ".join(
+            str(match.get(key) or "") for key in ("question", "answer", "content")
+        )
+        for money in _MONEY.finditer(body):
+            owners.setdefault(_money_norm(money.group(1)), set()).add(code)
+    return owners
+
+
+def guard_nationality_fee(
+    reply: str,
+    service: str | None,
+    nationality: str | None,
+    *sources: str,
+    matches: Any = (),
+) -> tuple[str, list[str]]:
+    """The reply with any other nationality's fee replaced, and what was cut.
+
+    No-op unless the switch is on, the service is priced per nationality
+    (kb_rules) and the nationality is one of the three we place.
+    """
+    if not NATIONALITY_FEE_GUARD or not reply:
+        return reply, []
+    held = kb_rules.fee_by_nationality().get(service or "")
+    if held is None or nationality not in _NATIONALITY_CODES:
+        return reply, []
+    known = nationality in held
+    owners = fee_owners(*sources, matches=matches) if known else {}
+
+    offending: list[tuple[int, int]] = []
+    for start, end in _sentence_spans(reply):
+        sentence = reply[start:end]
+        figures = [_money_norm(m.group(1)) for m in _MONEY.finditer(sentence)]
+        if not figures or _NOT_OUR_FEE.search(sentence):
+            continue
+        if not known:
+            offending.append((start, end))
+        elif any(owners.get(f) and nationality not in owners[f] for f in figures):
+            offending.append((start, end))
+    if not offending:
+        return reply, []
+
+    cut = [reply[s:e].strip() for s, e in offending]
+    already_deferred = "confirm the exact fee" in reply.lower()
+    out = reply
+    for index, (start, end) in reversed(list(enumerate(offending))):
+        sentence = out[start:end]
+        marker = re.match(r"\s*\d+\.\s+", sentence)
+        keep = marker.group(0) if marker else ""
+        replacement = (
+            keep + NATIONALITY_FEE_DEFERRAL if index == 0 and not already_deferred else ""
+        )
+        out = out[:start] + replacement + out[end:]
+    # A list item or line emptied by a removal goes with it.
+    out = re.sub(r"(?m)^\s*\d+\.\s*$\n?", "", out)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"(?m)^[ \t]+(?=\S)", "", out)
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    return (out or NATIONALITY_FEE_DEFERRAL), cut
 
 
 def ungrounded_figures(reply: str, *contexts: str) -> list[str]:

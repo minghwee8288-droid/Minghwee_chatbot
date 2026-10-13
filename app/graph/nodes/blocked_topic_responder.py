@@ -24,6 +24,7 @@ from app.graph.guards import (
     asks_for_documents,
     asks_for_process,
     greeting_only,
+    guard_nationality_fee,
     quotes_hiring_package_cost,
     clamp_reply,
     is_degenerate,
@@ -70,6 +71,7 @@ from app.graph.state import (
 from app.graph.reference import add_reference
 from app.services import ticket as ticket_service
 from app.services.ticket import TICKET_SERVICE_TYPES, service_label
+from app.services.lead import nationality_in_play
 
 logger = logging.getLogger(__name__)
 
@@ -827,6 +829,24 @@ async def _respond(state: ConversationState) -> dict[str, Any]:
             strip_handover_talk(reply),
             max_sentences=10 if stepped else 3 if answering else 2,
         )
+        # Another nationality's fee, or any fee where we hold none for hers
+        # (guards.guard_nationality_fee, Phase 3 Step 4). The cost sentence
+        # only - the timing and documents in the answer stand.
+        reply, cut = guard_nationality_fee(
+            reply,
+            state.get("service_type"),
+            nationality_in_play(state.get("collected_info"), state.get("incoming_text")),
+            state.get("rag_context", ""),
+            state.get("history_text", ""),
+            matches=state.get("rag_matches") or (),
+        )
+        if cut:
+            logger.warning(
+                "Conversation %s: blocked-topic reply quoted another nationality's "
+                "fee (%r) - deferring that sentence",
+                state.get("conversation_id"),
+                cut,
+            )
     if not reply:
         reply = FALLBACK_REPLY
 

@@ -89,6 +89,28 @@ STEPPED_REPLY = (
 # The helper-rights summary row's own text: ten numbered rights and the
 # contact line (scripts/load_service_notes.py).
 from scripts.load_service_notes import _HELPER_RIGHTS_ANSWER as _HELPER_RIGHTS  # noqa: E402
+from app.graph.guards import NATIONALITY_FEE_DEFERRAL  # noqa: E402
+
+# Step 4: the fee rows as the KB states them - the passport fee for two of the
+# three nationalities, and the new-hire agency fee for all three.
+_PASSPORT_FEE_ROW = (
+    "Based on our records:\n1. Q: How much does it cost to renew my helper's passport?\n"
+    "   A: It is $450 for a Filipino helper and $450 for an Indonesian helper. If your "
+    "helper is of another nationality, tell us and our agent will confirm the cost."
+)
+_NEW_HIRE_FEE_ROWS = (
+    "Based on our records:\n1. The agency fee for a new hire from the Philippines is $1,428.\n"
+    "2. The agency fee for a new hire from Indonesia is $1,188.\n"
+    "3. The agency fee for a new hire from Myanmar is $1,168."
+)
+_MM_PASSPORT_BRIEFING_REPLY = (
+    "Here is everything for Holabhola's passport renewal:\n\n"
+    "The appointment wait can take several weeks.\n\n"
+    "The cost is approximately $450.\n\n"
+    "Here is what we will need from you:\n1. A copy of your NRIC\n2. A copy of her passport\n\n"
+    "Thank you. I've passed everything to our team, and a live agent will connect "
+    "with you shortly."
+)
 
 CASES = [
     ("info_collector", "first contact", {}),
@@ -2547,6 +2569,81 @@ CASES = [
       "rag_context": "The total service fee and third-party costs are $4,225.",
       "_stub_reply": "The total service fee and third-party costs are $4,225.",
       "_expect_reply": "rather one of our agents"}),
+
+    # --- 2026-10-13: Phase 3 Step 4, one nationality's fee is not another's ---
+    # Section 9.28: "How much is passport renewal for my Myanmar helper?" was
+    # answered "$450" about one run in ten. $450 IS in the records - as the
+    # Filipino and Indonesian price - so ungrounded_figures passes it and the
+    # only protection was a prompt note. These run the reply the model actually
+    # wrote through each of the three paths that write a reply.
+    ("response_generator", "a Myanmar passport renewal never shows $450",
+     {"intent": "fee_enquiry", "service_type": "passport_renewal",
+      "incoming_text": "How much is passport renewal for my Myanmar helper?",
+      "collected_info": {},
+      "history_text": "client: hi\nbot: Hello",
+      "rag_context": _PASSPORT_FEE_ROW,
+      "_stub_reply": "For a Myanmar helper, the passport renewal fee is approximately "
+                     "$450. The appointment wait can take several weeks.",
+      "_forbid_reply": "450",
+      "_expect_reply": NATIONALITY_FEE_DEFERRAL}),
+    ("response_generator", "...while a Filipino passport renewal still shows $450",
+     {"intent": "fee_enquiry", "service_type": "passport_renewal",
+      "incoming_text": "How much is passport renewal for my Filipino helper?",
+      "collected_info": {},
+      "history_text": "client: hi\nbot: Hello",
+      "rag_context": _PASSPORT_FEE_ROW,
+      "_stub_reply": "For a Filipino helper, the passport renewal fee is approximately $450.",
+      "_expect_reply": "$450"}),
+    # A nationality we DO price: the Philippines figure must not go to an
+    # Indonesian new hire, even though all three sit in the records.
+    ("response_generator", "an Indonesian new hire never shows the Philippines fee",
+     {"intent": "fee_enquiry", "service_type": "new_hiring",
+      "incoming_text": "What are the fees for Indonesian new hire?",
+      "collected_info": {},
+      "history_text": "client: hi\nbot: Hello",
+      "rag_context": _NEW_HIRE_FEE_ROWS,
+      "_stub_reply": "For an Indonesian new hire, the agency fee is $1,428. Insurance "
+                     "and MOM processing are charged separately.",
+      "_forbid_reply": "1,428",
+      "_expect_reply": "charged separately"}),
+    ("response_generator", "...while its own fee goes out",
+     {"intent": "fee_enquiry", "service_type": "new_hiring",
+      "incoming_text": "What are the fees for Indonesian new hire?",
+      "collected_info": {},
+      "history_text": "client: hi\nbot: Hello",
+      "rag_context": _NEW_HIRE_FEE_ROWS,
+      "_stub_reply": "For an Indonesian new hire, the agency fee is $1,188.",
+      "_expect_reply": "$1,188"}),
+    # The closing briefing, which states a cost section by construction.
+    ("info_collector", "a Myanmar passport briefing never shows $450",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "in 2 months",
+      "collected_info": {"full_name": "Vaidik", "helper_name": "Holabhola",
+                         "nationality": "Myanmar", "passport_expiry": "2 months"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1, "nationality": 1,
+                             "passport_expiry": 1},
+      "briefed_services": [],
+      "rag_matches": [{"question": "x", "answer": _PASSPORT_FEE_ROW, "similarity": 0.6}],
+      "rag_context": _PASSPORT_FEE_ROW,
+      "history_text": "You: When does her current passport expire?",
+      "_stub_reply": _MM_PASSPORT_BRIEFING_REPLY,
+      "_forbid_reply": "450",
+      "_expect_reply": NATIONALITY_FEE_DEFERRAL}),
+    ("blocked_topic_responder", "a parked Myanmar passport renewal never shows $450",
+     {"intent": "fee_enquiry", "service_type": "passport_renewal",
+      "incoming_text": "how much is the fee?",
+      "collected_info": {"helper_name": "Lwin", "nationality": "Myanmar"},
+      "history_text": "You: I've passed this to our team.",
+      "rag_matches": [{"similarity": 0.56, "question": "How much does it cost to renew "
+                       "my helper's passport?", "answer": _PASSPORT_FEE_ROW,
+                       "chunk_type": "qa_pair"}],
+      "rag_context": _PASSPORT_FEE_ROW,
+      "rag_best_score": 0.56,
+      "_stub_reply": "For Lwin, the passport renewal fee is approximately $450.",
+      "_forbid_reply": "450",
+      "_expect_reply": NATIONALITY_FEE_DEFERRAL,
+      "blocked_topics": {"passport_renewal": {"ticket_id": 1,
+                                              "ticket_number": "CB-2026-0040"}}}),
 
     # --- 2026-10-07: conversation 26, a complaint and a direct-hire enquiry ---
     # Our TEAM had been messaging this client all week; Claire had not. The

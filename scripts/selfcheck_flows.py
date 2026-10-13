@@ -5379,6 +5379,114 @@ rows = [
   "the fee the records state for HER nationality" in tpl.HELPER_HOME_LEAVE_BRIEFING_NOTE
   and "no figure" not in tpl.HELPER_OWN_LEAVE_NOTE, True),
 ]
+
+# --- Phase 3 Step 4 (2026-10-13): one nationality's fee is not another's ----
+# Section 9.28: a Myanmar passport renewal quoted $450, the Filipino and
+# Indonesian price, about one run in ten. The guard reads WHICH nationalities
+# have a fee through kb_rules and never holds a figure itself.
+_NF = _guards.guard_nationality_fee
+_PP_ROW = ("It is $450 for a Filipino helper and $450 for an Indonesian helper. If "
+           "your helper is of another nationality, our agent will confirm the cost.")
+_HIRE_ROWS = "Philippines $1,428, Indonesia $1,188, or Myanmar $1,168."
+
+
+def _nf_cut(reply, service, nat, *sources, matches=()):
+    return bool(_NF(reply, service, nat, *sources, matches=matches)[1])
+
+
+def _nf_with_mm_passport_priced():
+    # A rule set in which a Myanmar passport fee IS held: the guard must follow
+    # it, which is what "read through kb_rules" means. Same reply, no records:
+    # cut under the defaults (no Myanmar fee held), kept once kb_rules says one is.
+    by_nat = dict(_kbr.DEFAULTS.fee_by_nationality)
+    by_nat["passport_renewal"] = frozenset({"PH", "ID", "MM"})
+    before = _nf_cut("The fee is $520.", "passport_renewal", "MM")
+    with _kbr.use(_kbr.Rules(**{**_kbr.DEFAULTS.__dict__, "fee_by_nationality": by_nat})):
+        return before, _nf_cut("The fee is $520.", "passport_renewal", "MM")
+
+
+def _nf_figures_in_code():
+    # No money literal and no number >= 100 in the guard's own code (docstrings
+    # aside): the figures are read off the records, never written here.
+    import ast
+    tree = ast.parse(_pathlib.Path(_guards.__file__).read_text(encoding="utf-8"))
+    found = []
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in (
+                "_money_norm", "_sentence_spans", "fee_owners", "guard_nationality_fee"):
+            body = node.body[1:] if (node.body and isinstance(node.body[0], ast.Expr)
+                                     and isinstance(node.body[0].value, ast.Constant)) else node.body
+            for sub in body:
+                for n in ast.walk(sub):
+                    if isinstance(n, ast.Constant) and (
+                            (isinstance(n.value, str) and re.search(r"\$\s?\d", n.value))
+                            or (isinstance(n.value, (int, float)) and not isinstance(n.value, bool)
+                                and n.value >= 100)):
+                        found.append((node.name, n.value))
+        if isinstance(node, ast.Assign) and any(
+                getattr(t, "id", "") == "NATIONALITY_FEE_DEFERRAL" for t in node.targets):
+            if re.search(r"\d", node.value.value):
+                found.append(("NATIONALITY_FEE_DEFERRAL", node.value.value))
+    return found
+
+
+def _nf_switched_off():
+    _guards.NATIONALITY_FEE_GUARD = False
+    try:
+        return _nf_cut("For a Myanmar helper it is $450.", "passport_renewal", "MM", _PP_ROW)
+    finally:
+        _guards.NATIONALITY_FEE_GUARD = True
+
+
+rows += [
+ ("a Myanmar passport renewal never shows $450",
+  _NF("For a Myanmar helper, the fee is approximately $450. It takes some weeks.",
+      "passport_renewal", "MM", _PP_ROW)[0],
+  _guards.NATIONALITY_FEE_DEFERRAL + " It takes some weeks."),
+ ("...nor a Myanmar home leave any fee at all, records or not",
+  _nf_cut("The fee is $400.", "home_leave", "MM"), True),
+ ("...while a Filipino and an Indonesian passport renewal still show $450",
+  (_nf_cut("The fee is $450.", "passport_renewal", "PH", _PP_ROW),
+   _nf_cut("The fee is $450.", "passport_renewal", "ID", _PP_ROW)), (False, False)),
+ ("an Indonesian new hire never shows the Philippines figure",
+  _nf_cut("For an Indonesian new hire the agency fee is $1,428.", "new_hiring", "ID",
+          _HIRE_ROWS), True),
+ ("...even when only our own earlier message labelled it",
+  _nf_cut("The agency fee is $1,428.", "new_hiring", "ID", "",
+          "You: The agency fee is Philippines $1,428, Indonesia $1,188 or Myanmar $1,168."),
+  True),
+ ("...and a figure in a row the KB labels PH belongs to PH",
+  _nf_cut("The agency fee is $1,428.", "new_hiring", "ID",
+          matches=[{"nationality": "PH", "answer": "The agency fee is $1,428."}]), True),
+ ("...while the Indonesian figure goes out",
+  _nf_cut("For an Indonesian new hire the agency fee is $1,188.", "new_hiring", "ID",
+          _HIRE_ROWS), False),
+ ("a salary, levy or bond sentence is not a fee",
+  (_nf_cut("Her salary would start at $650.", "passport_renewal", "MM"),
+   _nf_cut("The levy is $300 a month.", "new_hiring", "ID", "Philippines levy $300"),
+   _nf_cut("The security bond is $5,000.", "home_leave", "MM")), (False, False, False)),
+ ("a flat-priced service, an unknown nationality and no figure are left alone",
+  (_nf_cut("The fee is $695.", "renewal", "MM"),
+   _nf_cut("The fee is $450.", "passport_renewal", None, _PP_ROW),
+   _nf_cut("Our agent will confirm the cost.", "passport_renewal", "MM")),
+  (False, False, False)),
+ ("only the cost sentence goes - a list item keeps its number, the rest stands",
+  _NF("Here:\n1. The cost is $450.\n2. A copy of your NRIC", "passport_renewal", "MM")[0],
+  "Here:\n1. " + _guards.NATIONALITY_FEE_DEFERRAL + "\n2. A copy of your NRIC"),
+ ("...and a reply that already defers is not told it twice",
+  _NF("It is $450 for Filipinos. Our agent will confirm the exact fee for her.",
+      "passport_renewal", "MM")[0],
+  "Our agent will confirm the exact fee for her."),
+ ("the guard follows kb_rules, not a list of its own", _nf_with_mm_passport_priced(),
+  (True, False)),
+ ("NATIONALITY_FEE_GUARD off restores the old behaviour", _nf_switched_off(), False),
+ ("the guard holds no figure of its own", _nf_figures_in_code(), []),
+ # Derived like the hiring-cost check above: a node that grounds a reply sends
+ # one, so it must also run this guard.
+ ("every path that grounds a reply also runs the nationality-fee guard",
+  sorted(n for n, m in _NODES.items()
+         if hasattr(m, "ungrounded_figures") and not hasattr(m, "guard_nationality_fee")), []),
+]
 bad = 0
 for label, got, want in rows:
     ok = got == want
