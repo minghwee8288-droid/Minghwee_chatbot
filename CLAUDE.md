@@ -494,6 +494,8 @@ because the lead is opened early and the ticket is created much later.
 | Every reply on a parked topic that mentions the agent carries that topic's reference | `blocked_topic_responder` (applied once at the node's exit, `REFERENCE_ON_EVERY_PARKED_REPLY`) + the sweep in `smoke_nodes._run_case` | Step 2b: the first chase after a handover went down the model-written holding line with no reference, while the canned chase had one. Not on `NEW_SERVICE_HANDOVER`: that raises a new ticket, which handover_executor numbers. |
 | A detail about a topic whose ticket is open stays on that topic | `intent_classifier.states_a_detail` + `DETAIL_STAYS_ON_PARKED_TOPIC`; the responder does not chase it | "also please note she prefers to fly on a weekend" was read as `home_leave` and opened a new intake beside open renewal CB-2026-0033. Naming another service, asking for something (anyone's want/need) or asking a question still switches; "please note"/"fyi" make it a detail even with a want in it. |
 | A helper named earlier in the conversation is confirmed, not asked for again, after a switch | `info_collector.helpers_named_in` / `known_helpers_for` + `state.helpers_named` (`REMEMBER_NAMED_HELPERS`) | `helper_name` is dropped on a switch (rightly) and the webhook's ticket helpers are read only for a known employer. Never the client's own name (her own home leave or passport). |
+| A closing briefing is built from the briefing's own records, however many answers arrived at once | `info_collector` (`BRIEFING_FETCHES_ITS_OWN_RECORDS`) -> `rag_retriever.briefing_records` | The retriever runs before the extraction, so a briefing that falls due on THIS turn's answers was written from a search for the client's words. Live 2026-10-13: a renewal answered in one message deferred "the exact fee" where the answer is $695. Only fetched when the briefing was not already due before the turn. |
+| "(MDW)" never sits in front of a possessive | `guards.without_tag_before_possessive`, applied once in `graph.run_turn` (and the preview) behind `NO_TAG_BEFORE_POSSESSIVE` | "Devi lal singh (MDW)'s home leave" went out live. The style rule also says so; the code is the guarantee. |
 | The timing line never costs a reply and never carries a client's words | `app/timing.py` + `smoke_nodes.py` (`_timing_checks`) | Every entry point swallows its own errors, the line holds the conversation id, durations and TABLE names only, and `TURN_TIMING_LOG=false` makes every hook return at once. Asserted through the real `_process_locked`, `handle_inbound` and `send_bot_reply` with I/O stubbed; eight faults injected, eight red. |
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
 | Claire introduces herself in her first message, however many our TEAM sent before it | `guards.claire_has_spoken` + `message.format_history` ("Agent:") + the stage line in `build_system_prompt` | Agent messages were rendered "You:", so a thread full of them read as Claire's own and she never said who she was (conversation 26, 2026-10-07). Only a "You:" line is her. Every node's first-contact test reads the one predicate. |
@@ -726,6 +728,9 @@ Easy to get wrong:
   behaviour: `blocked_topic_responder.REFERENCE_ON_EVERY_PARKED_REPLY`,
   `intent_classifier.DETAIL_STAYS_ON_PARKED_TOPIC`,
   `info_collector.REMEMBER_NAMED_HELPERS`.
+  Step 2c's two, each `False` for the Step 2b behaviour:
+  `info_collector.BRIEFING_FETCHES_ITS_OWN_RECORDS`,
+  `graph.NO_TAG_BEFORE_POSSESSIVE`.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1522,6 +1527,38 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-13** - **Step 2c: a renewal briefing quoted no fee, a $40 fee
+  nobody asked about, and "(MDW)'s".** From the live phone test of Step 2b,
+  conversation 3766, 13:12-13:17 IST, read from its checkpoints (read-only).
+  (A) **"Our agent will confirm the exact fee" where the answer is $695.** The
+  client gave their name, the helper's name and the expiry in ONE message.
+  `rag_retriever` runs before the extraction, so the briefing was not yet due
+  when it searched: it searched the client's words, got five general renewal
+  rows and no fee row, and the collector then wrote the closing briefing from
+  them. No guard discarded anything. `rag_retriever.briefing_records` is the
+  briefing search (same query, filters, ten rows and cost row); the collector
+  calls it when the briefing falls due on this turn's answers and was not due
+  before (`BRIEFING_FETCHES_ITS_OWN_RECORDS`). Replayed 4 runs of 4: "The cost
+  is $695." The first attempt imported `app.graph.nodes.rag_retriever` as a
+  package attribute, which is the NODE function, not the module; the exception
+  was caught and the briefing silently used the old records. It is imported by
+  name now.
+  (B) **"an urgent request costs an additional $40" is in the knowledge base**:
+  the "Home leave - urgent requests" row and the "Home leave - cost" row both
+  state it for a Filipino helper, and both were in the briefing's records. It
+  is grounded, so there is no guard gap. It was volunteered although the client
+  asked for nothing urgent; that is a wording question, not a figure question,
+  and is left for a decision. 0 of 3 replays repeated it.
+  (C) **"Devi lal singh (MDW)'s home leave".** The tag is written by the model
+  from `style.py`'s first-mention rule; no code builds it. The rule now says a
+  possessive takes the plain name, and `guards.without_tag_before_possessive`
+  removes the tag there in `run_turn` (and the preview), behind
+  `NO_TAG_BEFORE_POSSESSIVE`. 1 replay of 3 still wrote it; the guard fixed it.
+  **Verified:** two smoke states (a renewal answered in one message and one
+  answer per turn, both must reach the client with $695), the briefing search
+  asks for the fee row, and the tag through the real `run_turn`. 7 faults
+  injected, 7 red. `smoke_nodes.py` is **322 checks**.
 
 - **2026-10-13** - **Step 2b: the reference on every parked reply, and a detail
   about a parked topic stays on it.** From the live phone test of Step 2,

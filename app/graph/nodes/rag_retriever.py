@@ -315,20 +315,25 @@ _ASKS_US_SOMETHING = re.compile(
 )
 
 
+def _briefing_query(state: ConversationState) -> str:
+    """The search a closing briefing is built from, for this service."""
+    service_key = state.get("service_type") or ""
+    service = _readable_service(service_key)
+    # A job seeker's closing message asks a different question, and the
+    # difference is not cosmetic - see the note on CANDIDATE_BRIEFING_QUERY.
+    if service_key in ticket_service.CANDIDATE_SERVICES:
+        return f"{CANDIDATE_BRIEFING_QUERY}\n({service})"
+    query = BRIEFING_QUERY_BY_SERVICE.get(service_key, BRIEFING_QUERY)
+    return f"{query}\n({service})"
+
+
 def _search_query(state: ConversationState) -> str:
     """Bias the query with the last thing the client said plus the topic."""
     message = (state.get("incoming_text") or "").strip()
     intent = state.get("intent") or ""
 
     if _briefing_turn(state):
-        service_key = state.get("service_type") or ""
-        service = _readable_service(service_key)
-        # A job seeker's closing message asks a different question, and the
-        # difference is not cosmetic - see the note on CANDIDATE_BRIEFING_QUERY.
-        if service_key in ticket_service.CANDIDATE_SERVICES:
-            return f"{CANDIDATE_BRIEFING_QUERY}\n({service})"
-        query = BRIEFING_QUERY_BY_SERVICE.get(service_key, BRIEFING_QUERY)
-        return f"{query}\n({service})"
+        return _briefing_query(state)
 
     # The small-ticket overview turn — same trick, different briefing. The
     # predicate is imported from the collector rather than copied, because the
@@ -731,6 +736,41 @@ async def _with_briefing_cost(
         if (row.get("id") or row.get("question")) not in seen:
             out.append(row)
     return out
+
+
+async def briefing_records(state: ConversationState) -> dict[str, Any]:
+    """The closing briefing's records, fetched by the COLLECTOR.
+
+    Step 2c, live 2026-10-13 (conversation 3766, CB-2026-0033): "myself VD
+    Growwstacks and my helper name is Devi lal singh Growwstacks and her
+    workpermit would expire in 3 weeks" answered all three renewal questions at
+    once. This node runs BEFORE the extraction, so the briefing was not due yet
+    when it searched: it used the client's words, got five general rows and no
+    fee row, and the collector then wrote the briefing from them - "Our agent
+    will confirm the exact fee" where the answer is $695. Same search, filters,
+    size and cost row as a briefing turn here; `state` carries the collected
+    values from this turn.
+    """
+    contact = _retrieval_audience(state)
+    nationality = _nationality(state)
+    service = _service_filter(state)
+    matches = await rag.search(
+        _briefing_query(state),
+        service_type=service,
+        contact_type=contact,
+        nationality=nationality,
+        match_count=BRIEFING_MATCH_COUNT,
+    )
+    if _briefing_cost_due(state, nationality):
+        if (state.get("service_type") or "") == "replacement":
+            matches = await _with_replacement_fees(matches, state, contact)
+        else:
+            matches = await _with_briefing_cost(matches, state, service, contact, nationality)
+    return {
+        "rag_matches": matches,
+        "rag_context": rag.format_context(matches),
+        "rag_best_score": rag.best_similarity(matches),
+    }
 
 
 async def rag_retriever(state: ConversationState) -> dict[str, Any]:

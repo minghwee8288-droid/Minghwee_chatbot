@@ -10,7 +10,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from app.config import settings
-from app.graph.guards import answering_our_question
+from app.graph.guards import answering_our_question, without_tag_before_possessive
 from app.graph.nodes.blocked_topic_responder import asks_general_info, blocked_topic_responder
 from app.graph.nodes.handover_executor import handover_executor
 from app.graph.nodes.info_collector import (
@@ -428,6 +428,11 @@ _TURN_RESET: dict[str, Any] = {
 }
 
 
+# Step 2c: "Devi (MDW)'s home leave" is sent as "Devi's home leave".
+# False = the reply goes out exactly as the node wrote it.
+NO_TAG_BEFORE_POSSESSIVE = True
+
+
 async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Run one conversation turn and return the resulting state."""
     # The pricing rules are read synchronously by the nodes, so they are
@@ -437,5 +442,8 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     graph = get_graph()
     state_input = {**_TURN_RESET, **payload}
     config = {"configurable": {"thread_id": thread_id}}
-    result = await graph.ainvoke(state_input, config=config)
-    return dict(result)
+    result = dict(await graph.ainvoke(state_input, config=config))
+    # Step 2c: every node's reply passes here, so the tag is fixed once.
+    if NO_TAG_BEFORE_POSSESSIVE and result.get("reply"):
+        result["reply"] = without_tag_before_possessive(result["reply"])
+    return result

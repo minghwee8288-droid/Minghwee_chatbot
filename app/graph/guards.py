@@ -638,6 +638,17 @@ def strip_leading_name(reply: str, name: str) -> str:
     return rest[0].upper() + rest[1:]
 
 
+# "(MDW)" tags a name; a possessive cannot hang off the bracket. Live
+# 2026-10-13 (3766): "Here is everything for Devi lal singh (MDW)'s home
+# leave". The tag goes and the possessive goes back on the name.
+_TAG_BEFORE_POSSESSIVE = re.compile(r"\s*\(MDW\)(['’](?:s\b)?)", re.IGNORECASE)
+
+
+def without_tag_before_possessive(reply: str) -> str:
+    """'Devi (MDW)'s leave' -> 'Devi's leave'. Anything else is untouched."""
+    return _TAG_BEFORE_POSSESSIVE.sub(r"\1", reply or "")
+
+
 def strip_repeated_opener(reply: str, *previous: str) -> str:
     """Drop a filler opener already used in any of the recent messages.
 

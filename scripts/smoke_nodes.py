@@ -31,6 +31,24 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Step 2c: what a renewal turn retrieves before the extraction (no fee row),
+# what the briefing search returns, and a briefing quoting the fee.
+_RENEWAL_GENERAL_ROWS = (
+    "Based on our records:\n1. Q: How do I renew my helper's work permit?\n"
+    "   A: Ming Hwee handles all of it. It usually takes about a week."
+)
+_RENEWAL_BRIEFING_ROWS = (
+    "Based on our records:\n1. Q: How much does it cost to renew my helper's work permit?\n"
+    "   A: The agency fee is approximately $695.\n"
+    "2. Q: How long does a work permit renewal take?\n   A: It usually takes about a week."
+)
+_RENEWAL_BRIEFING_REPLY = (
+    "Here is everything for Devi's Work Permit renewal:\n\n"
+    "It usually takes about a week.\n\nThe cost is approximately $695.\n\n"
+    "Thank you. I've passed everything to our team, and a live agent will connect "
+    "with you shortly. In the meantime, is there anything else I can help you with?"
+)
+
 BASE = {
     "conversation_id": 1,
     "phone": "+6591234567",
@@ -959,6 +977,43 @@ CASES = [
                              "nationality": 1, "leave_dates": 1, "leave_reason": 1},
       "briefed_services": [],
       "_expect_prompt": "book her air ticket"}),
+    # --- a renewal briefing carries its fee, Step 2c, 2026-10-13 -----------
+    # Conversation 3766: name, helper and expiry in ONE message. The retriever
+    # ran before they were extracted, searched the client's words, and the
+    # briefing deferred "the exact fee" where the answer is $695. The stub
+    # quotes $695, so if the briefing's own records are not fetched,
+    # ungrounded_figures bins it and the reply is the fallback question.
+    ("info_collector", "renewal: all fields in one message -> the briefing quotes $695",
+     {"intent": "renewal", "service_type": "renewal", "contact_type": "employer",
+      "incoming_text": "myself VD and my helper is Devi and her permit expires in 3 weeks",
+      "history_text": "You: Hi, I'm Claire, Ming Hwee's AI assistant. May I know your name?",
+      "collected_info": {}, "asked_field_counts": {"full_name": 1},
+      "briefed_services": [],
+      "rag_context": _RENEWAL_GENERAL_ROWS,
+      "_briefing_records": {"rag_matches": [{"similarity": 0.69}],
+                            "rag_context": _RENEWAL_BRIEFING_ROWS,
+                            "rag_best_score": 0.69},
+      "_stub_extraction": {"full_name": "VD", "helper_name": "Devi",
+                           "permit_expiry": "in 3 weeks"},
+      "_stub_reply": _RENEWAL_BRIEFING_REPLY,
+      "_expect_prompt": "$695",
+      "_expect_reply": "$695"}),
+    # ...and the ordinary way, one answer per turn: the retriever already
+    # searched for the briefing, so its records are used as they are.
+    ("info_collector", "renewal: one field per turn -> the briefing quotes $695",
+     {"intent": "renewal", "service_type": "renewal", "contact_type": "employer",
+      "incoming_text": "in 3 weeks",
+      "history_text": "You: When does her work permit expire?",
+      "collected_info": {"full_name": "VD", "helper_name": "Devi",
+                         "helper_from_us": "hired elsewhere - no placement on record"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1, "permit_expiry": 1},
+      "briefed_services": [],
+      "rag_context": _RENEWAL_BRIEFING_ROWS,
+      "_briefing_records": {"rag_context": "SHOULD NOT BE FETCHED"},
+      "_stub_extraction": {"permit_expiry": "in 3 weeks"},
+      "_stub_reply": _RENEWAL_BRIEFING_REPLY,
+      "_expect_reply": "$695",
+      "_forbid_prompt": "SHOULD NOT BE FETCHED"}),
     # ...and the HELPER's own closing message is written to her (4551,
     # 2026-10-08): no fee, her documents only, wait for her employer to
     # confirm before buying the ticket. Complete, so a briefing is built.
@@ -2597,6 +2652,7 @@ CASES = [
 # hiring-cost guard sit disabled for two days (2026-09-10). A value the
 # extractor made up is a thing only the NODE can drop, so the node has to run.
 _EXTRACTION: dict = {}
+_BRIEFING_RECORDS: dict = {}
 
 # What the model was actually handed on the last run. A fix that lives in the
 # INSTRUCTION cannot be proved by reading the reply: the note that raises the
@@ -2612,10 +2668,16 @@ async def _run_info_collector(state, stub=None):
         _LAST_SYSTEM_PROMPT = system_prompt or ""
         return stub or "When does her passport expire?"
 
+    # The briefing's own search (Step 2c) never reaches a database here: {}
+    # means "use this turn's records", which is what every older state expects.
+    import importlib
+    retriever = importlib.import_module("app.graph.nodes.rag_retriever")
     with patch("app.graph.nodes.info_collector.complete",
                new=_capture, create=True), \
          patch("app.graph.nodes.info_collector.complete_json",
                new=AsyncMock(return_value=dict(_EXTRACTION)), create=True), \
+         patch.object(retriever, "briefing_records",
+                      new=AsyncMock(return_value=dict(_BRIEFING_RECORDS))), \
          patch("app.graph.nodes.info_collector._open_lead_early",
                new=AsyncMock(return_value={})):
         from app.graph.nodes.info_collector import info_collector
@@ -2779,6 +2841,59 @@ async def _reference_checks() -> list[tuple[str, bool]]:
                     _guards.ungrounded_figures("It costs $450 (reference CB-2026-0142).", "") == ["450"]))
     results.append(("reference: strip_handover_talk keeps it",
                     "(reference CB-2026-0142)" in _guards.strip_handover_talk(with_ref)))
+    return results
+
+
+async def _tag_checks() -> list[tuple[str, bool]]:
+    """Step 2c: "(MDW)" never in front of a possessive, through run_turn."""
+    from app.graph import graph as graph_module
+    from app.graph.guards import without_tag_before_possessive as tidy
+
+    results = [
+        ("tag: 'Devi lal singh (MDW)'s home leave' -> 'Devi lal singh's home leave'",
+         tidy("Here is everything for Devi lal singh (MDW)'s home leave:")
+         == "Here is everything for Devi lal singh's home leave:"),
+        ("tag: ...with a curly apostrophe too",
+         tidy("for Devi (MDW)’s passport") == "for Devi’s passport"),
+        ("tag: a plain first mention keeps it",
+         tidy("When would Usriyah (MDW) be available?")
+         == "When would Usriyah (MDW) be available?"),
+    ]
+
+    # Step 2c, item 1: the collector's briefing search asks for the fee row.
+    import importlib
+    retriever = importlib.import_module("app.graph.nodes.rag_retriever")
+    calls = []
+
+    async def _search(query, **kw):
+        calls.append((query, kw.get("match_count")))
+        return []
+
+    with patch.object(retriever.rag, "search", new=_search):
+        await retriever.briefing_records({
+            "service_type": "renewal", "intent": "renewal", "contact_type": "employer",
+            "incoming_text": "myself VD, helper Devi, permit expires in 3 weeks",
+            "collected_info": {"full_name": "VD", "helper_name": "Devi",
+                               "permit_expiry": "in 3 weeks"},
+        })
+    results.append(("briefing: the collector's search is the briefing set (10 rows)",
+                     any(n == retriever.BRIEFING_MATCH_COUNT for _, n in calls)))
+    results.append(("briefing: ...plus the renewal's fee row",
+                     any("cost of work permit renewal" in q for q, _ in calls)))
+
+    class _Graph:
+        async def ainvoke(self, *_a, **_kw):
+            return {"reply": "Here is everything for Devi (MDW)'s home leave:"}
+
+    with patch.object(graph_module, "get_graph", new=lambda: _Graph()), \
+         patch.object(graph_module.kb_rules, "refresh", new=AsyncMock()):
+        out = await graph_module.run_turn("t", {})
+        results.append(("tag: run_turn sends the reply without it",
+                        out["reply"] == "Here is everything for Devi's home leave:"))
+        with patch.object(graph_module, "NO_TAG_BEFORE_POSSESSIVE", False):
+            out = await graph_module.run_turn("t", {})
+        results.append(("tag: NO_TAG_BEFORE_POSSESSIVE off -> the reply as written",
+                        "(MDW)'s" in out["reply"]))
     return results
 
 
@@ -3898,8 +4013,9 @@ async def _run_case(node, label, overrides):
     # `_expect_not_collected` is the important half: a field the client
     # never spoke to must not be filed as though they had, because a
     # filled field is never asked and the ticket then states it as fact.
-    global _EXTRACTION
+    global _EXTRACTION, _BRIEFING_RECORDS
     _EXTRACTION = state.pop("_stub_extraction", None) or {}
+    _BRIEFING_RECORDS = state.pop("_briefing_records", None) or {}
     not_collected = state.pop("_expect_not_collected", None)
     collected = state.pop("_expect_collected", None)
     with patch("app.graph.llm.complete",
@@ -4053,6 +4169,9 @@ async def main() -> int:
         failures += not ok
     for label, ok in await _reference_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  handover  {label:44}")
+        failures += not ok
+    for label, ok in await _tag_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  wording  {label:44}")
         failures += not ok
 
     off = await _pass(kb_rules.DEFAULTS)

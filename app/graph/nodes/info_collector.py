@@ -3036,6 +3036,12 @@ _CONFIRM_LABELS = {
 # known_helpers, as before.
 REMEMBER_NAMED_HELPERS = True
 
+# Step 2c: a briefing that falls due on THIS turn's answers fetches its own
+# records, because the retriever searched before those answers were extracted
+# (rag_retriever.briefing_records). False = the briefing uses whatever the
+# turn retrieved, as before.
+BRIEFING_FETCHES_ITS_OWN_RECORDS = True
+
 
 def known_helpers_for(state: ConversationState, service_type: str | None) -> list[dict[str, Any]]:
     """The helpers to offer on this service, or none."""
@@ -3785,6 +3791,34 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     # opened with "Hello" was greeted "Hi Vaidik" and asked for their name two
     # messages later. The incident note is at the new site. Nothing is needed
     # here any more: the block prints the name from our RECORDS or prints none.
+
+    # The retriever only searches for a briefing when the briefing was already
+    # due BEFORE this turn. When the key answer arrives on this turn (all of a
+    # renewal in one message, live 2026-10-13), it searched for the client's
+    # words and the fee row was never fetched. Fetch the briefing set now.
+    if (
+        BRIEFING_FETCHES_ITS_OWN_RECORDS
+        and not client_asked
+        and ticket_service.briefing_due(
+            service_type, collected, state.get("briefed_services")
+        )
+        and not ticket_service.briefing_due(
+            service_type, state.get("collected_info"), state.get("briefed_services")
+        )
+    ):
+        # Imported here: rag_retriever imports this module. And by name - the
+        # package exports the NODE function as `rag_retriever`, not the module.
+        from app.graph.nodes.rag_retriever import briefing_records
+
+        try:
+            state = {
+                **state,
+                **await briefing_records(
+                    {**state, "service_type": service_type, "collected_info": collected}
+                ),
+            }
+        except Exception:  # noqa: BLE001
+            logger.exception("Briefing records could not be fetched - using this turn's")
 
     briefing_note = ""
     # `answer_first` is the collector's own "they asked us something" flag, and
