@@ -17,3 +17,9 @@ venv/
 # which have carried the webhook secret and phone numbers (CLAUDE.md 9.7).
 .claude/settings.json
 .claude/settings.local.json
+
+# Local working documents, kept out of the repo by name.
+KNOWLEDGE_TRANSFER.md
+MingHwee_Bot_Process_and_Fees_Guide.docx
+MingHwee_Project_Progress_Report.docx
+prompt.docx

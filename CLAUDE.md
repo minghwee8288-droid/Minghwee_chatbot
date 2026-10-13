@@ -844,8 +844,10 @@ Ordered by what will hurt first.
    from there - `WHAPI_WEBHOOK_SECRET` comes from `.env` only. **Still open: it is in
    git history (commit 6fdf826 onward) and is the value production uses today, so it
    must be ROTATED** on the server `.env` and in the portal's Whapi webhook URL.
-   Rotation, not a history rewrite, is what closes it: a public repo's old commits
-   live on in forks and caches. The reset-ui built-in password is in the same state
+   Rotation, not a history rewrite, is what closes it. The repo has been **private
+   since 2026-10-12**, but it was public for weeks before that, and old commits can
+   live on in forks and caches, so rotate before go-live all the same. The reset-ui
+   built-in password is in the same state
    (`reset-ui/lib/env.ts`, by the client's request) - set `RESET_UI_PASSWORD` on its
    Vercel project before anything removes the default.
 8. **Duplicated, divergent constants.** `EMPLOYER_LEAD_SERVICES` /
@@ -1233,7 +1235,8 @@ Ordered by what will hurt first.
     digits (ends `…9155`). It is too short for a UAE mobile and is most likely
     an Indian number (`+91 97…`) that lost a digit - so that tester is
     probably NOT allowlisted, and the bot stays silent for them. The digits are
-    deliberately not written out here: this repo is public. Confirm the
+    deliberately not written out here: phone numbers stay out of the repo, which
+    was public when this was written (private since 2026-10-12). Confirm the
     intended number with whoever asked for it and correct it in the server
     `.env`, then `docker compose up -d` and check the "Safety gate" log line.
 32. **`POST /admin/preview` answers 422, not 404, when switched off and sent no
@@ -1619,7 +1622,8 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 10. New hiring: "worked in Singapore before" / "Singapore experience" is an
     experience preference, not a transfer (§9.37). No transfer timeline or fee
     unless she chose the transfer option or said she is in Singapore now.
-11. (Never assigned.)
+11. Known-helper confirmation: ask once ("Is this home leave for Devi, or
+    another helper?"). Never state the helper and then ask about her.
 12. A conditional fee (the $40 urgent home-leave surcharge) only when the
     client stated the condition (urgent, rushed, emergency, a family matter
     needing fast travel). From the KB rows "Home leave - urgent requests" and
@@ -1635,10 +1639,23 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
     remove known glitch strings ("天天彩票中奖" ended an Indonesian reply in
     the Step 2e replay). Never strip names, the address, "Claire", CB
     references or digits.
+16. Reference shown as a phone link: WhatsApp turns the "2026-0033" in
+    "CB-2026-0033" into a tappable phone number. Find a display-only fix that
+    keeps the stored number unchanged (WhatsApp inline code, the reference in
+    backticks, is not linkified); the formatting guards must allow exactly
+    that one pattern. If no clean fix exists, report the options and change
+    nothing.
 
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-13** - **Docs only.** §10a items 11 (ask once to confirm a known
+  helper) and 16 (the reference shown as a phone link) filled in. The
+  "public repo" lines in §9.7, §9.31 and the 2026-09-09 reset-ui entry now say
+  the repo has been private since 2026-10-12; the advice to rotate the webhook
+  secret and to set `RESET_UI_PASSWORD` stands, because it was public for weeks.
+  Four local working documents are ignored by name in `.gitignore`.
 
 - **2026-10-13** - **Step 2e: the reference in the agency's words.** The
   bracket inside the handover sentence ("...shortly (reference CB-2026-0033).")
@@ -6659,8 +6676,9 @@ Append here, newest first. One entry per behavioural change.
   contact is what catches a mistyped digit. The lookup still runs; it is invisible, and
   its only job is to fill that dialog in.
   (F) **The password is now built into `lib/env.ts`** (`DEFAULT_PASSWORD`) at the client's
-  request, so the page works with no configuration. **The repository is public**, so that
-  value is readable on GitHub: `RESET_UI_PASSWORD` in the Vercel project overrides it and
+  request, so the page works with no configuration. **The repository was public** when
+  this was written (private since 2026-10-12, but old copies may persist in forks or
+  caches), so treat that value as exposed: `RESET_UI_PASSWORD` in the Vercel project overrides it and
   should be set before this is pointed at live client numbers. Deployed as its own Vercel
   project with **Root Directory `reset-ui`** — the repo root is a Python service and
   building it there fails.
