@@ -490,7 +490,10 @@ because the lead is opened early and the ticket is created much later.
 | "typing..." is shown only where a reply is coming, and never outlives the turn | `app/whapi/typing.py` + `webhook` (`handle_inbound` start, stop after send and in `process_batch`'s `finally`) | Started only past every gate, and not for a message `needs_no_reply` would leave unanswered or a chat with a parked topic. A late start (the turn finished while it was still deciding) is refused, so it cannot reappear after the reply. Best effort throughout: a presence call never delays or fails a turn. |
 | A client who has finished does not wait the full debounce | `webhook.debounce_delay` / `looks_complete` + `MessageDebouncer(delay_for=)` | "?", 6+ words or a transcribed voice note -> `DEBOUNCE_SHORT_SECONDS`; a greeting, a fragment or bare media -> `DEBOUNCE_SECONDS`. The newest message decides and every message restarts the timer, so "hi" / "I need" / a full sentence is still one reply. A short answer to our own question ("Filipino") is complete too, unless it is a greeting or trails off. |
 | A stuck LLM call is cut, retried once, and never retried a third time | `llm.LLM_TIMEOUTS` + `_invoke_with_timeout` | Limits several times the measured p90 per purpose; the client's own retries are off under them; a 400-class error is not retried. |
-| Every handover tells the client its ticket reference, inside the sentence it already has | `app/graph/reference.py` (`add_reference`) from `handover_executor` + `blocked_topic_responder` | The reply is written before the ticket exists, so the number is added afterwards: after "...to our team", else before the end of the live-agent sentence; a reply with no handover sentence is left alone, never given a new one. A message folded into an open ticket shows THAT ticket's number. The chase and "are you there?" replies on a parked topic carry its number. Not on the safety reply (`SAFETY_REPLY_SHOWS_REFERENCE`, waiting on the agency). `ungrounded_figures` strips `guards.TICKET_REFERENCE` before reading figures. |
+| Every handover tells the client its ticket reference, inside the sentence it already has | `app/graph/reference.py` (`add_reference`) from `handover_executor` + `blocked_topic_responder` | The reply is written before the ticket exists, so the number is added afterwards: after "...to our team", else before the end of the live-agent sentence, else before the end of a sentence naming our agent; a reply with no such sentence is left alone, never given a new one. A message folded into an open ticket shows THAT ticket's number. Not on the safety reply (`SAFETY_REPLY_SHOWS_REFERENCE`, waiting on the agency). `ungrounded_figures` strips `guards.TICKET_REFERENCE` before reading figures. |
+| Every reply on a parked topic that mentions the agent carries that topic's reference | `blocked_topic_responder` (applied once at the node's exit, `REFERENCE_ON_EVERY_PARKED_REPLY`) + the sweep in `smoke_nodes._run_case` | Step 2b: the first chase after a handover went down the model-written holding line with no reference, while the canned chase had one. Not on `NEW_SERVICE_HANDOVER`: that raises a new ticket, which handover_executor numbers. |
+| A detail about a topic whose ticket is open stays on that topic | `intent_classifier.states_a_detail` + `DETAIL_STAYS_ON_PARKED_TOPIC`; the responder does not chase it | "also please note she prefers to fly on a weekend" was read as `home_leave` and opened a new intake beside open renewal CB-2026-0033. Naming another service, asking for something (anyone's want/need) or asking a question still switches; "please note"/"fyi" make it a detail even with a want in it. |
+| A helper named earlier in the conversation is confirmed, not asked for again, after a switch | `info_collector.helpers_named_in` / `known_helpers_for` + `state.helpers_named` (`REMEMBER_NAMED_HELPERS`) | `helper_name` is dropped on a switch (rightly) and the webhook's ticket helpers are read only for a known employer. Never the client's own name (her own home leave or passport). |
 | The timing line never costs a reply and never carries a client's words | `app/timing.py` + `smoke_nodes.py` (`_timing_checks`) | Every entry point swallows its own errors, the line holds the conversation id, durations and TABLE names only, and `TURN_TIMING_LOG=false` makes every hook return at once. Asserted through the real `_process_locked`, `handle_inbound` and `send_bot_reply` with I/O stubbed; eight faults injected, eight red. |
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
 | Claire introduces herself in her first message, however many our TEAM sent before it | `guards.claire_has_spoken` + `message.format_history` ("Agent:") + the stage line in `build_system_prompt` | Agent messages were rendered "You:", so a thread full of them read as Claire's own and she never said who she was (conversation 26, 2026-10-07). Only a "You:" line is her. Every node's first-contact test reads the one predicate. |
@@ -719,6 +722,10 @@ Easy to get wrong:
 - `HANDOVER_REFERENCE` (true) — the ticket's CB-YYYY-NNNN in the handover
   sentence and in the parked-topic chase replies (`app/graph/reference.py`).
   False is the old wording. The safety reply is separately off, by constant.
+  Step 2b's three switches are constants, each `False` for the Step 2
+  behaviour: `blocked_topic_responder.REFERENCE_ON_EVERY_PARKED_REPLY`,
+  `intent_classifier.DETAIL_STAYS_ON_PARKED_TOPIC`,
+  `info_collector.REMEMBER_NAMED_HELPERS`.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1515,6 +1522,44 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-13** - **Step 2b: the reference on every parked reply, and a detail
+  about a parked topic stays on it.** From the live phone test of Step 2,
+  conversation 3766, renewal CB-2026-0033, read from its checkpoints (read-only).
+  (A) **"any update on this" got no reference; "are you there" did.** The first
+  chase after the handover is not a chase to `_chasing()` (our last line was the
+  closing briefing, not a holding line), so it went to the model-written holding
+  line, and only the two canned replies called `add_reference`. The reference is
+  now added once at `blocked_topic_responder`'s exit to any reply that mentions
+  the agent (`REFERENCE_ON_EVERY_PARKED_REPLY`), and `add_reference` also finds a
+  sentence naming "our agent" (the "Noted, I've added that for our agent" and
+  cost-deferral replies). Not on `NEW_SERVICE_HANDOVER`, which raises a new
+  ticket. A sweep in `smoke_nodes._run_case` checks every parked state.
+  (B) **"also please note she prefers to fly on a weekend" opened a home-leave
+  intake.** The model's reasoning: "a preference for the helper's travel timing,
+  indicating a home-leave arrangement". No second ticket or lead was created
+  (the intake was not finished). `states_a_detail` + `DETAIL_STAYS_ON_PARKED_TOPIC`
+  keep a statement on the parked topic unless it names another service, asks
+  for something (anyone's want or need) or asks a question; the responder no
+  longer answers such a detail with the chase line. It is noted on the ticket's
+  follow-ups and acknowledged with the reference.
+  (C) **The helper's name was asked again** because a switch drops
+  `helper_name` and the webhook reads ticket helpers only for a known employer
+  (this number has no employer record). `state.helpers_named`
+  (`REMEMBER_NAMED_HELPERS`) offers a helper named earlier in the conversation
+  for confirmation, never fills it silently, and never records the client's own
+  name. The webhook gate itself is left for Step 8.
+  (D) **Asking the client's name was correct**: no employers row and no earlier
+  lead on this number; L-2026-0001 was opened by the bot in this conversation,
+  and it is what the portal shows linked to the ticket.
+  **Verified:** each live turn replayed through the real graph and model,
+  read-only, 2-3 runs; controls (a named service, a request, a question) still
+  switch and confirm the known helper. 13 faults injected, 13 red - after two
+  were green because one state met both own-name conditions; split into two.
+  `smoke_nodes.py` is **313 checks**.
+  **Not changed:** the webhook's stand-down "are you there" reply
+  (`webhook.STILL_HERE_REPLY`) carries no reference - it is not a parked-topic
+  reply and the thread may have no ticket.
 
 - **2026-10-13** - **Every handover tells the client its ticket reference** (Phase 3,
   Step 2). Complaints have carried CB-YYYY-NNNN since 2026-10-07; every other

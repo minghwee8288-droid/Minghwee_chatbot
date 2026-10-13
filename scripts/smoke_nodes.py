@@ -180,6 +180,52 @@ CASES = [
       "_stub_extraction": {"helper_name": "Maria"},
       "_expect_collected": {"helper_name": "Maria"},
       "_expect_not_collected": ["nationality"]}),
+    # Step 2b, 2026-10-13, conversation 3766: a renewal had collected the
+    # helper's name, a home-leave intake started, and asked for it again -
+    # helper_name is dropped on a switch and known_helpers was empty (no
+    # employer record). A helper named earlier in THIS conversation is
+    # offered for confirmation like a known one, on the switch turn...
+    ("info_collector", "a helper named earlier in the conversation is offered after a switch",
+     {"service_type": "home_leave", "intent": "home_leave",
+      "incoming_text": "I also want to arrange home leave for her",
+      "collected_service": "renewal",
+      "collected_info": {"full_name": "VD", "helper_name": "devi lal singh",
+                         "permit_expiry": "in 3 weeks"},
+      "asked_field_counts": {"full_name": 1, "helper_name": 1, "permit_expiry": 1},
+      "known_helpers": [],
+      "_stub_extraction": {},
+      "_expect_prompt": "Is this home leave for devi lal singh, or for another helper?",
+      "_expect_state": {"helpers_named": ["devi lal singh"]}}),
+    # ...and on the next turn, from state.helpers_named, a yes confirms her.
+    ("info_collector", "...and a yes on the next turn confirms her",
+     {"service_type": "home_leave", "intent": "home_leave",
+      "incoming_text": "yes",
+      "history_text": "You: Is this home leave for devi lal singh, or for another helper?",
+      "collected_service": "home_leave",
+      "collected_info": {"full_name": "VD"}, "asked_field_counts": {"helper_name": 1},
+      "known_helpers": [], "helpers_named": ["devi lal singh"],
+      "_stub_extraction": {"helper_name": "yes"},
+      "_expect_collected": {"helper_name": "devi lal singh"}}),
+    # ...but a helper's OWN name (her own home leave) is never offered back
+    # to her as "your helper".
+    # Two states, one per test, because a state meeting both proved neither
+    # (both faults stayed green on the first run).
+    ("info_collector", "...and a helper's own home leave is never remembered as 'her helper'",
+     {"service_type": "home_leave", "intent": "home_leave",
+      "incoming_text": "next week",
+      "collected_service": "home_leave",
+      "collected_info": {"full_name": "Siti", "helper_name": "Siti Rahayu", "requested_by": "helper"},
+      "asked_field_counts": {"helper_name": 0},
+      "_stub_extraction": {},
+      "_expect_state": {"helpers_named": None}}),
+    ("info_collector", "...nor a helper renewing her own passport",
+     {"service_type": "passport_renewal", "intent": "passport_renewal",
+      "incoming_text": "Indonesia",
+      "collected_service": "passport_renewal",
+      "collected_info": {"full_name": "Kareena", "helper_name": "Kareena"},
+      "asked_field_counts": {"full_name": 1},
+      "_stub_extraction": {},
+      "_expect_state": {"helpers_named": None}}),
     ("info_collector", "...and a direct hire, whose helper is a NEW one, is not offered any",
      {"service_type": "direct_hiring", "intent": "direct_hiring",
       "incoming_text": "i want to do direct hire",
@@ -441,6 +487,52 @@ CASES = [
       "_stub_intent": {"intent": "transfer", "service_type": "transfer",
                        "contact_type": None, "confidence": 0.9},
       "_expect_state": {"detected_contact_type": "candidate"}}),
+    # Step 2b, 2026-10-13, conversation 3766: with renewal CB-2026-0033 open,
+    # "also please note she prefers to fly on a weekend" was read as home_leave
+    # (the model's verdict, stubbed here as it came back live) and a new
+    # home-leave intake began. A detail stays on the parked topic...
+    ("intent_classifier", "a detail about a parked topic stays on it",
+     {"incoming_text": "also please note she prefers to fly on a weekend",
+      "intent": "case_enquiry", "service_type": "renewal",
+      "history_text": "Client: are you there\nYou: It is with a live agent. Anything else?",
+      "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
+      "_stub_intent": {"intent": "home_leave", "service_type": "home_leave",
+                       "contact_type": "employer", "confidence": 0.8},
+      "_expect_state": {"service_type": "renewal", "intent": "renewal"}}),
+    # ...but a client who clearly asks for another service still gets it:
+    # naming it, asking for something, or asking a question.
+    ("intent_classifier", "...a named new service still switches",
+     {"incoming_text": "I also want to arrange home leave for her",
+      "intent": "case_enquiry", "service_type": "renewal",
+      "history_text": "Client: are you there\nYou: It is with a live agent. Anything else?",
+      "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
+      "_stub_intent": {"intent": "home_leave", "service_type": "home_leave",
+                       "contact_type": "employer", "confidence": 0.9},
+      "_expect_state": {"service_type": "home_leave"}}),
+    ("intent_classifier", "...even a 'please note' that names another service",
+     {"incoming_text": "please note she also has home leave next month",
+      "intent": "case_enquiry", "service_type": "renewal",
+      "history_text": "Client: are you there\nYou: It is with a live agent. Anything else?",
+      "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
+      "_stub_intent": {"intent": "home_leave", "service_type": "home_leave",
+                       "contact_type": "employer", "confidence": 0.9},
+      "_expect_state": {"service_type": "home_leave"}}),
+    ("intent_classifier", "...a request with no service named still switches",
+     {"incoming_text": "my helper needs to go back to her country next month",
+      "intent": "case_enquiry", "service_type": "renewal",
+      "history_text": "Client: are you there\nYou: It is with a live agent. Anything else?",
+      "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
+      "_stub_intent": {"intent": "home_leave", "service_type": "home_leave",
+                       "contact_type": "employer", "confidence": 0.9},
+      "_expect_state": {"service_type": "home_leave"}}),
+    ("intent_classifier", "...and so does a question",
+     {"incoming_text": "can she fly on a weekend?",
+      "intent": "case_enquiry", "service_type": "renewal",
+      "history_text": "Client: are you there\nYou: It is with a live agent. Anything else?",
+      "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
+      "_stub_intent": {"intent": "home_leave", "service_type": "home_leave",
+                       "contact_type": "employer", "confidence": 0.9},
+      "_expect_state": {"service_type": "home_leave"}}),
 
     # --- direct hire: a question about WHEN, answered with a WHERE ---------
     # 2026-09-18, reproduced 3 runs of 3 against the real extractor before
@@ -1902,6 +1994,54 @@ CASES = [
                       "and a live agent will connect with you shortly.",
       "blocked_topics": {"new_hiring": {"ticket_id": 1, "ticket_number": "CB-2026-0031"}},
       "_expect_reply": "(reference CB-2026-0031)"}),
+    # Step 2b, 2026-10-13, conversation 3766 (CB-2026-0033). The FIRST chase
+    # after the handover went down the generated holding-line path, and the
+    # model's "A live agent is handling this..." arrived with no reference.
+    # Every parked reply that mentions the agent is also checked by the sweep
+    # in _run_case, whichever path wrote it.
+    ("blocked_topic_responder", "the first chase after a handover (model-written) gives the reference",
+     {"intent": "case_enquiry", "service_type": "renewal",
+      "incoming_text": "any update on this",
+      "history_text": "Client: in 3 weels\nYou: Here is everything for Devi's Work Permit renewal:\n\n"
+                      "Thank you. I've passed everything to our team (reference CB-2026-0033), "
+                      "and a live agent will connect with you shortly.",
+      "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
+      "_stub_reply": "A live agent is handling this and will connect with you shortly. "
+                     "In the meantime, is there anything else I can help you with?",
+      "_expect_reply": "shortly (reference CB-2026-0033)."}),
+    ("blocked_topic_responder", "...and the vetted fallback line gives it too",
+     {"intent": "case_enquiry", "service_type": "renewal",
+      "incoming_text": "any update on this",
+      "history_text": "Client: in 3 weels\nYou: Thank you, I've passed everything to our team.",
+      "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
+      "_stub_reply": "We sent it all to the agency and they have passed it up to a live agent.",
+      "_expect_reply": "(reference CB-2026-0033)"}),
+    # The detail itself, after the chase reply had gone out: noted on the
+    # ticket and acknowledged, never answered "I am chasing them" or silence.
+    ("blocked_topic_responder", "a new detail after a chase is noted with the reference, not chased",
+     {"intent": "renewal", "service_type": "renewal",
+      "incoming_text": "also please note she prefers to fly on a weekend",
+      "history_text": "Client: are you there\nYou: I hear you - I'll get back to you on this.",
+      "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033",
+                                     "captured_info": {"follow_ups": [{"message": "any update on this"}]}}},
+      "_stub_reply": "Noted, I've added that she prefers to fly on a weekend. A live agent will "
+                     "connect with you shortly.",
+      "_expect_reply": "shortly (reference CB-2026-0033).",
+      # CHASE_REPLY also ends "...shortly (reference ...)", so the reply alone
+      # cannot tell the two paths apart.
+      "_forbid_reply": "chasing them"}),
+    # A request for OTHER work handed to a person raises a NEW ticket, which
+    # handover_executor numbers - so it must not carry the parked one's.
+    ("blocked_topic_responder", "a handover for other work does not carry the parked topic's reference",
+     {"intent": "other", "service_type": "renewal",
+      "incoming_text": "I want another service",
+      # We asked which service once already and our last line is not a
+      # question, so this is the NEW_SERVICE_HANDOVER path.
+      "history_text": "Client: I want 1 more service\nYou: Of course — which service can I help you with?\n"
+                      "Client: hmm\nYou: Take your time.",
+      "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
+      "_expect_state": {"needs_handover": True},
+      "_forbid_reply": "CB-2026-0033"}),
     ("blocked_topic_responder", "process question, parked",
      {"intent": "process_question", "service_type": "new_hiring",
       "incoming_text": "what is the full process for hiring a helper",
@@ -3709,6 +3849,10 @@ async def _lid_checks() -> list[tuple[str, bool]]:
     return results
 
 
+# (label, carried the reference) for every parked reply that mentions the agent.
+_REFERENCE_SWEEP: set = set()
+
+
 async def _run_case(node, label, overrides):
     """Run one state. Returns (ok, detail, fingerprint).
 
@@ -3773,6 +3917,21 @@ async def _run_case(node, label, overrides):
         _LAST_SYSTEM_PROMPT,
         repr(sorted((k, repr(v)) for k, v in out.items())) if ok else repr(out),
     )
+    # Step 2b (2026-10-13): on a parked topic, EVERY reply that mentions the
+    # agent carries that topic's reference - whichever path wrote it. Swept
+    # over every blocked_topic_responder state here, not asserted on the one
+    # path that was reported: live, the canned chase had it and the model-
+    # written holding line did not. A handover (other work) is exempt: that
+    # is a new ticket, numbered by handover_executor.
+    if ok and node == "blocked_topic_responder":
+        from app.graph.reference import mentions_agent
+        numbers = [t.get("ticket_number") for t in (state.get("blocked_topics") or {}).values()
+                   if isinstance(t, dict) and t.get("ticket_number")]
+        if numbers and mentions_agent(got_reply) and not out.get("needs_handover"):
+            ok = any(n in got_reply for n in numbers)
+            _REFERENCE_SWEEP.add((label, ok))
+            if not ok:
+                return False, f"mentions the agent with no reference: {got_reply[:90]!r}", fingerprint
     if ok and expect:
         ok = expect.lower() in got_reply.lower()
         detail = f"expected {expect!r} in {got_reply[:80]!r}"
@@ -3900,6 +4059,14 @@ async def main() -> int:
     for (node, label, _), (ok, detail, _) in zip(CASES, off):
         print(f"  {'PASS' if ok else 'FAIL'}  {node + '  ' + label:44} -> {detail}")
         failures += not ok
+
+    # At least the six paths that mention the agent: model-written holding
+    # line, fallback, noted, chase, "are you there", cost deferral.
+    swept = sorted(_REFERENCE_SWEEP)
+    ok = len(swept) >= 6 and all(carried for _, carried in swept)
+    print(f"  {'PASS' if ok else 'FAIL'}  handover  every parked reply that mentions the agent "
+          f"carries its reference ({len(swept)} states)")
+    failures += not ok
 
     on_rules, where = await _rules_for_on_pass()
     on = await _pass(on_rules)

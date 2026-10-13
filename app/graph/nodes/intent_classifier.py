@@ -6,7 +6,7 @@ import logging
 import re
 from typing import Any
 
-from app.graph.closure import needs_no_reply
+from app.graph.closure import is_closing, is_pure_acknowledgement, needs_no_reply
 from app.graph.guards import answering_our_question
 from app.graph.llm import complete_json
 from app.graph.prompts.templates import (
@@ -325,6 +325,53 @@ _CHASING_STATUS = re.compile(
     r"|\bprogress\b",
     re.IGNORECASE,
 )
+
+
+# Step 2b (2026-10-13). A detail about a topic whose ticket is open stays on
+# that topic, unless the client clearly asks for a different service. Live,
+# conversation 3766: with work permit renewal CB-2026-0033 open, "also please
+# note she prefers to fly on a weekend" was read as home_leave - the model's
+# reasoning: "a preference for the helper's travel timing, indicating a
+# home-leave arrangement" - and a new home-leave intake asked the helper's name
+# again. False = the model's label stands, as before.
+DETAIL_STAYS_ON_PARKED_TOPIC = True
+
+# Says outright that this is a detail for the record.
+_GIVES_A_DETAIL = re.compile(
+    r"\b(?:please\s+)?note\b|\bfyi\b|\bjust\s+so\s+you\s+know\b|"
+    r"\bfor\s+your\s+(?:info|information|reference)\b|\bby\s+the\s+way\b|\bbtw\b|"
+    r"\bforgot\s+to\s+(?:mention|say|tell)\b",
+    re.IGNORECASE,
+)
+# Asks for something to be done. Anyone's want or need counts ("my helper
+# needs to go home"), because a new request is the case that must NOT be held.
+_REQUESTS_SOMETHING = re.compile(
+    r"\b(?:want|wants|need|needs|would\s+like|looking\s+for|require|requires|"
+    r"help\s+with|arrange|apply)\b",
+    re.IGNORECASE,
+)
+_ASKS_US = re.compile(
+    r"\?|^\W*(?:when|how|what|why|which|where|who|is|are|can|could|will|would|"
+    r"did|do|does|any)\b",
+    re.IGNORECASE,
+)
+
+
+def states_a_detail(message: str) -> bool:
+    """A statement that adds something - not a question, a chase, a bare
+    acknowledgement or a request for work. "please note" / "fyi" make it a
+    detail even with a want or need in it; a named service is tested
+    separately by the caller."""
+    body = (message or "").strip()
+    if (
+        not body
+        or _ASKS_US.search(body)
+        or _CHASING_STATUS.search(body)
+        or is_pure_acknowledgement(body)
+        or is_closing(body)
+    ):
+        return False
+    return bool(_GIVES_A_DETAIL.search(body)) or not _REQUESTS_SOMETHING.search(body)
 
 
 def _named_service(text: str) -> str | None:
@@ -900,6 +947,34 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
             message[:60],
             service_type,
             active_service,
+        )
+        service_type = active_service
+        if active_service in ALL_INTENTS:
+            intent = active_service
+
+    # A detail about the parked topic stays on it (DETAIL_STAYS_ON_PARKED_TOPIC
+    # above). The mirror of the new-service correction: there the client NAMED
+    # new work and was dragged onto a parked topic; here they named nothing,
+    # asked for nothing, and were dragged OFF it into a new intake. Naming
+    # another service, asking for something, or asking a question still
+    # switches, exactly as before.
+    if (
+        DETAIL_STAYS_ON_PARKED_TOPIC
+        and active_service
+        and service_type
+        and service_type != active_service
+        and service_type in SERVICE_INTENTS
+        and ticket_service.topic_key_for(active_service, effective_contact_type(state), active_service)
+        in parked
+        and ticket_service.topic_key_for(service_type, effective_contact_type(state), intent)
+        not in parked
+        and _named_service(message) in (None, active_service)
+        and states_a_detail(message)
+    ):
+        logger.info(
+            "Conversation %s: %r read as %r, but it is a detail about %s, whose ticket "
+            "is open - keeping it on that topic",
+            state.get("conversation_id"), message[:60], service_type, active_service,
         )
         service_type = active_service
         if active_service in ALL_INTENTS:

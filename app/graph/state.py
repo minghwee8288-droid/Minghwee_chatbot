@@ -261,6 +261,10 @@ class ConversationState(TypedDict, total=False):
     # on their earlier tickets), offered for CONFIRMATION by the helper
     # services - never filled in silently. Set by the webhook each turn.
     known_helpers: list[dict[str, Any]]
+    # Helpers the client has named in THIS conversation's collections
+    # (Step 2b, 2026-10-13), offered for confirmation alongside
+    # known_helpers after a service switch. Accumulates; not in _TURN_RESET.
+    helpers_named: Annotated[list[str], _merge_unique]
     # Hours since the last message on the thread before this turn; None for a
     # first message. "Welcome back" is said only after a real break.
     hours_since_last_message: float | None

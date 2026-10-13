@@ -3025,11 +3025,53 @@ _CONFIRM_LABELS = {
 }
 
 
+# Step 2b (2026-10-13): a helper the client already named in THIS conversation
+# is offered for confirmation too, not asked for again. Live, conversation
+# 3766: the renewal had collected "devi lal singh growwstacks", a new
+# home-leave intake started, and its first question was "May I know your
+# helper's name?" - a service switch drops helper_name (it is not portable,
+# rightly: the new service may be for another helper), and known_helpers was
+# empty because the webhook reads ticket helpers only for a known employer.
+# Kept in state.helpers_named, never filled in silently. False = only
+# known_helpers, as before.
+REMEMBER_NAMED_HELPERS = True
+
+
 def known_helpers_for(state: ConversationState, service_type: str | None) -> list[dict[str, Any]]:
     """The helpers to offer on this service, or none."""
     if service_type not in HELPER_CONFIRM_SERVICES:
         return []
-    return [h for h in (state.get("known_helpers") or []) if str(h.get("helper_name") or "").strip()]
+    helpers = [h for h in (state.get("known_helpers") or []) if str(h.get("helper_name") or "").strip()]
+    if REMEMBER_NAMED_HELPERS:
+        held = {h["helper_name"].strip().lower() for h in helpers}
+        # helpers_named is written after a turn; on the turn that switches,
+        # the name is still in the old collection, so it is read there too.
+        for name in [*(state.get("helpers_named") or []), *helpers_named_in(state, {})]:
+            if str(name or "").strip() and name.strip().lower() not in held:
+                helpers.append({"helper_name": name.strip()})
+                held.add(name.strip().lower())
+    return helpers[:3]
+
+
+def helpers_named_in(state: ConversationState, result: dict[str, Any]) -> list[str]:
+    """The helper named in this conversation's collection, before and after
+    this turn - never the client's own name (a helper renewing her own
+    passport or taking her own home leave fills helper_name from it)."""
+    if not REMEMBER_NAMED_HELPERS or effective_contact_type(state) == "candidate":
+        return []
+    names: list[str] = []
+    for collected in (state.get("collected_info") or {}, result.get("collected_info") or {}):
+        name = str(collected.get("helper_name") or "").strip()
+        own = str(collected.get("full_name") or "").strip()
+        if (
+            name
+            and name.lower() not in {"not provided", ticket_service.UNANSWERED.lower()}
+            and name.lower() != own.lower()
+            and collected.get("requested_by") != "helper"
+            and name not in names
+        ):
+            names.append(name[:300])
+    return names
 
 
 def confirmed_helper(
@@ -3170,6 +3212,14 @@ def _undelivered_question(state: ConversationState, switched: bool) -> str | Non
 
 
 async def info_collector(state: ConversationState) -> dict[str, Any]:
+    result = await _info_collector(state)
+    named = helpers_named_in(state, result)
+    if named:
+        result["helpers_named"] = named
+    return result
+
+
+async def _info_collector(state: ConversationState) -> dict[str, Any]:
     """Records where a new request began, uncounts a question that was never
     sent, then collects (`_collect`)."""
     contact_type = effective_contact_type(state)

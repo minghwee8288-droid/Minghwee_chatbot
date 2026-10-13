@@ -47,6 +47,13 @@ _LIVE_AGENT_SENTENCE = re.compile(
     r"[^.?!\n]*\blive\s+agent\b[^.?!\n]*", re.IGNORECASE
 )
 
+# Any other sentence that mentions our agent: "Noted, I've added that for our
+# agent", "one of our agents will take you through it". Step 2b (2026-10-13):
+# on a parked topic every reply that mentions the agent carries the reference,
+# and these are the parked replies the two patterns above miss. Last, so a
+# handover sentence always wins.
+_AGENT_SENTENCE = re.compile(r"[^.?!\n]*\bagents?\b[^.?!\n]*", re.IGNORECASE)
+
 
 def enabled() -> bool:
     return bool(settings.handover_reference)
@@ -54,6 +61,12 @@ def enabled() -> bool:
 
 def mention(ticket_number: str) -> str:
     return f"(reference {ticket_number})"
+
+
+def mentions_agent(reply: str) -> bool:
+    """Whether the reply hands over or mentions our agent - the replies that
+    must carry the parked topic's reference (Step 2b)."""
+    return any(p.search(reply or "") for p in (_PASSED_TO_TEAM, _LIVE_AGENT_SENTENCE, _AGENT_SENTENCE))
 
 
 def add_reference(reply: str, ticket_number: str | None) -> str:
@@ -66,7 +79,7 @@ def add_reference(reply: str, ticket_number: str | None) -> str:
     match = _PASSED_TO_TEAM.search(reply)
     if match:
         return f"{reply[:match.end()]} {tag}{reply[match.end():]}"
-    match = _LIVE_AGENT_SENTENCE.search(reply)
+    match = _LIVE_AGENT_SENTENCE.search(reply) or _AGENT_SENTENCE.search(reply)
     if match:
         end = match.end()
         # Before trailing spaces and the sentence's own punctuation.

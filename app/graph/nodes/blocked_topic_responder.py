@@ -42,7 +42,12 @@ from app.config import settings
 from app.graph.closure import is_closing, is_pure_acknowledgement
 # Shared, not duplicated (§9.8): the one detector for "the client named a concrete
 # service in their own words". intent_classifier owns it; this node only reads it.
-from app.graph.nodes.intent_classifier import _CHASING_STATUS, _named_service
+from app.graph.nodes.intent_classifier import (
+    _CHASING_STATUS,
+    DETAIL_STAYS_ON_PARKED_TOPIC,
+    _named_service,
+    states_a_detail,
+)
 # The same greeting the answering path sends, so the two cannot drift apart.
 from app.graph.nodes.response_generator import greeting_back
 from app.graph.llm import complete
@@ -513,7 +518,27 @@ def _current_topic(state: ConversationState) -> tuple[str | None, dict[str, Any]
     return key, ticket
 
 
+# Step 2b (2026-10-13): every reply on a parked topic that mentions the agent
+# carries that topic's reference, whichever path below wrote it. Live, the
+# first chase after the handover ("any update on this") went down the
+# generated holding-line path and arrived with no reference, while "are you
+# there" - the canned path - had one. Applied once at the exit rather than at
+# each return, so a path added later cannot miss it. Not on a reply that hands
+# over (NEW_SERVICE_HANDOVER): that raises a NEW ticket, and
+# handover_executor gives it that ticket's own number. False = only the chase
+# and "are you there?" replies carry it, as in Step 2.
+REFERENCE_ON_EVERY_PARKED_REPLY = True
+
+
 async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
+    result = await _respond(state)
+    if REFERENCE_ON_EVERY_PARKED_REPLY and result.get("reply") and not result.get("needs_handover"):
+        _, ticket = _current_topic(state)
+        result["reply"] = add_reference(result["reply"], ticket.get("ticket_number"))
+    return result
+
+
+async def _respond(state: ConversationState) -> dict[str, Any]:
     topic_key, ticket = _current_topic(state)
     message = (state.get("incoming_text") or "").strip()
 
@@ -654,7 +679,14 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
     # new to tell them, so do not spend a call generating another "still
     # checking" that the near-duplicate guard will discard into silence. Say the
     # one thing that IS new — that we have flagged the wait — and say it once.
-    if not answering and not detail and _chasing(state):
+    # ...unless what they sent is a new detail, which is not a chase: the
+    # holding-line path below acknowledges it as noted (Step 2b, 2026-10-13).
+    if (
+        not answering
+        and not detail
+        and _chasing(state)
+        and not (DETAIL_STAYS_ON_PARKED_TOPIC and states_a_detail(message))
+    ):
         logger.info(
             "Conversation %s: client chasing blocked topic %r (ticket %s) — acknowledging the "
             "wait rather than repeating the holding line",

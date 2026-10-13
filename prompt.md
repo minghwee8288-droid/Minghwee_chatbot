@@ -2738,6 +2738,19 @@ new information they give.
 It acknowledges what was said and reassures the client that a live agent has
 it, in at most two sentences.
 
+**Every reply on a topic already with an agent that mentions the agent carries
+that topic's ticket reference** (since 2026-10-13), added by the code after this
+prompt has run, inside the sentence: "A live agent is handling this and will
+connect with you shortly (reference CB-2026-0142)." This applies whichever
+message it is - this one, the fixed chase and "are you there?" lines in the
+Appendix, the fallback line, or "Noted, I've added that for our agent". The
+prompt itself is unchanged and still never mentions a ticket.
+
+A detail the client adds about this topic ("also please note she prefers to fly
+on a weekend") stays on this topic and is noted on its ticket, even when it
+sounds like another service. A new service starts only when the client names
+it, asks for something, or asks a question.
+
 ### Prompt
 ```text
 The client has just said something about {service_label}. The team is already looking into that one specifically and it is not resolved yet.
