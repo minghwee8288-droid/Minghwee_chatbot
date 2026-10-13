@@ -501,6 +501,10 @@ because the lead is opened early and the ticket is created much later.
 | A helper named earlier in the conversation is confirmed, not asked for again, after a switch | `info_collector.helpers_named_in` / `known_helpers_for` + `state.helpers_named` (`REMEMBER_NAMED_HELPERS`) | `helper_name` is dropped on a switch (rightly) and the webhook's ticket helpers are read only for a known employer. Never the client's own name (her own home leave or passport). |
 | A closing briefing is built from the briefing's own records, however many answers arrived at once | `info_collector` (`BRIEFING_FETCHES_ITS_OWN_RECORDS`) -> `rag_retriever.briefing_records` | The retriever runs before the extraction, so a briefing that falls due on THIS turn's answers was written from a search for the client's words. Live 2026-10-13: a renewal answered in one message deferred "the exact fee" where the answer is $695. Only fetched when the briefing was not already due before the turn. |
 | "(MDW)" never sits in front of a possessive | `guards.without_tag_before_possessive`, applied once in `graph.run_turn` (and the preview) behind `NO_TAG_BEFORE_POSSESSIVE` | "Devi lal singh (MDW)'s home leave" went out live. The style rule also says so; the code is the guarantee. |
+| "As this is your first helper" only when the client said so | `guards.without_assumed_first_helper` in `graph.run_turn` (and the preview) + a style line, behind `FIRST_HELPER_CONDITIONAL` | Our records cannot show it: "first time with us - no placement on record" is about OUR file. Said as a condition ("If this is your first helper, ..."); left as written where the client's own lines say first helper / first time hiring / never had a helper. Measured in Step 5 Batch B: the model wrote it in 2 of 3 replies before, 1 draft in 4 after and 0 replies. |
+| A known helper is named once, inside the question that confirms her | `info_collector.ASK_ONCE_ABOUT_KNOWN_HELPER` (the note) + `guards.one_mention_of_known_helper` (after `_write`) | Never stated and then asked about ("We have Devi on record. Is this for Devi...?"), and never asked twice. Any other sentence naming her is dropped; a reply with no confirmation question is left alone. |
+| No cost is "approximate" without a figure, on any service | `guards.without_figureless_approximate` in `graph.run_turn` (and the preview) behind `NO_APPROXIMATE_COST_ANYWHERE` | Step 4b covered the nationality-priced services; this covers direct hire, replacement and the rest. Only a sentence with no digit at all is replaced (with the deferral, or dropped where the reply already defers), so "approximately 2 weeks ... our agent will confirm the cost" stays. |
+| A fixed message promises only what happens | `blocked_topic_responder.CHASE_REPLY` / `PROBE_REPLY` (`NO_UNDELIVERED_PROMISES`) | "I am chasing them for you now" and "Let me put together exactly what it covers" promised work nobody does. Now "It is with a live agent, who will connect with you shortly" and "Our agent will take you through exactly what it covers", both with the reference. The old chase wording still counts as the chase already sent. |
 | No stray script reaches the client | `guards.without_stray_script`, applied once in `graph.run_turn` (and the preview) behind `STRAY_SCRIPT_GUARD` | The model ended an Indonesian reply with "天天彩票中奖" (Step 2e replay). `GLITCH_STRINGS` always go; a run of letters in a script that is neither the reply's main script nor one in the client's own lines or the names we hold for them goes too. Latin is never a cut script, so "Claire", "Ming Hwee", the address, a CB reference and Latin names survive in a Burmese or Chinese reply; digits and punctuation are not letters. Han and kana are one bucket. A cut is logged. |
 | A finished reply is not held back by Whapi | `message.send_bot_reply` (`SEND_WITHOUT_TYPING_TIME`) | With our own typing indicator running, no `typing_time` is sent: it only delayed delivery (whapi.send 1.4 s with 0.5 s asked). The channel's `/settings` holds no typing default. |
 | The search embedding starts beside the classifier, and is used only for the query the retriever actually builds | `graph._classify_with_prefetch` (`PREFETCH_SEARCH_EMBEDDING`) + `rag.prefetch_query` / `embed_query` | Predicted from the turn as it stands before classification (intent and service carry over). `embed_query` takes over a prefetch for the SAME text only, finished or still running; a different query (the classifier changed the service) is embedded as before, and a failed prefetch is retried, never reused. The canary is unchanged (cosine 1.000000 both ways). |
@@ -755,6 +759,13 @@ Easy to get wrong:
   `guards.NO_APPROXIMATE_WITHOUT_FIGURE` (Step 5 item 17).
   Step 5a's one, `False` for the Step 4b behaviour (the reply as the node
   wrote it): `guards.STRAY_SCRIPT_GUARD`.
+  Step 5 Batch B's six, each `False` for the Step 5a behaviour:
+  `style.ONE_QUESTION_STYLE` (item 1), `templates.NO_DEPENDS_ON_THE_CASE`
+  (item 3), `blocked_topic_responder.NO_UNDELIVERED_PROMISES` (item 4),
+  `guards.FIRST_HELPER_CONDITIONAL` (item 9, the guard and the style line),
+  `info_collector.ASK_ONCE_ABOUT_KNOWN_HELPER` (item 11),
+  `guards.NO_APPROXIMATE_COST_ANYWHERE` (item 17). The first three pick their
+  text at import, so they take effect on a restart like any code change.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1594,9 +1605,10 @@ behaviour behind one switch. Details of each step are in §11.
 | 2e | The reference as the agency's sentence, in the reply's language | `ab4bd17` |
 | 4 | Nationality-fee guard: no other nationality's fee, no fee where none is held | `48f889f` |
 | 4b | Fee nationality from message, collection, then parked ticket; no "approximate" without a figure (item 17) | `fc55045` |
-| 5a | Stray-script guard (item 15): glitch strings and foreign-script runs cut from the reply | see git log |
+| 5a | Stray-script guard (item 15): glitch strings and foreign-script runs cut from the reply | `e8ca470` |
+| 5B | Batch B (wording): items 1, 3, 4, 5, 9, 11, 17 | see git log |
 
-**Still to do, in order:** Step 5 (below), Step 6 (combined questions: propose pairs, stop before
+**Still to do, in order:** Step 5 (below; done: 15 in 5a and Batch B; next Batch C = items 6, 7, 8, 10, 12, then Batch D = 2, 13, 14, 16), Step 6 (combined questions: propose pairs, stop before
 wiring), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
 the webhook builds `known_helpers` only when `contact_type == "employer"`).
@@ -1610,19 +1622,19 @@ waiting on the client), the reference in the safety reply, the KB watcher.
 **Step 5 queue** (prompt contradictions and wording; same method: reproduce,
 fix, replay, assert, fault-inject). **Item 15 goes first.**
 
-1. Questions per message: the style guide's "ask 2-3 at most" against rule 8's
+1. **DONE in Batch B.** Questions per message: the style guide's "ask 2-3 at most" against rule 8's
    one per message. Make the style guide match rule 8 (Step 6 changes both).
 2. A helper offering herself for work: report what the code does for her and
    for a supplier or agent offering a helper; make prompt.md entry 53 match
    (she is collected, a third party is handed over). Stop if the code differs.
-3. "Depends on the case" (entry 50), banned 2026-09-17: if they asked about
+3. **DONE in Batch B.** "Depends on the case" (entry 50), banned 2026-09-17: if they asked about
    timing and the records hold none, our agent will confirm the timeline;
    otherwise leave timing out.
-4. Fixed messages that promise what nobody does: "I am chasing them for you
+4. **DONE in Batch B.** Fixed messages that promise what nobody does: "I am chasing them for you
    now" -> it is with a live agent who will connect shortly (keep the
    reference); "Let me put together exactly what it covers..." -> our agent
    will take them through exactly what it covers.
-5. prompt.md entries 38-39 still forbid a helper's own home-leave fee, which
+5. **DONE in Batch B.** prompt.md entries 38-39 still forbid a helper's own home-leave fee, which
    she has been told since 2026-10-09. Describe the code; change no code.
 6. A mechanical guard: a collection-turn reply must contain the question it
    was meant to ask, else the agency's written question (the transfer_employer
@@ -1633,12 +1645,12 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 8. Timeline mismatch: wanted sooner than the briefing's timeline -> say so in
    one sentence and mention a transfer helper in Singapore is usually faster.
    KB timelines only.
-9. "First helper": never "as this is your first helper" unless the records
+9. **DONE in Batch B.** "First helper": never "as this is your first helper" unless the records
    show it; otherwise "if this is your first helper".
 10. New hiring: "worked in Singapore before" / "Singapore experience" is an
     experience preference, not a transfer (§9.37). No transfer timeline or fee
     unless she chose the transfer option or said she is in Singapore now.
-11. Known-helper confirmation: ask once ("Is this home leave for Devi, or
+11. **DONE in Batch B.** Known-helper confirmation: ask once ("Is this home leave for Devi, or
     another helper?"). Never state the helper and then ask about her.
 12. A conditional fee (the $40 urgent home-leave surcharge) only when the
     client stated the condition (urgent, rushed, emergency, a family matter
@@ -1662,7 +1674,7 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
     backticks, is not linkified); the formatting guards must allow exactly
     that one pattern. If no clean fix exists, report the options and change
     nothing.
-17. **DONE in Step 4b** (2026-10-13), for the case where we hold no fee: a
+17. **DONE in Step 4b, and on every service in Batch B** (2026-10-13), for the case where we hold no fee: a
     cost with no figure is never called "approximate"; the sentence is "Our
     agent will confirm the cost for a Myanmar helper's passport renewal."
     Elsewhere (a withheld service, a fee not on record for other reasons)
@@ -1671,6 +1683,52 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-13** - **Step 5 Batch B (wording): items 1, 3, 4, 5, 9, 11, 17.**
+  Each behind its own switch (section 7).
+  (1) The style guide's "Ask 2-3 at most, then follow up" contradicted rule 8
+  and its own later line; it now says one question per message.
+  (3) The list instruction (prompt.md entry 50) still said "the timing depends
+  on the case", banned from the closing messages since 2026-09-17. A timing
+  the records give may be given; asked with none in the records, our agent
+  will confirm the timeline; not asked, timing is left out.
+  (4) "I am chasing them for you now" and "Let me put together exactly what it
+  covers" promised work nobody does. Now "It is with a live agent, who will
+  connect with you shortly" and "Our agent will take you through exactly what
+  it covers", each with the reference (the node's exit adds it). The old chase
+  wording still counts as already sent, so a thread is not chased twice.
+  (5) prompt.md entries 38-39 still quoted the 2026-09-18 redirect ("arranged
+  through her employer", no fee). They now quote `HELPER_OWN_LEAVE_NOTE` and
+  `HELPER_HOME_LEAVE_BRIEFING_NOTE` verbatim, and a flows assertion keeps them
+  in step. No code change.
+  (9) "As this is your first helper" states what our records cannot show (no
+  placement on record is about our file). A style line says to put it as a
+  condition, and `guards.without_assumed_first_helper` rewrites it in
+  `run_turn` unless the client said so. **The replay found a wording the
+  pattern missed** ("As this is your first time employing a helper", 2 of 3
+  replies); widened and asserted. After: 1 draft in 4, 0 replies.
+  (11) A known helper is named once, inside the confirmation question: the
+  note says so, and `guards.one_mention_of_known_helper` drops any other
+  sentence naming her (or the question asked twice). 6 replays, none named her
+  twice; the guard is proved by the smoke state.
+  (17) "Approximate" with no figure, on any service:
+  `guards.without_figureless_approximate` in `run_turn`. Only a sentence with
+  no digit is touched, so a timing in the same sentence survives - which a
+  fault injection showed needed its own test.
+  **Verified:** 8 `smoke_nodes.py` checks (2 node states, 6 through
+  `run_turn`) and 16 flows assertions; 14 faults injected, 14 red - after one
+  was GREEN (the digit rule had no test that reached it). Replayed through the
+  real `run_turn`, model and post-guards, read-only, 8 scenarios x 3 (known
+  helper on home leave and passport renewal, a replacement process, transfer
+  documents, direct-hire and replacement costs, first-time steps, a hiring
+  opening): no "depends on the case", no figure-free "approximate", no
+  helper named twice, no two questions. `smoke_nodes.py` is **425**,
+  `selfcheck_flows.py` **870**. E2E 6 of 7 on the full run,
+  0 refused writes, no row count changed by the run (wp_chat_messages +2 is
+  live inbound traffic). The one failure: direct hire's opening asked whether
+  the helper is in Singapore instead of the client's name; re-run 3 times, 3
+  passed. The model skipped the field it was given, which Batch C item 6 (the
+  reply must contain the question it was meant to ask) targets.
 
 - **2026-10-13** - **Step 5a (item 15): a stray script never reaches the
   client.** In the Step 2e replay the model ended an Indonesian chase with

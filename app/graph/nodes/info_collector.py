@@ -18,6 +18,7 @@ from app.graph.complaint import (
 )
 from app.graph.guards import (
     claire_has_spoken,
+    one_mention_of_known_helper,
     COST_DEFERRAL_REPLY,
     asks_for_documents,
     asks_for_process,
@@ -3037,6 +3038,12 @@ _CONFIRM_LABELS = {
 # known_helpers, as before.
 REMEMBER_NAMED_HELPERS = True
 
+# Phase 3 Step 5 item 11 (2026-10-13): the known helper is named once, inside
+# the confirmation question, never stated and then asked about. The note says
+# so and guards.one_mention_of_known_helper drops any other sentence naming
+# her. False = the Step 4b note, unguarded.
+ASK_ONCE_ABOUT_KNOWN_HELPER = True
+
 # Step 2c: a briefing that falls due on THIS turn's answers fetches its own
 # records, because the retriever searched before those answers were extracted
 # (rag_retriever.briefing_records). False = the briefing uses whatever the
@@ -3130,6 +3137,14 @@ def helper_confirm_note(helpers: list[dict[str, Any]], service_label: str) -> st
         "never offer only the names we know, because a client asking about a "
         "different or new helper has to be able to say so. If they say it is for "
         "someone else, the next message asks her name."
+        + (
+            " Name her ONLY inside this one question, and ask it once: do not "
+            "mention her anywhere else in the message - no \"we have her details "
+            "on record\", no welcome back that names her, nothing about her "
+            "before or after the question."
+            if ASK_ONCE_ABOUT_KNOWN_HELPER
+            else ""
+        )
     )
 
 
@@ -4383,6 +4398,10 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         )
         if overview:
             reply = _question_on_its_own_line(reply)
+        if helper_note and ASK_ONCE_ABOUT_KNOWN_HELPER:
+            reply = one_mention_of_known_helper(
+                reply, [h["helper_name"] for h in offer]
+            )
         if overview and (reply or "").strip() == (next_field.question or "").strip():
             logger.error(
                 "Conversation %s: the %s overview was discarded by a guard - the "

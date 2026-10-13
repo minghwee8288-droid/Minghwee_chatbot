@@ -116,11 +116,28 @@ _DIRECT_ADDRESS = re.compile(
 # strings are returned directly and never pass through strip_handover_talk. To
 # the client it read as being palmed off mid-conversation, right after the bot
 # had been answering them itself. The assertion below is the safety net.
-CHASE_REPLY = (
+_CHASE_REPLY_STEP4B = (
     "I hear you — this has not been forgotten. It is with a live agent and I am "
     "chasing them for you now, so they should connect with you shortly. Anything "
     "else I can help with while you wait?"
 )
+
+# Phase 3 Step 5 item 4 (2026-10-13). Two fixed messages promised something
+# nobody does: "I am chasing them for you now" (the bot chases no one; the
+# ticket is simply open with an agent) and "Let me put together exactly what it
+# covers" (nothing is put together - a person has to take them through it).
+# Each now says what actually happens. The reference is still added at the
+# node's exit, since both mention the agent. False = the Step 4b wording.
+NO_UNDELIVERED_PROMISES = True
+CHASE_REPLY = (
+    "I hear you — this has not been forgotten. It is with a live agent, who will "
+    "connect with you shortly. Anything else I can help with while you wait?"
+    if NO_UNDELIVERED_PROMISES
+    else _CHASE_REPLY_STEP4B
+)
+# Either wording counts as "the chase reply already went out", so a thread that
+# got the old one is not chased again in the new words.
+_CHASE_REPLIES = (CHASE_REPLY, _CHASE_REPLY_STEP4B)
 
 # For "are you there" / "hey" specifically — see _DIRECT_ADDRESS below. Worded
 # differently from CHASE_REPLY on purpose: they answer different questions
@@ -145,9 +162,15 @@ _PROBES = re.compile(
     re.IGNORECASE,
 )
 
-PROBE_REPLY = (
+_PROBE_REPLY_STEP4B = (
     "That is the standard rate for the service. Let me put together exactly what it "
     "covers so I can walk you through it properly."
+)
+PROBE_REPLY = (
+    "That is the standard rate for the service. Our agent will take you through "
+    "exactly what it covers."
+    if NO_UNDELIVERED_PROMISES
+    else _PROBE_REPLY_STEP4B
 )
 
 # The client wants something OTHER than the topic a human is already handling.
@@ -702,7 +725,8 @@ async def _respond(state: ConversationState) -> dict[str, Any]:
             ticket.get("ticket_number"),
         )
         if any(
-            near_duplicate(CHASE_REPLY, line)
+            near_duplicate(reply, line)
+            for reply in _CHASE_REPLIES
             for line in recent_bot_lines(state.get("history_text", ""), count=3)
         ):
             return {"reply": "", "suppress_reply": True, "needs_handover": False}
@@ -884,7 +908,8 @@ async def _respond(state: ConversationState) -> dict[str, Any]:
         # "Noted, I've added that for our agent".
         if CHASE_BEFORE_NOTE and asks_for_an_update(message):
             if not any(
-                near_duplicate(CHASE_REPLY, line)
+                near_duplicate(reply, line)
+                for reply in _CHASE_REPLIES
                 for line in recent_bot_lines(state.get("history_text", ""), count=3)
             ):
                 logger.info(

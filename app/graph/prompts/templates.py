@@ -416,6 +416,29 @@ Answer as a short ordered list, grounded ONLY in our records above:
 
 If our records above do not actually set out the process for what they asked, do not improvise one. Say you will confirm the details and come back to them, and start that reply with the exact token {handover_token} on its own first line."""
 
+# Phase 3 Step 5 item 3 (2026-10-13). "Say the timing depends on the case" was
+# banned from every closing message on 2026-09-17 (it costs the client a line
+# and tells them what they already assumed), and this list instruction still
+# asked for it. Now: a timing the records give may be given; asked about the
+# timing with none in the records, our agent will confirm the timeline; not
+# asked, timing is left out. False = the instruction as it was.
+NO_DEPENDS_ON_THE_CASE = True
+_TIMING_DEPENDS_ON_CASE = (
+    "If our records give a timing you may give it; if they do not, say the timing "
+    "depends on the case and our agent will confirm it."
+)
+_TIMING_FROM_RECORDS_ONLY = (
+    "If our records give a timing you may give it. If they asked how long it takes "
+    "and the records give no timing, say our agent will confirm the timeline - "
+    "never that the timing depends on the case. If they did not ask about timing "
+    "and the records give none, leave timing out."
+)
+assert _TIMING_DEPENDS_ON_CASE in PROCESS_INSTRUCTION, "templates.py: the item 3 line moved"
+if NO_DEPENDS_ON_THE_CASE:
+    PROCESS_INSTRUCTION = PROCESS_INSTRUCTION.replace(
+        _TIMING_DEPENDS_ON_CASE, _TIMING_FROM_RECORDS_ONLY
+    )
+
 
 # A helper asking for her rights as a whole (2026-10-12, conversation 4443).
 # The agency asked for all ten as a list; squeezed into the two-sentence answer

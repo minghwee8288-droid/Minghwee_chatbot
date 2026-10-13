@@ -97,3 +97,33 @@ WHEN CONTACT TYPE IS UNKNOWN:
 - Never sign off every message. Real chats don't end with "Best regards" or "Thank you and have a nice day" on every message. Only at natural closing points.
 - Never use the same opener twice in a row across messages.
 - Never parrot the client's words back: "Noted that you want to hire a Filipino helper for elderly care. May I know..." — just ask the question."""
+
+
+# Phase 3 Step 5 item 1 (2026-10-13). The employer section said "Ask 2-3 at
+# most, then follow up" while rule 8, and this guide's own list further down,
+# say one question per message. The model was given both and could pick
+# either. The line now says what rule 8 says (Step 6 revisits both together).
+# False = the guide as it was.
+ONE_QUESTION_STYLE = True
+_ASK_TWO_OR_THREE = "Ask 2-3 at most, then follow up."
+_ASK_ONE = (
+    "Ask ONE question per message (rule 8), then follow up with the next once "
+    "they answer."
+)
+assert _ASK_TWO_OR_THREE in STYLE_BLOCK, "style.py: the item 1 line moved"
+if ONE_QUESTION_STYLE:
+    STYLE_BLOCK = STYLE_BLOCK.replace(_ASK_TWO_OR_THREE, _ASK_ONE)
+
+# Phase 3 Step 5 item 9 (2026-10-13): whether this is their first helper is
+# not on our file ("no placement on record" is about OUR records), so it is
+# said as a condition. The same switch turns off the guard that rewrites it
+# (guards.without_assumed_first_helper). False = the guide as it was.
+from app.graph.guards import FIRST_HELPER_CONDITIONAL  # noqa: E402
+
+_FIRST_HELPER_LINE = (
+    '\n- Never write "as this is your first helper" or "since you are a first-time '
+    "employer\" unless the client told you so: our records cannot show it. Say it "
+    'as a condition - "if this is your first helper, ...".'
+)
+if FIRST_HELPER_CONDITIONAL:
+    STYLE_BLOCK += _FIRST_HELPER_LINE

@@ -228,6 +228,12 @@ async def run_preview(body: PreviewRequest) -> dict[str, Any]:
                 reply = guards.without_stray_script(
                     reply, *graph_module.stray_script_context(payload)
                 )
+            if guards.FIRST_HELPER_CONDITIONAL and reply:  # as run_turn does
+                reply = guards.without_assumed_first_helper(
+                    reply, *graph_module.stray_script_context(payload)
+                )
+            if guards.NO_APPROXIMATE_COST_ANYWHERE and reply:  # as run_turn does
+                reply = guards.without_figureless_approximate(reply)
             turns.append({
                 "message": text,
                 "reply": reply,

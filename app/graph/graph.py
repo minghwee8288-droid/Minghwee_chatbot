@@ -474,6 +474,14 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         result["reply"] = guards.without_stray_script(
             result["reply"], *stray_script_context(payload)
         )
+    # Step 5 item 9: "as this is your first helper" only where they said so.
+    if guards.FIRST_HELPER_CONDITIONAL and result.get("reply"):
+        result["reply"] = guards.without_assumed_first_helper(
+            result["reply"], *stray_script_context(payload)
+        )
+    # Step 5 item 17, every service: no "approximate" cost without a figure.
+    if guards.NO_APPROXIMATE_COST_ANYWHERE and result.get("reply"):
+        result["reply"] = guards.without_figureless_approximate(result["reply"])
     return result
 
 

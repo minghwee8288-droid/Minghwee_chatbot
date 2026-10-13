@@ -5585,6 +5585,98 @@ rows += [
  ("...run once, for every node, in run_turn and in the preview",
   _ss_switch_read_by_run_turn(), (True, True)),
 ]
+import importlib  # noqa: E402
+import inspect  # noqa: E402
+
+# Phase 3 Step 5 Batch B (items 1, 3, 4, 5, 9, 11, 17).
+from app.graph.prompts import style as _style  # noqa: E402
+from app.graph.prompts import templates as _templates  # noqa: E402
+from app.graph.prompts.system import build_system_prompt as _bsp  # noqa: E402
+_btr = importlib.import_module("app.graph.nodes.blocked_topic_responder")
+_ic_b = importlib.import_module("app.graph.nodes.info_collector")
+_PROMPT_MD = open("prompt.md", encoding="utf-8").read()
+
+rows += [
+ # item 1
+ ("item 1: the style guide asks one question per message, as rule 8 does",
+  ("Ask 2-3 at most" in _style.STYLE_BLOCK, _style._ASK_ONE in _style.STYLE_BLOCK,
+   _style._ASK_ONE in _bsp({"contact_type": "employer", "history_text": ""})),
+  (False, True, True)),
+ # item 3
+ ("item 3: the list instruction never says the timing depends on the case",
+  (_templates._TIMING_DEPENDS_ON_CASE in _templates.PROCESS_INSTRUCTION,
+   "depends on the case" in _templates.PROCESS_ADDENDUM,
+   "our agent will confirm the timeline" in _templates.PROCESS_INSTRUCTION,
+   "leave timing out" in _templates.PROCESS_INSTRUCTION),
+  (False, False, True, True)),
+ # item 4
+ ("item 4: the fixed messages promise nothing nobody does",
+  ("chasing" in _btr.CHASE_REPLY, "put together" in _btr.PROBE_REPLY,
+   "live agent" in _btr.CHASE_REPLY, "Our agent will take you through" in _btr.PROBE_REPLY),
+  (False, False, True, True)),
+ ("...and the old chase wording still counts as the chase already sent",
+  _btr._CHASE_REPLY_STEP4B in _btr._CHASE_REPLIES, True),
+ # item 5
+ ("item 5: prompt.md entries 38-39 quote the helper home-leave notes the code uses",
+  (_templates.HELPER_OWN_LEAVE_NOTE.strip() in _PROMPT_MD,
+   _templates.HELPER_HOME_LEAVE_BRIEFING_NOTE.strip() in _PROMPT_MD,
+   "It is arranged THROUGH HER EMPLOYER" in _PROMPT_MD),
+  (True, True, False)),
+ # item 9
+ ("item 9: 'as this is your first helper' becomes a condition",
+  (_guards.without_assumed_first_helper("As this is your first helper, she attends the SIP."),
+   _guards.without_assumed_first_helper("Since you are a first-time employer, you attend the EOP.")),
+  ("If this is your first helper, she attends the SIP.",
+   "If you are a first-time employer, you attend the EOP.")),
+ ("...including the replay's own wording",
+  _guards.without_assumed_first_helper(
+      "As this is your first time employing a helper, you need to complete the EOP."),
+  "If this is your first time employing a helper, you need to complete the EOP."),
+ ("...unless the client said it",
+  _guards.without_assumed_first_helper("As this is your first helper, she attends.",
+                                       "we have never hired a helper before"),
+  "As this is your first helper, she attends."),
+ ("...and the style guide says so", "if this is your first helper" in _style.STYLE_BLOCK, True),
+ # item 11
+ ("item 11: a known helper is named once, inside the question",
+  (_guards.one_mention_of_known_helper(
+      "Welcome back. We have Devi's details on record. Is this home leave for Devi, or for "
+      "another helper?", ["Devi"]),
+   _guards.one_mention_of_known_helper(
+      "Is this home leave for Devi, or another helper? When is Devi travelling?", ["Devi"])),
+  ("Welcome back. Is this home leave for Devi, or for another helper?",
+   "Is this home leave for Devi, or another helper?")),
+ ("...a reply with no confirmation question is left alone",
+  _guards.one_mention_of_known_helper("We have Devi on record.", ["Devi"]),
+  "We have Devi on record."),
+ ("...and the note says to name her only in the question",
+  "Name her ONLY inside this one question" in _ic_b.helper_confirm_note(
+      [{"helper_name": "Devi"}], "home leave"), True),
+ # item 17
+ ("item 17: a figure-free 'approximate' cost is replaced on any service",
+  (_guards.without_figureless_approximate(
+      "The direct hire fee is approximate and our agent will confirm it."),
+   _guards.without_figureless_approximate(
+      "The cost is approximate. Our agent will confirm the exact amount.")),
+  (_guards.NATIONALITY_FEE_DEFERRAL, "Our agent will confirm the exact amount.")),
+ ("...while a figure, and a timing, are left alone",
+  (_guards.without_figureless_approximate("The cost is approximately $695."),
+   _guards.without_figureless_approximate(
+      "It takes approximately 2 weeks, and our agent will confirm the cost.")),
+  ("The cost is approximately $695.",
+   "It takes approximately 2 weeks, and our agent will confirm the cost.")),
+ ("...and a cost sentence that also carries the timing keeps it",
+  _guards.without_figureless_approximate(
+      "The approximate cost will be confirmed by our agent, and it takes about 4 to 6 weeks."),
+  "The approximate cost will be confirmed by our agent, and it takes about 4 to 6 weeks."),
+ ("...and all three run once, in run_turn and in the preview",
+  tuple(name in inspect.getsource(m)
+        for name in ("FIRST_HELPER_CONDITIONAL", "NO_APPROXIMATE_COST_ANYWHERE")
+        for m in (importlib.import_module("app.graph.graph").run_turn,
+                  importlib.import_module("app.api.admin"))),
+  (True, True, True, True)),
+]
+
 bad = 0
 for label, got, want in rows:
     ok = got == want

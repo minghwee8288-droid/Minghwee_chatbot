@@ -929,6 +929,137 @@ def without_stray_script(reply: str, *client_text: str) -> str:
     return out
 
 
+# Phase 3 Step 5 item 9 (2026-10-13). "As this is your first helper, she must
+# attend the Settling-In Programme" states a fact nobody gave us. The record
+# fill says only "first time with us - no placement on record", which is about
+# OUR records: a client who employed a helper through another agency, or on
+# another number, is no first-timer. Said as a condition it is true either
+# way. Left as written when the client said so themselves.
+# False = the reply as the node wrote it.
+FIRST_HELPER_CONDITIONAL = True
+_ASSUMED_FIRST_HELPER = re.compile(
+    r"\b(as|since|because|given\s+that)\s+(?:this\s+is|it\s+is|it'?s|this'?s)\s+"
+    r"(your\s+first(?:\s+time\s+(?:hiring|employing|getting|having)\s+a)?\s+"
+    r"(?:domestic\s+)?(?:helper|maid|MDW|hire))\b",
+    re.IGNORECASE,
+)
+_ASSUMED_FIRST_TIME_EMPLOYER = re.compile(
+    r"\b(as|since|because|given\s+that)\s+you(?:'re|\s+are)\s+(a\s+first[- ]time\s+employer)\b",
+    re.IGNORECASE,
+)
+_SAYS_FIRST_HELPER = re.compile(
+    r"\b(?:my|our)\s+first\s+(?:domestic\s+)?(?:helper|maid|hire)\b|"
+    r"\bfirst\s+time\s+(?:hiring|employing|to\s+hire|getting|having)\b|"
+    r"\bfirst[- ]time\s+employer\b|"
+    r"\bnever\s+(?:hired|had|employed)\s+(?:a\s+)?(?:domestic\s+)?(?:helper|maid)",
+    re.IGNORECASE,
+)
+
+
+def _as_condition(match: re.Match, subject: str) -> str:
+    word = "If" if match.group(1)[0].isupper() else "if"
+    return f"{word} {subject} {match.group(2)}"
+
+
+def without_assumed_first_helper(reply: str, *client_text: str) -> str:
+    """'As this is your first helper, ...' -> 'If this is your first helper, ...'
+    unless the client said it is."""
+    body = reply or ""
+    if not body or _SAYS_FIRST_HELPER.search(" ".join(t or "" for t in client_text)):
+        return body
+    out = _ASSUMED_FIRST_HELPER.sub(lambda m: _as_condition(m, "this is"), body)
+    out = _ASSUMED_FIRST_TIME_EMPLOYER.sub(lambda m: _as_condition(m, "you are"), out)
+    if out != body:
+        logger.info("Reworded an assumed first helper as a condition")
+    return out
+
+
+def one_mention_of_known_helper(reply: str, names: list[str]) -> str:
+    """Step 5 item 11: a known helper is named once, inside the confirmation
+    question ("Is this home leave for Devi, or for another helper?"). Any
+    other sentence naming her - "We have Devi's details on record", or the
+    question asked a second time - is dropped. Left alone when no sentence
+    is the confirmation question."""
+    body = reply or ""
+    patterns = [
+        re.compile(rf"(?<!\w){re.escape(n.strip())}(?!\w)", re.IGNORECASE)
+        for n in names or [] if str(n or "").strip()
+    ]
+    if not body or not patterns:
+        return body
+    spans = _sentence_spans(body)
+
+    def names_her(i: int) -> bool:
+        return any(p.search(body[spans[i][0]:spans[i][1]]) for p in patterns)
+
+    confirm = [
+        i for i in range(len(spans))
+        if names_her(i) and "?" in body[spans[i][0]:spans[i][1]]
+    ]
+    if not confirm:
+        return body
+    drop = [i for i in range(len(spans)) if i != confirm[0] and names_her(i)]
+    if not drop:
+        return body
+    out = body
+    for i in reversed(drop):
+        start, end = spans[i]
+        out = out[:start] + out[end:]
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"(?m)^[ \t]+(?=\S)", "", out)
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    logger.info("Known helper named outside the confirmation question - %d sentence(s) dropped",
+                len(drop))
+    return out
+
+
+# Phase 3 Step 5 item 17, everywhere (2026-10-13). Step 4b stopped "the cost
+# is approximate" with no figure on the nationality-priced services. The same
+# sentence on a service we never price (direct hire, replacement) says nothing
+# either: there is no figure to approximate. Any sentence that calls a fee or
+# cost approximate and carries no amount is replaced with the deferral (or
+# dropped, where the reply already says our agent will confirm it). Tight on
+# purpose: "approximately 2 weeks ... our agent will confirm the cost" is a
+# timing, and stays. False = the reply as the node wrote it.
+NO_APPROXIMATE_COST_ANYWHERE = True
+_FIGURELESS_APPROXIMATE_COST = re.compile(
+    r"\b(?:fees?|costs?|prices?|charges?|amount)\b\s+(?:\w+\s+){0,3}?approximat\w*"
+    r"|\bapproximat\w*\s+(?:\w+\s+){0,2}?(?:fees?|costs?|prices?|charges?|amount)\b",
+    re.IGNORECASE,
+)
+
+
+def without_figureless_approximate(reply: str) -> str:
+    """'The cost is approximate and our agent will confirm it.' -> the deferral."""
+    body = reply or ""
+    if not body:
+        return body
+    offending = [
+        (start, end) for start, end in _sentence_spans(body)
+        if _FIGURELESS_APPROXIMATE_COST.search(body[start:end])
+        and not _MONEY.search(body[start:end])
+        and not re.search(r"\d", body[start:end])
+    ]
+    if not offending:
+        return body
+    rest = body
+    for start, end in reversed(offending):
+        rest = rest[:start] + rest[end:]
+    already = bool(_ALREADY_DEFERRED.search(rest))
+    out = body
+    for index, (start, end) in reversed(list(enumerate(offending))):
+        marker = re.match(r"\s*\d+\.\s+", out[start:end])
+        keep = marker.group(0) if marker else ""
+        replacement = keep + NATIONALITY_FEE_DEFERRAL if index == 0 and not already else ""
+        out = out[:start] + replacement + out[end:]
+    out = re.sub(r"(?m)^\s*\d+\.\s*$\n?", "", out)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"(?m)^[ \t]+(?=\S)", "", out)
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    logger.info("Replaced a figure-free 'approximate' cost sentence")
+    return out or NATIONALITY_FEE_DEFERRAL
+
+
 def client_lines(history_text: str) -> list[str]:
     """The client's own lines of a "Client:" / "You:" history."""
     return [line.split(":", 1)[1] for line in (history_text or "").splitlines()

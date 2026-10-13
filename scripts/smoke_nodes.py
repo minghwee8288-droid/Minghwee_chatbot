@@ -141,6 +141,18 @@ CASES = [
       "collected_info": {"full_name": "VD"}, "asked_field_counts": {},
       "known_helpers": [{"helper_name": "Yoyo", "nationality": "Indonesian"}],
       "_expect_prompt": 'Is this home leave for Yoyo, or for another helper?'}),
+    # Step 5 item 11: named once, inside the question - never stated and
+    # then asked about.
+    ("info_collector", "a known helper is named once, inside the confirmation question",
+     {"service_type": "home_leave", "intent": "home_leave",
+      "incoming_text": "my helper wants to go home",
+      "collected_info": {"full_name": "VD"}, "asked_field_counts": {},
+      "known_helpers": [{"helper_name": "Yoyo", "nationality": "Indonesian"}],
+      "_stub_extraction": {},
+      "_stub_reply": "We have Yoyo's details on record. Is this home leave for Yoyo, or for another helper?",
+      "_expect_prompt": "Name her ONLY inside this one question",
+      "_expect_reply": "Is this home leave for Yoyo, or for another helper?",
+      "_forbid_reply": "details on record"}),
     ("info_collector", "...and a yes confirms her, with what we hold about her",
      {"service_type": "home_leave", "intent": "home_leave",
       "incoming_text": "yes",
@@ -2058,6 +2070,16 @@ CASES = [
       "_expect_reply": "Noted"}),
     # 2026-10-12: a chase and an "are you there?" on a parked topic carry that
     # ticket's reference (app/graph/reference.py), inside the existing sentence.
+    # Step 5 item 4: pressed for why it costs that much, the client is told
+    # our agent takes them through it - never "let me put together".
+    ("blocked_topic_responder", "'why this much' is offered our agent, with the reference",
+     {"intent": "fee_enquiry", "service_type": "passport_renewal",
+      "incoming_text": "why this much?",
+      "history_text": "Client: how long does it take\nYou: Passport renewal takes roughly 6 to 8 weeks.",
+      "blocked_topics": {"passport_renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
+      "_stub_reply": "Passport renewal takes roughly 6 to 8 weeks.",
+      "_expect_reply": "Our agent will take you through exactly what it covers.",
+      "_forbid_reply": "put together"}),
     ("blocked_topic_responder", "a chase on a parked topic gives its ticket reference",
      {"intent": "case_enquiry", "service_type": "new_hiring",
       "incoming_text": "any update on my helper?",
@@ -2109,8 +2131,8 @@ CASES = [
                      "connect with you shortly.",
       "_expect_reply": "shortly. Your reference number is CB-2026-0033.",
       # CHASE_REPLY also carries "...shortly. Your reference number...", so the reply alone
-      # cannot tell the two paths apart.
-      "_forbid_reply": "chasing them"}),
+      # cannot tell the two paths apart; "has not been forgotten" is in both chase wordings.
+      "_forbid_reply": "has not been forgotten"}),
     # Step 2d, 2026-10-13, conversation 3766 (CB-2026-0033), the live shape:
     # "any update?" got a model-written holding line, then "ok can you tell me
     # any updates on this" got "Noted, I've added that for our agent" - the
@@ -2126,7 +2148,7 @@ CASES = [
                                      "captured_info": {"follow_ups": [{"message": "any update?"}]}}},
       "_stub_reply": "A live agent is already looking into Sharukkhan's Work Permit renewal and will "
                      "connect with you shortly. In the meantime, is there anything else I can help you with?",
-      "_expect_reply": "chasing them for you now",
+      "_expect_reply": "It is with a live agent, who will connect with you shortly",
       "_forbid_reply": "Noted"}),
     # ...and after a recognised holding line it is the chase branch, which a
     # detail used to skip.
@@ -2137,7 +2159,7 @@ CASES = [
       "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033",
                                      "captured_info": {"follow_ups": [{"message": "any update?"}]}}},
       "_stub_reply": "Noted, I've added that for our agent.",
-      "_expect_reply": "chasing them for you now",
+      "_expect_reply": "It is with a live agent, who will connect with you shortly",
       "_forbid_reply": "Noted"}),
     # ...while a real detail in the same place is still noted.
     ("blocked_topic_responder", "...while a real detail there is still noted",
@@ -2151,7 +2173,7 @@ CASES = [
       "_stub_reply": "A live agent is already looking into Sharukkhan's Work Permit renewal and will "
                      "connect with you shortly. In the meantime, is there anything else I can help you with?",
       "_expect_reply": "Noted",
-      "_forbid_reply": "chasing them"}),
+      "_forbid_reply": "has not been forgotten"}),
     # A request for OTHER work handed to a person raises a NEW ticket, which
     # handover_executor numbers - so it must not carry the parked one's.
     ("blocked_topic_responder", "a handover for other work does not carry the parked topic's reference",
@@ -3319,6 +3341,47 @@ async def _stray_script_checks() -> list[tuple[str, bool]]:
             got = (await graph_module.run_turn("t", {"incoming_text": "ဆရာ"}))["reply"]
             out.append(("stray script: a Burmese reply keeps Burmese, Claire, the reference",
                         got == burmese.replace(" " + glitch, "")))
+    return out
+
+
+async def _batch_b_checks() -> list[tuple[str, bool]]:
+    """Step 5 items 9 and 17, through the real run_turn."""
+    from app.graph import graph as graph_module
+    from app.graph import guards as guards_module
+
+    class _Graph:
+        def __init__(self, reply):
+            self.reply = reply
+
+        async def ainvoke(self, *_a, **_kw):
+            return {"reply": self.reply}
+
+    first = "As this is your first helper, she must attend the Settling-In Programme."
+    approx = "The direct hire fee is approximate and our agent will confirm it."
+    out = []
+    with patch.object(graph_module.kb_rules, "refresh", new=AsyncMock()):
+        async def turn(reply, payload=None):
+            with patch.object(graph_module, "get_graph", new=lambda: _Graph(reply)):
+                return (await graph_module.run_turn("t", payload or {}))["reply"]
+
+        out.append(("first helper: said as a condition",
+                    await turn(first, {"incoming_text": "what happens next?"})
+                    == "If this is your first helper, she must attend the Settling-In Programme."))
+        out.append(("first helper: kept where the client said so",
+                    await turn(first, {"incoming_text": "ok",
+                                       "history_text": "Client: this is my first helper\nYou: Noted."})
+                    == first))
+        with patch.object(guards_module, "FIRST_HELPER_CONDITIONAL", False):
+            out.append(("first helper: FIRST_HELPER_CONDITIONAL off -> as written",
+                        await turn(first) == first))
+        out.append(("approximate: a figure-free cost is our agent confirming it",
+                    await turn(approx) == guards_module.NATIONALITY_FEE_DEFERRAL))
+        out.append(("approximate: a timing 'approximately' stays",
+                    await turn("It takes approximately 4 to 6 weeks.")
+                    == "It takes approximately 4 to 6 weeks."))
+        with patch.object(guards_module, "NO_APPROXIMATE_COST_ANYWHERE", False):
+            out.append(("approximate: NO_APPROXIMATE_COST_ANYWHERE off -> as written",
+                        await turn(approx) == approx))
     return out
 
 
@@ -4708,6 +4771,9 @@ async def main() -> int:
         print(f"  {'PASS' if ok else 'FAIL'}  handover  {label:44}")
         failures += not ok
     for label, ok in await _tag_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  wording  {label:44}")
+        failures += not ok
+    for label, ok in await _batch_b_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  wording  {label:44}")
         failures += not ok
     for label, ok in await _stray_script_checks():
