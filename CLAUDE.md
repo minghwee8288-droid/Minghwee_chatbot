@@ -1555,6 +1555,87 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 
 ---
 
+## 10a. Phase 3 progress
+
+The staged programme run from 2026-10-12 (v2 prompt): one commit per step,
+stop and report after each, never deploy, production read-only, every new
+behaviour behind one switch. Details of each step are in §11.
+
+| Step | What | Commit |
+|---|---|---|
+| 0 | Stop tracking `.claude/settings.json` (it carried the webhook secret) | `ffc9928` |
+| A | Valid production baseline; e2e harness checks brought up to date; prompt.md tracked | `0a02792`, `8f470be`, `d3355f7` |
+| 1 | `TURN_TIMING` log line per turn + `scripts/latency_report.py` | `290ea5a` |
+| 1b | Typing indicator, smart debounce, shorter send pause, embedding cache, LLM timeouts | `be75cd8` |
+| 1c | Short debounce for an answer to our own question; smoke never calls Whapi | `60c57f7` |
+| 2 | Every handover tells the client its ticket reference | `da84d2e` |
+| 2b | Reference on every parked reply; a detail stays on its open topic | `5fdaa71` |
+| 2c | A briefing fetches its own records ($695); no "(MDW)" before a possessive | `35286ae` |
+| 1d | No Whapi `typing_time` under the indicator; search embedding starts beside the classifier | `d765360` |
+| 2d | An update request on a parked topic gets the status, never "Noted" | `c34e48c` |
+| 3 | A message not mainly in English always gets the harm check | `cfc0618` |
+| 2e | The reference as the agency's sentence, in the reply's language | `ab4bd17` |
+
+**Still to do, in order:** Step 4 (nationality-fee guard, Myanmar $450),
+Step 5 (below), Step 6 (combined questions: propose pairs, stop before
+wiring), Step 7 (escalation audit, read-only, report outside the repo),
+Step 8 (recognition harness: build, then stop before seeding with two options;
+the webhook builds `known_helpers` only when `contact_type == "employer"`).
+Final report: the unused `_carries_an_overview` in `scripts/e2e_services.py`
+can be removed. Parked, not in the programme: webhook secret rotation, the
+reset-ui password and the phone-number scrub (before go-live), fee figures and
+`cb_kb_rules`, the replacement scenario flow, cutting new-hiring questions,
+medical insurance rows, the supplier reply language ("respond in English",
+waiting on the client), the reference in the safety reply, the KB watcher.
+
+**Step 5 queue** (prompt contradictions and wording; same method: reproduce,
+fix, replay, assert, fault-inject). **Item 15 goes first.**
+
+1. Questions per message: the style guide's "ask 2-3 at most" against rule 8's
+   one per message. Make the style guide match rule 8 (Step 6 changes both).
+2. A helper offering herself for work: report what the code does for her and
+   for a supplier or agent offering a helper; make prompt.md entry 53 match
+   (she is collected, a third party is handed over). Stop if the code differs.
+3. "Depends on the case" (entry 50), banned 2026-09-17: if they asked about
+   timing and the records hold none, our agent will confirm the timeline;
+   otherwise leave timing out.
+4. Fixed messages that promise what nobody does: "I am chasing them for you
+   now" -> it is with a live agent who will connect shortly (keep the
+   reference); "Let me put together exactly what it covers..." -> our agent
+   will take them through exactly what it covers.
+5. prompt.md entries 38-39 still forbid a helper's own home-leave fee, which
+   she has been told since 2026-10-09. Describe the code; change no code.
+6. A mechanical guard: a collection-turn reply must contain the question it
+   was meant to ask, else the agency's written question (the transfer_employer
+   "I'll ask a few details" that asked nothing).
+7. Rest days: no or too few rest days -> acknowledge, state the MOM rule in one
+   sentence, continue. Only if the KB holds that rule (MOM guidelines); quote
+   only it, else stop and report. Never refuse or lecture.
+8. Timeline mismatch: wanted sooner than the briefing's timeline -> say so in
+   one sentence and mention a transfer helper in Singapore is usually faster.
+   KB timelines only.
+9. "First helper": never "as this is your first helper" unless the records
+   show it; otherwise "if this is your first helper".
+10. New hiring: "worked in Singapore before" / "Singapore experience" is an
+    experience preference, not a transfer (§9.37). No transfer timeline or fee
+    unless she chose the transfer option or said she is in Singapore now.
+11. (Never assigned.)
+12. A conditional fee (the $40 urgent home-leave surcharge) only when the
+    client stated the condition (urgent, rushed, emergency, a family matter
+    needing fast travel). From the KB rows "Home leave - urgent requests" and
+    "Home leave - cost", which stay untouched.
+13. The safety / harm reply never addresses the sender by a record name unless
+    the record confirms it is the sender's own (a helper may be writing on the
+    employer's thread). Default: no name. Seen in Step 3 (Burmese reply).
+14. A client writing Bahasa Indonesia gets Indonesian, not Malay - from the
+    client's words, never from nationality alone. Seen in Step 3 ("Sila
+    pastikan... hubungi polis").
+15. **Top priority.** Stray-script guard: remove runs of characters in a script
+    that is neither the reply's main script nor the client's, and always
+    remove known glitch strings ("天天彩票中奖" ended an Indonesian reply in
+    the Step 2e replay). Never strip names, the address, "Claire", CB
+    references or digits.
+
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
