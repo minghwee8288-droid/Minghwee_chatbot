@@ -493,7 +493,7 @@ because the lead is opened early and the ticket is created much later.
 | "typing..." is shown only where a reply is coming, and never outlives the turn | `app/whapi/typing.py` + `webhook` (`handle_inbound` start, stop after send and in `process_batch`'s `finally`) | Started only past every gate, and not for a message `needs_no_reply` would leave unanswered or a chat with a parked topic. A late start (the turn finished while it was still deciding) is refused, so it cannot reappear after the reply. Best effort throughout: a presence call never delays or fails a turn. |
 | A client who has finished does not wait the full debounce | `webhook.debounce_delay` / `looks_complete` + `MessageDebouncer(delay_for=)` | "?", 6+ words or a transcribed voice note -> `DEBOUNCE_SHORT_SECONDS`; a greeting, a fragment or bare media -> `DEBOUNCE_SECONDS`. The newest message decides and every message restarts the timer, so "hi" / "I need" / a full sentence is still one reply. A short answer to our own question ("Filipino") is complete too, unless it is a greeting or trails off. |
 | A stuck LLM call is cut, retried once, and never retried a third time | `llm.LLM_TIMEOUTS` + `_invoke_with_timeout` | Limits several times the measured p90 per purpose; the client's own retries are off under them; a 400-class error is not retried. |
-| Every handover tells the client its ticket reference, inside the sentence it already has | `app/graph/reference.py` (`add_reference`) from `handover_executor` + `blocked_topic_responder` | The reply is written before the ticket exists, so the number is added afterwards: after "...to our team", else before the end of the live-agent sentence, else before the end of a sentence naming our agent; a reply with no such sentence is left alone, never given a new one. A message folded into an open ticket shows THAT ticket's number. Not on the safety reply (`SAFETY_REPLY_SHOWS_REFERENCE`, waiting on the agency). `ungrounded_figures` strips `guards.TICKET_REFERENCE` before reading figures. |
+| Every handover tells the client its ticket reference, as the agency's sentence after the one it already has | `app/graph/reference.py` (`add_reference`, `REFERENCE_AS_SENTENCE`) from `handover_executor` + `blocked_topic_responder` | The reply is written before the ticket exists, so the number is added afterwards, after the sentence with "...to our team", else the live-agent sentence, else one naming our agent (in English or the reply's language); a reply with no such sentence is left alone. Step 2e: "Your reference number is CB-2026-NNNN. Please quote it whenever you ask about this request." the first time, "Your reference number is CB-2026-NNNN." once our earlier messages carry it, in the reply's language (`language.reply_language`, dominant script, else function words; the translations are unverified). Added after the clamp, which nothing re-runs. A message folded into an open ticket shows THAT ticket's number. Not on the safety reply (`SAFETY_REPLY_SHOWS_REFERENCE`, waiting on the agency). `ungrounded_figures` strips `guards.TICKET_REFERENCE` before reading figures. |
 | Every reply on a parked topic that mentions the agent carries that topic's reference | `blocked_topic_responder` (applied once at the node's exit, `REFERENCE_ON_EVERY_PARKED_REPLY`) + the sweep in `smoke_nodes._run_case` | Step 2b: the first chase after a handover went down the model-written holding line with no reference, while the canned chase had one. Not on `NEW_SERVICE_HANDOVER`: that raises a new ticket, which handover_executor numbers. |
 | A detail about a topic whose ticket is open stays on that topic | `intent_classifier.states_a_detail` + `DETAIL_STAYS_ON_PARKED_TOPIC`; the responder does not chase it | "also please note she prefers to fly on a weekend" was read as `home_leave` and opened a new intake beside open renewal CB-2026-0033. Naming another service, asking for something (anyone's want/need) or asking a question still switches; "please note"/"fyi" make it a detail even with a want in it. |
 | An update request on a parked topic gets the status, never "Noted" | `intent_classifier.asks_for_an_update` (`CHASE_BEFORE_NOTE`), read by `states_a_detail`, `adds_information`, `answers_our_question` and the responder's repeat path | "ok can you tell me any updates on this" was filed as a detail (live 3766, CB-2026-0033): `any\s+update\b` misses the plural and `_ASKS_US` is anchored at the start, which "ok" defeats. With or without "?". A real detail ("she prefers window seat") is still noted. |
@@ -744,6 +744,8 @@ Easy to get wrong:
   `intent_classifier.CHASE_BEFORE_NOTE`.
   Step 3's one, `False` for the Step 2d behaviour (English keywords only):
   `intent_classifier.NON_ENGLISH_HARM_CHECK`.
+  Step 2e's one, `False` for the bracket "(reference CB-...)" form:
+  `reference.REFERENCE_AS_SENTENCE`.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1556,6 +1558,36 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-13** - **Step 2e: the reference in the agency's words.** The
+  bracket inside the handover sentence ("...shortly (reference CB-2026-0033).")
+  is now a plain sentence after it: "Your reference number is CB-2026-0033.
+  Please quote it whenever you ask about this request." when the ticket is
+  raised, and "Your reference number is CB-2026-0033." once our earlier
+  messages carry the number (read from the history, so a reply on a ticket
+  raised before this change gets the long form once). In the reply's language:
+  English, Indonesian, Malay, Tagalog, Chinese, Burmese, Tamil, Hindi - our
+  translations, not checked by a native speaker. Until now only an English
+  phrase could anchor the reference, so a reply in another language carried
+  none; the agent and team words of those languages anchor it now, and the
+  sentence marks of Burmese and Chinese end a sentence. The complaint closing
+  keeps its own wording ("logged under reference ..."), from the agency's
+  example. `REFERENCE_AS_SENTENCE = False` restores the bracket.
+  **Found in the replay, and fixed:** the model ended an Indonesian reply with
+  six stray Chinese characters, and reading any CJK as Chinese put a Chinese
+  reference sentence into it; the language is the DOMINANT script now. **Not
+  fixed, recorded:** the stray characters themselves ("天天彩票中奖", a glitch
+  string) reached the reply - no guard catches stray CJK in a Latin-script
+  reply (`is_degenerate` is weak on unspaced scripts, section 5).
+  **Verified:** 3766 replayed read-only through the real model: the renewal
+  briefing ends "...shortly. Your reference number is CB-2026-0099. Please
+  quote it whenever you ask about this request. In the meantime, ..." (2 of 2,
+  stand-in number), and both chases carry the short form (4 of 4); an
+  Indonesian chase gets "Nomor referensi Anda adalah CB-2026-0033." 7 existing
+  checks moved to the new wording; 12 new. 9 faults injected, 9 red - after
+  one was GREEN because the expected text is in both forms; that state now
+  also forbids the long form. `smoke_nodes.py` is **404 checks**. E2E 7 of 7,
+  0 refusals (it raises no ticket, so no reference appears in it).
 
 - **2026-10-13** - **Step 3: the harm check for a message not mainly in
   English.** The deterministic safety nets are English (section 9.2): "Majikan

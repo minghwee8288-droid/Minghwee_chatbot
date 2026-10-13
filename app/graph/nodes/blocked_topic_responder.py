@@ -536,7 +536,9 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
     result = await _respond(state)
     if REFERENCE_ON_EVERY_PARKED_REPLY and result.get("reply") and not result.get("needs_handover"):
         _, ticket = _current_topic(state)
-        result["reply"] = add_reference(result["reply"], ticket.get("ticket_number"))
+        result["reply"] = add_reference(
+            result["reply"], ticket.get("ticket_number"), state.get("history_text") or ""
+        )
     return result
 
 
@@ -633,6 +635,7 @@ async def _respond(state: ConversationState) -> dict[str, Any]:
             "reply": add_reference(
                 CHASE_REPLY if already_said else STILL_HERE_REPLY,
                 ticket.get("ticket_number"),
+                state.get("history_text") or "",
             ),
             "needs_handover": False,
         }
@@ -702,7 +705,9 @@ async def _respond(state: ConversationState) -> dict[str, Any]:
         ):
             return {"reply": "", "suppress_reply": True, "needs_handover": False}
         return {
-            "reply": add_reference(CHASE_REPLY, ticket.get("ticket_number")),
+            "reply": add_reference(
+                CHASE_REPLY, ticket.get("ticket_number"), state.get("history_text") or ""
+            ),
             "needs_handover": False,
         }
 
@@ -865,7 +870,9 @@ async def _respond(state: ConversationState) -> dict[str, Any]:
                     state.get("conversation_id"), topic_key,
                 )
                 return {
-                    "reply": add_reference(CHASE_REPLY, ticket.get("ticket_number")),
+                    "reply": add_reference(
+                CHASE_REPLY, ticket.get("ticket_number"), state.get("history_text") or ""
+            ),
                     "needs_handover": False,
                 }
         elif adds_information(message):

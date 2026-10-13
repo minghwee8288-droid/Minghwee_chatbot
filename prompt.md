@@ -1918,11 +1918,16 @@ closing briefing (entry 43) add that briefing to this message.
 **The ticket reference is added by the code, after this prompt has run.** The
 ticket does not exist yet when the message is written, so the prompt still tells
 the AI never to mention a ticket (it would have to invent the number). Once the
-ticket is raised, the code puts its reference inside the handover sentence, not
-as a new sentence: "I've passed everything to our team (reference CB-2026-0142),
-and a live agent will connect with you shortly." If the message joins a ticket
-that is already open, that ticket's reference is used. The safety reply to a
-harm report carries no reference for now (waiting on the agency).
+ticket is raised, the code adds the agency's sentence straight after the handover
+sentence (since 2026-10-13, Step 2e): "I've passed everything to our team, and a
+live agent will connect with you shortly. Your reference number is
+CB-2026-0142. Please quote it whenever you ask about this request." Once our
+earlier messages have given the number, later replies say only "Your reference
+number is CB-2026-0142." The sentence is in the language of the reply
+(Indonesian, Malay, Tagalog, Chinese, Burmese, Tamil, Hindi, else English). If
+the message joins a ticket that is already open, that ticket's reference is
+used. The safety reply to a harm report carries no reference for now (waiting on
+the agency).
 
 ### Prompt
 ```text
@@ -1946,7 +1951,7 @@ asked for her name and country and then heard nothing.
 ### What does it make the chatbot do?
 It acknowledges the message and says a live agent will connect shortly, without
 asking anything. As with entry 40, the code then adds the ticket reference
-inside the sentence that says a live agent will connect.
+sentence after the sentence that says a live agent will connect.
 
 ### Prompt
 ```text
@@ -2752,8 +2757,10 @@ it, in at most two sentences.
 
 **Every reply on a topic already with an agent that mentions the agent carries
 that topic's ticket reference** (since 2026-10-13), added by the code after this
-prompt has run, inside the sentence: "A live agent is handling this and will
-connect with you shortly (reference CB-2026-0142)." This applies whichever
+prompt has run, as a sentence after the one that mentions the agent: "A live
+agent is handling this and will connect with you shortly. Your reference number
+is CB-2026-0142." (the longer "Please quote it..." form only if our earlier
+messages never gave the number; in the reply's language). This applies whichever
 message it is - this one, the fixed chase and "are you there?" lines in the
 Appendix, the fallback line, or "Noted, I've added that for our agent". The
 prompt itself is unchanged and still never mentions a ticket.
@@ -3010,8 +3017,8 @@ client might receive.
 | A complaint, first reply | "{Hi {name}, I'm Claire, Ming Hwee's AI assistant.} I'm sorry to hear that, and I want to make sure this is handled properly. Please tell me here: your name, your case or helper details and what happened. Your complaint will be logged and a senior team member will contact you within one working day. For urgent matters, you can call us on 6534 2277." *(only the missing details are asked for; the introduction is included only if Claire has not spoken before)* |
 | A complaint, once logged | "Thank you, {name}. Your complaint has been logged under reference {ticket number}, and a senior team member will contact you within one working day. For urgent matters, you can call us on 6534 2277." |
 | Fallback if the safety reply cannot be written | "I'm really sorry to hear this. Please make sure everyone is safe right now — if anyone is in danger, call the police at 999 immediately. I've alerted our team and a live agent will connect with you shortly." |
-| Client chases a topic already with an agent | "I hear you — this has not been forgotten. It is with a live agent and I am chasing them for you now, so they should connect with you shortly (reference CB-2026-0142). Anything else I can help with while you wait?" (the reference is that topic's own ticket) |
-| Client asks "are you there?" while a topic is with an agent | "I'm here! This one is with a live agent and they'll connect with you shortly (reference CB-2026-0142). In the meantime, is there anything else I can help you with?" (the reference is that topic's own ticket) |
+| Client chases a topic already with an agent | "I hear you — this has not been forgotten. It is with a live agent and I am chasing them for you now, so they should connect with you shortly. Your reference number is CB-2026-0142. Anything else I can help with while you wait?" (the reference is that topic's own ticket) |
+| Client asks "are you there?" while a topic is with an agent | "I'm here! This one is with a live agent and they'll connect with you shortly. Your reference number is CB-2026-0142. In the meantime, is there anything else I can help you with?" (the reference is that topic's own ticket) |
 | Client asks "are you there?" after the bot has stepped back for an agent | "I'm here! This is with a live agent and they'll connect with you shortly. In the meantime, is there anything else I can help you with?" |
 | Client asks why a price is what it is, on a topic with an agent | "That is the standard rate for the service. Let me put together exactly what it covers so I can walk you through it properly." |
 | Client says they want another service but does not name it | "Of course — which service can I help you with?" |

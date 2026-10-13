@@ -2041,14 +2041,14 @@ CASES = [
                       "and a live agent will connect with you shortly.\nClient: any update?\n"
                       "You: Still checking on this with the team for you.",
       "blocked_topics": {"new_hiring": {"ticket_id": 1, "ticket_number": "CB-2026-0031"}},
-      "_expect_reply": "(reference CB-2026-0031)"}),
+      "_expect_reply": "Your reference number is CB-2026-0031."}),
     ("blocked_topic_responder", "...and so does 'are you there?'",
      {"intent": "other", "service_type": "new_hiring",
       "incoming_text": "are you there?",
       "history_text": "Client: I want to hire a helper\nYou: I've passed everything to our team, "
                       "and a live agent will connect with you shortly.",
       "blocked_topics": {"new_hiring": {"ticket_id": 1, "ticket_number": "CB-2026-0031"}},
-      "_expect_reply": "(reference CB-2026-0031)"}),
+      "_expect_reply": "Your reference number is CB-2026-0031."}),
     # Step 2b, 2026-10-13, conversation 3766 (CB-2026-0033). The FIRST chase
     # after the handover went down the generated holding-line path, and the
     # model's "A live agent is handling this..." arrived with no reference.
@@ -2063,14 +2063,16 @@ CASES = [
       "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
       "_stub_reply": "A live agent is handling this and will connect with you shortly. "
                      "In the meantime, is there anything else I can help you with?",
-      "_expect_reply": "shortly (reference CB-2026-0033)."}),
+      "_expect_reply": "shortly. Your reference number is CB-2026-0033.",
+      # Step 2e: our closing already gave the number, so the short form only.
+      "_forbid_reply": "Please quote it"}),
     ("blocked_topic_responder", "...and the vetted fallback line gives it too",
      {"intent": "case_enquiry", "service_type": "renewal",
       "incoming_text": "any update on this",
       "history_text": "Client: in 3 weels\nYou: Thank you, I've passed everything to our team.",
       "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
       "_stub_reply": "We sent it all to the agency and they have passed it up to a live agent.",
-      "_expect_reply": "(reference CB-2026-0033)"}),
+      "_expect_reply": "Your reference number is CB-2026-0033."}),
     # The detail itself, after the chase reply had gone out: noted on the
     # ticket and acknowledged, never answered "I am chasing them" or silence.
     ("blocked_topic_responder", "a new detail after a chase is noted with the reference, not chased",
@@ -2081,8 +2083,8 @@ CASES = [
                                      "captured_info": {"follow_ups": [{"message": "any update on this"}]}}},
       "_stub_reply": "Noted, I've added that she prefers to fly on a weekend. A live agent will "
                      "connect with you shortly.",
-      "_expect_reply": "shortly (reference CB-2026-0033).",
-      # CHASE_REPLY also ends "...shortly (reference ...)", so the reply alone
+      "_expect_reply": "shortly. Your reference number is CB-2026-0033.",
+      # CHASE_REPLY also carries "...shortly. Your reference number...", so the reply alone
       # cannot tell the two paths apart.
       "_forbid_reply": "chasing them"}),
     # Step 2d, 2026-10-13, conversation 3766 (CB-2026-0033), the live shape:
@@ -2843,11 +2845,13 @@ async def _reference_checks() -> list[tuple[str, bool]]:
 
     results = []
     reply, create = await run(base)
-    results.append(("reference: a new ticket shows its number, in the handover sentence",
-                    "our team (reference CB-2026-0099), and a live agent" in reply))
-    results.append(("reference: ...without adding a sentence",
-                    _guards.clamp_reply(reply, 3) == _guards.clamp_reply(closing, 3).replace(
-                        "our team,", "our team (reference CB-2026-0099),")))
+    # Step 2e: the agency's wording, a plain sentence after the handover one.
+    _first = ("Your reference number is CB-2026-0099. Please quote it whenever you ask "
+              "about this request.")
+    results.append(("reference: a new ticket gives its number as the agency's sentence",
+                    _first in reply and "(reference" not in reply))
+    results.append(("reference: ...straight after the handover sentence, nothing else changed",
+                    reply == closing.replace("shortly. ", "shortly. " + _first + " ")))
 
     reply, create = await run(base, merge_target={"id": "t-7", "ticket_number": "CB-2026-0007"})
     results.append(("reference: a message folded into a ticket shows THAT ticket's number",
@@ -2882,6 +2886,49 @@ async def _reference_checks() -> list[tuple[str, bool]]:
                     _guards.ungrounded_figures("It costs $450 (reference CB-2026-0142).", "") == ["450"]))
     results.append(("reference: strip_handover_talk keeps it",
                     "(reference CB-2026-0142)" in _guards.strip_handover_talk(with_ref)))
+
+    # Step 2e: the sentence form - short once told, in the reply's language,
+    # and the bracket back with the switch off.
+    ref = importlib.import_module("app.graph.reference")
+    held = "A live agent is handling this and will connect with you shortly."
+    told = "You: ... Your reference number is CB-2026-0142. Please quote it whenever you ask about this request."
+    later = ref.add_reference(held, "CB-2026-0142", told)
+    results.append(("reference 2e: a later reply gives the short sentence only",
+                    later == held + " Your reference number is CB-2026-0142."))
+    results.append(("reference 2e: the first time it says to quote it",
+                    "Please quote it whenever you ask about this request." in
+                    ref.add_reference(held, "CB-2026-0142", "")))
+    with_sentence = ref.add_reference(held, "CB-2026-0142", "")
+    results.append(("reference 2e: ungrounded_figures does not read the sentence as a figure",
+                    _guards.ungrounded_figures(with_sentence, "") == []))
+    results.append(("reference 2e: strip_handover_talk keeps the sentence",
+                    "Your reference number is CB-2026-0142." in _guards.strip_handover_talk(with_sentence)))
+    for code, text, expect in (
+        ("Indonesian", "Terima kasih. Saya sudah meneruskan semua ke tim kami, dan agen akan "
+                       "segera menghubungi Anda.", "Nomor referensi Anda adalah CB-2026-0142. Mohon"),
+        ("Malay", "Saya telah memaklumkan pasukan kami, dan ejen kami akan menghubungi anda "
+                  "tidak lama lagi. Sila tunggu.", "Nombor rujukan anda ialah CB-2026-0142. Sila"),
+        ("Tagalog", "Salamat po. Naipasa ko na ito sa aming team, at kokontakin ka ng live agent.",
+                    "Ang iyong reference number ay CB-2026-0142."),
+        ("Chinese", "好的，我已将所有资料转交给我们的团队，专员会尽快联系您。还有什么可以帮您？",
+                    "联系您。您的参考编号是 CB-2026-0142。"),
+        ("Burmese", "ကျေးဇူးတင်ပါတယ်။ live agent တစ်ဦး မကြာမီ ဆက်သွယ်ပါမယ်။ အခြားကူညီစရာ ရှိပါသလား။",
+                    "ဆက်သွယ်ပါမယ်။ သင့်ရည်ညွှန်းနံပါတ်မှာ CB-2026-0142"),
+        # Live replay: the model ended an Indonesian reply with stray Chinese.
+        ("Indonesian with stray Chinese", "Agen kami sedang menangani perpanjangan Work Permit "
+                                          "dan akan menghubungi Anda segera. 天天彩票中奖",
+                    "segera. Nomor referensi Anda adalah CB-2026-0142."),
+    ):
+        got = ref.add_reference(text, "CB-2026-0142", "")
+        results.append((f"reference 2e: in the reply's language ({code})",
+                        expect in got and "Your reference number" not in got))
+    results.append(("reference 2e: a reply that mentions no agent is left alone",
+                    ref.add_reference("Noted, thanks.", "CB-2026-0142", "") == "Noted, thanks."))
+    with patch.object(ref, "REFERENCE_AS_SENTENCE", False):
+        results.append(("reference 2e: switch off -> the bracket, as before",
+                        ref.add_reference(held, "CB-2026-0142", "")
+                        == "A live agent is handling this and will connect with you shortly "
+                           "(reference CB-2026-0142)."))
     return results
 
 

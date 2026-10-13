@@ -127,7 +127,7 @@ async def handover_executor(state: ConversationState) -> dict[str, Any]:
     reply = update.get("reply") or state.get("reply") or ""
     number = update.get("ticket_number") or state.get("ticket_number")
     if reply and number and (intent != "dispute_assault" or SAFETY_REPLY_SHOWS_REFERENCE):
-        referenced = add_reference(reply, number)
+        referenced = add_reference(reply, number, state.get("history_text") or "")
         if referenced != reply:
             update["reply"] = referenced
 
