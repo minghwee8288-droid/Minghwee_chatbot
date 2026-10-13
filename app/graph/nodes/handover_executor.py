@@ -15,6 +15,7 @@ from typing import Any
 from app.graph.llm import complete
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import ASSAULT_INSTRUCTION
+from app.graph.reference import add_reference
 from app.graph.state import ConversationState, conversation_ref
 from app.services import assignment as assignment_service
 from app.services import handover as handover_service
@@ -30,6 +31,11 @@ ASSAULT_FALLBACK_REPLY = (
     "if anyone is in danger, call the police at 999 immediately. I've alerted our "
     "team and a live agent will connect with you shortly."
 )
+
+# Whether the safety reply to a harm report carries the ticket reference.
+# Off until the agency decides (2026-10-12): it is the one message that goes to
+# someone reporting harm, and what it should say is theirs to settle.
+SAFETY_REPLY_SHOWS_REFERENCE = False
 
 REASON_BY_INTENT = {
     "dispute_assault": handover_service.REASON_DISPUTE,
@@ -114,6 +120,16 @@ async def handover_executor(state: ConversationState) -> dict[str, Any]:
         assignment_rule=update.get("assignment_rule") or state.get("assignment_rule"),
         contact_type=state.get("contact_type") or state.get("detected_contact_type"),
     )
+
+    # The ticket's reference in the handover sentence the reply already has
+    # (app/graph/reference.py). ticket_creator ran just before this node, so
+    # the number - new, or the ticket this message was folded into - is here.
+    reply = update.get("reply") or state.get("reply") or ""
+    number = update.get("ticket_number") or state.get("ticket_number")
+    if reply and number and (intent != "dispute_assault" or SAFETY_REPLY_SHOWS_REFERENCE):
+        referenced = add_reference(reply, number)
+        if referenced != reply:
+            update["reply"] = referenced
 
     update.update(
         {

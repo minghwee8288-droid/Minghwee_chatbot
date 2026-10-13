@@ -1885,6 +1885,23 @@ CASES = [
                                         "captured_info": {"follow_ups": [{"message": "all of this"}]}}},
       "_stub_reply": "A live agent is handling your new helper enquiry and will connect with you shortly.",
       "_expect_reply": "Noted"}),
+    # 2026-10-12: a chase and an "are you there?" on a parked topic carry that
+    # ticket's reference (app/graph/reference.py), inside the existing sentence.
+    ("blocked_topic_responder", "a chase on a parked topic gives its ticket reference",
+     {"intent": "case_enquiry", "service_type": "new_hiring",
+      "incoming_text": "any update on my helper?",
+      "history_text": "Client: I want to hire a helper\nYou: I've passed everything to our team, "
+                      "and a live agent will connect with you shortly.\nClient: any update?\n"
+                      "You: Still checking on this with the team for you.",
+      "blocked_topics": {"new_hiring": {"ticket_id": 1, "ticket_number": "CB-2026-0031"}},
+      "_expect_reply": "(reference CB-2026-0031)"}),
+    ("blocked_topic_responder", "...and so does 'are you there?'",
+     {"intent": "other", "service_type": "new_hiring",
+      "incoming_text": "are you there?",
+      "history_text": "Client: I want to hire a helper\nYou: I've passed everything to our team, "
+                      "and a live agent will connect with you shortly.",
+      "blocked_topics": {"new_hiring": {"ticket_id": 1, "ticket_number": "CB-2026-0031"}},
+      "_expect_reply": "(reference CB-2026-0031)"}),
     ("blocked_topic_responder", "process question, parked",
      {"intent": "process_question", "service_type": "new_hiring",
       "incoming_text": "what is the full process for hiring a helper",
@@ -2539,6 +2556,90 @@ RUNNERS = {
     "blocked_topic_responder": _run_blocked_topic_responder,
     "intent_classifier": _run_intent_classifier,
 }
+
+
+async def _reference_checks() -> list[tuple[str, bool]]:
+    """The ticket reference in the handover sentence (app/graph/reference.py).
+
+    Runs ticket_creator and then handover_executor, the order the graph runs
+    them, with the insert, the merge lookup, the assignment and the handover
+    log stubbed - so the number that reaches the reply is the one the real
+    ticket_creator handed on, for a new ticket and for one it was folded into.
+    """
+    from app.config import settings as _settings
+    from app.graph import guards as _guards
+    import importlib
+    hx = importlib.import_module("app.graph.nodes.handover_executor")
+    tc = importlib.import_module("app.graph.nodes.ticket_creator")
+
+    closing = ("Thank you, Vaidik. I've passed everything to our team, and a live agent "
+               "will connect with you shortly. In the meantime, is there anything else I "
+               "can help you with?")
+    base = {"conversation_id": 77, "phone": "+6590000126", "intent": "renewal",
+            "service_type": "renewal", "contact_type": "employer",
+            "collected_info": {"full_name": "Vaidik", "helper_name": "Siti",
+                               "permit_expiry": "next month"},
+            "blocked_topics": {}, "reply": closing, "incoming_text": "next month"}
+
+    async def run(state, merge_target=None):
+        create = AsyncMock(return_value={"id": "t-1", "ticket_number": "CB-2026-0099"})
+        with patch.object(tc.ticket_service, "create", new=create), \
+             patch.object(tc.ticket_service, "pick_ticket_to_update",
+                          new=AsyncMock(return_value=merge_target)), \
+             patch.object(tc.ticket_service, "merge_into", new=AsyncMock()), \
+             patch.object(tc.assignment_service, "resolve_agent",
+                          new=AsyncMock(return_value=(None, "unassigned"))), \
+             patch.object(tc, "_finish_lead", new=AsyncMock(return_value=None)), \
+             patch.object(tc, "_maybe_create_lead", new=AsyncMock(return_value=None)), \
+             patch.object(hx.handover_service, "log_escalation",
+                          new=AsyncMock(return_value={})):
+            state = dict(state)
+            state.update(await tc.ticket_creator(state))
+            out = await hx.handover_executor(state)
+        return out.get("reply", state.get("reply")), create
+
+    results = []
+    reply, create = await run(base)
+    results.append(("reference: a new ticket shows its number, in the handover sentence",
+                    "our team (reference CB-2026-0099), and a live agent" in reply))
+    results.append(("reference: ...without adding a sentence",
+                    _guards.clamp_reply(reply, 3) == _guards.clamp_reply(closing, 3).replace(
+                        "our team,", "our team (reference CB-2026-0099),")))
+
+    reply, create = await run(base, merge_target={"id": "t-7", "ticket_number": "CB-2026-0007"})
+    results.append(("reference: a message folded into a ticket shows THAT ticket's number",
+                    "CB-2026-0007" in reply and "CB-2026-0099" not in reply
+                    and not create.await_count))
+
+    assault = dict(base, intent="dispute_assault", service_type="dispute_assault",
+                   reply=hx.ASSAULT_FALLBACK_REPLY, ticket_id="t-9",
+                   ticket_number="CB-2026-0009")
+    with patch.object(hx.handover_service, "log_escalation", new=AsyncMock(return_value={})):
+        out = await hx.handover_executor(assault)
+    results.append(("reference: the safety reply shows none (SAFETY_REPLY_SHOWS_REFERENCE)",
+                    "CB-2026" not in (out.get("reply") or assault["reply"])))
+
+    with patch.object(_settings, "handover_reference", False):
+        reply, _ = await run(base)
+    results.append(("reference: HANDOVER_REFERENCE off -> the old wording", reply == closing))
+
+    from app.graph.reference import add_reference
+    # A closing that already carries its number AND a handover phrase, so the
+    # duplicate check is the only thing stopping a second copy (the first
+    # version had no phrase to insert at, and passed with the check removed).
+    complaint = ("I've passed this to our team under reference CB-2026-0099, and a "
+                 "live agent will connect with you shortly.")
+    results.append(("reference: never added twice (a closing that already has it)",
+                    add_reference(complaint, "CB-2026-0099") == complaint))
+
+    with_ref = "I've passed this to our team (reference CB-2026-0142), and a live agent will connect with you shortly."
+    results.append(("reference: ungrounded_figures does not read it as a figure",
+                    _guards.ungrounded_figures(with_ref, "") == []))
+    results.append(("reference: ...and still catches a real price beside it",
+                    _guards.ungrounded_figures("It costs $450 (reference CB-2026-0142).", "") == ["450"]))
+    results.append(("reference: strip_handover_talk keeps it",
+                    "(reference CB-2026-0142)" in _guards.strip_handover_talk(with_ref)))
+    return results
 
 
 async def _timing_checks() -> list[tuple[str, bool]]:
@@ -3790,6 +3891,9 @@ async def main() -> int:
         failures += not ok
     for label, ok in await _step1b_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  latency  {label:44}")
+        failures += not ok
+    for label, ok in await _reference_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  handover  {label:44}")
         failures += not ok
 
     off = await _pass(kb_rules.DEFAULTS)

@@ -72,6 +72,8 @@ app/
     closure.py       "say nothing" path (acknowledgements, closings)
     complaint.py     a complaint's fixed opening and closing (the wait, the number
                      to call, the ticket reference) - written here, not by the model
+    reference.py     the ticket's CB-YYYY-NNNN, put into the handover sentence the
+                     reply already has (handover_executor; parked-topic chases)
     llm.py           OpenRouter via langchain_openai; complete() / complete_json()
     checkpointer.py  rewrites LangGraph SQL to cb_-prefixed tables
     nodes/           intent_classifier, rag_retriever, response_generator,
@@ -488,6 +490,7 @@ because the lead is opened early and the ticket is created much later.
 | "typing..." is shown only where a reply is coming, and never outlives the turn | `app/whapi/typing.py` + `webhook` (`handle_inbound` start, stop after send and in `process_batch`'s `finally`) | Started only past every gate, and not for a message `needs_no_reply` would leave unanswered or a chat with a parked topic. A late start (the turn finished while it was still deciding) is refused, so it cannot reappear after the reply. Best effort throughout: a presence call never delays or fails a turn. |
 | A client who has finished does not wait the full debounce | `webhook.debounce_delay` / `looks_complete` + `MessageDebouncer(delay_for=)` | "?", 6+ words or a transcribed voice note -> `DEBOUNCE_SHORT_SECONDS`; a greeting, a fragment or bare media -> `DEBOUNCE_SECONDS`. The newest message decides and every message restarts the timer, so "hi" / "I need" / a full sentence is still one reply. A short answer to our own question ("Filipino") is complete too, unless it is a greeting or trails off. |
 | A stuck LLM call is cut, retried once, and never retried a third time | `llm.LLM_TIMEOUTS` + `_invoke_with_timeout` | Limits several times the measured p90 per purpose; the client's own retries are off under them; a 400-class error is not retried. |
+| Every handover tells the client its ticket reference, inside the sentence it already has | `app/graph/reference.py` (`add_reference`) from `handover_executor` + `blocked_topic_responder` | The reply is written before the ticket exists, so the number is added afterwards: after "...to our team", else before the end of the live-agent sentence; a reply with no handover sentence is left alone, never given a new one. A message folded into an open ticket shows THAT ticket's number. The chase and "are you there?" replies on a parked topic carry its number. Not on the safety reply (`SAFETY_REPLY_SHOWS_REFERENCE`, waiting on the agency). `ungrounded_figures` strips `guards.TICKET_REFERENCE` before reading figures. |
 | The timing line never costs a reply and never carries a client's words | `app/timing.py` + `smoke_nodes.py` (`_timing_checks`) | Every entry point swallows its own errors, the line holds the conversation id, durations and TABLE names only, and `TURN_TIMING_LOG=false` makes every hook return at once. Asserted through the real `_process_locked`, `handle_inbound` and `send_bot_reply` with I/O stubbed; eight faults injected, eight red. |
 | A preview writes nothing | `app/readonly.py` at `Database.execute` / `Database.rpc` / the Whapi client | The graph writes as a side effect of answering (lead opened early, ticket, handover, round robin). Guarded at the two doors every write passes through rather than per writer, so a writer added tomorrow is covered. Refused DB writes return empty and are listed in the response; a Whapi request raises. |
 | Claire introduces herself in her first message, however many our TEAM sent before it | `guards.claire_has_spoken` + `message.format_history` ("Agent:") + the stage line in `build_system_prompt` | Agent messages were rendered "You:", so a thread full of them read as Claire's own and she never said who she was (conversation 26, 2026-10-07). Only a "You:" line is her. Every node's first-contact test reads the one predicate. |
@@ -713,6 +716,9 @@ Easy to get wrong:
   - `LLM_CALL_TIMEOUTS` (true) — `llm.LLM_TIMEOUTS` per purpose with one
     immediate retry; off is the old single 45 s timeout and the OpenAI
     client's two backed-off retries.
+- `HANDOVER_REFERENCE` (true) — the ticket's CB-YYYY-NNNN in the handover
+  sentence and in the parked-topic chase replies (`app/graph/reference.py`).
+  False is the old wording. The safety reply is separately off, by constant.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1324,6 +1330,9 @@ at a time.
 - **Payment.** Their stated end state is a payment link in the flow, then forms, then
   processing. **Nothing in this bot takes money**; the knowledge base only says who will
   raise it and when.
+- **Should the safety reply to a harm report carry the ticket reference?** Every
+  other handover does since 2026-10-12. It is one constant,
+  `handover_executor.SAFETY_REPLY_SHOWS_REFERENCE`, and off until they say.
 - **Whether "a live agent will reach out within 24 hours" is a commitment they want to
   make.** `strip_handover_talk` removes promised times deliberately, and a promise the
   agency cannot keep is worse than none — so this needs to be a carve-out they ask for,
@@ -1506,6 +1515,26 @@ than a wrong line in a comment. Run `git status` first and commit by name.
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-13** - **Every handover tells the client its ticket reference** (Phase 3,
+  Step 2). Complaints have carried CB-YYYY-NNNN since 2026-10-07; every other
+  handover said "a live agent will connect with you shortly" and left the client
+  nothing to quote when they chased it. The reply is written by the collector or
+  `response_generator` BEFORE `ticket_creator` inserts the row, so the number
+  cannot be in the prompt (which still forbids the model to mention a ticket - it
+  would invent one). `handover_executor`, which runs straight after, puts it into
+  the existing handover sentence: after "...to our team", else before the end of
+  the live-agent sentence. A reply with no handover sentence is left alone, never
+  given a new one, so the sentence-count rules hold. A message folded into an open
+  ticket shows that ticket's number (the merge path already returned it). On a
+  parked topic the chase and "are you there?" replies carry that topic's number.
+  The safety reply does not (`SAFETY_REPLY_SHOWS_REFERENCE`, waiting on the
+  agency). `ungrounded_figures` strips the reference before reading figures (a
+  real $450 beside it is still caught), and `strip_handover_talk` leaves it.
+  `HANDOVER_REFERENCE=false` restores the old wording. Eleven `smoke_nodes.py`
+  checks, running the real `ticket_creator` then `handover_executor`; nine faults
+  injected, nine red - after one was green because its test closing had no
+  handover phrase to insert at. `smoke_nodes.py` is **299 checks**.
 
 - **2026-10-13** - **A helper asking her rights gets the detailed list from Module 27.**
   The agency: "i want detailed rights message for helper in listed format properly

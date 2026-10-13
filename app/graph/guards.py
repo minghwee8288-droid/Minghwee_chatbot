@@ -20,6 +20,11 @@ _FIGURE = re.compile(r"\d[\d,\.]*")
 # Small numbers are ordinary prose ("2 types", "3-4 weeks") and are ignored.
 _MIN_GROUNDED_FIGURE = 100
 
+# A ticket reference, CB-YYYY-NNNN (app/graph/reference.py). One definition:
+# reference.py imports it from here.
+TICKET_REFERENCE = re.compile(r"\bCB-\d{4}-\d{4}\b")
+_TICKET_REFERENCE = TICKET_REFERENCE
+
 
 def _digit_forms(text: str) -> set[str]:
     """Every figure in the text, normalised so $60,000 == S$60000 == 60,000."""
@@ -178,6 +183,10 @@ def ungrounded_figures(reply: str, *contexts: str) -> list[str]:
     """
     grounded = _digit_forms(" ".join(c for c in contexts if c))
     suspect: list[str] = []
+    # A ticket reference (CB-2026-0142) is an identifier, not a figure: read
+    # as one, "2026" and "0142" would bin a reply that only repeats it
+    # (2026-10-12, app/graph/reference.py).
+    reply = _TICKET_REFERENCE.sub(" ", reply or "")
     for figure in _digit_forms(reply):
         head = figure.split(".", 1)[0]
         if not head.isdigit() or int(head) < _MIN_GROUNDED_FIGURE:

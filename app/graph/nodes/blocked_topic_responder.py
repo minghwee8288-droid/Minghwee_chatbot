@@ -60,6 +60,7 @@ from app.graph.state import (
     ConversationState,
     effective_contact_type,
 )
+from app.graph.reference import add_reference
 from app.services import ticket as ticket_service
 from app.services.ticket import TICKET_SERVICE_TYPES, service_label
 
@@ -600,7 +601,12 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
             ticket.get("ticket_number"),
         )
         return {
-            "reply": CHASE_REPLY if already_said else STILL_HERE_REPLY,
+            # The parked ticket's reference, so they have something to quote
+            # (app/graph/reference.py, 2026-10-12).
+            "reply": add_reference(
+                CHASE_REPLY if already_said else STILL_HERE_REPLY,
+                ticket.get("ticket_number"),
+            ),
             "needs_handover": False,
         }
 
@@ -661,7 +667,10 @@ async def blocked_topic_responder(state: ConversationState) -> dict[str, Any]:
             for line in recent_bot_lines(state.get("history_text", ""), count=3)
         ):
             return {"reply": "", "suppress_reply": True, "needs_handover": False}
-        return {"reply": CHASE_REPLY, "needs_handover": False}
+        return {
+            "reply": add_reference(CHASE_REPLY, ticket.get("ticket_number")),
+            "needs_handover": False,
+        }
 
     label = ticket_service.service_types_label(ticket) if ticket.get("id") else service_label(topic_key)
     template = (

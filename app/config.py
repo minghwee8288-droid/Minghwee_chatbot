@@ -173,6 +173,11 @@ class Settings(BaseSettings):
     # client's own two backed-off retries.
     llm_call_timeouts: bool = True
 
+    # The ticket's CB-YYYY-NNNN in the client-facing handover sentence, and in
+    # the chase / "are you there" replies on a parked topic (app/graph/
+    # reference.py). False = the old wording, with no reference.
+    handover_reference: bool = True
+
     # One JSON log line per turn with how long each step took (app/timing.py,
     # read by scripts/latency_report.py). No message text, no phone number.
     # False switches it off entirely; nothing else depends on it.
