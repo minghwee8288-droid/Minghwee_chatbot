@@ -2689,10 +2689,37 @@ def priority_for(service_type: str | None) -> str:
     return "high" if service_type in HIGH_PRIORITY_SERVICES else "medium"
 
 
+# Step 5 Batch B2 item 1 (2026-10-14): a reference is never issued twice.
+# CB-2026-0033 went out three times in one day, on test threads cleared with
+# reset-ui between them: the number was read off the highest ticket still on
+# cb_tickets, so deleting a ticket handed its number out again. The database
+# counter (scripts/sql/ticket_number_001_counter.sql) only ever goes up, and
+# two tickets at the same moment take two numbers. Until that file is applied
+# the function is missing and the old read-max path below is used, logged.
+# False = the old read-max path always.
+TICKET_NUMBER_COUNTER = True
+_COUNTER_RE = re.compile(r"^CB-\d{4}-\d{4,}$")
+
+
 async def next_ticket_number() -> str:
     """CB-YYYY-NNNN, sequential within the calendar year."""
     year = datetime.now(tz=timezone.utc).year
     prefix = f"CB-{year}-"
+    if TICKET_NUMBER_COUNTER:
+        try:
+            number = await db.rpc("cb_next_ticket_number", {"p_year": year})
+        except Exception:  # noqa: BLE001 - the function may not be applied yet
+            logger.exception(
+                "cb_next_ticket_number failed - apply scripts/sql/ticket_number_001_counter.sql; "
+                "falling back to the highest number on the table, which can reuse a deleted "
+                "ticket's number"
+            )
+        else:
+            if isinstance(number, str) and _COUNTER_RE.match(number):
+                return number
+            # None under readonly (the preview refuses every RPC but the KB search).
+            if number is not None:
+                logger.error("cb_next_ticket_number returned %r - using the old path", number)
     try:
         result = await db.execute(
             db.table(TABLE)

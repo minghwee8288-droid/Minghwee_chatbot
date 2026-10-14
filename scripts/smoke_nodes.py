@@ -3385,6 +3385,48 @@ async def _batch_b_checks() -> list[tuple[str, bool]]:
     return out
 
 
+async def _batch_b2_checks() -> list[tuple[str, bool]]:
+    """Step 5 Batch B2 (2026-10-14)."""
+    from app.services import ticket as ticket_module
+
+    out = []
+
+    # Item 1: the reference comes from the database counter, never from the
+    # highest ticket still on the table (which reset-ui deletes).
+    class _Rows:
+        def __init__(self, rows):
+            self.data = rows
+
+    class _Query:
+        def __getattr__(self, _name):
+            return lambda *a, **kw: self
+
+    read_max = AsyncMock(return_value=_Rows([{"ticket_number": "CB-2026-0032"}]))
+    with patch.object(ticket_module.db, "table", new=lambda *_: _Query()), \
+            patch.object(ticket_module.db, "execute", new=read_max):
+        with patch.object(ticket_module.db, "rpc", new=AsyncMock(return_value="CB-2026-0100")):
+            number = await ticket_module.next_ticket_number()
+            out.append(("ticket number: from the counter, never max+1",
+                        number == "CB-2026-0100" and not read_max.await_count))
+        with patch.object(ticket_module.db, "rpc",
+                          new=AsyncMock(side_effect=RuntimeError("function missing"))):
+            out.append(("ticket number: counter missing -> old path, logged",
+                        (await ticket_module.next_ticket_number()).endswith("-0033")))
+        with patch.object(ticket_module.db, "rpc", new=AsyncMock(return_value=None)):
+            out.append(("ticket number: preview (rpc refused) -> old path",
+                        (await ticket_module.next_ticket_number()).endswith("-0033")))
+        with patch.object(ticket_module.db, "rpc", new=AsyncMock(return_value="junk")):
+            out.append(("ticket number: a malformed counter answer is not used",
+                        (await ticket_module.next_ticket_number()).endswith("-0033")))
+        rpc = AsyncMock(return_value="CB-2026-0100")
+        with patch.object(ticket_module.db, "rpc", new=rpc), \
+                patch.object(ticket_module, "TICKET_NUMBER_COUNTER", False):
+            out.append(("ticket number: TICKET_NUMBER_COUNTER off -> old path, no rpc",
+                        (await ticket_module.next_ticket_number()).endswith("-0033")
+                        and not rpc.await_count))
+    return out
+
+
 async def _timing_checks() -> list[tuple[str, bool]]:
     """The per-turn timing line (app/timing.py), through the real webhook turn.
 
@@ -4778,6 +4820,9 @@ async def main() -> int:
         failures += not ok
     for label, ok in await _stray_script_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  wording  {label:44}")
+        failures += not ok
+    for label, ok in await _batch_b2_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  batch-b2  {label:44}")
         failures += not ok
     for label, ok in _chase_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  chase  {label:44}")

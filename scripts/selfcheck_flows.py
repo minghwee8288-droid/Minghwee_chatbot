@@ -5677,6 +5677,22 @@ rows += [
   (True, True, True, True)),
 ]
 
+# Phase 3 Step 5 Batch B2 (2026-10-14).
+_ticket_b2 = importlib.import_module("app.services.ticket")
+_COUNTER_SQL = open("scripts/sql/ticket_number_001_counter.sql", encoding="utf-8").read()
+rows += [
+ # item 1
+ ("B2 item 1: a ticket number comes from the database counter",
+  ("cb_next_ticket_number" in inspect.getsource(_ticket_b2.next_ticket_number),
+   _ticket_b2.TICKET_NUMBER_COUNTER),
+  (True, True)),
+ ("...which only goes up, starts 2026 after 0099, and never truncates a fifth digit",
+  ("last_number = c.last_number + 1" in _COUNTER_SQL, "0), 99)" in _COUNTER_SQL,
+   "case when n < 10000" in _COUNTER_SQL, "cb_tickets" in _COUNTER_SQL.split("create or replace")[0]
+   and "alter table public.cb_tickets" not in _COUNTER_SQL),
+  (True, True, True, True)),
+]
+
 bad = 0
 for label, got, want in rows:
     ok = got == want
