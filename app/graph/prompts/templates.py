@@ -1447,3 +1447,21 @@ _FEE_GUIDE_NEW = (
 assert _FEE_GUIDE_OLD in FEE_HANDOVER_INSTRUCTION, "templates.py: the B2 item 2 line moved"
 if FIXED_FEE_STATED_PLAINLY:
     FEE_HANDOVER_INSTRUCTION = FEE_HANDOVER_INSTRUCTION.replace(_FEE_GUIDE_OLD, _FEE_GUIDE_NEW)
+
+# ...and the same line on a parked topic, which is where the live "how much is
+# the fee" after the renewal closing was answered "The approximate fee is $695".
+_PARKED_FEE_GUIDE_OLD = (
+    "A fee or salary figure from the records is given as a guide: say it is approximate."
+)
+_PARKED_FEE_GUIDE_NEW = (
+    "A fee the records state exactly is given exactly - never \"approximately\", never "
+    "\"to be confirmed\"; only a figure the records give as a range, call approximate or "
+    "mark as subject to change is given as a guide."
+)
+assert _PARKED_FEE_GUIDE_OLD in BLOCKED_TOPIC_ANSWER_INSTRUCTION, (
+    "templates.py: the B2 item 2 parked-topic line moved"
+)
+if FIXED_FEE_STATED_PLAINLY:
+    BLOCKED_TOPIC_ANSWER_INSTRUCTION = BLOCKED_TOPIC_ANSWER_INSTRUCTION.replace(
+        _PARKED_FEE_GUIDE_OLD, _PARKED_FEE_GUIDE_NEW
+    )

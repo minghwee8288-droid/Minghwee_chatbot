@@ -5697,8 +5697,9 @@ rows += [
    importlib.import_module("app.graph.prompts.system")._RULE5_GUIDE_OLD
    in importlib.import_module("app.graph.prompts.system").RULES,
    _templates._FEE_GUIDE_OLD in _templates.FEE_HANDOVER_INSTRUCTION,
-   "never \"approximately\"" in _bsp({"contact_type": "employer", "history_text": ""})),
-  (False, False, False, False, True)),
+   "never \"approximately\"" in _bsp({"contact_type": "employer", "history_text": ""}),
+   _templates._PARKED_FEE_GUIDE_OLD in _btr.BLOCKED_TOPIC_ANSWER_INSTRUCTION),
+  (False, False, False, False, True, False)),
  ("...the guard reads which figures the records state exactly",
   sorted(_guards.fixed_fee_figures(
       "Work permit renewal is $695. It is approximately $450 for a Filipino helper. "
