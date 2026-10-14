@@ -11,6 +11,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.config import settings
 from app.graph import guards
+from app.graph import language
 from app.graph.guards import answering_our_question, without_tag_before_possessive
 from app.graph.nodes.blocked_topic_responder import (
     PROBE_REPLY,
@@ -518,6 +519,11 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             result["reply"], payload.get("incoming_text") or "",
             (result.get("collected_info") or {}).get("leave_reason"),
         )
+    # Step 5 Batch F item 5: no Malay-only word in a reply to Bahasa Indonesia.
+    if (language.INDONESIAN_NOT_MALAY and result.get("reply")
+            and language.client_writes_indonesian(
+                payload.get("incoming_text") or "", payload.get("history_text") or "")):
+        result["reply"] = language.to_indonesian(result["reply"])
     return result
 
 

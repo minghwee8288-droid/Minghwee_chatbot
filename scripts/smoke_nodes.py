@@ -3941,6 +3941,20 @@ async def _batch_b2_checks() -> list[tuple[str, bool]]:
                 patch.object(graph_module, "get_graph", new=lambda: _Graph(result)):
             return (await graph_module.run_turn("t", {"incoming_text": message}))["reply"]
 
+    # Batch F item 5: Bahasa Indonesia in, no Malay-only word out.
+    async def bahasa(reply, message):
+        result = {"reply": reply, "service_type": None, "collected_info": {}}
+        with patch.object(graph_module.kb_rules, "refresh", new=AsyncMock()), \
+                patch.object(graph_module, "get_graph", new=lambda: _Graph(result)):
+            return (await graph_module.run_turn("t", {"incoming_text": message}))["reply"]
+
+    malay = "Sila pastikan anda selamat dan hubungi polis di 999."
+    out.append(("F5 language: a reply to Bahasa Indonesia loses its Malay-only words",
+                await bahasa(malay, "Majikan saya memukul saya")
+                == "Silakan pastikan anda selamat dan hubungi polisi di 999."))
+    out.append(("F5 language: ...while a client writing Malay keeps Malay",
+                await bahasa(malay, "Sila tolong, majikan saya pukul saya") == malay))
+
     ask = "Which country is Devi from?"
     out.append(("caring line: a family emergency gets one",
                 await leave(ask, "her mother is in hospital", "family emergency - mother in hospital")

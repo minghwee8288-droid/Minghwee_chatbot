@@ -579,6 +579,13 @@ def build_system_prompt(
         known = "\n".join(f"- {key}: {value}" for key, value in collected.items())
         sections.append("--- Already confirmed by the client (do not ask again) ---\n" + known)
 
+    # Step 5 Batch F item 5: Bahasa Indonesia is answered in Indonesian.
+    from app.graph import language as _language
+    if _language.INDONESIAN_NOT_MALAY and _language.client_writes_indonesian(
+        state.get("incoming_text") or "", history
+    ):
+        sections.append("--- Language ---\n" + _language.INDONESIAN_NOTE)
+
     if extra_instructions:
         sections.append("--- This message ---\n" + extra_instructions)
 

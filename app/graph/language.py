@@ -126,3 +126,49 @@ def reply_language(text: str) -> str:
         indonesian = sum(w in _INDONESIAN_ONLY for w in words)
         return "ms" if malay > indonesian else "id"
     return "en"
+
+
+# Phase 3 Step 5 Batch F item 5 (Step 5 item 14), 2026-10-14. A client writing
+# Bahasa Indonesia ("Majikan saya memukul saya") was answered in Malay ("Sila
+# pastikan... hubungi polis", Step 3; "polis", "sesiapa", "ejen" in the Batch F
+# replay). Decided from the CLIENT's words, never from a nationality: their
+# message, or (a short one) their last few lines. The prompt is told to answer
+# in Indonesian, and the Malay-only words the model still writes are swapped
+# for their Indonesian forms. False = neither.
+INDONESIAN_NOT_MALAY = True
+INDONESIAN_NOTE = (
+    "The client writes Bahasa Indonesia. Reply in Indonesian, NOT Malay: "
+    "\"silakan\" or \"mohon\" (not \"sila\"), \"polisi\" (not \"polis\"), \"tim\" "
+    "(not \"pasukan\"), \"agen\" (not \"ejen\"), \"nomor\" (not \"nombor\"), \"karena\" "
+    "(not \"kerana\"), \"siapa pun\" (not \"sesiapa\"), \"Anda\" (not \"awak\")."
+)
+# Malay word -> Indonesian word. Only words with no other everyday meaning in
+# Indonesian, so the swap cannot change what a sentence says.
+_MALAY_TO_INDONESIAN = {
+    "sila": "silakan", "polis": "polisi", "pasukan": "tim", "ejen": "agen",
+    "nombor": "nomor", "kerana": "karena", "sesiapa": "siapa pun", "awak": "Anda",
+    "mahu": "mau", "sahaja": "saja", "maklumkan": "beri tahu", "memaklumkan": "memberi tahu",
+    "khabar": "kabar", "sebarang": "apa pun",
+}
+_MALAY_WORD = re.compile(
+    r"\b(" + "|".join(sorted(_MALAY_TO_INDONESIAN, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def client_writes_indonesian(incoming: str, history_text: str = "") -> bool:
+    """Whether the client writes Bahasa Indonesia (not Malay), from their words."""
+    code = reply_language(incoming or "")
+    if code == "en":
+        client_lines = [line[len("Client:"):] for line in (history_text or "").splitlines()
+                        if line.startswith("Client:")]
+        code = reply_language(" ".join(client_lines[-3:] + [incoming or ""]))
+    return code == "id"
+
+
+def to_indonesian(reply: str) -> str:
+    """Malay-only words in the reply swapped for their Indonesian forms."""
+    def swap(m: re.Match) -> str:
+        word = _MALAY_TO_INDONESIAN[m.group(1).lower()]
+        return word[0].upper() + word[1:] if m.group(1)[0].isupper() else word
+    return _MALAY_WORD.sub(swap, reply or "")

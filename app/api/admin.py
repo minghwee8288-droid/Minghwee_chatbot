@@ -257,6 +257,10 @@ async def run_preview(body: PreviewRequest) -> dict[str, Any]:
                 reply = guards.with_caring_line(
                     reply, text, (result.get("collected_info") or {}).get("leave_reason")
                 )
+            from app.graph import language as _language
+            if (_language.INDONESIAN_NOT_MALAY and reply  # as run_turn does
+                    and _language.client_writes_indonesian(text, payload["history_text"])):
+                reply = _language.to_indonesian(reply)
             turns.append({
                 "message": text,
                 "reply": reply,

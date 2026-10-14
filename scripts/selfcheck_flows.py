@@ -5855,6 +5855,20 @@ rows += [
       "Please tell Ratna Choukade we are here.")),
   ("Hi, I am really sorry to hear this.", "I am so sorry. Please stay safe.",
    "Please make sure you are safe.", "Please tell Ratna Choukade we are here.")),
+ # Batch F item 5: Bahasa Indonesia is answered in Indonesian, from the client's words.
+ ("F5: Indonesian is read from the client's words; Malay and English are not",
+  tuple(importlib.import_module("app.graph.language").client_writes_indonesian(m, h) for m, h in (
+      ("Majikan saya memukul saya", ""),
+      ("Sila bantu, majikan saya pukul saya", ""),
+      ("my employer hit me", ""),
+      ("ok", "Client: saya mau pulang ke Indonesia\nYou: Kapan?"))),
+  (True, False, False, True)),
+ ("...and the prompt says so only then",
+  ("Reply in Indonesian, NOT Malay" in _sys.build_system_prompt(
+      {"incoming_text": "Majikan saya memukul saya", "history_text": ""}),
+   "Reply in Indonesian, NOT Malay" in _sys.build_system_prompt(
+      {"incoming_text": "my employer hit me", "history_text": ""})),
+  (True, False)),
  # Batch E item 11: the religion question is one plain question, short reason.
  ("E11: a short reason, and the invitation is not read out as an option",
   (len(_ic_b._WHY_WE_ASK["helper_religion"]) < 60,
