@@ -5844,6 +5844,23 @@ rows += [
    "briefing_note += TIMELINE_MISMATCH_NOTE" in inspect.getsource(_ic_b),
    "only if the records above state one" in _ic_b.TIMELINE_MISMATCH_NOTE),
   (True, True, True)),
+ # item 12
+ ("C item 12: the $40 urgent fee goes unless the client stated urgency",
+  (_guards.without_unasked_conditional_fee(
+      "It is $400. An urgent request costs an additional $40.", "regular home leave"),
+   _guards.without_unasked_conditional_fee(
+      "It is $400. An urgent request costs an additional $40.", "it is a family emergency"),
+   _guards.without_unasked_conditional_fee(
+      "Here is what we need:\n1. Her passport\n2. If rushed, an extra $40\n3. Her itinerary",
+      "regular leave")),
+  ("It is $400.", "It is $400. An urgent request costs an additional $40.",
+   "Here is what we need:\n1. Her passport\n2. Her itinerary")),
+ ("...an urgency sentence with no fee stays, and it runs on home leave",
+  (_guards.without_unasked_conditional_fee("It is $400. If it is urgent, let us know.", "x"),
+   tuple("CONDITIONAL_FEE_ONLY_IF_ASKED" in inspect.getsource(m)
+         for m in (importlib.import_module("app.graph.graph").run_turn,
+                   importlib.import_module("app.api.admin")))),
+  ("It is $400. If it is urgent, let us know.", (True, True))),
  ("...and the collector runs it on every ordinary question turn",
   ("with_the_question_asked(reply, next_field)" in inspect.getsource(_ic_b),
    _ic_b.REPLY_ASKS_ITS_QUESTION),

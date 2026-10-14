@@ -495,6 +495,12 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         result["reply"] = guards.without_reintroduction(
             result["reply"], payload.get("history_text") or "", payload.get("incoming_text") or ""
         )
+    # Step 5 Batch C item 12: the urgent-request fee only when they asked for urgent.
+    if (guards.CONDITIONAL_FEE_ONLY_IF_ASKED and result.get("reply")
+            and result.get("service_type") == "home_leave"):
+        result["reply"] = guards.without_unasked_conditional_fee(
+            result["reply"], *stray_script_context(payload)[:-2]
+        )
     # Step 5 Batch B2 item 5: a family matter or an emergency gets a caring line.
     if (guards.CARING_LINE_FOR_FAMILY_MATTERS and result.get("reply")
             and result.get("service_type") == "home_leave"):

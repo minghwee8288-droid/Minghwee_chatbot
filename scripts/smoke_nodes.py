@@ -3745,6 +3745,30 @@ async def _batch_b2_checks() -> list[tuple[str, bool]]:
     with patch.object(guards_module, "NO_REINTRODUCTION", False):
         out.append(("no re-intro: NO_REINTRODUCTION off -> as written",
                     await intro_turn(intro, spoken) == intro))
+
+    # Batch C item 12: the $40 urgent fee only when they asked for urgent.
+    closing = ("It costs $400 and takes about 4 weeks. An urgent request costs an additional "
+               "$40.\n\nA live agent will connect with you shortly.")
+
+    async def home_leave_turn(reply, message, history="", service="home_leave"):
+        result = {"reply": reply, "service_type": service}
+        with patch.object(graph_module.kb_rules, "refresh", new=AsyncMock()), \
+                patch.object(graph_module, "get_graph", new=lambda: _Graph(result)):
+            return (await graph_module.run_turn(
+                "t", {"incoming_text": message, "history_text": history}))["reply"]
+
+    plain = "It costs $400 and takes about 4 weeks.\n\nA live agent will connect with you shortly."
+    out.append(("conditional fee: $40 urgent dropped when nobody asked",
+                await home_leave_turn(closing, "regular home leave") == plain))
+    out.append(("conditional fee: kept when they said it is urgent",
+                await home_leave_turn(closing, "Philippines",
+                                      "Client: it is urgent, her mother is in hospital")
+                == closing))
+    out.append(("conditional fee: another service is left alone",
+                await home_leave_turn(closing, "x", service="renewal") == closing))
+    with patch.object(guards_module, "CONDITIONAL_FEE_ONLY_IF_ASKED", False):
+        out.append(("conditional fee: CONDITIONAL_FEE_ONLY_IF_ASKED off -> as written",
+                    await home_leave_turn(closing, "regular home leave") == closing))
     return out
 
 

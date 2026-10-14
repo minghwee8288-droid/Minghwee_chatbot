@@ -242,6 +242,11 @@ async def run_preview(body: PreviewRequest) -> dict[str, Any]:
                 )
             if guards.NO_REINTRODUCTION and reply:  # as run_turn does
                 reply = guards.without_reintroduction(reply, payload["history_text"], text)
+            if (guards.CONDITIONAL_FEE_ONLY_IF_ASKED and reply  # as run_turn does
+                    and result.get("service_type") == "home_leave"):
+                reply = guards.without_unasked_conditional_fee(
+                    reply, *graph_module.stray_script_context(payload)[:-2]
+                )
             if (guards.CARING_LINE_FOR_FAMILY_MATTERS and reply  # as run_turn does
                     and result.get("service_type") == "home_leave"):
                 reply = guards.with_caring_line(

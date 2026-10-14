@@ -1243,6 +1243,72 @@ def looks_like_phone_number(text: str) -> bool:
     return 8 <= len(compact.lstrip("+")) <= 15
 
 
+# Phase 3 Step 5 Batch C item 12 (2026-10-14). A conditional fee is quoted
+# only when the client has stated the condition. The home-leave rows say "If a
+# Filipino helper's application has to be rushed there is an additional $40",
+# and live (Step 2c, conversation 3766) the closing briefing volunteered "an
+# urgent request costs an additional $40" to a client who asked for nothing
+# urgent. A sentence pairing an urgency word with a money figure is taken out
+# of a home-leave reply unless the client's own lines say it is urgent,
+# rushed, an emergency, a family matter needing fast travel, or ASAP. The KB
+# rows are untouched. False = the reply as written.
+CONDITIONAL_FEE_ONLY_IF_ASKED = True
+_URGENT_FEE_SENTENCE = re.compile(
+    r"\b(?:urgent\w*|rush\w*|expedit\w*|express|emergenc\w*|faster|speed\s+up)\b",
+    re.IGNORECASE,
+)
+_CLIENT_SAYS_URGENT = re.compile(
+    r"\b(?:urgent\w*|rush\w*|emergenc\w*|asap|as\s+soon\s+as\s+possible|immediate\w*|quickly"
+    r"|fast|hurry|family\s+(?:matters?|emergenc\w*|problems?|issues?)|sick|ill|unwell"
+    r"|hospital\w*|passed\s+away|died|funeral|accident|critical)\b",
+    re.IGNORECASE,
+)
+
+
+def without_unasked_conditional_fee(reply: str, *client_text: str) -> str:
+    """'An urgent request costs an additional $40.' out, unless they asked for urgent."""
+    body = reply or ""
+    if not body or _CLIENT_SAYS_URGENT.search(" ".join(t or "" for t in client_text)):
+        return body
+    drop = [
+        (start, end) for start, end in _sentence_spans(body)
+        if _URGENT_FEE_SENTENCE.search(body[start:end]) and _MONEY.search(body[start:end])
+    ]
+    if not drop:
+        return body
+    out = body
+    for start, end in reversed(drop):
+        out = out[:start] + out[end:]
+    out = re.sub(r"(?m)^\s*\d+\.\s*$\n?", "", out)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"(?m)^[ \t]+(?=\S)", "", out)
+    out = re.sub(r"(?m)[ \t]+$", "", out)
+    out = _renumber_lists(re.sub(r"\n{3,}", "\n\n", out).strip())
+    if not out:
+        return body
+    logger.info("Dropped an urgent-request fee the client never asked about")
+    return out
+
+
+def _renumber_lists(text: str) -> str:
+    """1, 3, 4 -> 1, 2, 3, with no blank line left inside a list."""
+    lines = text.split("\n")
+    out: list[str] = []
+    number = 0
+    for index, line in enumerate(lines):
+        marker = re.match(r"^(\d+)\.\s+", line)
+        if marker:
+            if out and out[-1] == "" and number:
+                out.pop()  # the gap a dropped item left
+            number += 1
+            out.append(f"{number}. " + line[marker.end():])
+            continue
+        if line.strip():
+            number = 0
+        out.append(line)
+    return "\n".join(out)
+
+
 # Phase 3 Step 5 Batch B2 item 3 (2026-10-14). Live: "why this much?" after
 # the renewal fee was answered with the price again ("...the exact amount will
 # be confirmed by our team"). Asking WHY a fee is what it is wants what it
