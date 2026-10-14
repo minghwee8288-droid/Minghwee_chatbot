@@ -517,6 +517,15 @@ because the lead is opened early and the ticket is created much later.
 | "Worked in Singapore before" is experience, not a transfer | `info_collector._EX_SINGAPORE` / `wants_a_transfer_helper` / `NOT_A_TRANSFER_NOTE` (`HIRE_SOURCE_NOT_TRANSFER`) | Batch C item 10, section 9.37. Filed as "Singapore experience", the new-hire closing briefing read it as a transfer: "1 to 2 weeks for a transfer helper" and the $1,428 fee deferred. The value is now filed as "worked in Singapore before (to be hired from overseas)", and unless the client chose the transfer option or said she is in Singapore now, the briefing is told to give the overseas timeline and the new-hire fee, never a transfer's. "not a transfer" is never read as one. |
 | A start sooner than the new-hire timeline is said out loud | `info_collector.wants_sooner_than_a_new_hire` / `TIMELINE_MISMATCH_NOTE` (`TIMELINE_MISMATCH`) | Batch C item 8. In the new-hire closing briefing, a `start_timeline` under 4 weeks ("within 2 weeks", "next week") or "ASAP" gets one sentence after the timing line saying it is sooner than the overseas timeline, and that a transfer helper already in Singapore is usually faster - with the transfer timeline only if the records state one. No promised date. Not when she is a transfer already. |
 | A conditional fee only when the client stated the condition | `guards.without_unasked_conditional_fee` in `graph.run_turn` (and the preview) (`CONDITIONAL_FEE_ONLY_IF_ASKED`) | Batch C item 12. The home-leave rows carry the $40 urgent surcharge, and the closing briefing volunteered it (Step 2c). In a home-leave reply a sentence pairing an urgency word (urgent, rushed, expedite, emergency, faster) with a money figure is dropped, and a list renumbered, unless the client's own lines say urgent, rushed, emergency, ASAP, a family matter or illness. A fee-free urgency sentence stays. The KB rows are untouched. |
+| The employer's home leave asks the reason | `info_collector.names_a_leave_reason` (`LEAVE_REASON_ASKED`) | An UNASKED leave_reason is kept only when the client's own message names a reason. "go back to her home country" was filed as the reason, so the question never went (Batch E item 1). |
+| An urgent home leave still asks the dates, and is flagged once | `info_collector.states_a_date` + `URGENT_LEAVE_NOTE` (`LEAVE_DATES_ASKED`) | "urgently" was filed as "as soon as possible - within 2 weeks". An unasked leave_dates needs a date in the client's message; the closing says once that we flag it as urgent, outside the steps, with no faster promise (item 3). |
+| "Why this much?" never gets the price back, on any path | `guards.price_probe_reply` in `run_turn` (and the preview) + `PRICE_WHY_NOTE` (`WHY_THE_PRICE_EVERY_PATH`) | Whole multi-line messages are read (`recent_bot_messages`); a sentence restating a figure already sent loses it ("the fee covers...") or goes; with nothing explaining the fee left, `PROBE_REPLY` plus any pending question (item 2). |
+| A side question does not close the collection | `info_collector` (`side_question`, `briefing_waits`) (`SIDE_QUESTION_KEEPS_PENDING`) | A question asked instead of answering the field we last asked does not use up its ask (once per field). A collection that completes on a question turn still gets its closing summary (item 4). |
+| An overseas direct hire wanted immediately is told it cannot | `info_collector.overseas_start_too_soon` + `DIRECT_HIRE_TIMELINE_NOTE` (`DIRECT_HIRE_TIMELINE_MISMATCH`) | Not a transfer case and a start under 4 weeks or "immediately": one sentence after the timing line, records' timeline only. An unasked start date needs a time in the client's message (item 5). |
+| No service-intro opening mid-thread; no name asked twice | `guards._ANY_INTRODUCTION` (`NO_REINTRODUCTION_ANYWHERE`) + `info_collector.name_given_earlier` (`NO_NAME_REASK`) | Greetings with a name, "this is Claire", dashes and colons after "assistant". A name given to our "may I know your name?" counts as known (item 6). |
+| One caring sentence, never two | `guards._SAYS_SORRY` (`CARING_LINE_ONCE`) | The model's own "I'm sorry..." counts as the caring line; an apology does not (item 7). |
+| Every inbound message is logged on arrival | `parser.parse_webhook` (`INBOUND_RECEIPT_LOG`) | id, type, from_me at INFO before any filter; every drop logs at INFO; no phone number added (item 8). |
+| A rest-day pushback is answered, never ignored | `info_collector.pushes_back_on_rest_day` + `REST_DAY_PUSHBACK_NOTE` (`REST_DAY_PUSHBACK`) + `intent_classifier` (`REST_DAY_PUSHBACK_STAYS`) | Once with the KB rule, then without it, always followed by the pending question; and it never switches the live collection to dispute_salary, which reset the transfer intake (items 9, 10). |
 | No stray script reaches the client | `guards.without_stray_script`, applied once in `graph.run_turn` (and the preview) behind `STRAY_SCRIPT_GUARD` | The model ended an Indonesian reply with "天天彩票中奖" (Step 2e replay). `GLITCH_STRINGS` always go; a run of letters in a script that is neither the reply's main script nor one in the client's own lines or the names we hold for them goes too. Latin is never a cut script, so "Claire", "Ming Hwee", the address, a CB reference and Latin names survive in a Burmese or Chinese reply; digits and punctuation are not letters. Han and kana are one bucket. A cut is logged. |
 | A finished reply is not held back by Whapi | `message.send_bot_reply` (`SEND_WITHOUT_TYPING_TIME`) | With our own typing indicator running, no `typing_time` is sent: it only delayed delivery (whapi.send 1.4 s with 0.5 s asked). The channel's `/settings` holds no typing default. |
 | The search embedding starts beside the classifier, and is used only for the query the retriever actually builds | `graph._classify_with_prefetch` (`PREFETCH_SEARCH_EMBEDDING`) + `rag.prefetch_query` / `embed_query` | Predicted from the turn as it stands before classification (intent and service carry over). `embed_query` takes over a prefetch for the SAME text only, finished or still running; a different query (the classifier changed the service) is embedded as before, and a failed prefetch is retried, never reused. The canary is unchanged (cosine 1.000000 both ways). |
@@ -793,6 +802,18 @@ Easy to get wrong:
   `info_collector.HIRE_SOURCE_NOT_TRANSFER` (item 10),
   `info_collector.TIMELINE_MISMATCH` (item 8),
   `guards.CONDITIONAL_FEE_ONLY_IF_ASKED` (item 12).
+  Step 5 Batch E's switches, each `False` for the Batch C behaviour:
+  `info_collector.LEAVE_REASON_ASKED` (item 1),
+  `guards.WHY_THE_PRICE_EVERY_PATH` (item 2),
+  `info_collector.LEAVE_DATES_ASKED` (item 3),
+  `info_collector.SIDE_QUESTION_KEEPS_PENDING` (item 4),
+  `info_collector.DIRECT_HIRE_TIMELINE_MISMATCH` (item 5),
+  `guards.NO_REINTRODUCTION_ANYWHERE` and `info_collector.NO_NAME_REASK` (item 6),
+  `guards.CARING_LINE_ONCE` (item 7),
+  `parser.INBOUND_RECEIPT_LOG` (item 8, logging only),
+  `info_collector.REST_DAY_PUSHBACK` (item 9),
+  `intent_classifier.REST_DAY_PUSHBACK_STAYS` (item 10),
+  `info_collector.SHORT_RELIGION_QUESTION` (item 11).
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1341,6 +1362,23 @@ Ordered by what will hurt first.
     `scripts/sql/rollback/rollback_ticket_number_001_counter.sql`, never run
     without an explicit go-word.
 
+39. **Message lost before reaching the webhook (Whapi/WhatsApp side), 14 Oct.**
+    Transfer flow, about 3:21 pm local (09:51 UTC): the client's answer "there
+    are 1 child with the age of 2 years" got no reply. The server log shows our
+    question sent at 09:50:46 and nothing inbound until 09:53:46 (only health
+    checks), which was the client's resend, answered at 09:54:00. The bot never
+    received the first copy. Nothing to fix in the bot; since Batch E item 8
+    every message is logged on arrival by id and type, so the next one can be
+    proved either way from the log.
+40. **Salary bands differ between flows, and are not from the KB** (Batch E
+    item 12, not done). The budget question offers code options ("below SGD
+    500" ... "above SGD 800"); a Filipino preference rewrites them to start at
+    S$650 (2026-09-17, the agency's own request), which is why the new hire
+    showed "SGD 650-700" and the transfer "below $500". The KB holds salary
+    figures per nationality (Filipino S$650/S$670, Indonesian from S$550, a
+    general S$450-850) but no budget bands. An open question would remove the
+    floor behaviour the agency asked for, so it waits on a decision.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
@@ -1647,8 +1685,9 @@ behaviour behind one switch. Details of each step are in §11.
 | 5B | Batch B (wording): items 1, 3, 4, 5, 9, 11, 17 | `c7bcdb8` |
 | 5B2 | Batch B2 (phone-test fixes): reference never reused, fixed fees stated plainly, "why this much", name case, caring line, no re-introduction, phone validation | see git log |
 | 5C | Batch C (behaviour): items 6, 7, 8, 10, 12 | see git log |
+| 5E | Batch E (14 Oct phone test): items 1-11; 12 waits on a decision (section 9.40) | see git log |
 
-**Still to do, in order:** Step 5 (below; done: 15 in 5a, Batch B, B2 and Batch C; next Batch D = items 2, 13, 14, 16), Step 6 (combined questions: propose pairs, stop before
+**Still to do, in order:** Step 5 (below; done: 15 in 5a, Batch B, B2, Batch C and Batch E; next Batch D = items 2, 13, 14, 16), Step 6 (combined questions: propose pairs, stop before
 wiring), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
 the webhook builds `known_helpers` only when `contact_type == "employer"`).
@@ -1723,6 +1762,34 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-14** - **Step 5 Batch E: fixes from the 14 Oct phone test, items
+  1-11.** Each behind its own switch (section 7), each its own commit.
+  (1) Employer home leave asks the reason again: the opener was filed as
+  leave_reason. (2) "Why this much?" never repeats the price, on every path:
+  the B2 fix ran on the parked path only and read just the first line of a
+  multi-line message. (3) An urgent home leave still asks the dates
+  ("urgently" was filed as "as soon as possible - within 2 weeks") and is
+  flagged as urgent once. (4) A side question no longer closes the
+  collection: update_channel (max_asks=1) was filed "not provided" and the
+  briefing skipped (CB-2026-0104). (5) An overseas direct hire wanted
+  "immediately" is told the overseas timeline applies; the start date is now
+  actually asked. (6) Wider re-introduction guard; a name given earlier in the
+  chat is not asked again. The live introduction did not reproduce in replay.
+  (7) One caring sentence. (8) The 3:21 pm message never reached the webhook
+  (section 9.39); every inbound message is now logged on arrival.
+  (9) Rest-day pushback answered once with the rule, then without it.
+  (10) That pushback was classified dispute_salary, which switched out of the
+  transfer collection and back, resetting it; it now stays. The portal's
+  "Dropping service_type='transfer_employer'" line is its display column only.
+  (11) The religion question is one plain question.
+  (12) NOT done: the budget bands are code options, not KB content, and an
+  open question would remove the Filipino floor behaviour (section 9.40).
+  **Found, not changed:** the extraction prompt buckets "immediately" as "as
+  soon as possible - within 2 weeks" (start_timeline's option), so a reply can
+  say "within 2 weeks" when the client said "immediately"; a reply opening
+  with a bare "Vaidik." (an opener guard trimming "Thanks,").
+  **Verified:** see the commit messages for each replay and fault count.
 
 - **2026-10-14** - **Docs only: the ticket-number counter is applied on
   production.** `scripts/sql/ticket_number_001_counter.sql` was verified live

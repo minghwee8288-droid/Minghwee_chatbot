@@ -3080,3 +3080,54 @@ Two other backups do not have fixed wording:
 - **"Let me check" replies.** When Claire needs a "let me check" style holding
   reply, she picks from a small set of pre-written variations so that she does
   not repeat herself.
+
+## 67. Batch E Additions (14 October Phone Test)
+
+### What is this prompt used for?
+
+Short notes added to Claire's instructions on particular turns, from the 14 October phone test. Each can be switched off on its own.
+
+### What does it make the chatbot do?
+
+- **"Why this much?"** on any service, at any point: say what the fee covers and do not repeat the price.
+- **An urgent home leave**: one sentence that we will flag it as urgent, with no faster timeline promised.
+- **A direct hire from overseas wanted immediately**: one sentence that she cannot start that soon, using the timeline in our records.
+- **Pushback on the rest-day rule**: acknowledged once with the rule, then without it, always followed by the next question.
+- **The religion question**: one plain question with a short reason.
+
+### Prompt — "Why this much?"
+
+```
+The client is asking WHY the fee is what it is. Say what the fee covers, in one or two sentences, taken from the records. Do NOT state the figure again - they already have it - and do not say the amount will be confirmed. If the records do not say what it covers, say our agent will take them through exactly what it covers.
+```
+
+### Prompt — Urgent home leave
+
+```
+THIS LEAVE IS URGENT (the client gave a family matter or an emergency as the reason). Add ONE short sentence saying we will flag it as urgent with our team, on its own just before the handover line - never as a numbered step. Do NOT promise it will be done faster than the timing stated above, do not invent a quicker route or a date, and say it once only.
+```
+
+### Prompt — Overseas direct hire wanted sooner
+
+```
+They want her to start {when}, but she is overseas and this is the overseas route. Say so plainly in ONE sentence right after the timing line: she cannot start that soon, because the timeline you are giving applies. Use only the timeline in the records above. Do not promise a date and do not suggest the timeline can be shortened.
+```
+
+### Prompt — Rest-day pushback (first time)
+
+```
+They are pushing back on the rest-day rule. In ONE short sentence acknowledge that you have noted their preference and restate the MOM rule, taken only from this record and adding nothing to it: "{rule}" Our agent will go through it with them. Do not argue, do not lecture, do not refuse them and do not ask about rest days again - then ask your next question.
+```
+
+### Prompt — Rest-day pushback (again)
+
+```
+They are pushing back on the rest-day rule again. You have already told them the rule: do NOT repeat it. In one short clause say you have noted it and our agent will go through it with them, then ask your next question.
+```
+
+### Reason given with the religion question
+
+```
+so we can match her to your household
+```
+
