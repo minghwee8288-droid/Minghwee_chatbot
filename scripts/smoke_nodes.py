@@ -158,6 +158,14 @@ CASES = [
       "_expect_prompt": "Name her ONLY inside this one question",
       "_expect_reply": "Is this home leave for Yoyo, or for another helper?",
       "_forbid_reply": "details on record"}),
+    # Step 5 B2 item 4: a helper name typed in capitals is filed in title case.
+    ("info_collector", "B2: 'DEVI' is filed as 'Devi'",
+     {"service_type": "home_leave", "intent": "home_leave",
+      "incoming_text": "DEVI",
+      "history_text": "You: May I know your helper's name?",
+      "collected_info": {"full_name": "VD"}, "asked_field_counts": {"full_name": 1, "helper_name": 1},
+      "_stub_extraction": {"helper_name": "DEVI"},
+      "_expect_collected": {"helper_name": "Devi"}}),
     ("info_collector", "...and a yes confirms her, with what we hold about her",
      {"service_type": "home_leave", "intent": "home_leave",
       "incoming_text": "yes",
@@ -264,7 +272,8 @@ CASES = [
       "collected_info": {"full_name": "VD"}, "asked_field_counts": {"helper_name": 1},
       "known_helpers": [], "helpers_named": ["devi lal singh"],
       "_stub_extraction": {"helper_name": "yes"},
-      "_expect_collected": {"helper_name": "devi lal singh"}}),
+      # Filed in title case since Step 5 B2 item 4 (was "devi lal singh").
+      "_expect_collected": {"helper_name": "Devi Lal Singh"}}),
     # ...but a helper's OWN name (her own home leave) is never offered back
     # to her as "your helper".
     # Two states, one per test, because a state meeting both proved neither
@@ -3505,6 +3514,27 @@ async def _batch_b2_checks() -> list[tuple[str, bool]]:
     with patch.object(guards_module, "FIXED_FEE_STATED_PLAINLY", False):
         out.append(("fixed fee: FIXED_FEE_STATED_PLAINLY off -> as written",
                     await turn(live, [renewal_row]) == live))
+
+    # Item 4: a helper name in capitals is read back in title case.
+    async def named(reply, collected, payload=None):
+        with patch.object(graph_module.kb_rules, "refresh", new=AsyncMock()), \
+                patch.object(graph_module, "get_graph",
+                             new=lambda: _Graph({"reply": reply, "collected_info": collected})):
+            return (await graph_module.run_turn("t", payload or {}))["reply"]
+
+    caps = "Here is everything for DEVI's home leave. When is DEVI travelling?"
+    out.append(("name case: 'DEVI's' -> 'Devi's'",
+                await named(caps, {"helper_name": "DEVI"})
+                == "Here is everything for Devi's home leave. When is Devi travelling?"))
+    out.append(("name case: a known helper on file is tidied too",
+                await named("Is this for YOYO?", {},
+                            {"known_helpers": [{"helper_name": "yoyo"}]}) == "Is this for Yoyo?"))
+    out.append(("name case: a mixed-case name is left as typed",
+                await named("Is this for McDonald?", {"helper_name": "McDonald"})
+                == "Is this for McDonald?"))
+    with patch.object(guards_module, "TIDY_HELPER_NAME_CASE", False):
+        out.append(("name case: TIDY_HELPER_NAME_CASE off -> as written",
+                    await named(caps, {"helper_name": "DEVI"}) == caps))
     return out
 
 

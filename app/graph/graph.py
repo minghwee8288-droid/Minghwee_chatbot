@@ -485,7 +485,22 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     # Step 5 Batch B2 item 2: a fee the records state exactly is stated plainly.
     if guards.FIXED_FEE_STATED_PLAINLY and result.get("reply"):
         result["reply"] = guards.state_fixed_fee_plainly(result["reply"], records_text(result))
+    # Step 5 Batch B2 item 4: "DEVI's" -> "Devi's" for the helpers we know.
+    if guards.TIDY_HELPER_NAME_CASE and result.get("reply"):
+        result["reply"] = guards.tidy_helper_names_in_reply(
+            result["reply"], helper_names(result, payload)
+        )
     return result
+
+
+def helper_names(result: dict[str, Any], payload: dict[str, Any]) -> list[str]:
+    """Every helper name this turn knows: the one being collected, the ones
+    named earlier in the conversation, and the ones on file."""
+    names = [(result.get("collected_info") or {}).get("helper_name")]
+    names += list(result.get("helpers_named") or payload.get("helpers_named") or [])
+    names += [h.get("helper_name") for h in (payload.get("known_helpers") or [])
+              if isinstance(h, dict)]
+    return [str(n) for n in names if n]
 
 
 def records_text(result: dict[str, Any]) -> str:

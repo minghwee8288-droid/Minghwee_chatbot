@@ -1102,6 +1102,61 @@ _CONFIRM_AND = re.compile(
 _CLAUSE_SPLIT = re.compile(r"(,\s*(?:and|but|so|which|while)?\s*|;\s*|\s+[-–—]\s+)")
 
 
+# Phase 3 Step 5 Batch B2 item 4 (2026-10-14). Live: "DEVI's home leave" - the
+# client typed the helper's name in capitals and every reply read it back that
+# way. A name typed all in capitals or all in lower case is shown in title
+# case ("Devi", "Mary-Jane", "O'Neil"); a mixed-case one ("McDonald", "de
+# Silva") is the client's own spelling and is left exactly as typed. Applied
+# where the name is filed (info_collector) and to the reply (run_turn). In a
+# reply, an all-lower copy is only rewritten when the name is not also an
+# everyday word, so "may" in "may I know" stays. False = names as typed.
+TIDY_HELPER_NAME_CASE = True
+_NAME_IS_A_WORD = frozenset({
+    "may", "joy", "hope", "grace", "faith", "rose", "april", "june", "sunny", "honey",
+    "lucky", "precious", "cherry", "lovely", "angel", "baby", "star", "dawn", "mercy",
+    "charity", "patience", "summer", "will", "mark", "rich", "an", "ma", "ana",
+})
+
+
+def tidy_name_case(name: str) -> str:
+    """'DEVI LAL' / 'devi lal' -> 'Devi Lal'; 'McDonald' unchanged."""
+    text = (name or "").strip()
+    letters = [c for c in text if c.isalpha()]
+    if len(letters) < 2:
+        return text
+    if not (all(c.isupper() for c in letters) or all(c.islower() for c in letters)):
+        return text
+    return re.sub(r"[^\W\d_]+", lambda m: m.group(0)[:1].upper() + m.group(0)[1:].lower(), text)
+
+
+def tidy_helper_names_in_reply(reply: str, names: list[str]) -> str:
+    """'DEVI's home leave' -> 'Devi's home leave', for the helpers we know."""
+    body = reply or ""
+    forms = []
+    for raw in names:
+        full = tidy_name_case(str(raw or ""))
+        forms.append(full)
+        if " " in full:  # "DEVI" for "Devi Lal Singh"
+            forms.append(full.split()[0])
+    for tidy in forms:
+        if len(tidy) < 2:
+            continue
+        pattern = re.compile(r"(?<![\w'])" + re.escape(tidy) + r"(?![\w])", re.IGNORECASE)
+
+        def fix(match: re.Match, tidy=tidy) -> str:
+            seen = match.group(0)
+            if seen == tidy or tidy_name_case(seen) != tidy:
+                return seen  # already right, or a mixed-case spelling of its own
+            if seen.islower() and seen in _NAME_IS_A_WORD:
+                return seen
+            return tidy
+
+        body = pattern.sub(fix, body)
+    if body != reply:
+        logger.info("Helper name case tidied in the reply")
+    return body
+
+
 # Phase 3 Step 5 Batch B2 item 3 (2026-10-14). Live: "why this much?" after
 # the renewal fee was answered with the price again ("...the exact amount will
 # be confirmed by our team"). Asking WHY a fee is what it is wants what it

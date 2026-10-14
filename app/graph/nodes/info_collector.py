@@ -16,6 +16,7 @@ from app.graph.complaint import (
     complaint_opening,
     states_a_complaint,
 )
+from app.graph import guards
 from app.graph.guards import (
     claire_has_spoken,
     one_mention_of_known_helper,
@@ -3432,6 +3433,13 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         )
         extracted = {**extracted, "transfer_direction": direction}
         collected = {**collected, "transfer_direction": direction}
+
+    # Step 5 Batch B2 item 4: "DEVI" or "devi" is filed, and read back, as
+    # "Devi". A mixed-case name ("McDonald", "de Silva") is left as typed.
+    if guards.TIDY_HELPER_NAME_CASE and extracted.get("helper_name"):
+        tidy = guards.tidy_name_case(str(extracted["helper_name"]))
+        extracted = {**extracted, "helper_name": tidy}
+        collected = {**collected, "helper_name": tidy}
 
     # A field the client has been asked about repeatedly and still not answered
     # is recorded as unanswered rather than asked again. Sales sees the gap

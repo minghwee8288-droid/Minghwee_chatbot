@@ -236,6 +236,10 @@ async def run_preview(body: PreviewRequest) -> dict[str, Any]:
                 reply = guards.without_figureless_approximate(reply)
             if guards.FIXED_FEE_STATED_PLAINLY and reply:  # as run_turn does
                 reply = guards.state_fixed_fee_plainly(reply, graph_module.records_text(result))
+            if guards.TIDY_HELPER_NAME_CASE and reply:  # as run_turn does
+                reply = guards.tidy_helper_names_in_reply(
+                    reply, graph_module.helper_names(result, payload)
+                )
             turns.append({
                 "message": text,
                 "reply": reply,

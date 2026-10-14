@@ -5739,6 +5739,20 @@ rows += [
   tuple(name in inspect.getsource(_btr) for name in (
       "asks_why_the_price", "without_repeated_price", "PRICE_PROBE_NOTE")),
   (True, True, True)),
+ # item 4
+ ("B2 item 4: all-caps or all-lower names in title case, mixed case as typed",
+  tuple(_guards.tidy_name_case(n) for n in (
+      "DEVI", "devi lal singh", "mary-jane", "o'neil", "McDonald", "de Silva", "Siti")),
+  ("Devi", "Devi Lal Singh", "Mary-Jane", "O'Neil", "McDonald", "de Silva", "Siti")),
+ ("...in a reply, and 'may I know' is not a helper called May",
+  (_guards.tidy_helper_names_in_reply("When is DEVI's flight?", ["Devi Lal Singh"]),
+   _guards.tidy_helper_names_in_reply("may I know when MAY travels?", ["may"])),
+  ("When is Devi's flight?", "may I know when May travels?")),
+ ("...run in run_turn, the preview and where the name is filed",
+  tuple("TIDY_HELPER_NAME_CASE" in inspect.getsource(m)
+        for m in (importlib.import_module("app.graph.graph").run_turn,
+                  importlib.import_module("app.api.admin"), _ic_b)),
+  (True, True, True)),
  ("...run once, in run_turn and in the preview",
   tuple("FIXED_FEE_STATED_PLAINLY" in inspect.getsource(m)
         for m in (importlib.import_module("app.graph.graph").run_turn,
