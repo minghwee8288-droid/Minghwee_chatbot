@@ -5768,6 +5768,19 @@ rows += [
         for m in (importlib.import_module("app.graph.graph").run_turn,
                   importlib.import_module("app.api.admin"))),
   (True, True)),
+ # Batch E item 2: "why this much?" on every path, reading our whole messages.
+ ("E2: a price inside a multi-line message counts as already sent",
+  (_guards.recent_bot_messages("Client: a\nYou: Here:\n\nThe cost is $450.\nClient: b", 1),
+   _guards.price_probe_reply("It is approximately $450.", "You: Here:\n\nThe cost is $450.", "P"),
+   _guards.price_probe_reply("It is $450.", "You: Here:\n\nThe cost is $450.", "P") != "It is $450."),
+  (["Here:\n\nThe cost is $450."], "P", True)),
+ ("...and it runs in run_turn, the preview, and both other answering nodes",
+  tuple("WHY_THE_PRICE_EVERY_PATH" in inspect.getsource(m)
+        for m in (importlib.import_module("app.graph.graph").run_turn,
+                  importlib.import_module("app.api.admin"),
+                  importlib.import_module("app.graph.nodes.response_generator"),
+                  _ic_b._collect)),
+  (True, True, True, True)),
  # Batch E item 7: one caring sentence, never two.
  ("E7: no caring line over sympathy the reply already carries",
   tuple(_guards.with_caring_line(r, "it is a family matter", "family matter") == r for r in (

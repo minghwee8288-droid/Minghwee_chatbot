@@ -4564,6 +4564,11 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     # before this node on every turn, so the records are in state and the answer
     # can go out with the next question rather than being ignored.
     answer_first = ANSWER_THEN_ASK_INSTRUCTION if client_asked else ""
+    # Step 5 Batch E item 2: "why this much?" is told what the fee covers.
+    if guards.WHY_THE_PRICE_EVERY_PATH and guards.asks_why_the_price(
+        state.get("incoming_text") or ""
+    ):
+        answer_first += guards.PRICE_WHY_NOTE
 
     # "Tell me about this service" - answered in full before the first
     # question. It REPLACES the short answer and the one-clause overview and

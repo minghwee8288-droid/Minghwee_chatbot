@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from app.config import settings
+from app.graph import guards
 from app.graph.guards import (
     COST_DEFERRAL_REPLY,
     _NO_REQUEST_MAX_WORDS,
@@ -413,6 +414,12 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
                 _service,
                 _nat,
             )
+
+    # Step 5 Batch E item 2: "why this much?" is told what the fee covers.
+    if guards.WHY_THE_PRICE_EVERY_PATH and guards.asks_why_the_price(
+        state.get("incoming_text") or ""
+    ):
+        instruction += guards.PRICE_WHY_NOTE
 
     # What the client has told us about their helpers, to answer from when they
     # ask ("can you tell me the nationality of choral" - 3766, 2026-10-08).

@@ -12,7 +12,11 @@ from langgraph.graph import END, START, StateGraph
 from app.config import settings
 from app.graph import guards
 from app.graph.guards import answering_our_question, without_tag_before_possessive
-from app.graph.nodes.blocked_topic_responder import asks_general_info, blocked_topic_responder
+from app.graph.nodes.blocked_topic_responder import (
+    PROBE_REPLY,
+    asks_general_info,
+    blocked_topic_responder,
+)
 from app.graph.nodes.handover_executor import handover_executor
 from app.graph.nodes.info_collector import (
     asks_for_service_again,
@@ -485,6 +489,12 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     # Step 5 Batch B2 item 2: a fee the records state exactly is stated plainly.
     if guards.FIXED_FEE_STATED_PLAINLY and result.get("reply"):
         result["reply"] = guards.state_fixed_fee_plainly(result["reply"], records_text(result))
+    # Step 5 Batch E item 2: "why this much?" never gets the price back, on any path.
+    if (guards.WHY_THE_PRICE_EVERY_PATH and result.get("reply")
+            and guards.asks_why_the_price(payload.get("incoming_text") or "")):
+        result["reply"] = guards.price_probe_reply(
+            result["reply"], payload.get("history_text") or "", PROBE_REPLY
+        )
     # Step 5 Batch B2 item 4: "DEVI's" -> "Devi's" for the helpers we know.
     if guards.TIDY_HELPER_NAME_CASE and result.get("reply"):
         result["reply"] = guards.tidy_helper_names_in_reply(

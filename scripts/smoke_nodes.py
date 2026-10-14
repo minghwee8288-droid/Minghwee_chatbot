@@ -1017,6 +1017,16 @@ CASES = [
       "rag_best_score": 0.5, "rag_matches": [{"question": "x", "similarity": 0.5}], "rag_context": "x",
       "_stub_reply": "Choral is Filipino.",
       "_expect_prompt": "choral (Filipino)"}),
+    # Step 5 Batch E item 2: before any ticket, "why this much?" is told what
+    # the fee covers, not the price again.
+    ("response_generator", "E2: 'why this much' before a ticket asks for what the fee covers",
+     {"intent": "fee_enquiry", "service_type": "renewal", "contact_type": "employer",
+      "incoming_text": "why this much?",
+      "history_text": "Client: how much is work permit renewal?\nYou: Work permit renewal is $695.",
+      "rag_best_score": 0.6, "rag_matches": [{"question": "x", "similarity": 0.6}],
+      "rag_context": "x",
+      "_stub_reply": "It covers the authorisation and the submission to MOM.",
+      "_expect_prompt": "The client is asking WHY the fee is what it is"}),
     # 2026-10-12, conversation 4443: her rights went out as one sentence of
     # seven. All ten, as a list, and none cut off by the clamp.
     # 2026-10-13: "i want detailed rights message for helper in listed format
@@ -3772,6 +3782,31 @@ async def _batch_b2_checks() -> list[tuple[str, bool]]:
                 await leave("Sorry, I meant her dates. " + ask, "it is a family matter",
                             "family matter")
                 == "I hope everything is alright at home. Sorry, I meant her dates. " + ask))
+    # Batch E item 2: "why this much?" never gets a price back that sits
+    # inside our earlier multi-line closing message, on any path.
+    async def why(reply, history):
+        result = {"reply": reply, "service_type": "passport_renewal", "collected_info": {}}
+        with patch.object(graph_module.kb_rules, "refresh", new=AsyncMock()), \
+                patch.object(graph_module, "get_graph", new=lambda: _Graph(result)):
+            return (await graph_module.run_turn(
+                "t", {"incoming_text": "why this much?", "history_text": history}))["reply"]
+
+    briefing = ("Client: 15 March 2027\nYou: Here is everything for Maria's passport renewal:\n\n"
+                "It takes approximately 6 to 8 weeks.\n\nThe cost is approximately $450 for a "
+                "Filipino helper.\n\nI've passed everything to our team.")
+    out.append(("E2 why this much: the price inside our briefing is not repeated",
+                await why("It is approximately $450 for a Filipino helper.", briefing)
+                == graph_module.PROBE_REPLY))
+    out.append(("E2 why this much: a coverage sentence keeps its meaning, not the figure",
+                await why("The $450 covers us handling the forms. When does it expire?", briefing)
+                == "The fee covers us handling the forms. When does it expire?"))
+    out.append(("E2 why this much: a new figure we never sent is left alone",
+                await why("It includes the $95 the embassy charges for the passport.", briefing)
+                == "It includes the $95 the embassy charges for the passport."))
+    with patch.object(guards_module, "WHY_THE_PRICE_EVERY_PATH", False):
+        out.append(("E2 why this much: WHY_THE_PRICE_EVERY_PATH off -> as written",
+                    await why("It is approximately $450 for a Filipino helper.", briefing)
+                    == "It is approximately $450 for a Filipino helper."))
     with patch.object(guards_module, "CARING_LINE_ONCE", False):
         out.append(("E7 caring line: CARING_LINE_ONCE off -> the B2 behaviour",
                     await leave(sorry, "it is a family matter", "family matter")

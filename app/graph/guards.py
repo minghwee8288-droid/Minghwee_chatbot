@@ -1379,6 +1379,87 @@ def without_repeated_price(reply: str, *previous: str) -> str:
     return out if _EXPLAINS_COVERAGE.search(out) else ""
 
 
+# Phase 3 Step 5 Batch E item 2 (2026-10-14). Phone test: "why this much?" on
+# a passport renewal got "approximately $450 for a Filipino helper" back. The
+# B2 item 3 fix lived on the parked-topic path alone, and even there read only
+# the FIRST line of a multi-line message (recent_bot_lines), so a price quoted
+# inside a closing briefing was never seen as already sent. Replayed before a
+# ticket: 3 of 3 "The $450 covers the passport renewal arrangement...". Now on
+# every path, in run_turn: the whole of our last messages is read; a sentence
+# that restates a figure already sent loses the figure ("the fee covers...")
+# if it explains what is covered and is dropped if it does not; if nothing
+# explaining the fee is left, our agent's line goes out, and a pending
+# question the reply ended on is kept. False = the B2 item 3 behaviour.
+WHY_THE_PRICE_EVERY_PATH = True
+PRICE_WHY_NOTE = (
+    "\n\nThe client is asking WHY the fee is what it is. Say what the fee covers, in "
+    "one or two sentences, taken from the records. Do NOT state the figure again - "
+    "they already have it - and do not say the amount will be confirmed. If the "
+    "records do not say what it covers, say our agent will take them through exactly "
+    "what it covers."
+)
+_SPEAKER = re.compile(r"^(?:Client|You|Agent):")
+# "the approximately $450 fee" -> one phrase to swap for "the fee".
+_SENT_FIGURE = re.compile(
+    r"\b(?:the\s+)?(?:(?:approximate(?:ly)?|about|around|roughly)\s+)?"
+    r"(?:S\$|SGD\s?|\$)\s?(\d[\d,]*(?:\.\d+)?)(?:\s+(?:fee|cost|price|charge))?",
+    re.IGNORECASE,
+)
+
+
+def recent_bot_messages(history_text: str, count: int = 3) -> list[str]:
+    """Our last few messages, WHOLE (a message's later lines carry no prefix),
+    most recent first."""
+    messages: list[list[str]] = []
+    current: list[str] | None = None
+    for line in (history_text or "").splitlines():
+        if _SPEAKER.match(line):
+            current = [line[4:].strip()] if line.startswith("You:") else None
+            if current is not None:
+                messages.append(current)
+        elif current is not None:
+            current.append(line)
+    return ["\n".join(m).strip() for m in reversed(messages)][:count]
+
+
+def price_probe_reply(reply: str, history_text: str, probe: str) -> str:
+    """The answer to 'why this much?' with no figure we already sent in it."""
+    body = (reply or "").strip()
+    sent = {
+        _money_norm(m.group(1))
+        for message in recent_bot_messages(history_text, count=3)
+        for m in _MONEY.finditer(message)
+    }
+    kept: list[str] = []
+    question = ""
+    spans = _sentence_spans(body)
+    for index, (start, end) in enumerate(spans):
+        sentence = body[start:end].strip()
+        figures = {_money_norm(m.group(1)) for m in _MONEY.finditer(sentence)}
+        repeats = bool(figures & sent)
+        if index == len(spans) - 1 and sentence.endswith("?") and not repeats:
+            question = sentence
+            continue
+        if repeats:
+            if not _EXPLAINS_COVERAGE.search(sentence):
+                continue
+            sentence = _SENT_FIGURE.sub(
+                lambda m: "the fee" if _money_norm(m.group(1)) in sent else m.group(0),
+                sentence,
+            )
+            sentence = sentence[:1].upper() + sentence[1:]
+        elif not figures and _CONFIRMS_THE_FEE.search(sentence) and not _EXPLAINS_COVERAGE.search(sentence):
+            continue
+        kept.append(sentence)
+    explained = " ".join(kept).strip()
+    if not _EXPLAINS_COVERAGE.search(explained):
+        explained = probe
+    out = f"{explained} {question}".strip()
+    if out != body:
+        logger.info("'Why this much?' answer: the price we already sent was not repeated")
+    return out
+
+
 def _figure_sentences(text: str) -> list[tuple[str, str]]:
     """(normalised figure, the sentence it sits in) for every money figure."""
     out = []
