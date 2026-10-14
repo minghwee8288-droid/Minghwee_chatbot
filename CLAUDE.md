@@ -526,6 +526,11 @@ because the lead is opened early and the ticket is created much later.
 | One caring sentence, never two | `guards._SAYS_SORRY` (`CARING_LINE_ONCE`) | The model's own "I'm sorry..." counts as the caring line; an apology does not (item 7). |
 | Every inbound message is logged on arrival | `parser.parse_webhook` (`INBOUND_RECEIPT_LOG`) | id, type, from_me at INFO before any filter; every drop logs at INFO; no phone number added (item 8). |
 | A rest-day pushback is answered, never ignored | `info_collector.pushes_back_on_rest_day` + `REST_DAY_PUSHBACK_NOTE` (`REST_DAY_PUSHBACK`) + `intent_classifier` (`REST_DAY_PUSHBACK_STAYS`) | Once with the KB rule, then without it, always followed by the pending question; and it never switches the live collection to dispute_salary, which reset the transfer intake (items 9, 10). |
+| A timing answer is filed in the client's own words | `templates.TIMING_IN_CLIENT_WORDS` + `info_collector.timing_in_client_words` (`CLIENT_TIMING_WORDS`) | "immediately" was bucketed as "as soon as possible - within 2 weeks" and echoed. On a field whose question asks when, an added timeframe the client's message does not state gives way to their own ASAP word (Batch F item 1). |
+| A reply never opens on a bare name | `guards.strip_repeated_opener` (`NO_BARE_NAME_OPENING`) | A repeated "Thanks," was cut from "Thanks, Vaidik. When..." and left "Vaidik." The name the filler addressed goes with it (item 2). |
+| The safety reply addresses nobody by name | `handover_executor._assault_reply` + `guards.without_names_addressed` (`SAFETY_REPLY_NO_NAME`) | A helper may write on her employer's thread, and no record confirms whose number it is. No record name or full_name in its prompt; any held name used to address them is removed (item 4 = Step 5 item 13). |
+| Bahasa Indonesia is answered in Indonesian, not Malay | `language.client_writes_indonesian` / `to_indonesian` + a system-prompt line (`INDONESIAN_NOT_MALAY`), in `run_turn` (and the preview) | From the client's words (their message, else their last lines), never a nationality. Malay-only words ("polis", "sila", "ejen", "sesiapa") swapped; a client writing Malay keeps Malay (item 5 = Step 5 item 14). |
+| A ticket reference is shown as inline code | `reference.shown` + `guards.references_as_code` in `run_turn` (and the preview) (`REFERENCE_AS_CODE`) | WhatsApp linkified "2026-0100" as a phone number; inline code is not linkified. Every reference is wrapped, any other backtick dropped; the stored number is unchanged (item 6 = Step 5 item 16). |
 | No stray script reaches the client | `guards.without_stray_script`, applied once in `graph.run_turn` (and the preview) behind `STRAY_SCRIPT_GUARD` | The model ended an Indonesian reply with "天天彩票中奖" (Step 2e replay). `GLITCH_STRINGS` always go; a run of letters in a script that is neither the reply's main script nor one in the client's own lines or the names we hold for them goes too. Latin is never a cut script, so "Claire", "Ming Hwee", the address, a CB reference and Latin names survive in a Burmese or Chinese reply; digits and punctuation are not letters. Han and kana are one bucket. A cut is logged. |
 | A finished reply is not held back by Whapi | `message.send_bot_reply` (`SEND_WITHOUT_TYPING_TIME`) | With our own typing indicator running, no `typing_time` is sent: it only delayed delivery (whapi.send 1.4 s with 0.5 s asked). The channel's `/settings` holds no typing default. |
 | The search embedding starts beside the classifier, and is used only for the query the retriever actually builds | `graph._classify_with_prefetch` (`PREFETCH_SEARCH_EMBEDDING`) + `rag.prefetch_query` / `embed_query` | Predicted from the turn as it stands before classification (intent and service carry over). `embed_query` takes over a prefetch for the SAME text only, finished or still running; a different query (the classifier changed the service) is embedded as before, and a failed prefetch is retried, never reused. The canary is unchanged (cosine 1.000000 both ways). |
@@ -814,6 +819,12 @@ Easy to get wrong:
   `info_collector.REST_DAY_PUSHBACK` (item 9),
   `intent_classifier.REST_DAY_PUSHBACK_STAYS` (item 10),
   `info_collector.SHORT_RELIGION_QUESTION` (item 11).
+  Step 5 Batch F's switches, each `False` for the Batch E behaviour:
+  `templates.TIMING_IN_CLIENT_WORDS` and `info_collector.CLIENT_TIMING_WORDS`
+  (item 1), `guards.NO_BARE_NAME_OPENING` (item 2),
+  `handover_executor.SAFETY_REPLY_NO_NAME` (item 4),
+  `language.INDONESIAN_NOT_MALAY` (item 5), `reference.REFERENCE_AS_CODE`
+  (item 6).
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1370,14 +1381,33 @@ Ordered by what will hurt first.
     received the first copy. Nothing to fix in the bot; since Batch E item 8
     every message is logged on arrival by id and type, so the next one can be
     proved either way from the log.
-40. **Salary bands differ between flows, and are not from the KB** (Batch E
-    item 12, not done). The budget question offers code options ("below SGD
+40. **RESOLVED 2026-10-14: bands kept, nationality-based by design** (the
+    agency's decision; no code change). Myanmar lower, Filipino from the S$650
+    floor they asked for on 2026-09-17. What was recorded:
+    **Salary bands differ between flows, and are not from the KB** (Batch E
+    item 12). The budget question offers code options ("below SGD
     500" ... "above SGD 800"); a Filipino preference rewrites them to start at
     S$650 (2026-09-17, the agency's own request), which is why the new hire
     showed "SGD 650-700" and the transfer "below $500". The KB holds salary
     figures per nationality (Filipino S$650/S$670, Indonesian from S$550, a
     general S$450-850) but no budget bands. An open question would remove the
     floor behaviour the agency asked for, so it waits on a decision.
+41. **A third party offering a helper is not always handed over** (Batch F
+    item 3 = Step 5 item 2, stopped as instructed: the code differs from the
+    rule). Measured read-only, 2 runs each: a helper offering herself is
+    collected (`candidate_new_hiring`), and an agent or an unknown sender with
+    "I have a helper looking for work" is handed over (`candidate_registration`
+    with no fields). But a sender on file as an EMPLOYER relaying someone
+    else's maid ("my friend's maid is looking for a new employer") is
+    collected through the candidate flow, because `resolve_service` hands the
+    bare registration only to `_THIRD_PARTY_CONTACTS` (supplier, partner); one
+    run then asked the employer for "your name" as though they were the
+    helper. prompt.md entry 53 still says the third-party instruction covers
+    "a supplier, an agent, an employer, or the helper herself", which the code
+    no longer does for the helper. Neither the code nor entry 53 was changed:
+    decide whether an employer relaying a helper is handed over (then
+    `resolve_service` treats an employer sender as a third party for
+    `candidate_registration`), and entry 53 is then rewritten to match.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -1686,8 +1716,9 @@ behaviour behind one switch. Details of each step are in §11.
 | 5B2 | Batch B2 (phone-test fixes): reference never reused, fixed fees stated plainly, "why this much", name case, caring line, no re-introduction, phone validation | see git log |
 | 5C | Batch C (behaviour): items 6, 7, 8, 10, 12 | see git log |
 | 5E | Batch E (14 Oct phone test): items 1-11; 12 waits on a decision (section 9.40) | see git log |
+| 5F | Batch F: "immediately" as said, no bare-name opening, safety reply names nobody (item 13), Indonesian not Malay (item 14), reference as inline code (item 16); item 2 stopped (section 9.41) | see git log |
 
-**Still to do, in order:** Step 5 (below; done: 15 in 5a, Batch B, B2, Batch C and Batch E; next Batch D = items 2, 13, 14, 16), Step 6 (combined questions: propose pairs, stop before
+**Still to do, in order:** Step 5 (below; done: 15 in 5a, Batch B, B2, Batch C, Batch E and Batch F (13, 14, 16); item 2 stopped, section 9.41), Step 6 (combined questions: propose pairs, stop before
 wiring), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
 the webhook builds `known_helpers` only when `contact_type == "employer"`).
@@ -1703,7 +1734,8 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 
 1. **DONE in Batch B.** Questions per message: the style guide's "ask 2-3 at most" against rule 8's
    one per message. Make the style guide match rule 8 (Step 6 changes both).
-2. A helper offering herself for work: report what the code does for her and
+2. **STOPPED in Batch F, section 9.41** (the code differs for an employer
+   relaying a helper). A helper offering herself for work: report what the code does for her and
    for a supplier or agent offering a helper; make prompt.md entry 53 match
    (she is collected, a third party is handed over). Stop if the code differs.
 3. **DONE in Batch B.** "Depends on the case" (entry 50), banned 2026-09-17: if they asked about
@@ -1735,10 +1767,10 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
     client stated the condition (urgent, rushed, emergency, a family matter
     needing fast travel). From the KB rows "Home leave - urgent requests" and
     "Home leave - cost", which stay untouched.
-13. The safety / harm reply never addresses the sender by a record name unless
+13. **DONE in Batch F** (`SAFETY_REPLY_NO_NAME`). The safety / harm reply never addresses the sender by a record name unless
     the record confirms it is the sender's own (a helper may be writing on the
     employer's thread). Default: no name. Seen in Step 3 (Burmese reply).
-14. A client writing Bahasa Indonesia gets Indonesian, not Malay - from the
+14. **DONE in Batch F** (`INDONESIAN_NOT_MALAY`). A client writing Bahasa Indonesia gets Indonesian, not Malay - from the
     client's words, never from nationality alone. Seen in Step 3 ("Sila
     pastikan... hubungi polis").
 15. **DONE in Step 5a** (2026-10-13), `guards.without_stray_script`.
@@ -1747,7 +1779,7 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
     remove known glitch strings ("天天彩票中奖" ended an Indonesian reply in
     the Step 2e replay). Never strip names, the address, "Claire", CB
     references or digits.
-16. Reference shown as a phone link: WhatsApp turns the "2026-0033" in
+16. **DONE in Batch F** (`REFERENCE_AS_CODE`). Reference shown as a phone link: WhatsApp turns the "2026-0033" in
     "CB-2026-0033" into a tappable phone number. Find a display-only fix that
     keeps the stored number unchanged (WhatsApp inline code, the reference in
     backticks, is not linkified); the formatting guards must allow exactly
@@ -1762,6 +1794,25 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-14** - **Step 5 Batch F: items 1, 2, 4, 5, 6; item 3 stopped.**
+  Each behind its own switch (section 7), each its own commit.
+  (1) "immediately" is filed and echoed as said: the extraction prompt no
+  longer buckets it as "as soon as possible - within 2 weeks", and the
+  collector rewrites an added timeframe on a when-field. Live 6 of 6.
+  (2) A repeated "Thanks," no longer leaves a bare name ("Vaidik.") opening
+  the reply. (3) STOPPED, section 9.41: an employer relaying someone else's
+  helper is collected, not handed over; nothing changed. (4) The safety reply
+  addresses nobody by name; live 9 of 9 (Burmese, Bahasa, English) on a thread
+  with a record name. (5) Bahasa Indonesia is answered in Indonesian: the
+  replay of (4) gave Malay 3 of 3 before ("polis", "sesiapa", "ejen") and
+  Indonesian 3 of 3 after. (6) The ticket reference is inline code
+  (`` `CB-2026-0100` ``), which WhatsApp does not linkify; 19 existing
+  reference checks moved to that form. Not replayable read-only (no ticket is
+  issued), so the rendering is a phone test.
+  Section 9.40 resolved: the salary bands are kept, nationality-based by design.
+  **Verified:** `smoke_nodes.py` 501 (was 494), `selfcheck_flows.py` 921 (was
+  914); 5 faults injected, 5 red.
 
 - **2026-10-14** - **Step 5 Batch E: fixes from the 14 Oct phone test, items
   1-11.** Each behind its own switch (section 7), each its own commit.

@@ -881,7 +881,7 @@ Capture what the client said in passing, not only what they were asked. One sent
 Some fields list the answers the office works with. Match what the client said to the closest one and return THAT wording, so the record is consistent:
 - "3 room flat", "HDB 3rm" -> "HDB 1-3 room"; "5 room" -> "HDB 4-5 room"; "condominium" -> "condo"; "terrace", "bungalow" -> "landed"
 - "we are 4 at home", "me, my wife and 2 kids" -> "3-4"
-- "next week", "urgently", "immediately" -> "as soon as possible - within 2 weeks"; "still looking around", "just checking" -> "just exploring for now"
+- a timing answer is returned in the client's own words: "immediately" -> "immediately", "urgently" -> "urgently", "asap" -> "as soon as possible", "next week" -> "next week". Never add a timeframe the client did not state; "still looking around", "just checking" -> "just exploring for now"
 - "Pinay", "Philippines" -> "Filipino"; "Burmese" -> "Myanmar"
 But return what the client actually said whenever it carries detail no listed answer does — "$680", "HDB 4 room with a store room", "8 of us including my in-laws". Never force a real answer into a bucket that loses information, and never invent a bucket value for a field the client said nothing about.
 
@@ -3129,5 +3129,29 @@ They are pushing back on the rest-day rule again. You have already told them the
 
 ```
 so we can match her to your household
+```
+
+## 68. Batch F Additions (14 October)
+
+### What is this prompt used for?
+
+Lines added to Claire's instructions in Batch F. Each can be switched off on its own.
+
+### What does it make the chatbot do?
+
+- **Timing answers** (entry 12, Detail Extraction): "immediately" is kept as "immediately", never turned into "within 2 weeks".
+- **The safety reply** (entry 63): addresses the person by no name, because the person writing may not be the person our records name.
+- **Bahasa Indonesia**: a client writing Indonesian is answered in Indonesian, not Malay.
+
+### Prompt — Added to the safety reply
+
+```
+Address them by NO name at all - not a name from our records and not one from earlier in the conversation. The person writing may not be the person our records name.
+```
+
+### Prompt — Added when the client writes Bahasa Indonesia
+
+```
+The client writes Bahasa Indonesia. Reply in Indonesian, NOT Malay: "silakan" or "mohon" (not "sila"), "polisi" (not "polis"), "tim" (not "pasukan"), "agen" (not "ejen"), "nomor" (not "nombor"), "karena" (not "kerana"), "siapa pun" (not "sesiapa"), "Anda" (not "awak").
 ```
 
