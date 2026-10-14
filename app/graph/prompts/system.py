@@ -466,6 +466,28 @@ def _replacement_cost_block(state: dict[str, Any]) -> str:
     return "" if replacement_package_fee_due(state) else REPLACEMENT_COST_BLOCK
 
 
+# Phase 3 Step 5 Batch B2 item 2 (2026-10-14): rule 5 told the model to call
+# every figure approximate and promise to confirm it - "The approximate fee is
+# $695" where the records say "Work permit renewal is $695". Only a figure the
+# records themselves qualify is a guide now. The same switch runs
+# guards.state_fixed_fee_plainly. False = rule 5 as it was.
+from app.graph.guards import FIXED_FEE_STATED_PLAINLY  # noqa: E402
+
+_RULE5_GUIDE_OLD = (
+    "give a figure or a range, give it as a guide: say it is approximate, that the exact "
+    "amount depends on their requirements, and that you will confirm it."
+)
+_RULE5_GUIDE_NEW = (
+    "state a fee exactly (\"Work permit renewal is $695\"), give it exactly: never "
+    "\"approximately\", never \"to be confirmed\". If the records give a range, call a figure "
+    "approximate or mark it as subject to change, give it as a guide: say it is approximate "
+    "and that you will confirm the exact amount."
+)
+assert _RULE5_GUIDE_OLD in RULES, "system.py: the B2 item 2 line of rule 5 moved"
+if FIXED_FEE_STATED_PLAINLY:
+    RULES = RULES.replace(_RULE5_GUIDE_OLD, _RULE5_GUIDE_NEW)
+
+
 def build_system_prompt(
     state: dict[str, Any] | None = None,
     *,

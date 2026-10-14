@@ -482,7 +482,19 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     # Step 5 item 17, every service: no "approximate" cost without a figure.
     if guards.NO_APPROXIMATE_COST_ANYWHERE and result.get("reply"):
         result["reply"] = guards.without_figureless_approximate(result["reply"])
+    # Step 5 Batch B2 item 2: a fee the records state exactly is stated plainly.
+    if guards.FIXED_FEE_STATED_PLAINLY and result.get("reply"):
+        result["reply"] = guards.state_fixed_fee_plainly(result["reply"], records_text(result))
     return result
+
+
+def records_text(result: dict[str, Any]) -> str:
+    """The retrieved records the turn's reply was written from, as plain text."""
+    rows = result.get("rag_matches") or []
+    return "\n".join(
+        [result.get("rag_context") or ""]
+        + [str(row.get("answer") or row.get("content") or "") for row in rows if isinstance(row, dict)]
+    )
 
 
 def stray_script_context(payload: dict[str, Any]) -> list[str]:

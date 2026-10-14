@@ -234,6 +234,8 @@ async def run_preview(body: PreviewRequest) -> dict[str, Any]:
                 )
             if guards.NO_APPROXIMATE_COST_ANYWHERE and reply:  # as run_turn does
                 reply = guards.without_figureless_approximate(reply)
+            if guards.FIXED_FEE_STATED_PLAINLY and reply:  # as run_turn does
+                reply = guards.state_fixed_fee_plainly(reply, graph_module.records_text(result))
             turns.append({
                 "message": text,
                 "reply": reply,

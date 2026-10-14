@@ -5691,6 +5691,39 @@ rows += [
    "case when n < 10000" in _COUNTER_SQL, "cb_tickets" in _COUNTER_SQL.split("create or replace")[0]
    and "alter table public.cb_tickets" not in _COUNTER_SQL),
   (True, True, True, True)),
+ # item 2
+ ("B2 item 2: the prompts no longer make every fee approximate",
+  (_style._FIGURE_LINE_OLD in _style.STYLE_BLOCK, _style._MONEY_EXCEPTION_OLD in _style.STYLE_BLOCK,
+   importlib.import_module("app.graph.prompts.system")._RULE5_GUIDE_OLD
+   in importlib.import_module("app.graph.prompts.system").RULES,
+   _templates._FEE_GUIDE_OLD in _templates.FEE_HANDOVER_INSTRUCTION,
+   "never \"approximately\"" in _bsp({"contact_type": "employer", "history_text": ""})),
+  (False, False, False, False, True)),
+ ("...the guard reads which figures the records state exactly",
+  sorted(_guards.fixed_fee_figures(
+      "Work permit renewal is $695. It is approximately $450 for a Filipino helper. "
+      "It is $400 for a Filipino helper and $250 for an Indonesian helper. Flight costs "
+      "vary: Philippines S$300-500. The levy is $300 a month.")),
+  ["250", "400", "695"]),
+ ("...and states those plainly, leaving the others alone",
+  (_guards.state_fixed_fee_plainly("It is about $400 for a Filipino helper.",
+                                   "It is $400 for a Filipino helper."),
+   _guards.state_fixed_fee_plainly("The approximate $695 covers the renewal. A live agent will "
+                                   "confirm the exact amount and connect with you shortly.",
+                                   "Work permit renewal is $695."),
+   _guards.state_fixed_fee_plainly("The fee is about $650. Her salary is around $650.",
+                                   "Her salary is $650. The service fee is $650."),
+   _guards.state_fixed_fee_plainly("The cost is approximately $695 and flights are about "
+                                   "$300-500.", "Work permit renewal is $695.")),
+  ("It is $400 for a Filipino helper.",
+   "The $695 covers the renewal. A live agent will connect with you shortly.",
+   "The fee is $650. Her salary is around $650.",
+   "The cost is approximately $695 and flights are about $300-500.")),
+ ("...run once, in run_turn and in the preview",
+  tuple("FIXED_FEE_STATED_PLAINLY" in inspect.getsource(m)
+        for m in (importlib.import_module("app.graph.graph").run_turn,
+                  importlib.import_module("app.api.admin"))),
+  (True, True)),
 ]
 
 bad = 0

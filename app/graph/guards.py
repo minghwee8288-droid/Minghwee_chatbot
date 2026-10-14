@@ -1060,6 +1060,127 @@ def without_figureless_approximate(reply: str) -> str:
     return out or NATIONALITY_FEE_DEFERRAL
 
 
+# Phase 3 Step 5 Batch B2 item 2 (2026-10-14). Live: after the renewal closing
+# said "The cost is $695", "how much is the fee" got "The approximate fee is
+# $695" and "why this much" got "...the exact amount will be confirmed by our
+# team". The records say "Work permit renewal is $695" - a fixed price. Prompt
+# rule 5 told the model to call EVERY figure approximate and promise to
+# confirm it (3 of 3 replays). A figure the records state with no qualifier is
+# now stated plainly: "approximately"/"about"/"around" before it and
+# "approximate" before its fee word go, and a clause promising to confirm the
+# exact amount goes. A figure the records themselves qualify (the passport
+# row's "approximately $450", a range, "from", "subject to change") is left
+# alone, and so is a reply that also carries such a figure. Salary, levy and
+# bond sentences are not our fee and are never touched.
+# False = the reply as the node wrote it (the prompt lines swap with it).
+FIXED_FEE_STATED_PLAINLY = True
+_VARYING_FIGURE = re.compile(
+    r"\b(?:approx\w*|about|around|roughly|estimat\w*|from|starts?|starting|subject\s+to\s+change"
+    r"|var(?:y|ies|iable|ying)|depend\w*|up\s+to|between|typical\w*|ranges?|minimum|at\s+least"
+    r"|or\s+more|guide)\b",
+    re.IGNORECASE,
+)
+_SOFTENER_BEFORE_FIGURE = re.compile(
+    r"\b(?:approximately|approximate|approx\.?|about|around|roughly)\s+(?=(?:S\$|SGD\s?|\$)\s?\d)",
+    re.IGNORECASE,
+)
+_APPROXIMATE_FEE_WORD = re.compile(
+    r"\b(?:the\s+)?approximate\s+(?=(?:[\w-]+\s+){0,4}?(?:fees?|costs?|prices?|charges?|amount)\b)",
+    re.IGNORECASE,
+)
+_CONFIRMS_THE_FEE = re.compile(
+    r"\bconfirm\w*\b[^.!?;,]*?\b(?:fees?|amount|costs?|figure|price|quotation)\b"
+    r"|\b(?:exact|final)\s+(?:[\w-]+\s+)?(?:fees?|amount|costs?|figure|price)\b[^.!?;,]*\bconfirm\w*"
+    r"|\b(?:fees?|amount|costs?|price)\b[^.!?;,]*\bdepends?\s+on\s+your\s+requirements",
+    re.IGNORECASE,
+)
+_CONFIRM_AND = re.compile(
+    r"\bconfirm\w*\s+(?:the\s+)?(?:exact\s+|final\s+)?(?:[\w-]+\s+)?(?:fees?|amount|costs?|figure|price)"
+    r"(?:\s+(?:for\s+you|with\s+you|for\s+your\s+case))?\s+and\s+",
+    re.IGNORECASE,
+)
+_CLAUSE_SPLIT = re.compile(r"(,\s*(?:and|but|so|which|while)?\s*|;\s*|\s+[-–—]\s+)")
+
+
+def _figure_sentences(text: str) -> list[tuple[str, str]]:
+    """(normalised figure, the sentence it sits in) for every money figure."""
+    out = []
+    for start, end in _sentence_spans(text or ""):
+        sentence = text[start:end]
+        for match in _MONEY.finditer(sentence):
+            out.append((_money_norm(match.group(1)), sentence))
+    return out
+
+
+def fixed_fee_figures(records: str) -> set[str]:
+    """Figures the records only ever state plainly, as a fee rather than a salary,
+    levy or bond: never qualified, never part of a range."""
+    seen: dict[str, bool] = {}
+    for figure, sentence in _figure_sentences(records):
+        if _NOT_OUR_FEE.search(sentence):
+            continue
+        ranged = re.search(
+            r"(?:S\$|SGD\s?|\$)?\s?" + re.escape(figure) + r"(?:\.\d+)?\s*(?:[-–]|to)\s*(?:S\$|\$)?\d"
+            r"|\d\s*(?:[-–]|to)\s*(?:S\$|SGD\s?|\$)\s?" + re.escape(figure),
+            sentence.replace(",", ""),
+        )
+        plain = not (_VARYING_FIGURE.search(sentence) or ranged)
+        seen[figure] = seen.get(figure, True) and plain
+    return {figure for figure, plain in seen.items() if plain}
+
+
+def state_fixed_fee_plainly(reply: str, records: str) -> str:
+    """'The approximate fee is $695, and our team will confirm the exact amount.'
+    -> 'The fee is $695.' - only for a figure the records state exactly."""
+    body = reply or ""
+    if not body or not records:
+        return body
+    fixed = fixed_fee_figures(records)
+    if not fixed:
+        return body
+    fee_figures = {
+        figure for figure, sentence in _figure_sentences(body) if not _NOT_OUR_FEE.search(sentence)
+    }
+    plain_here = fee_figures & fixed
+    if not plain_here:
+        return body
+    every_figure_fixed = fee_figures <= fixed
+    out = []
+    cursor = 0
+    for start, end in _sentence_spans(body):
+        out.append(body[cursor:start])
+        sentence = body[start:end]
+        figures = {f for f, _ in _figure_sentences(sentence)}
+        about_salary = bool(_NOT_OUR_FEE.search(sentence))
+        if figures and not about_salary and figures <= fixed:
+            sentence = _SOFTENER_BEFORE_FIGURE.sub("", sentence)
+            sentence = _APPROXIMATE_FEE_WORD.sub(
+                lambda m: "The " if m.group(0)[:1].isupper() else "the ", sentence)
+            if every_figure_fixed and _CONFIRMS_THE_FEE.search(sentence):
+                parts = _CLAUSE_SPLIT.split(sentence)
+                kept = [parts[0]]
+                for sep, clause in zip(parts[1::2], parts[2::2]):
+                    if _CONFIRMS_THE_FEE.search(clause) and not _MONEY.search(clause):
+                        continue
+                    kept += [sep, clause]
+                sentence = "".join(kept).rstrip(" ,;")
+                if sentence and sentence[-1] not in ".!?":
+                    sentence += "."
+        elif not figures and every_figure_fixed and _CONFIRMS_THE_FEE.search(sentence):
+            trimmed = _CONFIRM_AND.sub("", sentence)
+            sentence = "" if _CONFIRMS_THE_FEE.search(trimmed) else trimmed
+        out.append(sentence)
+        cursor = end
+    out.append(body[cursor:])
+    result = "".join(out)
+    result = re.sub(r"[ \t]{2,}", " ", result)
+    result = re.sub(r"(?m)^[ \t]+(?=\S)", "", result)
+    result = re.sub(r"\n{3,}", "\n\n", result).strip()
+    if result != body:
+        logger.info("Stated a fixed fee plainly: %r -> %r", body[:160], result[:160])
+    return result or body
+
+
 def client_lines(history_text: str) -> list[str]:
     """The client's own lines of a "Client:" / "You:" history."""
     return [line.split(":", 1)[1] for line in (history_text or "").splitlines()

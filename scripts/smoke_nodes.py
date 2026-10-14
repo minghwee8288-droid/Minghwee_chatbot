@@ -3424,6 +3424,44 @@ async def _batch_b2_checks() -> list[tuple[str, bool]]:
             out.append(("ticket number: TICKET_NUMBER_COUNTER off -> old path, no rpc",
                         (await ticket_module.next_ticket_number()).endswith("-0033")
                         and not rpc.await_count))
+
+    # Item 2: through the real run_turn, a fee the records state exactly.
+    from app.graph import graph as graph_module
+    from app.graph import guards as guards_module
+
+    class _Graph:
+        def __init__(self, result):
+            self.result = result
+
+        async def ainvoke(self, *_a, **_kw):
+            return dict(self.result)
+
+    renewal_row = {"answer": "Work permit renewal is $695. That covers us handling the whole "
+                             "thing for you."}
+    passport_row = {"answer": "It is approximately $450 for a Filipino helper and "
+                              "approximately $450 for an Indonesian helper."}
+
+    async def turn(reply, rows, payload=None):
+        with patch.object(graph_module.kb_rules, "refresh", new=AsyncMock()), \
+                patch.object(graph_module, "get_graph",
+                             new=lambda: _Graph({"reply": reply, "rag_matches": rows})):
+            return (await graph_module.run_turn("t", payload or {}))["reply"]
+
+    live = "The approximate work permit renewal fee is $695."
+    out.append(("fixed fee: 'The approximate fee is $695' -> stated plainly",
+                await turn(live, [renewal_row]) == "The work permit renewal fee is $695."))
+    out.append(("fixed fee: '...the exact amount will be confirmed' cut",
+                await turn("The fee is $695, and the exact amount will be confirmed by our "
+                           "team.", [renewal_row]) == "The fee is $695."))
+    out.append(("fixed fee: a fee the KB calls approximate keeps the word",
+                await turn("The cost is approximately $450, and our agent will confirm the "
+                           "exact fee.", [passport_row])
+                == "The cost is approximately $450, and our agent will confirm the exact fee."))
+    out.append(("fixed fee: no records, nothing changed",
+                await turn(live, []) == live))
+    with patch.object(guards_module, "FIXED_FEE_STATED_PLAINLY", False):
+        out.append(("fixed fee: FIXED_FEE_STATED_PLAINLY off -> as written",
+                    await turn(live, [renewal_row]) == live))
     return out
 
 

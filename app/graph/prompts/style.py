@@ -127,3 +127,37 @@ _FIRST_HELPER_LINE = (
 )
 if FIRST_HELPER_CONDITIONAL:
     STYLE_BLOCK += _FIRST_HELPER_LINE
+
+# Phase 3 Step 5 Batch B2 item 2 (2026-10-14): a fee the records state exactly
+# is stated plainly. These two lines told the model to call every fee
+# approximate and promise to confirm it, so "Work permit renewal is $695"
+# went out as "The approximate fee is $695" (3 of 3 replays). The same switch
+# runs guards.state_fixed_fee_plainly on the reply. False = the guide as it was.
+from app.graph.guards import FIXED_FEE_STATED_PLAINLY  # noqa: E402
+
+_MONEY_EXCEPTION_OLD = (
+    "(Money is the exception: rule 5 requires you to say a fee or salary figure is "
+    "approximate and that you will confirm the exact amount.)"
+)
+_MONEY_EXCEPTION_NEW = (
+    "(Money follows rule 5: a figure the records state exactly is given exactly; only "
+    "a figure the records call approximate, give as a range or mark as subject to "
+    "change is given as a guide with the exact amount to be confirmed.)"
+)
+_FIGURE_LINE_OLD = (
+    "Give the figure, say it is approximate if it is, and stop. Do not follow it with "
+    "what it includes or what it depends on unless they asked — but for a fee, salary "
+    "or levy, DO add that you will confirm the exact amount (rule 5)."
+)
+_FIGURE_LINE_NEW = (
+    "Give the figure, say it is approximate only if the records say so, and stop. Do "
+    "not follow it with what it includes or what it depends on unless they asked. A "
+    "fee the records state exactly needs no \"I'll confirm the exact amount\" (rule 5)."
+)
+assert _MONEY_EXCEPTION_OLD in STYLE_BLOCK and _FIGURE_LINE_OLD in STYLE_BLOCK, (
+    "style.py: the B2 item 2 lines moved"
+)
+if FIXED_FEE_STATED_PLAINLY:
+    STYLE_BLOCK = STYLE_BLOCK.replace(_MONEY_EXCEPTION_OLD, _MONEY_EXCEPTION_NEW).replace(
+        _FIGURE_LINE_OLD, _FIGURE_LINE_NEW
+    )

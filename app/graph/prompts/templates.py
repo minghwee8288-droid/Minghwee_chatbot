@@ -1426,3 +1426,24 @@ into "approximately". Where a fee is marked as subject to change, say so. A fee
 that applies only in a particular case is only mentioned when that case
 applies.
 """
+
+
+# Phase 3 Step 5 Batch B2 item 2 (2026-10-14): a fee the records state exactly
+# is stated exactly. This line made every fee "approximate" and promised to
+# confirm it. The switch is guards.FIXED_FEE_STATED_PLAINLY, which also runs
+# guards.state_fixed_fee_plainly on the reply. False = the line as it was.
+from app.graph.guards import FIXED_FEE_STATED_PLAINLY  # noqa: E402
+
+_FEE_GUIDE_OLD = (
+    "give them the approximate figure from those records, say plainly that it is a guide "
+    "and that you will confirm the exact amount based on their requirements, and stop."
+)
+_FEE_GUIDE_NEW = (
+    "give them the figure from those records, and stop. A figure the records state exactly "
+    "is given exactly - never \"approximately\", never \"to be confirmed\". Only a figure "
+    "the records give as a range, call approximate or mark as subject to change is a guide: "
+    "say so, and that you will confirm the exact amount based on their requirements."
+)
+assert _FEE_GUIDE_OLD in FEE_HANDOVER_INSTRUCTION, "templates.py: the B2 item 2 line moved"
+if FIXED_FEE_STATED_PLAINLY:
+    FEE_HANDOVER_INSTRUCTION = FEE_HANDOVER_INSTRUCTION.replace(_FEE_GUIDE_OLD, _FEE_GUIDE_NEW)
