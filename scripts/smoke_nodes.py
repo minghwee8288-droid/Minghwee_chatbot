@@ -3867,6 +3867,83 @@ async def _step6_checks() -> list[tuple[str, bool]]:
     return out
 
 
+async def _step6c_checks() -> list[tuple[str, bool]]:
+    """Step 6c: the question-style choice, through the real collector."""
+    import importlib
+    ico = importlib.import_module("app.graph.nodes.info_collector")
+    from app.services import ticket as ticket_module
+    global _EXTRACTION
+    intro = ("Client: Hi, I want to hire a helper\n"
+             "You: Hi, I'm Claire, Ming Hwee's AI assistant. May I know your name?\n")
+
+    def named(service, name_line="VD", **extra):
+        return {"service_type": service, "intent": service, "contact_type": "employer",
+                "conversation_id": 0, "incoming_text": name_line, "prior_hires": 0,
+                "history_text": intro + f"Client: {name_line}",
+                "collected_info": {}, "asked_field_counts": {"full_name": 1}, **extra}
+
+    def offered(text):
+        return {**named("new_hiring", text), "collected_info": {"full_name": "VD"},
+                "question_style": "offered",
+                "history_text": intro + "Client: VD\nYou: Thanks, VD. "
+                + ico.QUESTION_STYLE_OFFER_TEXT + f"\nClient: {text}"}
+
+    out = []
+    _EXTRACTION = {"full_name": "VD"}
+    got = await _run_info_collector(named("new_hiring"))
+    out.append(("6c: the offer is in the reply that thanks them for their name",
+                got.get("reply") == f"Thanks, VD. {ico.QUESTION_STYLE_OFFER_TEXT}"
+                and got.get("question_style") == "offered"
+                and not any(k for k in (got.get("asked_field_counts") or {}) if k != "full_name")))
+    first = await _run_info_collector({**named("new_hiring"), "history_text": ""})
+    out.append(("6c: never on the first message, before Claire's introduction",
+                first.get("question_style") != "offered"))
+    with patch.object(ico, "QUESTION_STYLE_OFFER", False):
+        off = await _run_info_collector(named("new_hiring"))
+    out.append(("6c: QUESTION_STYLE_OFFER off -> the normal question",
+                off.get("question_style") != "offered"))
+    short_on = await _run_info_collector(named("renewal"))
+    with patch.object(ico, "QUESTION_STYLE_OFFER_SHORT", False):
+        short_off = await _run_info_collector(named("renewal"))
+    out.append(("6c: offered on work permit renewal, and its sub-switch turns that off",
+                short_on.get("question_style") == "offered"
+                and short_off.get("question_style") != "offered"))
+    out.append(("6c: never for a complaint or a missing-helper report",
+                ticket_module.COMPLAINT not in ico.style_offer_services()
+                and ticket_module.MISSING_HELPER not in ico.style_offer_services()))
+    _EXTRACTION = {"full_name": "Siti"}
+    foreign = await _run_info_collector(named("new_hiring", "Nama saya Siti, saya mau tanya dulu"))
+    out.append(("6c: not offered in a conversation that is not in English",
+                foreign.get("question_style") != "offered"))
+
+    _EXTRACTION = {}
+    allm = await _run_info_collector(offered("all at once please"))
+    reply = allm.get("reply") or ""
+    counts = allm.get("asked_field_counts") or {}
+    home = next((ln for ln in reply.splitlines() if "type of home" in ln.lower()), "")
+    out.append(("6c: 'all at once' -> one numbered message of every remaining question",
+                allm.get("question_style") == "all"
+                and reply.startswith(ico._STYLE_LIST_FIRST)
+                and "\n1. " in reply and "\n5. " in reply
+                and {"requirement", "household", "home_type", "home_size"} <= set(counts)))
+    out.append(("6c: ...an approved pair shares one numbered line",
+                bool(home) and "bedroom" in home.lower()))
+    later = {**offered("x"), "question_style": "all",
+             "collected_info": {"full_name": "VD", "requirement": "childcare"},
+             "asked_field_counts": {k: 1 for k in counts} | {"full_name": 1},
+             "incoming_text": "1. childcare"}
+    again = await _run_info_collector(later)
+    out.append(("6c: ...then only what is still missing, together, in one message",
+                (again.get("reply") or "").startswith(ico._STYLE_LIST_AGAIN)))
+    one = await _run_info_collector(offered("one by one is fine"))
+    out.append(("6c: 'one by one' -> the normal flow, remembered",
+                one.get("question_style") == "one"
+                and not (one.get("reply") or "").startswith(ico._STYLE_LIST_FIRST)))
+    unclear = await _run_info_collector(offered("hmm ok"))
+    out.append(("6c: an unclear answer -> one by one", unclear.get("question_style") == "one"))
+    return out
+
+
 async def _batch_b_checks() -> list[tuple[str, bool]]:
     """Step 5 items 9 and 17, through the real run_turn."""
     from app.graph import graph as graph_module
@@ -5560,6 +5637,9 @@ async def main() -> int:
         failures += not ok
     for label, ok in await _step6_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  step-6  {label:44}")
+        failures += not ok
+    for label, ok in await _step6c_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  step-6c  {label:44}")
         failures += not ok
     for label, ok in await _stray_script_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  wording  {label:44}")

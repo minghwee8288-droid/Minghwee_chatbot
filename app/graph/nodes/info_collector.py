@@ -73,6 +73,7 @@ from app.graph.prompts.templates import (
     HANDOVER_CLOSER_INSTRUCTION,
 )
 from app.graph.state import RESET_KEY, ConversationState, effective_contact_type
+from app.graph.language import mainly_non_english
 from app.services import lead as lead_service
 from app.services import ticket as ticket_service
 # SERVICE_LABELS/service_label live in app.services.ticket now — the SAME_ISSUE
@@ -2032,6 +2033,87 @@ PAIRED_QUESTION_NOTE = (
     "{guidance}"
 )
 
+# Phase 3 Step 6c (2026-10-14): the client chooses how the questions come.
+# Offered once per conversation, in the same reply that thanks them for their
+# name (the first collector turn after Claire has introduced herself and the
+# name is known), never before the introduction, never on a bare greeting
+# (the collector does not run there), and never on a complaint, a safety
+# report or a missing-helper report. "All at once" sends every remaining
+# question as one numbered message (pairs on one line, options named) and
+# then only what is still missing or unclear; "one by one", no answer or an
+# unclear one is the normal flow. The choice is state.question_style and
+# lasts the whole conversation. Fixed English wording, so it is not offered
+# in a conversation that is not in English.
+# QUESTION_STYLE_OFFER = False: never offered, the normal flow everywhere.
+# QUESTION_STYLE_OFFER_SHORT = False: not offered on the short services.
+QUESTION_STYLE_OFFER = True
+QUESTION_STYLE_OFFER_SHORT = True
+_STYLE_SERVICES = frozenset({
+    "new_hiring", "direct_hiring", "replacement", ticket_service.TRANSFER_EMPLOYER,
+    "home_leave", "insurance", ticket_service.CANDIDATE_HIRING, "transfer",
+})
+_STYLE_SHORT_SERVICES = frozenset({"renewal", "passport_renewal"})
+QUESTION_STYLE_OFFER_TEXT = (
+    "I can ask you one question at a time, or send all the questions at once so you "
+    "can answer in one reply. Which would you prefer?"
+)
+_STYLE_LIST_FIRST = "Sure, here are the questions. You can answer them all in one reply:"
+_STYLE_LIST_AGAIN = "Thank you. A few details are still missing or unclear:"
+_STYLE_LIST_END = "If something does not apply, just say so."
+_STYLE_ALL = re.compile(
+    r"\bat\s+once\b|\ball\s+(?:together|in\s+one|of\s+them|the\s+questions|questions)\b"
+    r"|\bsend\s+(?:me\s+)?(?:them\s+)?all\b|\bin\s+one\s+(?:go|message|reply)\b"
+    r"|^\s*(?:all|second|2|the\s+second(?:\s+one)?)\s*[.!]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def style_offer_services() -> frozenset[str]:
+    """The services the question-style choice is offered on (Step 6c)."""
+    if not QUESTION_STYLE_OFFER:
+        return frozenset()
+    return _STYLE_SERVICES | (_STYLE_SHORT_SERVICES if QUESTION_STYLE_OFFER_SHORT else frozenset())
+
+
+def chosen_style(message: str) -> str:
+    """'all' when the client asked for every question at once, else 'one' -
+    one by one, no answer and an unclear answer all keep the normal flow."""
+    return "all" if _STYLE_ALL.search(message or "") else "one"
+
+
+def _question_with_options(field: ticket_service.Field) -> str:
+    """The field's written question, with its options named when the question
+    offers no choice of its own ("... or ...", or two options named) and the
+    options are not a plain yes/no."""
+    question = (field.question or field.label).strip()
+    options = list(field.options or ())
+    named = sum(1 for o in options if o.lower() in question.lower())
+    offers_choice = named >= 2 or re.search(r"\bor\b", question, re.IGNORECASE)
+    yes_no = all(re.match(r"(?:yes|no)\b", o, re.IGNORECASE) for o in options)
+    if len(options) >= 2 and not offers_choice and not yes_no:
+        question = f"{question.rstrip()} (for example: {', '.join(options[:5])})"
+    return question
+
+
+def all_questions_message(missing: list[ticket_service.Field], collected: dict[str, Any],
+                          first: bool) -> tuple[str, list[str]]:
+    """The numbered message for 'all at once': every remaining question, a
+    pair on one line. Returns (message, keys asked)."""
+    lines, keys, i = [], [], 0
+    while i < len(missing):
+        field = missing[i]
+        partner = ticket_service.paired_field(field, missing[i:], collected)
+        text = _question_with_options(field)
+        keys.append(field.key)
+        i += 1
+        if partner:
+            text = f"{text} {_question_with_options(partner)}"
+            keys.append(partner.key)
+            i += 1
+        lines.append(f"{len(lines) + 1}. {text}")
+    head = _STYLE_LIST_FIRST if first else _STYLE_LIST_AGAIN
+    return "\n".join([head, *lines, _STYLE_LIST_END]), keys
+
 # Phase 3 Step 5 Batch F item 1 (2026-10-14). The extractor filed
 # "immediately" as "as soon as possible - within 2 weeks", and replies echoed
 # "within 2 weeks". A timing value carrying a timeframe the client's message
@@ -3776,6 +3858,10 @@ async def _info_collector(state: ConversationState) -> dict[str, Any]:
             result = {**result, "asked_field_counts": counts}
     if "last_question" not in result:
         result = {**result, "last_question": None}
+    # Step 6c: the answer to the style offer is remembered whichever path
+    # this turn took (a question, a completed collection, the next field).
+    if state.get("question_style") == "offered" and "question_style" not in result:
+        result = {**result, "question_style": chosen_style(state.get("incoming_text") or "")}
     if switched and result.get("collected_service") == service_type:
         result = {**result, "collected_since": _first_line(state.get("incoming_text"))}
     if restart_key:
@@ -4948,6 +5034,71 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         and _SINGAPORE.search(state.get("incoming_text") or "")
     ):
         helper_passport_note += SINGAPORE_NOT_HOME_NOTE
+
+    # Step 6c: how the questions come. Read the answer to the offer first,
+    # then either offer it (once), send them all, or carry on one by one.
+    style = state.get("question_style") or ""
+    style_update: dict[str, Any] = {}
+    if style == "offered":
+        style = chosen_style(state.get("incoming_text") or "")
+        style_update = {"question_style": style}
+        logger.info("Conversation %s: question style chosen - %s",
+                    state.get("conversation_id"), style)
+    plain_turn = not (answer_first or overview or workload_note or follow_up_notes)
+    client_name = str(collected.get("full_name") or "").strip()
+    # The reply that thanks them for their name: the name became known on this
+    # turn (record_name_note) - or, for a name from our records, which is known
+    # before Claire has spoken, the turn after her first question.
+    name_turn = bool(record_name_note) or (
+        bool(str(state.get("record_name") or "").strip())
+        and sum(v for v in asked.values() if isinstance(v, int)) == 1
+    )
+    if (
+        missing
+        and not style
+        and plain_turn
+        and name_turn
+        and service_type in style_offer_services()
+        and not first_contact
+        and client_name
+        and client_name != UNANSWERED
+        and len(missing) >= 2
+        and not mainly_non_english(state.get("incoming_text") or "")
+    ):
+        first_name = client_name.split()[0]
+        logger.info("Conversation %s: offering the question style for %s",
+                    state.get("conversation_id"), service_type)
+        return {
+            **lead_fields,
+            "collected_info": carry,
+            "service_type": service_type,
+            "collected_service": service_type,
+            "asked_field_counts": counts,
+            "missing_field_keys": [field.key for field in missing],
+            "info_complete": False,
+            "reply": f"Thanks, {first_name}. {QUESTION_STYLE_OFFER_TEXT}",
+            "question_style": "offered",
+            "needs_handover": bool(state.get("needs_handover")),
+        }
+    if missing and style == "all" and plain_turn and service_type in style_offer_services():
+        reply, keys = all_questions_message(missing, collected, first=bool(style_update))
+        for key in keys:
+            counts[key] = 1
+        logger.info("Conversation %s: asking %d question(s) at once for %s",
+                    state.get("conversation_id"), len(keys), service_type)
+        return {
+            **lead_fields,
+            "collected_info": carry,
+            "service_type": service_type,
+            "collected_service": service_type,
+            "asked_field_counts": counts,
+            "missing_field_keys": [field.key for field in missing],
+            "info_complete": False,
+            "reply": reply,
+            "last_question": {"key": keys[0], "text": reply},
+            "needs_handover": bool(state.get("needs_handover")),
+            **style_update,
+        }
 
     if missing:
         next_field = missing[0]

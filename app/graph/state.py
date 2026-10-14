@@ -360,6 +360,9 @@ class ConversationState(TypedDict, total=False):
     # entry is 'workload' (2026-09-17) - telling a client twice that their
     # job is too big for one helper reads as an argument, not as advice.
     flagged_once: Annotated[list[str], _merge_unique]
+    # Step 6c: "offered", then "one" or "all" - how the client wants the
+    # questions. Kept for the whole conversation, absent from _TURN_RESET.
+    question_style: str
     info_complete: bool
 
     # --- Output ---

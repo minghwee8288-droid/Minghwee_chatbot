@@ -166,6 +166,14 @@ def _asked_field(before: dict, after: dict, collected: dict | None = None) -> st
     return (unanswered or changed or [None])[0]
 
 
+def _asked_fields(before: dict, after: dict, collected: dict | None) -> list[str]:
+    """Every unanswered field asked this turn, in the order asked (Step 6c's
+    numbered list asks many at once)."""
+    return [key for key, value in (after or {}).items()
+            if isinstance(value, int) and value > (before or {}).get(key, 0)
+            and not (collected or {}).get(key)]
+
+
 def _asked_partner(field: str, before: dict, after: dict, collected: dict | None,
                    service: str | None) -> str | None:
     """The field asked together with `field` this turn (Step 6), or None:
@@ -181,6 +189,7 @@ def _asked_partner(field: str, before: dict, after: dict, collected: dict | None
 async def run_service(
     service: str, opener: str, show: bool,
     extra_state: dict | None = None, answers: dict | None = None,
+    style: str = "one",
 ) -> dict:
     """One whole conversation. Returns the transcript plus what was collected.
 
@@ -239,6 +248,20 @@ async def run_service(
         if out.get("info_complete"):
             break
 
+        # Step 6c: the question-style offer asks no field. The client picks
+        # one at a time unless the run asks for the numbered list.
+        if out.get("question_style") == "offered":
+            asked_keys.append(None)
+            said = "all at once please" if style == "all" else "one at a time is fine"
+            continue
+        listed = _asked_fields(before, state.get("asked_field_counts"),
+                               state.get("collected_info"))
+        if len(listed) > 2:
+            asked_keys.append(listed[0])
+            said = "\n".join(f"{n}. {scripted.get(k, 'not sure')}"
+                             for n, k in enumerate(listed, 1))
+            unscripted.extend(k for k in listed if k not in scripted)
+            continue
         field = _asked_field(before, state.get("asked_field_counts"),
                              state.get("collected_info"))
         asked_keys.append(field)
@@ -517,6 +540,8 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("services", nargs="*", default=None)
     parser.add_argument("--transcripts", action="store_true")
+    parser.add_argument("--style", choices=("one", "all"), default="one",
+                        help="Step 6c: what the client answers to the question-style offer")
     args = parser.parse_args()
 
     wanted = args.services or list(SERVICES)
@@ -530,7 +555,8 @@ async def main() -> None:
         print("=" * 78)
         print(f"{service}   \"{SERVICES[service]}\"")
         print("=" * 78)
-        result = await run_service(service, SERVICES[service], args.transcripts)
+        result = await run_service(service, SERVICES[service], args.transcripts,
+                                   style=args.style)
         if not args.transcripts:
             print(f"  FIRST : {result['transcript'][0][1]}")
             print(f"  LAST  : {result['transcript'][-1][1][:1200]}")
