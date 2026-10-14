@@ -281,6 +281,21 @@ CASES = [
       "_stub_extraction": {},
       "_forbid_prompt": "HELPER herself, asking for her OWN home leave",
       "_expect_collected": {"requested_by": "employer"}}),
+    # Step 5 Batch E item 1: the request restated is not the reason for it.
+    # Phone test 14 Oct: the employer flow never asked the reason, because
+    # "go back to her home country" was filed as leave_reason.
+    ("info_collector", "E1: 'go back to her home country' is not filed as the leave reason",
+     {"service_type": "home_leave", "intent": "home_leave", "contact_type": "employer",
+      "incoming_text": "Hi my helper wants to go back to her home country for leave",
+      "history_text": "",
+      "_stub_extraction": {"leave_reason": "return to her home country"},
+      "_expect_not_collected": ["leave_reason"]}),
+    ("info_collector", "E1: ...while a reason the client volunteers is kept",
+     {"service_type": "home_leave", "intent": "home_leave", "contact_type": "employer",
+      "incoming_text": "my helper wants to go home for her yearly leave",
+      "history_text": "",
+      "_stub_extraction": {"leave_reason": "yearly leave"},
+      "_expect_collected": {"leave_reason": "yearly leave"}}),
     ("info_collector", "'Singapore' is not a home leave's home country - asked again, with why",
      {"service_type": "home_leave", "intent": "home_leave", "contact_type": "employer",
       "incoming_text": "she is from Singapore",

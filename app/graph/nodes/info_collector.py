@@ -1514,6 +1514,32 @@ _ASKS_FOR_CARE = re.compile(
 # survives untouched.
 _PREFERENCE_FIELDS = {"replacement_preferences", "reason"}
 
+# Phase 3 Step 5 Batch E item 1 (2026-10-14). The employer's home leave
+# stopped asking "is this her regular home leave, or a family matter?". Phone
+# test, every run: the opening "my helper wants to go back to her home country
+# for leave" was extracted as leave_reason "return to her home country" - the
+# request restated - so the field looked answered and was never put (1 run in
+# 2 replayed). With the reason unknown the caring line and the urgent-fee
+# condition cannot fire. An UNASKED leave_reason is kept only when the client's
+# own message names a reason; once asked, their answer is their answer. Fails
+# towards asking: a volunteered reason that slips past costs one question.
+# False = the extraction as returned.
+LEAVE_REASON_ASKED = True
+_NAMES_A_LEAVE_REASON = re.compile(
+    r"\b(?:regular|annual|yearly|routine|usual|normal|holiday|vacation|break|contract"
+    r"|festival|eid|raya|lebaran|christmas|new\s+year|thingyan|wedding|marr\w*|visit\w*"
+    r"|family|parents?|mother|father|mum|mom|dad|grand\w+|child\w*|kids?|son|daughter"
+    r"|husband|brother|sister|relatives?|sick|ill|unwell|hospital\w*|passed\s+away|died"
+    r"|death|dying|funeral|emergenc\w*|urgent\w*|accident|surgery|operation|birth"
+    r"|baby|pregnan\w*|medical|personal|graduation|religious|pilgrimage|rest)\b",
+    re.IGNORECASE,
+)
+
+
+def names_a_leave_reason(text: str) -> bool:
+    """Does the client's own message say WHY she is going home?"""
+    return bool(_NAMES_A_LEAVE_REASON.search(text or ""))
+
 _PREFERENCE_FILLER = re.compile(
     # `current` and `existing` joined 2026-09-18: "replace current helper" was
     # the value the extractor filed for `reason` off the opening message, and
@@ -3025,6 +3051,21 @@ async def _extract(
             logger.info(
                 "Conversation %s: ignoring '%s' for 'complaint_detail' - it says "
                 "there is a complaint, not what it is",
+                state.get("conversation_id"),
+                text[:40],
+            )
+            continue
+        # Batch E item 1: "go back to her home country for leave" is the
+        # request, not the reason for it. See names_a_leave_reason.
+        if (
+            LEAVE_REASON_ASKED
+            and key == "leave_reason"
+            and not asked.get(key)
+            and not names_a_leave_reason(state.get("incoming_text") or "")
+        ):
+            logger.info(
+                "Conversation %s: ignoring '%s' for 'leave_reason' - the client's "
+                "message gave no reason, so the value was inferred",
                 state.get("conversation_id"),
                 text[:40],
             )

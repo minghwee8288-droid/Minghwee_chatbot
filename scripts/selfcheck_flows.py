@@ -5866,6 +5866,18 @@ rows += [
   ("with_the_question_asked(reply, next_field)" in inspect.getsource(_ic_b),
    _ic_b.REPLY_ASKS_ITS_QUESTION),
   (True, True)),
+ # Step 5 Batch E item 1: the request restated is not the reason for the leave.
+ ("E1: a home-leave request names no reason; a volunteered one does",
+  tuple(_ic_b.names_a_leave_reason(t) for t in (
+      "Hi my helper wants to go back to her home country for leave",
+      "my helper wants to go home leave", "she needs to go home",
+      "her yearly leave in December", "her father is in hospital",
+      "a family matter", "for Hari Raya")),
+  (False, False, False, True, True, True, True)),
+ ("...and the filter is on, unasked only, in the extraction",
+  (_ic_b.LEAVE_REASON_ASKED,
+   'key == "leave_reason"\n            and not asked.get(key)' in inspect.getsource(_ic_b._extract)),
+  (True, True)),
 ]
 
 bad = 0
