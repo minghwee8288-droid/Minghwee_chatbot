@@ -3944,6 +3944,57 @@ async def _step6c_checks() -> list[tuple[str, bool]]:
     return out
 
 
+async def _step6b_checks() -> list[tuple[str, bool]]:
+    """Step 6b: an answer to our own question is extracted beside the
+    classifier, and used only when the collector's inputs are the same."""
+    import asyncio
+    import importlib
+    ico = importlib.import_module("app.graph.nodes.info_collector")
+    graph_module = importlib.import_module("app.graph.graph")
+    global _EXTRACTION
+    _EXTRACTION = {}
+    calls: list[str] = []
+
+    async def fake_extract(st, service, asked):
+        calls.append(service)
+        await asyncio.sleep(0)
+        return {"household": "4 of us"} if service == "new_hiring" else {}
+
+    base = {"service_type": "new_hiring", "intent": "new_hiring", "contact_type": "employer",
+            "collected_service": "new_hiring", "conversation_id": 77,
+            "incoming_text": "4 of us",
+            "history_text": "Client: I want to hire a helper\nYou: How many people live in your household?",
+            "collected_info": {"full_name": "VD", "requirement": "general housework and cooking"},
+            "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1}}
+    out = []
+    with patch.object(ico, "_extract", new=fake_extract):
+        started = ico.start_speculative_extraction(dict(base))
+        got = await _run_info_collector(dict(base))
+        out.append(("6b: an answer to our question is extracted beside the classifier, once",
+                    started and calls == ["new_hiring"] and not ico._SPECULATIVE
+                    and (got.get("collected_info") or {}).get("household") == "4 of us"))
+        calls.clear()
+        ico.start_speculative_extraction(dict(base))
+        switched = {**base, "service_type": "renewal", "intent": "renewal"}
+        await _run_info_collector(switched)
+        out.append(("6b: ...discarded when the service switches, and extracted again",
+                    "renewal" in calls and not ico._SPECULATIVE))
+        calls.clear()
+        asked_nothing = {**base, "history_text": "Client: hi\nYou: Noted."}
+        out.append(("6b: not started when our last message asked nothing",
+                    ico.start_speculative_extraction(asked_nothing) is False and not calls))
+        with patch.object(ico, "SPECULATIVE_EXTRACTION", False):
+            out.append(("6b: SPECULATIVE_EXTRACTION off -> never started",
+                        ico.start_speculative_extraction(dict(base)) is False))
+    seen = []
+    with patch.object(ico, "start_speculative_extraction", new=lambda st: seen.append(1)), \
+         patch.object(graph_module, "intent_classifier", new=AsyncMock(return_value={})):
+        await graph_module._classify_with_prefetch(dict(base))
+    out.append(("6b: the graph's classifier step starts it", seen == [1]))
+    ico._SPECULATIVE.clear()
+    return out
+
+
 async def _batch_b_checks() -> list[tuple[str, bool]]:
     """Step 5 items 9 and 17, through the real run_turn."""
     from app.graph import graph as graph_module
@@ -5640,6 +5691,9 @@ async def main() -> int:
         failures += not ok
     for label, ok in await _step6c_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  step-6c  {label:44}")
+        failures += not ok
+    for label, ok in await _step6b_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  step-6b  {label:44}")
         failures += not ok
     for label, ok in await _stray_script_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  wording  {label:44}")

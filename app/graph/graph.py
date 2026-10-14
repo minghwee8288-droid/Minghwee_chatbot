@@ -262,6 +262,9 @@ async def _classify_with_prefetch(state: ConversationState) -> dict[str, Any]:
             rag.prefetch_query(_search_query(state))
         except Exception:  # noqa: BLE001 - a prefetch must never cost a turn
             logger.exception("Could not predict the search query")
+    # Step 6b: an answer to our own question is extracted beside the classifier.
+    from app.graph.nodes.info_collector import start_speculative_extraction
+    start_speculative_extraction(state)
     return await intent_classifier(state)
 
 

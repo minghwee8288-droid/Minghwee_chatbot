@@ -6,6 +6,8 @@ feel like they are filling in a form.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import re
 from typing import Any
@@ -3144,6 +3146,81 @@ def _field_guidance(
     return "".join(parts)
 
 
+# Phase 3 Step 6b (2026-10-14): when the client is answering our own question,
+# the extraction starts beside the classifier instead of after it. The graph's
+# classifier step calls start_speculative_extraction(); the collector takes the
+# result only if it was made from exactly the inputs it would use itself (the
+# same service, message, history, collected answers and ask counts) and
+# otherwise discards it and extracts as before - so a turn that switches
+# service, restarts a finished request or uncounts an unsent question never
+# uses it. False = the extraction always runs after the classifier.
+SPECULATIVE_EXTRACTION = True
+_SPECULATIVE: dict[Any, tuple[tuple, "asyncio.Task[dict[str, Any]]"]] = {}
+
+
+def _extraction_fingerprint(service_type: str, extraction_state: dict, asked: dict) -> tuple:
+    return (
+        service_type,
+        extraction_state.get("incoming_text") or "",
+        extraction_state.get("history_text") or "",
+        json.dumps(extraction_state.get("collected_info") or {}, sort_keys=True, default=str),
+        json.dumps({k: v for k, v in (asked or {}).items()}, sort_keys=True, default=str),
+    )
+
+
+def start_speculative_extraction(state: ConversationState) -> bool:
+    """Start this turn's extraction now, if the client is answering the
+    question our last message asked within a live collection. Never raises."""
+    key = state.get("conversation_id")
+    stale = _SPECULATIVE.pop(key, None)
+    if stale:
+        stale[1].cancel()
+    if not SPECULATIVE_EXTRACTION:
+        return False
+    try:
+        service = state.get("collected_service")
+        if not service or not ticket_service.fields_for(service):
+            return False
+        if not guards.answering_our_question(state.get("history_text") or "",
+                                             state.get("incoming_text") or ""):
+            return False
+        extraction_state = {
+            **dict(state),
+            "collected_info": state.get("collected_info") or {},
+            "history_text": _history_since(state.get("history_text") or "",
+                                           state.get("collected_since")),
+        }
+        asked = dict(state.get("asked_field_counts") or {})
+        fingerprint = _extraction_fingerprint(service, extraction_state, asked)
+        task = asyncio.ensure_future(_extract(extraction_state, service, asked))
+        _SPECULATIVE[key] = (fingerprint, task)
+        return True
+    except Exception:  # noqa: BLE001 - a speculation must never cost a turn
+        logger.exception("Could not start the speculative extraction")
+        return False
+
+
+async def _extract_using_speculation(
+    state: ConversationState, extraction_state: dict, service_type: str, asked: dict[str, int]
+) -> dict[str, Any]:
+    entry = _SPECULATIVE.pop(state.get("conversation_id"), None)
+    if entry:
+        fingerprint, task = entry
+        if fingerprint == _extraction_fingerprint(service_type, extraction_state, asked):
+            try:
+                result = await task
+                logger.info("Conversation %s: used the extraction started beside the classifier",
+                            state.get("conversation_id"))
+                return result
+            except Exception:  # noqa: BLE001
+                logger.exception("Speculative extraction failed - extracting again")
+        else:
+            task.cancel()
+            logger.info("Conversation %s: speculative extraction discarded (inputs changed)",
+                        state.get("conversation_id"))
+    return await _extract(extraction_state, service_type, asked)
+
+
 async def _extract(
     state: ConversationState, service_type: str, asked: dict[str, int]
 ) -> dict[str, Any]:
@@ -3961,7 +4038,7 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         extraction_state["history_text"] = _history_since(
             state.get("history_text") or "", state.get("collected_since")
         )
-    extracted = await _extract(extraction_state, service_type, asked)
+    extracted = await _extract_using_speculation(state, extraction_state, service_type, asked)
 
     # Anything we already know goes in before the gap analysis, so it is never
     # asked for and still reaches the ticket.
