@@ -5813,6 +5813,12 @@ rows += [
         for m in (importlib.import_module("app.graph.graph").run_turn,
                   importlib.import_module("app.api.admin"))),
   (True, True)),
+ # Batch E item 11: the religion question is one plain question, short reason.
+ ("E11: a short reason, and the invitation is not read out as an option",
+  (len(_ic_b._WHY_WE_ASK["helper_religion"]) < 60,
+   "do NOT read either out as an option" in _guidance_for("new_hiring", "helper_religion"),
+   "do NOT read either out as an option" in _guidance_for("new_hiring", "languages")),
+  (True, True, False)),
  # Batch E item 9: a rest-day pushback is recognised against what was filed.
  ("E9: pushback is told apart from an ordinary answer",
   tuple(_ic_b.pushes_back_on_rest_day(t, f) for t, f in (

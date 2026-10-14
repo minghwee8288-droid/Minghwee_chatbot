@@ -2361,6 +2361,10 @@ def _mentions_care(text: str) -> bool:
 #
 # Keyed on the field key, so the ones shared with transfer_employer through
 # _hiring_field get it in both flows without a second copy (§9.8).
+# Step 5 Batch E item 11: the religion question as one plain question with a
+# short reason. False = the 2026-09-22 reason and the read-out invitation.
+SHORT_RELIGION_QUESTION = True
+
 _WHY_WE_ASK: dict[str, str] = {
     # Added 2026-09-17 with the field. Religion is the most personal thing
     # either side is asked for, and a question like that arriving bare is the
@@ -2373,9 +2377,17 @@ _WHY_WE_ASK: dict[str, str] = {
     # later". Nobody reported this one; the sweep below found it, which is the
     # point of deriving the rule over the table rather than fixing the field
     # that was reported. It now ends the way the helper's own half does.
-    "helper_religion": "so her faith and your household's practices fit "
-                       "together from day one, and anything she does not eat "
-                       "or handle is agreed before she starts",
+    # Batch E item 11 (2026-10-14): the phone test read "To ensure her faith and
+    # your household practices are compatible from the start, and any dietary or
+    # handling considerations are agreed beforehand, would you prefer Muslim,
+    # Christian, ... or more than one option, including another religion?" -
+    # too long. One short reason now; the old one is kept for the switch.
+    "helper_religion": (
+        "so we can match her to your household"
+        if SHORT_RELIGION_QUESTION
+        else "so her faith and your household's practices fit together from day "
+        "one, and anything she does not eat or handle is agreed before she starts"
+    ),
     "religion": "so we place you with a household whose practices you are "
                 "comfortable with, and so anything you do not eat or handle is "
                 "agreed before you accept the job",
@@ -2971,6 +2983,15 @@ def _field_guidance(
                     "that other answers might work. If she names a country we "
                     "do not recruit from, that is dealt with on the next turn "
                     "- it is not for this question to invite it."
+                )
+            elif field.multiple_answers and SHORT_RELIGION_QUESTION and field.key == "helper_religion":
+                # Batch E item 11: the invitation was read out as two extra
+                # options ("or more than one option, including another religion").
+                parts.append(
+                    " They may give more than one, or something not on the list, and "
+                    "that is accepted - but do NOT read either out as an option (no 'or "
+                    "more than one option', no 'including another religion'). Ask it as "
+                    "ONE plain question: the written question with a short reason."
                 )
             elif field.multiple_answers:
                 parts.append(
