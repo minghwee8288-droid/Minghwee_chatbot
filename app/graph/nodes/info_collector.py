@@ -2022,6 +2022,38 @@ _ASAP = re.compile(
     r"\b(?:asap|urgent\w*|immediate\w*|right\s+away|as\s+soon\s+as\s+possible|straight\s+away)\b",
     re.IGNORECASE,
 )
+
+# Phase 3 Step 5 Batch F item 1 (2026-10-14). The extractor filed
+# "immediately" as "as soon as possible - within 2 weeks", and replies echoed
+# "within 2 weeks". A timing value carrying a timeframe the client's message
+# does not state, where the message says ASAP/immediately/urgently, is filed in
+# the client's own word. The prompt says the same (templates.
+# TIMING_IN_CLIENT_WORDS); this holds whatever the model returns. Only for a
+# field whose question asks when. False = the value as extracted.
+CLIENT_TIMING_WORDS = True
+_TIMEFRAME = re.compile(
+    r"\b(?:\d+|one|two|three|four|five|six|a|few)\s*(?:(?:-|to)\s*\d+\s*)?"
+    r"(?:days?|weeks?|months?)\b|\bfortnight\b",
+    re.IGNORECASE,
+)
+_CLIENT_ASAP_WORD = (
+    (re.compile(r"\bimmediate\w*", re.I), "immediately"),
+    (re.compile(r"\burgent\w*", re.I), "urgently"),
+    (re.compile(r"\b(?:right|straight)\s+away\b", re.I), "right away"),
+    (re.compile(r"\basap\b|\bas\s+soon\s+as\s+possible\b", re.I), "as soon as possible"),
+)
+
+
+def timing_in_client_words(value: str, message: str) -> str:
+    """The value, or the client's own ASAP word when the value adds a timeframe."""
+    if not _TIMEFRAME.search(value or "") or _TIMEFRAME.search(message or ""):
+        return value
+    for pattern, word in _CLIENT_ASAP_WORD:
+        if pattern.search(message or ""):
+            return word
+    return value
+
+
 TIMELINE_MISMATCH_NOTE = (
     "\n\nThey want her to start {when}, sooner than the overseas timeline you are giving. "
     "Say so plainly in ONE sentence right after the timing line, and add that a transfer "
@@ -3342,6 +3374,18 @@ async def _extract(
                 text[:40],
             )
             continue
+        # Batch F item 1: "immediately" stays "immediately".
+        if CLIENT_TIMING_WORDS and key in when_keys:
+            said = timing_in_client_words(text, state.get("incoming_text") or "")
+            if said != text:
+                logger.info(
+                    "Conversation %s: filing '%s' as '%s' for '%s' - the client gave no timeframe",
+                    state.get("conversation_id"),
+                    text[:40],
+                    said,
+                    key,
+                )
+                text = said
         cleaned[key] = redact_nric(text, context=f"captured:{key}")[:300]
     return cleaned
 

@@ -197,7 +197,27 @@ eldercare".
 
 If the client corrects an earlier answer, return the corrected value."""
 
-EXTRACTION_USER = """Fields to look for:
+# Phase 3 Step 5 Batch F item 1 (2026-10-14). "immediately" was filed as
+# start_timeline's bucket "as soon as possible - within 2 weeks", so a reply
+# could say "within 2 weeks" to a client who said "immediately". A timing
+# answer with no timeframe in it is now kept in the client's own words; only
+# the timeline-mismatch logic interprets it. The collector also rewrites such
+# a value mechanically (info_collector.timing_in_client_words).
+# False = the extraction instruction as it was.
+TIMING_IN_CLIENT_WORDS = True
+_TIMING_BUCKETED = (
+    '- "next week", "urgently", "immediately" -> "as soon as possible - within 2 weeks"; '
+)
+_TIMING_AS_SAID = (
+    '- a timing answer is returned in the client\'s own words: "immediately" -> '
+    '"immediately", "urgently" -> "urgently", "asap" -> "as soon as possible", '
+    '"next week" -> "next week". Never add a timeframe the client did not state; '
+)
+assert _TIMING_BUCKETED in EXTRACTION_SYSTEM, "templates.py: the Batch F item 1 line moved"
+if TIMING_IN_CLIENT_WORDS:
+    EXTRACTION_SYSTEM = EXTRACTION_SYSTEM.replace(_TIMING_BUCKETED, _TIMING_AS_SAID)
+
+EXTRACTION_USER ="""Fields to look for:
 {fields}
 
 Already captured (do not repeat unless the client corrected it):

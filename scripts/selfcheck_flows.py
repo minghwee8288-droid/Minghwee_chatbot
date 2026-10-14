@@ -5813,6 +5813,26 @@ rows += [
         for m in (importlib.import_module("app.graph.graph").run_turn,
                   importlib.import_module("app.api.admin"))),
   (True, True)),
+ # Batch F item 1: a timing answer is filed in the client's own words.
+ ("F1: an added timeframe gives way to the client's own ASAP word; a stated one stays",
+  tuple(_ic_b.timing_in_client_words(v, m) for v, m in (
+      ("as soon as possible - within 2 weeks", "immediately"),
+      ("as soon as possible - within 2 weeks", "urgently pls"),
+      ("as soon as possible - within 2 weeks", "asap"),
+      ("as soon as possible - within 2 weeks", "within 2 weeks please"),
+      ("next month", "immediately"),
+      ("as soon as possible - within 2 weeks", "not sure"))),
+  ("immediately", "urgently", "as soon as possible",
+   "as soon as possible - within 2 weeks", "next month",
+   "as soon as possible - within 2 weeks")),
+ ("...and the extraction prompt no longer buckets 'immediately' into 2 weeks",
+  (importlib.import_module("app.graph.prompts.templates").TIMING_IN_CLIENT_WORDS,
+   '"immediately" -> "as soon as possible - within 2 weeks"'
+   in importlib.import_module("app.graph.prompts.templates").EXTRACTION_SYSTEM,
+   '"immediately" -> "immediately"'
+   in importlib.import_module("app.graph.prompts.templates").EXTRACTION_SYSTEM,
+   _ic_b.wants_sooner_than_a_new_hire({"start_timeline": "immediately"})),
+  (True, False, True, True)),
  # Batch E item 11: the religion question is one plain question, short reason.
  ("E11: a short reason, and the invitation is not read out as an option",
   (len(_ic_b._WHY_WE_ASK["helper_religion"]) < 60,

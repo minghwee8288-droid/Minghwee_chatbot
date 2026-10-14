@@ -412,7 +412,25 @@ CASES = [
       "_stub_extraction": {"helper_transfer_case": "no",
                            "helper_availability": "still in the Philippines"},
       "_expect_not_collected": ["helper_availability"]}),
-    # Step 5 Batch E item 1: the request restated is not the reason for it.
+    # Step 5 Batch F item 1: "immediately" is filed as said, never as the
+    # "as soon as possible - within 2 weeks" bucket the replies then echoed.
+    ("info_collector", "F1: 'immediately' is filed as 'immediately', not 'within 2 weeks'",
+     {"service_type": "new_hiring", "intent": "new_hiring", "contact_type": "employer",
+      "incoming_text": "immediately",
+      "history_text": "You: How soon are you hoping to have someone start?",
+      "collected_info": {"full_name": "VD"},
+      "asked_field_counts": {"full_name": 1, "start_timeline": 1},
+      "_stub_extraction": {"start_timeline": "as soon as possible - within 2 weeks"},
+      "_expect_collected": {"start_timeline": "immediately"}}),
+    ("info_collector", "F1: ...while a timeframe the client gave is kept",
+     {"service_type": "new_hiring", "intent": "new_hiring", "contact_type": "employer",
+      "incoming_text": "asap, within 2 weeks",
+      "history_text": "You: How soon are you hoping to have someone start?",
+      "collected_info": {"full_name": "VD"},
+      "asked_field_counts": {"full_name": 1, "start_timeline": 1},
+      "_stub_extraction": {"start_timeline": "as soon as possible - within 2 weeks"},
+      "_expect_collected": {"start_timeline": "as soon as possible - within 2 weeks"}}),
+    # Step 5 Batch E item 1:the request restated is not the reason for it.
     # Phone test 14 Oct: the employer flow never asked the reason, because
     # "go back to her home country" was filed as leave_reason.
     ("info_collector", "E1: 'go back to her home country' is not filed as the leave reason",
