@@ -373,6 +373,15 @@ def asks_for_an_update(message: str) -> bool:
 # home-leave arrangement" - and a new home-leave intake asked the helper's name
 # again. False = the model's label stands, as before.
 DETAIL_STAYS_ON_PARKED_TOPIC = True
+# Step 5 Batch E item 10: see the rule in intent_classifier.
+REST_DAY_PUSHBACK_STAYS = True
+
+
+def _pushes_back_on_rest_day(message: str, collected: dict) -> bool:
+    # Imported here: info_collector imports this module.
+    from app.graph.nodes.info_collector import pushes_back_on_rest_day
+
+    return pushes_back_on_rest_day(message, collected)
 
 # Says outright that this is a detail for the record.
 _GIVES_A_DETAIL = re.compile(
@@ -875,6 +884,37 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
         )
         service_type = active_service
         intent = active_service if active_service in ALL_INTENTS else intent
+
+    # Phase 3 Step 5 Batch E item 10 (2026-10-14). Phone test, transfer flow:
+    # after the rest-day exchange, "ok" / "its ok" got "So you are looking to
+    # hire a transfer helper. I'll ask a few details... How many children...?",
+    # re-asking what was answered ten minutes earlier. Reproduced 2 of 2: the
+    # pushback "what?? I am telling you I don't give her any rest days" is
+    # classified dispute_salary - a switch, which clears the collection - and
+    # "its ok" switches back and starts it again from nothing. (It carries a
+    # "?", so the answer rule above does not hold it.) A pushback on the
+    # rest-day rule inside a live, unparked collection stays on that
+    # collection. The portal's "Dropping service_type='transfer_employer'"
+    # line is the conversation row's display column only; nothing reads it
+    # back. False = the classifier's label stands.
+    if (
+        REST_DAY_PUSHBACK_STAYS
+        and active_service
+        and service_type
+        and service_type != active_service
+        and active_service not in (state.get("blocked_topics") or {})
+        and not _named_service(message)
+        and _pushes_back_on_rest_day(message, state.get("collected_info") or {})
+    ):
+        logger.info(
+            "Conversation %s: rest-day pushback - keeping %s rather than switching to %s",
+            state.get("conversation_id"), active_service, service_type,
+        )
+        service_type = active_service
+        intent = (
+            active_service if active_service in ALL_INTENTS
+            else state.get("intent") or intent
+        )
 
     # A price question inside a live enquiry is part of that enquiry, not a new
     # one. Without this, "how much do you charge" halfway through new_hiring

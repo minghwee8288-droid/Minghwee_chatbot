@@ -774,6 +774,18 @@ CASES = [
                        "contact_type": None, "confidence": 0.9},
       "_expect_state": {"detected_contact_type": "employer",
                         "service_type": "transfer"}}),
+    # Step 5 Batch E item 10: a rest-day pushback read as dispute_salary
+    # (the model's verdict, 2 of 2 live) stays on the transfer collection.
+    ("intent_classifier", "E10: a rest-day pushback does not switch out of the live collection",
+     {"incoming_text": "what?? I am telling you I dont give her any rest days",
+      "intent": "transfer", "service_type": "transfer_employer", "contact_type": "employer",
+      "collected_service": "transfer_employer",
+      "collected_info": {"full_name": "VD", "rest_day": "no rest day"},
+      "asked_field_counts": {"full_name": 1, "rest_day": 1},
+      "history_text": "You: Noted. How did you hear about Ming Hwee?",
+      "_stub_intent": {"intent": "dispute_salary", "service_type": "dispute_salary",
+                       "contact_type": "employer", "confidence": 0.9},
+      "_expect_state": {"service_type": "transfer_employer"}}),
     # ...and the control, which is the half that must not be traded away: a
     # helper asking for herself keeps her own flow (2026-09-04).
     ("intent_classifier", "...and a helper asking for herself still reads as the helper",
