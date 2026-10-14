@@ -1596,10 +1596,30 @@ def strip_repeated_opener(reply: str, *previous: str) -> str:
         # decapitating it.
         return body
     stripped = body[match.end():].strip()
+    # Batch F item 2: the name the filler was addressed with goes with it.
+    # "Thanks, Vaidik. When does..." lost "Thanks," and went out as
+    # "Vaidik. When does..." - a reply opening on a bare name.
+    vocative = _VOCATIVE_AFTER_FILLER.match(stripped) if NO_BARE_NAME_OPENING else None
+    if vocative:
+        stripped = stripped[vocative.end():].strip()
     if len(stripped.split()) < 4:  # nothing meaningful would be left
         return body
     logger.info("Dropped repeated opener %r", match.group(0).strip())
     return stripped[0].upper() + stripped[1:]
+
+
+# Phase 3 Step 5 Batch F item 2 (2026-10-14). A reply opened with a bare
+# "Vaidik." - strip_repeated_opener cut a repeated "Thanks," and left the name
+# it was addressed to. A run of one to three Capitalised words ending a
+# sentence (or set off by a comma or dash) right after the filler is that
+# name, and goes too. Lower-case words ("Got it, no problem.") are not a name
+# and stay. False = only the filler goes, as before.
+NO_BARE_NAME_OPENING = True
+_VOCATIVE_AFTER_FILLER = re.compile(
+    r"^(?!(?:Yes|No|Yeah|So|Also|And|But|Please|Well|Here|Now|Then|First|Next|Okay|Ok|"
+    r"Sure|Great|Thanks|Noted|Of|In|For|To|If|As|We|I|You|She|He|It|They|This|That)\b)"
+    r"[A-Z][\w'\-]*(?:\s+[A-Z][\w'\-]*){0,2}\s*(?:[.!,;:]|\s[—–-])\s*"
+)
 
 
 # "How does this actually run, and what will I have to produce?" - the one

@@ -5833,6 +5833,19 @@ rows += [
    in importlib.import_module("app.graph.prompts.templates").EXTRACTION_SYSTEM,
    _ic_b.wants_sooner_than_a_new_hire({"start_timeline": "immediately"})),
   (True, False, True, True)),
+ # Batch F item 2: a repeated "Thanks," never leaves a bare name opening the reply.
+ ("F2: the name goes with a repeated filler; real sentences and 'Yes,' stay",
+  tuple(_guards.strip_repeated_opener(r, "Thanks, what is her name?") for r in (
+      "Thanks, Vaidik. When does Devi plan to travel?",
+      "Thanks, Vaidik Dubey - when does Devi plan to travel?",
+      "Thanks, yes, she can travel next month with the forms.",
+      "Thanks. Yes, she can travel next month with the forms.",
+      "Thanks. When does Devi plan to travel home?")),
+  ("When does Devi plan to travel?",
+   "When does Devi plan to travel?",
+   "Yes, she can travel next month with the forms.",
+   "Yes, she can travel next month with the forms.",
+   "When does Devi plan to travel home?")),
  # Batch E item 11: the religion question is one plain question, short reason.
  ("E11: a short reason, and the invitation is not read out as an option",
   (len(_ic_b._WHY_WE_ASK["helper_religion"]) < 60,
