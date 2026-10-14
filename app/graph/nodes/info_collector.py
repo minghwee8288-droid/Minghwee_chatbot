@@ -1851,6 +1851,40 @@ def with_the_question_asked(reply: str, field: ticket_service.Field) -> str:
             + body[cut + len(last):]).strip()
 
 
+# Phase 3 Step 5 Batch C item 10 (2026-10-14, section 9.37). "Someone who has
+# worked in Singapore before" is an EXPERIENCE preference: she is hired from
+# overseas. Filed as "Singapore experience", the new-hire closing briefing read
+# it as a transfer and quoted "1 to 2 weeks for a transfer helper" and deferred
+# the $1,428 fee (0 of 6 right on that prompt). Now the value is filed as what
+# it means, and the briefing is told she is not a transfer unless the client
+# chose the transfer option or said she is in Singapore now.
+# False = the value as extracted and the briefing note as before.
+HIRE_SOURCE_NOT_TRANSFER = True
+_TRANSFER_HELPER = re.compile(
+    r"(?<!not a )(?<!not )\btransfer\b"
+    r"|\b(?:currently|now|already|still)\s+(?:working\s+|based\s+)?in\s+(?:singapore|sg)\b"
+    r"|\bin\s+(?:singapore|sg)\s+(?:now|currently|already|right\s+now)\b",
+    re.IGNORECASE,
+)
+_EX_SINGAPORE = re.compile(
+    r"\b(?:worked|work\s+experience|experience\w*|ex)[\s-]+(?:\w+\s+){0,3}?(?:singapore|sg)\b"
+    r"|\b(?:singapore|sg)[\s-]+(?:experience\w*|exp)\b|\bex-?(?:singapore|sg)\b",
+    re.IGNORECASE,
+)
+EX_SINGAPORE_VALUE = "worked in Singapore before (to be hired from overseas)"
+NOT_A_TRANSFER_NOTE = (
+    "\n\nShe is NOT a transfer helper: the client did not choose a transfer helper or say "
+    "she is in Singapore now, so she will be hired from overseas (\"worked in Singapore "
+    "before\" is experience, not a transfer). Give the overseas timeline (from signing) and "
+    "the new-hire agency fee. Never give the transfer timeline or a transfer fee as hers."
+)
+
+
+def wants_a_transfer_helper(collected: dict) -> bool:
+    """Whether the client chose a transfer helper, or said she is in Singapore now."""
+    return bool(_TRANSFER_HELPER.search(str(collected.get("hire_source") or "")))
+
+
 # Phase 3 Step 5 Batch C item 7 (2026-10-14): asked about rest days, a client
 # who wants none, or fewer than one a week with nothing said about paying for
 # them, is acknowledged, told the MOM rule in one sentence, and the intake
@@ -3557,6 +3591,13 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         extracted = {**extracted, "helper_name": tidy}
         collected = {**collected, "helper_name": tidy}
 
+    # Batch C item 10: "worked in Singapore before" is filed as what it means.
+    if (HIRE_SOURCE_NOT_TRANSFER and extracted.get("hire_source")
+            and _EX_SINGAPORE.search(str(extracted["hire_source"]))
+            and not _TRANSFER_HELPER.search(str(extracted["hire_source"]))):
+        extracted = {**extracted, "hire_source": EX_SINGAPORE_VALUE}
+        collected = {**collected, "hire_source": EX_SINGAPORE_VALUE}
+
     # A field the client has been asked about repeatedly and still not answered
     # is recorded as unanswered rather than asked again. Sales sees the gap
     # honestly, which is more use than a value invented to close it — the live
@@ -4064,6 +4105,10 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         # Appended AFTER the fee addendum deliberately — if we have no price for
         # her nationality that sentence still comes first, and this one is about
         # what the client DOES, which is the end of the message either way.
+        # Batch C item 10: a new hire is not a transfer unless they chose one.
+        if service_type == "new_hiring" and not wants_a_transfer_helper(collected):
+            if HIRE_SOURCE_NOT_TRANSFER:
+                briefing_note += NOT_A_TRANSFER_NOTE
         if service_type == "home_leave":
             briefing_note += HOME_LEAVE_TICKET_NOTE
         if leave_by_helper:

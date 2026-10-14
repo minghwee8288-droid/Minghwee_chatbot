@@ -5825,6 +5825,17 @@ rows += [
    "Do not refuse, do not lecture" in _ic_b.REST_DAY_RULE_NOTE,
    "REST_DAY_RULE_QUERY" in inspect.getsource(_ic_b.rest_day_rule_record)),
   (True, True, True, True)),
+ # item 10
+ ("C item 10: 'worked in Singapore before' is experience; a transfer is chosen or 'in Singapore now'",
+  (tuple(bool(_ic_b._EX_SINGAPORE.search(v)) for v in (
+      "someone who has worked in Singapore before", "Singapore experience", "ex-SG")),
+   tuple(_ic_b.wants_a_transfer_helper({"hire_source": v}) for v in (
+      "transfer helper already in Singapore", "she is in Singapore now",
+      _ic_b.EX_SINGAPORE_VALUE, "first-timer", "not a transfer",
+      "currently working in Singapore"))),
+  ((True, True, True), (True, True, False, False, False, True))),
+ ("...and it is told to the closing briefing",
+  "briefing_note += NOT_A_TRANSFER_NOTE" in inspect.getsource(_ic_b), True),
  ("...and the collector runs it on every ordinary question turn",
   ("with_the_question_asked(reply, next_field)" in inspect.getsource(_ic_b),
    _ic_b.REPLY_ASKS_ITS_QUESTION),
