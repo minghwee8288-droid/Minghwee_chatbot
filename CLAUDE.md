@@ -1271,7 +1271,8 @@ Ordered by what will hurt first.
     the case fixed that day. Not changed: making the sticky rule yield to a
     named service switches `service_type` mid-collection, and what that does
     to the live collection has not been measured.
-37. **A new hire whose helper "has worked in Singapore before" is briefed as
+37. **FIXED 2026-10-14 (Step 5 Batch C item 10), see the change log.**
+    **A new hire whose helper "has worked in Singapore before" is briefed as
     a TRANSFER.** Phase 3 Step 5 item 10. Seen 2026-10-13 in the e2e: the
     scripted answer "someone who has worked in Singapore before" is filed as
     `hire_source` "Singapore experience" in some runs, and the closing
@@ -1329,6 +1330,13 @@ Ordered by what will hurt first.
     `127.0.0.1` only (`"127.0.0.1:8000:8000"`), and Docker log rotation
     (`json-file`, `max-size` 10m, `max-file` 5). Until then the repo's file
     published 8000 on every interface.
+
+38. **The ticket-number counter is not applied to any database yet** (Step 5
+    B2 item 1). `scripts/sql/ticket_number_001_counter.sql` must be run on
+    production with `apply_sql.py --expect-ref <ref>` (a go-word is needed).
+    Until then `cb_next_ticket_number` is missing, the bot logs an error per
+    ticket and falls back to the highest number on the table plus one, which
+    re-issues a deleted ticket's number - the defect the file fixes.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -1633,9 +1641,11 @@ behaviour behind one switch. Details of each step are in §11.
 | 4 | Nationality-fee guard: no other nationality's fee, no fee where none is held | `48f889f` |
 | 4b | Fee nationality from message, collection, then parked ticket; no "approximate" without a figure (item 17) | `fc55045` |
 | 5a | Stray-script guard (item 15): glitch strings and foreign-script runs cut from the reply | `e8ca470` |
-| 5B | Batch B (wording): items 1, 3, 4, 5, 9, 11, 17 | see git log |
+| 5B | Batch B (wording): items 1, 3, 4, 5, 9, 11, 17 | `c7bcdb8` |
+| 5B2 | Batch B2 (phone-test fixes): reference never reused, fixed fees stated plainly, "why this much", name case, caring line, no re-introduction, phone validation | see git log |
+| 5C | Batch C (behaviour): items 6, 7, 8, 10, 12 | see git log |
 
-**Still to do, in order:** Step 5 (below; done: 15 in 5a and Batch B; next Batch C = items 6, 7, 8, 10, 12, then Batch D = 2, 13, 14, 16), Step 6 (combined questions: propose pairs, stop before
+**Still to do, in order:** Step 5 (below; done: 15 in 5a, Batch B, B2 and Batch C; next Batch D = items 2, 13, 14, 16), Step 6 (combined questions: propose pairs, stop before
 wiring), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
 the webhook builds `known_helpers` only when `contact_type == "employer"`).
@@ -1663,23 +1673,23 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
    will take them through exactly what it covers.
 5. **DONE in Batch B.** prompt.md entries 38-39 still forbid a helper's own home-leave fee, which
    she has been told since 2026-10-09. Describe the code; change no code.
-6. A mechanical guard: a collection-turn reply must contain the question it
+6. **DONE in Batch C.** A mechanical guard: a collection-turn reply must contain the question it
    was meant to ask, else the agency's written question (the transfer_employer
    "I'll ask a few details" that asked nothing).
-7. Rest days: no or too few rest days -> acknowledge, state the MOM rule in one
+7. **DONE in Batch C.** Rest days: no or too few rest days -> acknowledge, state the MOM rule in one
    sentence, continue. Only if the KB holds that rule (MOM guidelines); quote
    only it, else stop and report. Never refuse or lecture.
-8. Timeline mismatch: wanted sooner than the briefing's timeline -> say so in
+8. **DONE in Batch C.** Timeline mismatch: wanted sooner than the briefing's timeline -> say so in
    one sentence and mention a transfer helper in Singapore is usually faster.
    KB timelines only.
 9. **DONE in Batch B.** "First helper": never "as this is your first helper" unless the records
    show it; otherwise "if this is your first helper".
-10. New hiring: "worked in Singapore before" / "Singapore experience" is an
+10. **DONE in Batch C.** New hiring: "worked in Singapore before" / "Singapore experience" is an
     experience preference, not a transfer (§9.37). No transfer timeline or fee
     unless she chose the transfer option or said she is in Singapore now.
 11. **DONE in Batch B.** Known-helper confirmation: ask once ("Is this home leave for Devi, or
     another helper?"). Never state the helper and then ask about her.
-12. A conditional fee (the $40 urgent home-leave surcharge) only when the
+12. **DONE in Batch C.** A conditional fee (the $40 urgent home-leave surcharge) only when the
     client stated the condition (urgent, rushed, emergency, a family matter
     needing fast travel). From the KB rows "Home leave - urgent requests" and
     "Home leave - cost", which stay untouched.
@@ -1710,6 +1720,76 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-14** - **Step 5 Batch C (behaviour): items 6, 7, 8, 10, 12.** Each
+  behind its own switch (section 7).
+  (6) A collection-turn reply asks the question it was meant to ask
+  (`info_collector.with_the_question_asked`): no question -> the field's
+  written question is added; questions that share no content word with the
+  field's question, label, key or options -> the last one is replaced by it.
+  Replayed 24 real replies: 1 changed (a direct-hire opening that said "I'll
+  ask a few details" and asked nothing - the reported defect, live), 0
+  reworded questions touched.
+  (7) No rest day, or too few unpaid: the reply acknowledges, states the MOM
+  rule in one sentence quoted only from the KB row "Does my helper have to get
+  a day off every week?" (fetched by its own search, used as grounding for
+  the turn), and carries on. Replayed 3 of 3 with the rule; the model dropped
+  the next question each time and item 6 put it back. A weekly day off: 0 of 3.
+  (8) A new-hire start under 4 weeks or "ASAP" is told, in the closing
+  briefing, that it is sooner than the overseas timeline and that a transfer
+  helper is usually faster (records only).
+  (10) Section 9.37: "worked in Singapore before" is filed as experience and
+  the closing briefing is told she is not a transfer unless the client chose
+  one or said she is in Singapore now. The flows check caught a first draft
+  whose filed value said "not a transfer" - which the transfer pattern read as
+  a transfer; fixed both ways.
+  (12) The $40 urgent home-leave fee only when the client said it is urgent
+  (`guards.without_unasked_conditional_fee`). Replayed: regular reason 0 of 6
+  mention it (the model did not volunteer it, so the guard is proved by the
+  smoke checks); emergency 2 of 3 quote it, as allowed.
+  **Verified (B2 and C together):** `smoke_nodes.py` **467** (was 425),
+  `selfcheck_flows.py` **898** (was 870); every injected fault red on a copy
+  of the repo (one first went red only by breaking the file's indentation and
+  was re-run as a clean removal). E2E 7 of 7, 0 refused writes, no row count
+  changed by the run (wp_chat_conversation_reads +1 is a portal user).
+
+- **2026-10-14** - **Step 5 Batch B2: fixes from the Batch B phone test.** Each
+  behind its own switch (section 7).
+  (1) **CB-2026-0033 was issued three times in one day.** The number was the
+  highest ticket still on `cb_tickets` plus one, and reset-ui deletes tickets.
+  `scripts/sql/ticket_number_001_counter.sql` adds a per-year counter that
+  only goes up (an atomic UPSERT, so two tickets at once take two numbers);
+  2026 starts after 0099. Proved on PGlite (real Postgres in WASM): 10 checks,
+  3 SQL faults red, the rollback clean. **Not applied anywhere** (section 9.38);
+  until it is, the old path runs, logged.
+  (2) **"Work permit renewal is $695" went out as "The approximate fee is
+  $695"** (3 of 3 replays). Prompt rule 5 told the model to call every figure
+  approximate; so did `style.py`, `FEE_HANDOVER_INSTRUCTION` and the parked
+  answer instruction. All four swapped, and `guards.state_fixed_fee_plainly`
+  drops "approximately" and "will confirm the exact amount" for a figure the
+  retrieved records state plainly. The passport row says "approximately
+  $450" itself, so passport renewal keeps the word.
+  (3) "Why this much?" says what the fee covers, from the records, or the
+  agent line with the reference - never the price again. Replayed 6 of 6.
+  (4) A helper name typed in capitals or lower case is filed and shown in
+  title case ("Devi"); mixed case is left as typed. One Step 2b state now
+  expects "Devi Lal Singh" where it expected "devi lal singh".
+  (5) A home leave for a family matter or an emergency gets "I hope everything
+  is alright at home." before the reply, once. Replayed 3 of 3.
+  (6) "Hi, I'm Claire" mid-thread did NOT reproduce (0 in 9 replays of the
+  exact sequence; the live thread had been cleared). A guard removes an
+  opening introduction once the transcript shows Claire has spoken, except
+  when the client asks who she is.
+  (7) "+9612+654+941" was accepted as the employer's number. A number must be
+  8-15 digits with one leading + at most; otherwise it is not recorded, the
+  question is asked again with the reason, and it is never read back.
+  (8) **Direct hire: the KB holds no direct-hire fee** (only "our agent will
+  confirm the exact figure"). Nothing changed, as instructed - fees are with
+  the client.
+  **Verified:** every item through `smoke_nodes.py` / `selfcheck_flows.py`;
+  every fault group re-run on a copy of the repo with the clock-rollover flake
+  filtered by text, not by its count (the earlier filter matched "rules 228"
+  and the count had moved, so a flake could have read as red).
 
 - **2026-10-13** - **Step 5 Batch B (wording): items 1, 3, 4, 5, 9, 11, 17.**
   Each behind its own switch (section 7).
