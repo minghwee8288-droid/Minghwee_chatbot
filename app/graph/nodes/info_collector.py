@@ -1885,6 +1885,36 @@ def wants_a_transfer_helper(collected: dict) -> bool:
     return bool(_TRANSFER_HELPER.search(str(collected.get("hire_source") or "")))
 
 
+# Phase 3 Step 5 Batch C item 8 (2026-10-14): a client who wants her to start
+# sooner than the new-hire timeline is told so in the closing briefing, in one
+# sentence, with the note that a transfer helper already in Singapore is
+# usually faster - figures from the records only. Sooner = under 4 weeks (the
+# overseas span starts at 4), or "as soon as possible". Not when she is a
+# transfer already. False = the briefing as before.
+TIMELINE_MISMATCH = True
+_TIMELINE_MISMATCH_DAYS = 28
+_ASAP = re.compile(
+    r"\b(?:asap|urgent\w*|immediate\w*|right\s+away|as\s+soon\s+as\s+possible|straight\s+away)\b",
+    re.IGNORECASE,
+)
+TIMELINE_MISMATCH_NOTE = (
+    "\n\nThey want her to start {when}, sooner than the overseas timeline you are giving. "
+    "Say so plainly in ONE sentence right after the timing line, and add that a transfer "
+    "helper already in Singapore is usually faster - give the transfer timeline only if the "
+    "records above state one, otherwise no figure. Do not promise a date and do not "
+    "suggest the timeline can be shortened."
+)
+
+
+def wants_sooner_than_a_new_hire(collected: dict) -> bool:
+    """'within 2 weeks', 'next week', 'ASAP' - sooner than 4 weeks."""
+    value = str(collected.get("start_timeline") or "")
+    if _ASAP.search(value):
+        return True
+    days = _expiry_in_days(value)
+    return days is not None and days < _TIMELINE_MISMATCH_DAYS
+
+
 # Phase 3 Step 5 Batch C item 7 (2026-10-14): asked about rest days, a client
 # who wants none, or fewer than one a week with nothing said about paying for
 # them, is acknowledged, told the MOM rule in one sentence, and the intake
@@ -4105,10 +4135,15 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         # Appended AFTER the fee addendum deliberately — if we have no price for
         # her nationality that sentence still comes first, and this one is about
         # what the client DOES, which is the end of the message either way.
-        # Batch C item 10: a new hire is not a transfer unless they chose one.
+        # Batch C items 10 and 8: a new hire is not a transfer unless they
+        # chose one, and a start sooner than its timeline is said out loud.
         if service_type == "new_hiring" and not wants_a_transfer_helper(collected):
             if HIRE_SOURCE_NOT_TRANSFER:
                 briefing_note += NOT_A_TRANSFER_NOTE
+            if TIMELINE_MISMATCH and wants_sooner_than_a_new_hire(collected):
+                briefing_note += TIMELINE_MISMATCH_NOTE.format(
+                    when=str(collected.get("start_timeline")).strip()
+                )
         if service_type == "home_leave":
             briefing_note += HOME_LEAVE_TICKET_NOTE
         if leave_by_helper:

@@ -5834,8 +5834,16 @@ rows += [
       _ic_b.EX_SINGAPORE_VALUE, "first-timer", "not a transfer",
       "currently working in Singapore"))),
   ((True, True, True), (True, True, False, False, False, True))),
- ("...and it is told to the closing briefing",
-  "briefing_note += NOT_A_TRANSFER_NOTE" in inspect.getsource(_ic_b), True),
+ # item 8
+ ("C item 8: a start sooner than 4 weeks, or ASAP, is too soon for a new hire",
+  tuple(_ic_b.wants_sooner_than_a_new_hire({"start_timeline": v}) for v in (
+      "within 2 weeks", "ASAP", "next week", "within 1 month", "within 2 months", "just exploring")),
+  (True, True, True, False, False, False)),
+ ("...and both are told to the closing briefing, not to the questions",
+  ("briefing_note += NOT_A_TRANSFER_NOTE" in inspect.getsource(_ic_b),
+   "briefing_note += TIMELINE_MISMATCH_NOTE" in inspect.getsource(_ic_b),
+   "only if the records above state one" in _ic_b.TIMELINE_MISMATCH_NOTE),
+  (True, True, True)),
  ("...and the collector runs it on every ordinary question turn",
   ("with_the_question_asked(reply, next_field)" in inspect.getsource(_ic_b),
    _ic_b.REPLY_ASKS_ITS_QUESTION),
