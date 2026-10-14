@@ -531,6 +531,8 @@ because the lead is opened early and the ticket is created much later.
 | The safety reply addresses nobody by name | `handover_executor._assault_reply` + `guards.without_names_addressed` (`SAFETY_REPLY_NO_NAME`) | A helper may write on her employer's thread, and no record confirms whose number it is. No record name or full_name in its prompt; any held name used to address them is removed (item 4 = Step 5 item 13). |
 | Bahasa Indonesia is answered in Indonesian, not Malay | `language.client_writes_indonesian` / `to_indonesian` + a system-prompt line (`INDONESIAN_NOT_MALAY`), in `run_turn` (and the preview) | From the client's words (their message, else their last lines), never a nationality. Malay-only words ("polis", "sila", "ejen", "sesiapa") swapped; a client writing Malay keeps Malay (item 5 = Step 5 item 14). |
 | A ticket reference is shown as inline code | `reference.shown` + `guards.references_as_code` in `run_turn` (and the preview) (`REFERENCE_AS_CODE`) | WhatsApp linkified "2026-0100" as a phone number; inline code is not linkified. Every reference is wrapped, any other backtick dropped; the stored number is unchanged (item 6 = Step 5 item 16). |
+| Two fields are asked together only when paired, adjacent and decided | `ticket.paired_field` + `Field.ask_with` + `info_collector.PAIRED_QUESTION_NOTE` (`PAIRED_QUESTIONS`) | Step 6 part 1. Only the next outstanding field, only the one `ask_with` names, only when both gates are decided, never three. Both are counted asked (max_asks per field); entry 26's closed note says "the two details". `ask_with` is not `group`, which names a topic for the transition line. **No pair is wired** (asserted) until the agency approves the list. |
+| Rule 8 and the style guide agree: one topic per message | `system._RULE_8_ONE_TOPIC` + `style._ONE_TOPIC_LINE` (`ONE_TOPIC_RULE`) | Step 6 part 2: two closely related details may be asked in one natural sentence when the instruction names them; otherwise one question. Changed together so neither forbids what the other allows. |
 | No stray script reaches the client | `guards.without_stray_script`, applied once in `graph.run_turn` (and the preview) behind `STRAY_SCRIPT_GUARD` | The model ended an Indonesian reply with "天天彩票中奖" (Step 2e replay). `GLITCH_STRINGS` always go; a run of letters in a script that is neither the reply's main script nor one in the client's own lines or the names we hold for them goes too. Latin is never a cut script, so "Claire", "Ming Hwee", the address, a CB reference and Latin names survive in a Burmese or Chinese reply; digits and punctuation are not letters. Han and kana are one bucket. A cut is logged. |
 | A finished reply is not held back by Whapi | `message.send_bot_reply` (`SEND_WITHOUT_TYPING_TIME`) | With our own typing indicator running, no `typing_time` is sent: it only delayed delivery (whapi.send 1.4 s with 0.5 s asked). The channel's `/settings` holds no typing default. |
 | The search embedding starts beside the classifier, and is used only for the query the retriever actually builds | `graph._classify_with_prefetch` (`PREFETCH_SEARCH_EMBEDDING`) + `rag.prefetch_query` / `embed_query` | Predicted from the turn as it stands before classification (intent and service carry over). `embed_query` takes over a prefetch for the SAME text only, finished or still running; a different query (the classifier changed the service) is embedded as before, and a failed prefetch is retried, never reused. The canary is unchanged (cosine 1.000000 both ways). |
@@ -825,6 +827,10 @@ Easy to get wrong:
   `handover_executor.SAFETY_REPLY_NO_NAME` (item 4),
   `language.INDONESIAN_NOT_MALAY` (item 5), `reference.REFERENCE_AS_CODE`
   (item 6).
+  Step 6 parts 1-3's two, each `False` for the Batch F behaviour:
+  `ticket.PAIRED_QUESTIONS` (a Field's `ask_with` partner asked in the same
+  message; no Field sets one yet) and `style.ONE_TOPIC_RULE` (rule 8 and the
+  style guide say one topic per message, read by system.py too).
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1716,9 +1722,10 @@ behaviour behind one switch. Details of each step are in §11.
 | 5B2 | Batch B2 (phone-test fixes): reference never reused, fixed fees stated plainly, "why this much", name case, caring line, no re-introduction, phone validation | see git log |
 | 5C | Batch C (behaviour): items 6, 7, 8, 10, 12 | see git log |
 | 5E | Batch E (14 Oct phone test): items 1-11; 12 waits on a decision (section 9.40) | see git log |
+| 6 (1-3) | Combined questions: `Field.ask_with` + `paired_field`, rule 8 / style guide to one topic per message; no pair wired | see git log |
 | 5F | Batch F: "immediately" as said, no bare-name opening, safety reply names nobody (item 13), Indonesian not Malay (item 14), reference as inline code (item 16); item 2 stopped (section 9.41) | see git log |
 
-**Still to do, in order:** Step 5 (below; done: 15 in 5a, Batch B, B2, Batch C, Batch E and Batch F (13, 14, 16); item 2 stopped, section 9.41), Step 6 (combined questions: propose pairs, stop before
+**Still to do, in order:** Step 5 (below; done: 15 in 5a, Batch B, B2, Batch C, Batch E and Batch F (13, 14, 16); item 2 stopped, section 9.41), Step 6 (combined questions: parts 1-3 done, pairs proposed and waiting for approval, stop before
 wiring), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
 the webhook builds `known_helpers` only when `contact_type == "employer"`).
@@ -1794,6 +1801,24 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-14** - **Step 6 parts 1-3: the combined-question mechanism, no
+  pair wired.** `Field.ask_with` names the field asked in the same message
+  (`group` already exists and names a topic for the transition line, so it is
+  a new key). `ticket.paired_field` returns it only when it is the next
+  outstanding field and both gates are decided, never a chain of three; the
+  collector adds `PAIRED_QUESTION_NOTE`, counts both fields asked, offers both
+  fields' options as grounding, falls back to both written questions, and
+  words entry 26's closed note for two details. Rule 8 and the style guide now
+  say one topic per message (two closely related details in one natural
+  sentence when the instruction names them). With no `ask_with` set, every
+  message still asks one field (asserted). Part 3, checked with one pair
+  patched in through the real collector: both counted (max_asks is still per
+  field), the instruction names the second, entry 26 adjusts, an undecided
+  gate or the switch off gives one field. Multi-answer extraction is
+  unaffected (every applicable field still goes to the extractor), and the
+  half-answer case (section 9.21) is unchanged. `smoke_nodes.py` 507,
+  `selfcheck_flows.py` 924; 2 faults, 2 red.
 
 - **2026-10-14** - **Step 5 Batch F: items 1, 2, 4, 5, 6; item 3 stopped.**
   Each behind its own switch (section 7), each its own commit.
