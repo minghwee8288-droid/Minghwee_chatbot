@@ -45,7 +45,7 @@ from app.utils import redact_nric
 from app.whapi.client import WhapiError, whapi
 from app.whapi import typing as typing_indicator
 from app.whapi.debouncer import MessageDebouncer
-from app.whapi.parser import IncomingMessage, parse_webhook, verify_signature
+from app.whapi.parser import INBOUND_RECEIPT_LOG, IncomingMessage, parse_webhook, verify_signature
 
 logger = logging.getLogger(__name__)
 
@@ -563,7 +563,10 @@ async def maybe_return_to_bot(conversation: dict[str, Any]) -> dict[str, Any]:
 async def handle_inbound(message: IncomingMessage) -> None:
     """Store an incoming client message and queue it for the bot."""
     if _already_processed(message.whapi_message_id):
-        logger.debug("Replayed webhook for %s — ignoring", message.whapi_message_id)
+        # Batch E item 8: a drop is never silent at INFO (parser.INBOUND_RECEIPT_LOG).
+        (logger.info if INBOUND_RECEIPT_LOG else logger.debug)(
+            "Replayed webhook for %s — ignoring", message.whapi_message_id
+        )
         return
 
     # A reaction, a delete notice or another protocol event is not a message
@@ -575,11 +578,18 @@ async def handle_inbound(message: IncomingMessage) -> None:
     # a minute apart. Checked FIRST, so a protocol event is not stored, not
     # read-receipted, not debounced and never engages the bot at all.
     if not message_service.has_message_content(message):
-        logger.debug(
-            "Ignoring contentless inbound event on %s (type=%s) — not a client message",
-            message.customer_number,
-            message.message_type,
-        )
+        if INBOUND_RECEIPT_LOG:
+            logger.info(
+                "Ignoring contentless inbound event %s (type=%s) — not a client message",
+                message.whapi_message_id,
+                message.message_type,
+            )
+        else:
+            logger.debug(
+                "Ignoring contentless inbound event on %s (type=%s) — not a client message",
+                message.customer_number,
+                message.message_type,
+            )
         return
 
     phone = message.customer_number

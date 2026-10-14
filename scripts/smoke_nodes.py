@@ -4862,6 +4862,42 @@ async def _lid_checks() -> list[tuple[str, bool]]:
             f"{label} {'reaches' if should_reach else 'never reaches'} the bot",
             bool(reached) is should_reach))
 
+    # Batch E item 8: a contentless event and a replay are dropped with an INFO
+    # line naming the message id - and no phone number.
+    import logging as _logging
+    seen: list[str] = []
+
+    class _Grab(_logging.Handler):
+        def emit(self, record):
+            if record.levelno >= _logging.INFO:
+                seen.append(record.getMessage())
+
+    grab = _Grab()
+    _wh.logger.addHandler(grab)
+    _old_level = _wh.logger.level
+    _wh.logger.setLevel(_logging.INFO)
+    try:
+        gone = parse_webhook(payload(**{
+            "from": "917970027379@s.whatsapp.net", "chat_id": "917970027379@s.whatsapp.net",
+            "id": "E8-deleted", "type": "action",
+            "action": {"type": "delete", "target": "x"}}))[0]
+        await _wh.handle_inbound(gone)
+        replay = parse_webhook(payload(**{
+            "from": "917970027379@s.whatsapp.net", "chat_id": "917970027379@s.whatsapp.net",
+            "id": "E8-replayed", "text": {"body": "hi"}}))[0]
+        with patch.object(_wh, "_already_processed", new=lambda _id: True):
+            await _wh.handle_inbound(replay)
+    finally:
+        _wh.logger.setLevel(_old_level)
+        _wh.logger.removeHandler(grab)
+    logged = "\n".join(seen)
+    results.append(("E8: a contentless event is dropped with an INFO line naming it",
+                    "E8-deleted" in logged))
+    results.append(("E8: a replay is dropped with an INFO line naming it",
+                    "E8-replayed" in logged))
+    results.append(("E8: neither line carries the phone number",
+                    "917970027379" not in logged))
+
     # ...and the OUTBOUND half, which has had this guard since 2026-09-18 and
     # never had a check: injecting `if False:` there on 2026-09-22 came back
     # GREEN in both suites. A reaction sent from the agency's own handset -

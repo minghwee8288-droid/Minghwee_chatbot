@@ -435,6 +435,51 @@ _FINISHED = {
 }
 
 
+def _inbound_receipt_check():
+    """Batch E item 8: parse a payload holding a normal message, a group
+    message, a self-chat message and one with no readable counterparty, and
+    read what was logged at INFO."""
+    import logging as _logging
+    from app.config import settings as _settings
+    from app.whapi import parser as _parser
+
+    lines: list[str] = []
+
+    class _Grab(_logging.Handler):
+        def emit(self, record):
+            if record.levelno >= _logging.INFO:
+                lines.append(record.getMessage())
+
+    own = "6500000001"
+    payload = {"messages": [
+        {"id": "MSG-NORMAL", "type": "text", "from_me": False, "chat_id": "6590000002@s.whatsapp.net",
+         "from": "6590000002", "text": {"body": "hi"}},
+        {"id": "MSG-GROUP", "type": "text", "from_me": False, "chat_id": "123@g.us", "from": "6590000003",
+         "text": {"body": "hi"}},
+        {"id": "MSG-SELF", "type": "text", "from_me": False, "chat_id": own + "@s.whatsapp.net",
+         "from": own, "text": {"body": "hi"}},
+        {"id": "MSG-NOBODY", "type": "text", "from_me": False, "chat_id": "", "from": "",
+         "text": {"body": "hi"}},
+    ]}
+    handler = _Grab()
+    _parser.logger.addHandler(handler)
+    old_level, old_own = _parser.logger.level, _settings.whapi_sender_phone
+    _parser.logger.setLevel(_logging.INFO)
+    try:
+        object.__setattr__(_settings, "whapi_sender_phone", own)
+        _parser.parse_webhook(payload)
+    finally:
+        object.__setattr__(_settings, "whapi_sender_phone", old_own)
+        _parser.logger.setLevel(old_level)
+        _parser.logger.removeHandler(handler)
+    text = "\n".join(lines)
+    ids = ("MSG-NORMAL", "MSG-GROUP", "MSG-SELF", "MSG-NOBODY")
+    received = all(f"received: id={i}" in text for i in ids)
+    every_drop = all(text.count(i) >= 2 for i in ("MSG-GROUP", "MSG-SELF", "MSG-NOBODY"))
+    no_number = not any(n in text for n in ("6590000002", "6590000003", own))
+    return (received, every_drop, no_number)
+
+
 def _restart_result():
     """Run the real collector wrapper on a new request for the finished
     service, with the collection itself stubbed."""
@@ -5768,6 +5813,10 @@ rows += [
         for m in (importlib.import_module("app.graph.graph").run_turn,
                   importlib.import_module("app.api.admin"))),
   (True, True)),
+ # Batch E item 8: every inbound message is logged on arrival, and no drop is silent.
+ ("E8: every message id in a payload reaches an INFO line, with no phone number",
+  _inbound_receipt_check(),
+  (True, True, True)),
  # Batch E item 6: no service-intro opening mid-thread, no name asked twice.
  ("E6: every introduction shape is taken out once Claire has spoken",
   tuple(_guards.without_reintroduction(r, "Client: hi\nYou: x", "I want a direct hire") for r in (

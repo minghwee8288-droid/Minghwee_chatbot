@@ -14,6 +14,15 @@ from app.utils import digits_only, normalize_phone
 
 logger = logging.getLogger(__name__)
 
+# Phase 3 Step 5 Batch E item 8 (2026-10-14). Phone test: a client's answer at
+# 3:21 pm got no reply. The server log showed it never reached the webhook (the
+# resend at 3:23 pm did, and was answered) - lost on the Whapi/WhatsApp side.
+# To make the next one provable either way, every message is logged on arrival
+# by id and type, before any filter, and every drop that was DEBUG-only (group,
+# self-chat, replay, contentless) or silent (no counterparty) is logged at INFO.
+# No phone number is added to any line. False = the old logging.
+INBOUND_RECEIPT_LOG = True
+
 # Whapi message types that carry a media object of the same name.
 MEDIA_TYPES = ("image", "video", "audio", "voice", "document", "sticker")
 
@@ -233,19 +242,37 @@ def parse_webhook(payload: dict[str, Any]) -> list[IncomingMessage]:
     own_number = digits_only(settings.whapi_sender_phone)
     for message in messages:
         if not isinstance(message, dict):
+            if INBOUND_RECEIPT_LOG:
+                logger.info("Webhook entry that is not a message object - skipped")
             continue
+        # Batch E item 8: every message that reaches us is logged here, before
+        # any filter, dedupe or ignore rule, by id and type only - no number.
+        if INBOUND_RECEIPT_LOG:
+            logger.info(
+                "Webhook message received: id=%s type=%s from_me=%s",
+                message.get("id"), message.get("type"), bool(message.get("from_me")),
+            )
         # Group chats are out of scope: the bot only handles 1:1 client threads.
         chat_id = str(message.get("chat_id") or "")
         if chat_id.endswith("@g.us") or chat_id.endswith("@broadcast"):
-            logger.debug("Ignoring group/broadcast message %s", message.get("id"))
+            (logger.info if INBOUND_RECEIPT_LOG else logger.debug)(
+                "Ignoring group/broadcast message %s", message.get("id")
+            )
             continue
         item = parse_message(message)
         if not item or not item.customer_number:
+            if INBOUND_RECEIPT_LOG:
+                logger.info(
+                    "Message %s dropped: no counterparty could be read from it",
+                    message.get("id"),
+                )
             continue
         # A "chat" whose counterparty is our own number is WhatsApp's
         # message-yourself thread or a protocol message, not a client.
         if own_number and digits_only(item.customer_number) == own_number:
-            logger.debug("Ignoring self-chat message %s", item.whapi_message_id)
+            (logger.info if INBOUND_RECEIPT_LOG else logger.debug)(
+                "Ignoring self-chat message %s", item.whapi_message_id
+            )
             continue
         parsed.append(item)
     return parsed
