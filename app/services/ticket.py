@@ -2674,6 +2674,35 @@ def paired_field(
     return partner
 
 
+# Phase 3 Step 6 part 4, 2026-10-14: the pairs the agency approved, and only
+# those. Wired per service with dataclasses.replace rather than on the shared
+# Field objects (helper_name, availability, the _hiring_field copies), so a
+# pair in one flow never reaches another. Each pair must be adjacent in its
+# flow (asserted in selfcheck_flows). Deliberately NOT wired, by decision:
+# budget + rest_day, helper_profile + hire_source, and both replacement pairs.
+# False = no field has a partner; PAIRED_QUESTIONS still guards the mechanism.
+APPROVED_PAIRS_WIRED = True
+APPROVED_PAIRS: dict[str, tuple[tuple[str, str], ...]] = {
+    "new_hiring": (("home_type", "home_size"), ("cooking", "special_duties")),
+    TRANSFER_EMPLOYER: (("home_type", "home_size"), ("cooking", "special_duties"),
+                        ("helper_name", "reason")),
+    "direct_hiring": (("helper_name", "helper_nationality"),),
+    # The helper's own leave only: both fields are gated on requested_by.
+    "home_leave": (("employer_name", "employer_contact"),),
+    CANDIDATE_HIRING: (("experience", "experience_field"), ("current_location", "availability"),
+                       ("rest_day_preference", "expected_salary")),
+    "transfer": (("employer_consent", "availability"),),
+}
+
+if APPROVED_PAIRS_WIRED:
+    for _service, _pairs in APPROVED_PAIRS.items():
+        _partner_of = dict(_pairs)
+        SERVICE_FIELDS[_service] = [
+            replace(f, ask_with=_partner_of[f.key]) if f.key in _partner_of else f
+            for f in SERVICE_FIELDS[_service]
+        ]
+
+
 def missing_fields(service_type: str | None, collected: dict[str, Any]) -> list[Field]:
     """What still has to be asked — gated fields that do not apply are not missing."""
     return [

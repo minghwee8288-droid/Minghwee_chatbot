@@ -3811,9 +3811,10 @@ async def _stray_script_checks() -> list[tuple[str, bool]]:
 
 
 async def _step6_checks() -> list[tuple[str, bool]]:
-    """Step 6 parts 1-3: the pairing mechanism, run through the real collector
-    with ONE pair patched in (home_type with home_size) and taken out again.
-    Nothing in SERVICE_FIELDS is paired, so the live flows are untouched."""
+    """Step 6: the pairing mechanism through the real collector. Since part 4
+    the live new_hiring flow carries the approved home_type + home_size pair,
+    so the paired case runs the wiring as shipped and the unpaired case strips
+    ask_with off a copy."""
     import dataclasses
     from app.services import ticket as ticket_module
     global _EXTRACTION
@@ -3830,13 +3831,16 @@ async def _step6_checks() -> list[tuple[str, bool]]:
     _EXTRACTION = {}
     out = []
 
-    unpaired = await _run_info_collector(dict(state))
+    bare = [dataclasses.replace(f, ask_with="") for f in fields]
+    with patch.dict(ticket_module.SERVICE_FIELDS, {"new_hiring": bare}):
+        unpaired = await _run_info_collector(dict(state))
     out.append(("Step 6: with no pair, one field is counted and the prompt names one",
                 set(unpaired.get("asked_field_counts") or {}) == {"home_type"}
                 and "Ask this together with" not in _LAST_SYSTEM_PROMPT))
 
     paired = list(fields)
-    paired[i] = dataclasses.replace(fields[i], ask_with="home_size")
+    out.append(("Step 6 part 4: the live new_hiring flow pairs home_type with home_size",
+                paired[i].ask_with == "home_size"))
     with patch.dict(ticket_module.SERVICE_FIELDS, {"new_hiring": paired}):
         got = await _run_info_collector(dict(state))
         prompt = _LAST_SYSTEM_PROMPT

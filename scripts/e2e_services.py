@@ -166,6 +166,18 @@ def _asked_field(before: dict, after: dict, collected: dict | None = None) -> st
     return (unanswered or changed or [None])[0]
 
 
+def _asked_partner(field: str, before: dict, after: dict, collected: dict | None,
+                   service: str | None) -> str | None:
+    """The field asked together with `field` this turn (Step 6), or None:
+    its ask_with partner, if that counter moved too and it is unanswered."""
+    from app.services import ticket as _ticket
+    spec = next((f for f in _ticket.fields_for(service) if f.key == field), None)
+    partner = spec.ask_with if spec else ""
+    if not partner or (collected or {}).get(partner):
+        return None
+    return partner if (after or {}).get(partner, 0) > (before or {}).get(partner, 0) else None
+
+
 async def run_service(
     service: str, opener: str, show: bool,
     extra_state: dict | None = None, answers: dict | None = None,
@@ -239,6 +251,12 @@ async def run_service(
             said = "yes"
             continue
         said = scripted[field]
+        # Step 6: a paired question asked two fields; a person answers both in
+        # one reply, so the client does too.
+        partner = _asked_partner(field, before, state.get("asked_field_counts"),
+                                 state.get("collected_info"), state.get("service_type"))
+        if partner and partner in scripted:
+            said = f"{said}. {scripted[partner]}"
 
     return {
         "service": service,
