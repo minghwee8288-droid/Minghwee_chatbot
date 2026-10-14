@@ -490,6 +490,13 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         result["reply"] = guards.tidy_helper_names_in_reply(
             result["reply"], helper_names(result, payload)
         )
+    # Step 5 Batch B2 item 5: a family matter or an emergency gets a caring line.
+    if (guards.CARING_LINE_FOR_FAMILY_MATTERS and result.get("reply")
+            and result.get("service_type") == "home_leave"):
+        result["reply"] = guards.with_caring_line(
+            result["reply"], payload.get("incoming_text") or "",
+            (result.get("collected_info") or {}).get("leave_reason"),
+        )
     return result
 
 

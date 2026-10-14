@@ -240,6 +240,11 @@ async def run_preview(body: PreviewRequest) -> dict[str, Any]:
                 reply = guards.tidy_helper_names_in_reply(
                     reply, graph_module.helper_names(result, payload)
                 )
+            if (guards.CARING_LINE_FOR_FAMILY_MATTERS and reply  # as run_turn does
+                    and result.get("service_type") == "home_leave"):
+                reply = guards.with_caring_line(
+                    reply, text, (result.get("collected_info") or {}).get("leave_reason")
+                )
             turns.append({
                 "message": text,
                 "reply": reply,

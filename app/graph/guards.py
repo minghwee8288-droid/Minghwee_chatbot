@@ -1157,6 +1157,36 @@ def tidy_helper_names_in_reply(reply: str, names: list[str]) -> str:
     return body
 
 
+# Phase 3 Step 5 Batch B2 item 5 (2026-10-14). A home leave for a family matter
+# or an emergency gets one short caring line before we move on; a regular home
+# leave does not. Only on the turn the client gives that reason, and only where
+# the reply does not already carry one. False = the reply as written.
+CARING_LINE_FOR_FAMILY_MATTERS = True
+CARING_LINE = "I hope everything is alright at home."
+_FAMILY_MATTER = re.compile(
+    r"\bfamily\s+(?:matters?|emergenc\w*|problems?|issues?|reasons?|crisis)\b|\bemergenc\w*"
+    r"|\burgent\w*|\b(?:sick|ill|unwell|hospital\w*|passed\s+away|died|death|dying|funeral"
+    r"|accident|surgery|operation|critical|bereave\w*)\b",
+    re.IGNORECASE,
+)
+_ALREADY_CARING = re.compile(
+    r"\b(?:hope\s+(?:everything|all|she|he|they|your|her|his)|sorry\s+to\s+hear|take\s+care"
+    r"|thinking\s+of)\b",
+    re.IGNORECASE,
+)
+
+
+def with_caring_line(reply: str, message: str, leave_reason: str | None) -> str:
+    """'I hope everything is alright at home.' before the reply, once, when the
+    reason just given for a home leave is a family matter or an emergency."""
+    if not reply or not leave_reason or not _FAMILY_MATTER.search(message or ""):
+        return reply
+    if not _FAMILY_MATTER.search(str(leave_reason)) or _ALREADY_CARING.search(reply):
+        return reply
+    logger.info("Home leave for a family matter - caring line added")
+    return f"{CARING_LINE} {reply}"
+
+
 # Phase 3 Step 5 Batch B2 item 3 (2026-10-14). Live: "why this much?" after
 # the renewal fee was answered with the price again ("...the exact amount will
 # be confirmed by our team"). Asking WHY a fee is what it is wants what it

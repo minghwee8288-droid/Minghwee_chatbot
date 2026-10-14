@@ -5753,6 +5753,20 @@ rows += [
         for m in (importlib.import_module("app.graph.graph").run_turn,
                   importlib.import_module("app.api.admin"), _ic_b)),
   (True, True, True)),
+ # item 5
+ ("B2 item 5: a family matter gets a caring line, a regular leave does not",
+  (_guards.with_caring_line("When does she travel?", "my father passed away", "father passed away"),
+   _guards.with_caring_line("When does she travel?", "regular home leave", "regular home leave"),
+   _guards.with_caring_line("When does she travel?", "to visit her family", "visit family"),
+   _guards.with_caring_line("When does she travel?", "nothing urgent, it is her regular leave",
+                            "regular home leave")),
+  ("I hope everything is alright at home. When does she travel?",
+   "When does she travel?", "When does she travel?", "When does she travel?")),
+ ("...run in run_turn and in the preview",
+  tuple("CARING_LINE_FOR_FAMILY_MATTERS" in inspect.getsource(m)
+        for m in (importlib.import_module("app.graph.graph").run_turn,
+                  importlib.import_module("app.api.admin"))),
+  (True, True)),
  ("...run once, in run_turn and in the preview",
   tuple("FIXED_FEE_STATED_PLAINLY" in inspect.getsource(m)
         for m in (importlib.import_module("app.graph.graph").run_turn,

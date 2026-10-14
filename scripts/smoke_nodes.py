@@ -3535,6 +3535,29 @@ async def _batch_b2_checks() -> list[tuple[str, bool]]:
     with patch.object(guards_module, "TIDY_HELPER_NAME_CASE", False):
         out.append(("name case: TIDY_HELPER_NAME_CASE off -> as written",
                     await named(caps, {"helper_name": "DEVI"}) == caps))
+
+    # Item 5: a family matter or an emergency gets one caring line.
+    async def leave(reply, message, reason):
+        result = {"reply": reply, "service_type": "home_leave",
+                  "collected_info": {"leave_reason": reason}}
+        with patch.object(graph_module.kb_rules, "refresh", new=AsyncMock()), \
+                patch.object(graph_module, "get_graph", new=lambda: _Graph(result)):
+            return (await graph_module.run_turn("t", {"incoming_text": message}))["reply"]
+
+    ask = "Which country is Devi from?"
+    out.append(("caring line: a family emergency gets one",
+                await leave(ask, "her mother is in hospital", "family emergency - mother in hospital")
+                == "I hope everything is alright at home. " + ask))
+    out.append(("caring line: a regular home leave does not",
+                await leave(ask, "her regular home leave", "regular home leave") == ask))
+    out.append(("caring line: not twice when the reply already cares",
+                await leave("I'm sorry to hear that. " + ask, "her father is sick", "father sick")
+                == "I'm sorry to hear that. " + ask))
+    out.append(("caring line: only on the turn the reason is given",
+                await leave(ask, "Philippines", "family emergency") == ask))
+    with patch.object(guards_module, "CARING_LINE_FOR_FAMILY_MATTERS", False):
+        out.append(("caring line: CARING_LINE_FOR_FAMILY_MATTERS off -> as written",
+                    await leave(ask, "her mother is in hospital", "family emergency") == ask))
     return out
 
 
