@@ -3469,6 +3469,24 @@ async def _reference_checks() -> list[tuple[str, bool]]:
     results.append(("reference: the safety reply shows none (SAFETY_REPLY_SHOWS_REFERENCE)",
                     "CB-2026" not in (out.get("reply") or assault["reply"])))
 
+    # Step 5 Batch F item 4: the safety reply addresses nobody by a record
+    # name - a helper may be writing on her employer's thread (Step 3, Burmese).
+    seen = {}
+
+    async def _named_reply(system_prompt, *a, **kw):
+        seen["prompt"] = system_prompt or ""
+        return "Hi Ratna, I'm so sorry to hear this. Please make sure you are safe and call 999."
+
+    harm = dict(base, intent="dispute_assault", service_type="dispute_assault", reply="",
+                record_name="Ratna Choukade", customer_name="Ratna",
+                collected_info={"full_name": "Ratna Choukade"},
+                incoming_text="majikan saya memukul saya")
+    with patch.object(hx, "complete", new=_named_reply):
+        safety = await hx._assault_reply(harm)
+    results.append(("F4: the safety reply carries no record name, and none reaches its prompt",
+                    "Ratna" not in safety and "Ratna" not in seen.get("prompt", "x Ratna")
+                    and safety.startswith("Hi, I'm so sorry")))
+
     with patch.object(_settings, "handover_reference", False):
         reply, _ = await run(base)
     results.append(("reference: HANDOVER_REFERENCE off -> the old wording", reply == closing))

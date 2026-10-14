@@ -2091,3 +2091,36 @@ def greeting_only(text: str) -> bool:
     if not body or len(body.split()) > _NO_REQUEST_MAX_WORDS:
         return False
     return bool(_GREETING.match(body)) and not re.search(r"[\w?]", without_greeting(body))
+
+
+def without_names_addressed(reply: str, names: list[str]) -> str:
+    """The reply with each name we hold taken out where it addresses someone.
+
+    Phase 3 Step 5 Batch F item 4: the safety reply addresses nobody by name
+    (handover_executor.SAFETY_REPLY_NO_NAME). "Hi Ratna, please..." ->
+    "Hi, please...", "I'm so sorry, Ratna." -> "I'm so sorry.", "Ratna, please
+    stay safe." -> "Please stay safe." A name used in the middle of a sentence
+    as a person talked ABOUT is left alone.
+    """
+    out = reply or ""
+    variants: list[str] = []
+    for name in names:
+        name = (name or "").strip()
+        if not name:
+            continue
+        variants.append(name)
+        first = name.split()[0]
+        if len(first) >= 3 and first != name:
+            variants.append(first)
+    for name in sorted(set(variants), key=len, reverse=True):
+        n = re.escape(name)
+        out = re.sub(rf"\b(hi|hello|hey|dear)\s+{n}\b", r"\1", out, flags=re.IGNORECASE)
+        out = re.sub(rf"\s*[,\u104a]\s*{n}\b(?=\s*[.!?,\u104a\u104b]|\s*$)", "", out,
+                     flags=re.IGNORECASE)
+        out = re.sub(rf"(^|(?<=[.!?\u104b]\s))\s*{n}\s*[,!\u104a:\u2014-]\s*", r"\1", out,
+                     flags=re.IGNORECASE)
+    out = re.sub(r"(^|[.!?]\s+)([a-z])", lambda m: m.group(1) + m.group(2).upper(), out)
+    out = re.sub(r"[ \t]{2,}", " ", out).strip()
+    if out != (reply or "").strip():
+        logger.info("Took a name out of the safety reply")
+    return out

@@ -5846,6 +5846,15 @@ rows += [
    "Yes, she can travel next month with the forms.",
    "Yes, she can travel next month with the forms.",
    "When does Devi plan to travel home?")),
+ # Batch F item 4: the safety reply addresses nobody by a name we hold.
+ ("F4: a name used to address them goes; a name talked about stays",
+  tuple(_guards.without_names_addressed(r, ["Ratna Choukade"]) for r in (
+      "Hi Ratna, I am really sorry to hear this.",
+      "I am so sorry, Ratna. Please stay safe.",
+      "Ratna Choukade, please make sure you are safe.",
+      "Please tell Ratna Choukade we are here.")),
+  ("Hi, I am really sorry to hear this.", "I am so sorry. Please stay safe.",
+   "Please make sure you are safe.", "Please tell Ratna Choukade we are here.")),
  # Batch E item 11: the religion question is one plain question, short reason.
  ("E11: a short reason, and the invitation is not read out as an option",
   (len(_ic_b._WHY_WE_ASK["helper_religion"]) < 60,

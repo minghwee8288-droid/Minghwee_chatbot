@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.graph.guards import without_names_addressed
 from app.graph.llm import complete
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import ASSAULT_INSTRUCTION
@@ -45,8 +46,40 @@ REASON_BY_INTENT = {
 }
 
 
+# Phase 3 Step 5 Batch F item 4 (2026-10-14). The Step 3 Burmese safety reply
+# addressed the thread's EMPLOYER by name - the record name on the number -
+# while the person reporting harm may well be the helper, writing on her
+# employer's thread. Nothing we hold confirms a record name is the sender's
+# own, so the safety reply uses no name: none reaches its prompt, the
+# instruction says so, and any name we hold that still appears as a form of
+# address is taken out. False = the reply as before.
+SAFETY_REPLY_NO_NAME = True
+_NO_NAME_LINE = (
+    "\n\nAddress them by NO name at all - not a name from our records and not one "
+    "from earlier in the conversation. The person writing may not be the person our "
+    "records name."
+)
+
+
+def _names_held(state: ConversationState) -> list[str]:
+    collected = state.get("collected_info") or {}
+    return [
+        str(n) for n in (state.get("record_name"), state.get("customer_name"),
+                         collected.get("full_name"))
+        if n
+    ]
+
+
 async def _assault_reply(state: ConversationState) -> str:
-    system_prompt = build_system_prompt(dict(state), extra_instructions=ASSAULT_INSTRUCTION)
+    prompt_state = dict(state)
+    instruction = ASSAULT_INSTRUCTION
+    if SAFETY_REPLY_NO_NAME:
+        prompt_state["record_name"] = ""
+        prompt_state["collected_info"] = {
+            k: v for k, v in (state.get("collected_info") or {}).items() if k != "full_name"
+        }
+        instruction = ASSAULT_INSTRUCTION + _NO_NAME_LINE
+    system_prompt = build_system_prompt(prompt_state, extra_instructions=instruction)
     user_prompt = (
         f"Client's message(s):\n{state.get('incoming_text', '')}\n\nYour reply:"
     )
@@ -55,7 +88,10 @@ async def _assault_reply(state: ConversationState) -> str:
     except Exception:  # noqa: BLE001
         logger.exception("Assault reply generation failed — using the fixed message")
         return ASSAULT_FALLBACK_REPLY
-    return reply.strip('"') or ASSAULT_FALLBACK_REPLY
+    reply = reply.strip('"')
+    if SAFETY_REPLY_NO_NAME and reply:
+        reply = without_names_addressed(reply, _names_held(state))
+    return reply or ASSAULT_FALLBACK_REPLY
 
 
 async def _assault_ticket(state: ConversationState) -> dict[str, Any]:
