@@ -2571,17 +2571,23 @@ Tell them where the case currently stands using only the case details above. Do 
 ## 53. Someone Offering a Helper for Placement
 
 ### What is this prompt used for?
-It is used when someone offers a helper for placement in an ordinary answering
-turn: a supplier, an agent, an employer, or the helper herself.
+It is used when a third party offers a helper for placement: anyone who is
+not the helper herself - a supplier, an agent, or an employer, including an
+existing client relaying someone else's maid ("my friend's maid is looking for
+a new employer"). The helper herself never reaches this prompt: she is
+registered through the candidate questions instead (switch
+`ticket.THIRD_PARTY_EMPLOYER_RELAY`, 14 October; before it, an employer on
+file relaying a helper was run through the candidate questions too).
 
 ### Why is this prompt needed?
 Registering a helper offered by another party needs documents and
 verification, which a person handles. This keeps Claire from collecting
-sensitive details over chat in that situation.
+sensitive details over chat in that situation, and from asking the sender
+"your name" as though they were the helper.
 
 ### What does it make the chatbot do?
-It acknowledges the offer warmly and says a live agent will connect shortly. A
-helper is reassured.
+It acknowledges the offer warmly and says a live agent will connect shortly.
+Nothing is collected from the sender.
 
 ### Prompt
 ```text

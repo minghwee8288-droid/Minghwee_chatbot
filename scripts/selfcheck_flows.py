@@ -459,6 +459,23 @@ def _paired_field_cases():
     return tuple(p.key if p else None for p in out)
 
 
+def _third_party_cases():
+    """Batch G F3: where a registration goes for each sender, switch on and off.
+    Only the helper herself (candidate) or a sender nobody can place yet
+    (unknown) is collected; an employer, supplier or partner is handed over."""
+    def resolve():
+        return tuple(t.resolve_service("candidate_registration", c)
+                     for c in ("candidate", "unknown", "employer", "supplier", "partner"))
+    on = resolve()
+    saved = t.THIRD_PARTY_EMPLOYER_RELAY
+    t.THIRD_PARTY_EMPLOYER_RELAY = False
+    try:
+        off = resolve()
+    finally:
+        t.THIRD_PARTY_EMPLOYER_RELAY = saved
+    return on, off
+
+
 def _inbound_receipt_check():
     """Batch E item 8: parse a payload holding a normal message, a group
     message, a self-chat message and one with no readable counterparty, and
@@ -5682,6 +5699,17 @@ rows += [
  ("Step 6: a pair is the NEXT field, the one named, both gates decided, never three",
   _paired_field_cases(),
   ("b", None, None, None, None, "b")),
+ # Batch G F3: anyone who is not the helper herself is a third party.
+ ("F3: an employer relaying a helper is handed over like a supplier; she is still collected",
+  _third_party_cases(),
+  (("candidate_new_hiring", "candidate_new_hiring", "candidate_registration",
+    "candidate_registration", "candidate_registration"),
+   ("candidate_new_hiring", "candidate_new_hiring", "candidate_new_hiring",
+    "candidate_registration", "candidate_registration"))),
+ ("...and prompt.md entry 53 says the helper herself never reaches the third-party prompt",
+  ("relaying someone else's maid" in _PROMPT_MD,
+   "or the helper herself." in _PROMPT_MD),
+  (True, False)),
  # item 3
  ("item 3: the list instruction never says the timing depends on the case",
   (_templates._TIMING_DEPENDS_ON_CASE in _templates.PROCESS_INSTRUCTION,

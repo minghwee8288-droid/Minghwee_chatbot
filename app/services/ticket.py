@@ -1835,6 +1835,21 @@ TICKET_SERVICE_FALLBACK = {
 # lead, so they never go down the candidate lead flow.
 _THIRD_PARTY_CONTACTS = {"supplier", "partner"}
 
+# Phase 3 Step 5 Batch G item F3 (Step 5 item 2), 2026-10-14. The agency's
+# decision: anyone who is not the helper herself is a third party, an existing
+# EMPLOYER included. Measured read-only before (section 9.41): an employer on
+# file relaying "my friend's maid is looking for a new employer" was run
+# through the candidate flow, and one run asked that employer "your name" as
+# though they were the helper. A sender whose master record says employer
+# cannot be the job seeker, so a registration from them is handed over like a
+# supplier's. An unknown sender is left to the classifier (a job seeker
+# usually writes from an unknown number). False = only supplier and partner.
+THIRD_PARTY_EMPLOYER_RELAY = True
+
+
+def _third_party_contacts() -> set[str]:
+    return _THIRD_PARTY_CONTACTS | ({"employer"} if THIRD_PARTY_EMPLOYER_RELAY else set())
+
 
 def _storable_service(service_type: str, conversation: dict[str, Any]) -> tuple[str, str | None]:
     """(value to store, true type when it had to be substituted)."""
@@ -1887,9 +1902,10 @@ def resolve_service(service_type: str | None, contact_type: str | None) -> str |
     # one (see the constant).
     if service_type == "transfer" and contact != "candidate":
         return TRANSFER_EMPLOYER
-    # A supplier or partner offering another helper keeps the bare registration
-    # service: they raise no lead, so there is nothing to collect from them.
-    if service_type == CANDIDATE_REGISTRATION and contact not in _THIRD_PARTY_CONTACTS:
+    # A supplier or partner (and, with THIRD_PARTY_EMPLOYER_RELAY, an employer)
+    # offering another helper keeps the bare registration service: they raise
+    # no lead, so there is nothing to collect from them.
+    if service_type == CANDIDATE_REGISTRATION and contact not in _third_party_contacts():
         return CANDIDATE_HIRING
     return service_type
 
