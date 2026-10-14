@@ -1803,6 +1803,53 @@ _BARE_NO = re.compile(r"^\W*(?:no|nope|nah|none|nothing)\W*$", re.IGNORECASE)
 _ASKS_FOR_ANY = re.compile(r"^\W*(?:any(?:thing|one)?|(?:is|are)\s+there)\b", re.IGNORECASE)
 
 
+# Phase 3 Step 5 Batch C item 6 (2026-10-14): a collection-turn reply asks the
+# question it was meant to ask. Seen: transfer_employer's "I'll ask a few
+# details" that asked nothing, and the e2e direct hire whose opening asked
+# "Is she already in Singapore?" instead of the client's name. A reply with
+# no question gets the agency's written question; a reply whose questions are
+# all about something else has its last one replaced by it. "About" is a
+# shared content word with the field's own question, label, key or options,
+# so a reworded question passes. False = the reply as the model wrote it.
+REPLY_ASKS_ITS_QUESTION = True
+_QUESTION_STOPWORDS = frozenset(
+    "what when where which while would could should your yours know there this that "
+    "have does will with from about like such other more many much please their they "
+    "them then than also just into able tell share kindly thanks thank anything else "
+    "someone something before after need needs want wants help shall okay noted sure "
+    "great right".split()
+)
+
+
+def _content_stems(text: str) -> set[str]:
+    words = re.findall(r"[a-z]+", (text or "").lower().replace("'s", ""))
+    return {w[:5] for w in words if len(w) >= 4 and w not in _QUESTION_STOPWORDS}
+
+
+def with_the_question_asked(reply: str, field: ticket_service.Field) -> str:
+    """The reply, with the field's own question if it did not ask it."""
+    body = (reply or "").strip()
+    question = (field.question or "").strip()
+    if not body or not question or body == question:
+        return reply
+    wanted = _content_stems(" ".join(
+        [question, field.label or "", field.key.replace("_", " "), *(field.options or ())]
+    ))
+    sentences = re.findall(r"[^.!?\n]*\?", body)
+    if any(_content_stems(s) & wanted for s in sentences):
+        return reply
+    if not sentences:
+        joiner = "\n\n" if "\n" in body else " "
+        logger.info("Collector reply asked nothing - the %s question added", field.key)
+        return f"{body}{joiner}{question}"
+    last = sentences[-1]
+    cut = body.rfind(last)
+    logger.info("Collector reply asked about something else (%r) - the %s question put "
+                "in its place", last.strip()[:80], field.key)
+    return (body[:cut].rstrip() + (" " if body[:cut].strip() else "") + question
+            + body[cut + len(last):]).strip()
+
+
 # Step 5 Batch B2 item 7: the fields that hold a phone number, and what the
 # question says when the number given did not look like one. The number is
 # never read back - it may be somebody's real number with a digit wrong.
@@ -4450,6 +4497,12 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             reply = one_mention_of_known_helper(
                 reply, [h["helper_name"] for h in offer]
             )
+        # Batch C item 6: the reply asks the question it was meant to ask. Not
+        # on a turn whose note asks something else on purpose (the workload
+        # advice, a route question while her nationality or location is
+        # unknown).
+        if REPLY_ASKS_ITS_QUESTION and not (workload_note or nationality_note or location_note):
+            reply = with_the_question_asked(reply, next_field)
         if overview and (reply or "").strip() == (next_field.question or "").strip():
             logger.error(
                 "Conversation %s: the %s overview was discarded by a guard - the "

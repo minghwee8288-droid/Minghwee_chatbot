@@ -5797,6 +5797,29 @@ rows += [
   (True, True)),
 ]
 
+# Phase 3 Step 5 Batch C (2026-10-14).
+_tk_c = importlib.import_module("app.services.ticket")
+_fld = lambda svc, key: next(f for f in _tk_c.fields_for(svc) if f.key == key)  # noqa: E731
+rows += [
+ # item 6
+ ("C item 6: a reply that asked something else gets the field's own question",
+  (_ic_b.with_the_question_asked("Hi, I'm Claire. Is she already in Singapore?",
+                                 _fld("direct_hiring", "full_name")),
+   _ic_b.with_the_question_asked("I'll ask a few details.", _fld("transfer_employer", "full_name"))),
+  ("Hi, I'm Claire. May I know your name?", "I'll ask a few details. May I know your name?")),
+ ("...while a reworded question about the same thing is left alone",
+  tuple(_ic_b.with_the_question_asked(r, _fld(s, k)) == r for s, k, r in (
+      ("home_leave", "helper_name", "Is this home leave for Yoyo, or for another helper?"),
+      ("new_hiring", "pets", "Got it - do you have any dogs or cats at home?"),
+      ("new_hiring", "budget", "Do you have a monthly salary in mind, such as SGD 600-700?"),
+      ("new_hiring", "rest_day", "How would you like to arrange her days off?"))),
+  (True, True, True, True)),
+ ("...and the collector runs it on every ordinary question turn",
+  ("with_the_question_asked(reply, next_field)" in inspect.getsource(_ic_b),
+   _ic_b.REPLY_ASKS_ITS_QUESTION),
+  (True, True)),
+]
+
 bad = 0
 for label, got, want in rows:
     ok = got == want

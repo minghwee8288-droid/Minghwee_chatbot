@@ -158,6 +158,26 @@ CASES = [
       "_expect_prompt": "Name her ONLY inside this one question",
       "_expect_reply": "Is this home leave for Yoyo, or for another helper?",
       "_forbid_reply": "details on record"}),
+    # Step 5 Batch C item 6: the opening asks the question it was meant to ask.
+    # The e2e direct hire asked whether she was in Singapore instead of the
+    # client's name.
+    ("info_collector", "C6: a reply asking about something else gets its own question",
+     {"service_type": "direct_hiring", "intent": "direct_hiring", "contact_type": "employer",
+      "incoming_text": "I want to do a direct hire", "history_text": "",
+      "collected_info": {}, "asked_field_counts": {},
+      "_stub_extraction": {},
+      "_stub_reply": "Hi, I'm Claire, Ming Hwee's AI assistant. Is she already in Singapore, "
+                     "working for another employer?",
+      "_expect_reply": "May I know your name?",
+      "_forbid_reply": "already in Singapore"}),
+    ("info_collector", "C6: ...and a reply asking nothing gets it added",
+     {"service_type": "transfer_employer", "intent": "transfer", "contact_type": "employer",
+      "incoming_text": "I am looking for a transfer helper", "history_text": "",
+      "collected_info": {}, "asked_field_counts": {},
+      "_stub_extraction": {},
+      "_stub_reply": "Hi, I'm Claire, Ming Hwee's AI assistant. I'll ask a few details so we "
+                     "can find the right helper.",
+      "_expect_reply": "May I know your name?"}),
     # Step 5 B2 item 7: a phone number that is not one is never filed, and the
     # question is asked again with the reason - never read back.
     ("info_collector", "B2: '+9612+654+941' is not filed, asked again with the reason",
