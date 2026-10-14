@@ -1102,6 +1102,60 @@ _CONFIRM_AND = re.compile(
 _CLAUSE_SPLIT = re.compile(r"(,\s*(?:and|but|so|which|while)?\s*|;\s*|\s+[-–—]\s+)")
 
 
+# Phase 3 Step 5 Batch B2 item 3 (2026-10-14). Live: "why this much?" after
+# the renewal fee was answered with the price again ("...the exact amount will
+# be confirmed by our team"). Asking WHY a fee is what it is wants what it
+# covers. Answered from the records when they say what it covers, else the
+# agent line (blocked_topic_responder.PROBE_REPLY). A sentence that only
+# restates a figure we already sent is never the answer.
+# False = the reply as the node wrote it.
+WHY_THE_PRICE_EXPLAINED = True
+_PRICE_WORD = re.compile(
+    r"\b(?:much|expensive|costly|pricey|high|fees?|costs?|prices?|charges?|pay|paying|rate)\b"
+    r"|\$\s?\d",
+    re.IGNORECASE,
+)
+_ASKS_WHAT_IT_COVERS = re.compile(
+    r"\bwhat(?:'s|\s+is|\s+does|\s+do)\s+(?:(?:it|that|this|the\s+fee)\s+)?"
+    r"(?:included|covered|cover|include)\b"
+    r"|\bbreak(?:\s|-)?(?:it\s+)?down\b|\bbreakdown\b",
+    re.IGNORECASE,
+)
+_WHY = re.compile(r"\bwhy\b|\bhow\s+come\b|\bexplain\b|\bjustif", re.IGNORECASE)
+_EXPLAINS_COVERAGE = re.compile(
+    r"\bcover(?:s|ed|ing)?\b|\binclud\w*|\bpays?\s+for\b|\bgoes\s+towards\b|\bmade\s+up\s+of\b"
+    r"|\bfor\s+(?:us\s+|our\s+)?handling\b",
+    re.IGNORECASE,
+)
+
+
+def asks_why_the_price(message: str) -> bool:
+    """'why this much?', 'why so expensive', 'what does it cover'."""
+    text = message or ""
+    if _ASKS_WHAT_IT_COVERS.search(text):
+        return True
+    return bool(_WHY.search(text) and _PRICE_WORD.search(text))
+
+
+def without_repeated_price(reply: str, *previous: str) -> str:
+    """The reply to 'why this much?' minus every sentence that only restates a
+    figure we already sent, or promises to confirm the amount. '' when what is
+    left explains nothing - the caller then sends the agent line."""
+    body = reply or ""
+    sent = {_money_norm(m.group(1)) for line in previous for m in _MONEY.finditer(line or "")}
+    kept = []
+    for start, end in _sentence_spans(body):
+        sentence = body[start:end]
+        figures = {_money_norm(m.group(1)) for m in _MONEY.finditer(sentence)}
+        if figures & sent and not _EXPLAINS_COVERAGE.search(sentence):
+            continue
+        if not figures and _CONFIRMS_THE_FEE.search(sentence) and not _EXPLAINS_COVERAGE.search(sentence):
+            continue
+        kept.append(sentence)
+    out = " ".join(kept).strip()
+    return out if _EXPLAINS_COVERAGE.search(out) else ""
+
+
 def _figure_sentences(text: str) -> list[tuple[str, str]]:
     """(normalised figure, the sentence it sits in) for every money figure."""
     out = []

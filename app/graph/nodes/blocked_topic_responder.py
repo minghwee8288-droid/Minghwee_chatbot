@@ -40,6 +40,7 @@ from app.graph.guards import (
     ungrounded_figures,
 )
 from app.config import settings
+from app.graph import guards as _guards
 from app.graph.closure import is_closing, is_pure_acknowledgement
 # Shared, not duplicated (§9.8): the one detector for "the client named a concrete
 # service in their own words". intent_classifier owns it; this node only reads it.
@@ -171,6 +172,17 @@ PROBE_REPLY = (
     "exactly what it covers."
     if NO_UNDELIVERED_PROMISES
     else _PROBE_REPLY_STEP4B
+)
+
+# Step 5 Batch B2 item 3 (2026-10-14): "why this much?" is answered with what
+# the fee covers, from the records, or with PROBE_REPLY - never the figure
+# again (guards.asks_why_the_price / without_repeated_price; the switch is
+# guards.WHY_THE_PRICE_EXPLAINED).
+PRICE_PROBE_NOTE = (
+    "\n\nThe client is asking WHY the fee is what it is. Answer in one or two sentences "
+    "with what the fee covers, taken from the records above. Do not state the figure "
+    "again - they already have it - and do not say the amount will be confirmed. If the "
+    "records do not say what it covers, reply with exactly: \"" + PROBE_REPLY + "\""
 )
 
 # The client wants something OTHER than the topic a human is already handling.
@@ -626,6 +638,16 @@ async def _respond(state: ConversationState) -> dict[str, Any]:
         new_service = intent if intent in TICKET_SERVICE_TYPES else None
         await ticket_service.merge_into(ticket["id"], service_type=new_service)
 
+    # "why this much?" - what the fee covers, or the agent line (Step 5 B2 item 3).
+    price_probe = _guards.WHY_THE_PRICE_EXPLAINED and _guards.asks_why_the_price(message)
+    if price_probe and not answering:
+        logger.info(
+            "Conversation %s: asked why the fee on topic %r is what it is, nothing in the "
+            "records to answer from - offering our agent",
+            state.get("conversation_id"), topic_key,
+        )
+        return {"reply": PROBE_REPLY, "needs_handover": False}
+
     if not reassure:
         logger.info(
             "Conversation %s: logged a message on blocked topic %r (ticket %s) without replying "
@@ -763,6 +785,7 @@ async def _respond(state: ConversationState) -> dict[str, Any]:
         rag_context=state.get("rag_context", "") if (answering or detail) else "",
         extra_instructions=(
             template.format(service_label=label) + (PROCESS_ADDENDUM if stepped else "")
+            + (PRICE_PROBE_NOTE if price_probe else "")
         ),
     )
     user_prompt = (
@@ -874,6 +897,16 @@ async def _respond(state: ConversationState) -> dict[str, Any]:
                 state.get("conversation_id"),
                 cut,
             )
+    if price_probe:
+        explained = _guards.without_repeated_price(
+            reply, *recent_bot_lines(state.get("history_text", ""), count=3)
+        )
+        if not explained:
+            logger.info(
+                "Conversation %s: the answer to 'why this much' only repeated the price - "
+                "offering our agent", state.get("conversation_id"),
+            )
+        reply = explained or PROBE_REPLY
     if not reply:
         reply = FALLBACK_REPLY
 

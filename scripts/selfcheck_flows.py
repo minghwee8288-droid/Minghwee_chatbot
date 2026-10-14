@@ -5719,6 +5719,26 @@ rows += [
    "The $695 covers the renewal. A live agent will connect with you shortly.",
    "The fee is $650. Her salary is around $650.",
    "The cost is approximately $695 and flights are about $300-500.")),
+ # item 3
+ ("B2 item 3: 'why this much' is recognised, an unrelated 'why' is not",
+  tuple(_guards.asks_why_the_price(m) for m in (
+      "why this much?", "why so expensive", "what does it cover", "how come it is $695",
+      "why do you need her passport", "why is she not answering")),
+  (True, True, True, True, False, False)),
+ ("...a reply that only repeats the price explains nothing; what it covers stays",
+  (_guards.without_repeated_price("The work permit renewal fee is $695.", "The cost is $695."),
+   _guards.without_repeated_price("The fee is $695. A live agent will confirm the exact amount.",
+                                  "The cost is $695."),
+   _guards.without_repeated_price("$695 covers the authorisation and the submission to MOM.",
+                                  "The cost is $695."),
+   _guards.without_repeated_price("The fee is $695. That covers the authorisation and the "
+                                  "submission to MOM.", "The cost is $695.")),
+  ("", "", "$695 covers the authorisation and the submission to MOM.",
+   "That covers the authorisation and the submission to MOM.")),
+ ("...and the parked-topic path uses both",
+  tuple(name in inspect.getsource(_btr) for name in (
+      "asks_why_the_price", "without_repeated_price", "PRICE_PROBE_NOTE")),
+  (True, True, True)),
  ("...run once, in run_turn and in the preview",
   tuple("FIXED_FEE_STATED_PLAINLY" in inspect.getsource(m)
         for m in (importlib.import_module("app.graph.graph").run_turn,

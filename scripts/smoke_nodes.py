@@ -100,6 +100,11 @@ _PASSPORT_FEE_ROW = (
     "   A: It is $450 for a Filipino helper and $450 for an Indonesian helper. If your "
     "helper is of another nationality, tell us and our agent will confirm the cost."
 )
+_RENEWAL_FEE_ROW = (
+    "Based on our records:\n1. Q: How much does it cost to renew my helper's work permit?\n"
+    "   A: Work permit renewal is $695. That covers us handling the whole thing for you - "
+    "the authorisation, the declaration, the insurance arrangement and the submission to MOM."
+)
 _NEW_HIRE_FEE_ROWS = (
     "Based on our records:\n1. The agency fee for a new hire from the Philippines is $1,428.\n"
     "2. The agency fee for a new hire from Indonesia is $1,188.\n"
@@ -2080,6 +2085,44 @@ CASES = [
       "_stub_reply": "Passport renewal takes roughly 6 to 8 weeks.",
       "_expect_reply": "Our agent will take you through exactly what it covers.",
       "_forbid_reply": "put together"}),
+    # Step 5 B2 item 3: with records that say what the fee covers, "why this
+    # much?" is told what it covers - and a reply that only repeats the price
+    # is replaced by our agent's line, with the reference.
+    ("blocked_topic_responder", "B2: 'why this much' repeating the price -> our agent",
+     {"intent": "fee_enquiry", "service_type": "renewal",
+      "incoming_text": "why this much?",
+      "history_text": "Client: how much is the fee\nYou: The cost is $695.",
+      "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
+      "rag_matches": [{"similarity": 0.6, "nationality": "all",
+                       "question": "How much does it cost to renew my helper's work permit?",
+                       "answer": _RENEWAL_FEE_ROW, "chunk_type": "qa_pair"}],
+      "rag_context": _RENEWAL_FEE_ROW, "rag_best_score": 0.6,
+      "_stub_reply": "The work permit renewal fee is $695, and the exact amount will be "
+                     "confirmed by our team.",
+      "_expect_reply": "Our agent will take you through exactly what it covers.",
+      "_expect_prompt": "The client is asking WHY the fee is what it is",
+      "_forbid_reply": "$695"}),
+    ("blocked_topic_responder", "B2: ...and what it covers, from the records, is kept",
+     {"intent": "fee_enquiry", "service_type": "renewal",
+      "incoming_text": "why this much?",
+      "history_text": "Client: how much is the fee\nYou: The cost is $695.",
+      "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
+      "rag_matches": [{"similarity": 0.6, "nationality": "all",
+                       "question": "How much does it cost to renew my helper's work permit?",
+                       "answer": _RENEWAL_FEE_ROW, "chunk_type": "qa_pair"}],
+      "rag_context": _RENEWAL_FEE_ROW, "rag_best_score": 0.6,
+      "_stub_reply": "That covers us handling the whole renewal - the authorisation, the "
+                     "declaration and the submission to MOM.",
+      "_expect_reply": "That covers us handling the whole renewal",
+      "_forbid_reply": "take you through"}),
+    ("blocked_topic_responder", "B2: ...after a holding line, with no records -> our agent",
+     {"intent": "fee_enquiry", "service_type": "renewal",
+      "incoming_text": "why this much?",
+      "history_text": "Client: how much is the fee\nYou: The cost is $695.\nClient: ok\n"
+                      "You: Still checking on this with the team for you.",
+      "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
+      "rag_matches": [], "rag_context": "", "rag_best_score": 0.0,
+      "_expect_reply": "Our agent will take you through exactly what it covers."}),
     ("blocked_topic_responder", "a chase on a parked topic gives its ticket reference",
      {"intent": "case_enquiry", "service_type": "new_hiring",
       "incoming_text": "any update on my helper?",
