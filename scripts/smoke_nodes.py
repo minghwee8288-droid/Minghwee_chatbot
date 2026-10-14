@@ -2517,14 +2517,14 @@ CASES = [
                       "and a live agent will connect with you shortly.\nClient: any update?\n"
                       "You: Still checking on this with the team for you.",
       "blocked_topics": {"new_hiring": {"ticket_id": 1, "ticket_number": "CB-2026-0031"}},
-      "_expect_reply": "Your reference number is CB-2026-0031."}),
+      "_expect_reply": "Your reference number is `CB-2026-0031`."}),
     ("blocked_topic_responder", "...and so does 'are you there?'",
      {"intent": "other", "service_type": "new_hiring",
       "incoming_text": "are you there?",
       "history_text": "Client: I want to hire a helper\nYou: I've passed everything to our team, "
                       "and a live agent will connect with you shortly.",
       "blocked_topics": {"new_hiring": {"ticket_id": 1, "ticket_number": "CB-2026-0031"}},
-      "_expect_reply": "Your reference number is CB-2026-0031."}),
+      "_expect_reply": "Your reference number is `CB-2026-0031`."}),
     # Step 2b, 2026-10-13, conversation 3766 (CB-2026-0033). The FIRST chase
     # after the handover went down the generated holding-line path, and the
     # model's "A live agent is handling this..." arrived with no reference.
@@ -2539,7 +2539,7 @@ CASES = [
       "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
       "_stub_reply": "A live agent is handling this and will connect with you shortly. "
                      "In the meantime, is there anything else I can help you with?",
-      "_expect_reply": "shortly. Your reference number is CB-2026-0033.",
+      "_expect_reply": "shortly. Your reference number is `CB-2026-0033`.",
       # Step 2e: our closing already gave the number, so the short form only.
       "_forbid_reply": "Please quote it"}),
     ("blocked_topic_responder", "...and the vetted fallback line gives it too",
@@ -2548,7 +2548,7 @@ CASES = [
       "history_text": "Client: in 3 weels\nYou: Thank you, I've passed everything to our team.",
       "blocked_topics": {"renewal": {"ticket_id": 1, "ticket_number": "CB-2026-0033"}},
       "_stub_reply": "We sent it all to the agency and they have passed it up to a live agent.",
-      "_expect_reply": "Your reference number is CB-2026-0033."}),
+      "_expect_reply": "Your reference number is `CB-2026-0033`."}),
     # The detail itself, after the chase reply had gone out: noted on the
     # ticket and acknowledged, never answered "I am chasing them" or silence.
     ("blocked_topic_responder", "a new detail after a chase is noted with the reference, not chased",
@@ -2559,7 +2559,7 @@ CASES = [
                                      "captured_info": {"follow_ups": [{"message": "any update on this"}]}}},
       "_stub_reply": "Noted, I've added that she prefers to fly on a weekend. A live agent will "
                      "connect with you shortly.",
-      "_expect_reply": "shortly. Your reference number is CB-2026-0033.",
+      "_expect_reply": "shortly. Your reference number is `CB-2026-0033`.",
       # CHASE_REPLY also carries "...shortly. Your reference number...", so the reply alone
       # cannot tell the two paths apart; "has not been forgotten" is in both chase wordings.
       "_forbid_reply": "has not been forgotten"}),
@@ -3449,7 +3449,7 @@ async def _reference_checks() -> list[tuple[str, bool]]:
     results = []
     reply, create = await run(base)
     # Step 2e: the agency's wording, a plain sentence after the handover one.
-    _first = ("Your reference number is CB-2026-0099. Please quote it whenever you ask "
+    _first = ("Your reference number is `CB-2026-0099`. Please quote it whenever you ask "
               "about this request.")
     results.append(("reference: a new ticket gives its number as the agency's sentence",
                     _first in reply and "(reference" not in reply))
@@ -3515,7 +3515,7 @@ async def _reference_checks() -> list[tuple[str, bool]]:
     told = "You: ... Your reference number is CB-2026-0142. Please quote it whenever you ask about this request."
     later = ref.add_reference(held, "CB-2026-0142", told)
     results.append(("reference 2e: a later reply gives the short sentence only",
-                    later == held + " Your reference number is CB-2026-0142."))
+                    later == held + " Your reference number is `CB-2026-0142`."))
     results.append(("reference 2e: the first time it says to quote it",
                     "Please quote it whenever you ask about this request." in
                     ref.add_reference(held, "CB-2026-0142", "")))
@@ -3523,22 +3523,22 @@ async def _reference_checks() -> list[tuple[str, bool]]:
     results.append(("reference 2e: ungrounded_figures does not read the sentence as a figure",
                     _guards.ungrounded_figures(with_sentence, "") == []))
     results.append(("reference 2e: strip_handover_talk keeps the sentence",
-                    "Your reference number is CB-2026-0142." in _guards.strip_handover_talk(with_sentence)))
+                    "Your reference number is `CB-2026-0142`." in _guards.strip_handover_talk(with_sentence)))
     for code, text, expect in (
         ("Indonesian", "Terima kasih. Saya sudah meneruskan semua ke tim kami, dan agen akan "
-                       "segera menghubungi Anda.", "Nomor referensi Anda adalah CB-2026-0142. Mohon"),
+                       "segera menghubungi Anda.", "Nomor referensi Anda adalah `CB-2026-0142`. Mohon"),
         ("Malay", "Saya telah memaklumkan pasukan kami, dan ejen kami akan menghubungi anda "
-                  "tidak lama lagi. Sila tunggu.", "Nombor rujukan anda ialah CB-2026-0142. Sila"),
+                  "tidak lama lagi. Sila tunggu.", "Nombor rujukan anda ialah `CB-2026-0142`. Sila"),
         ("Tagalog", "Salamat po. Naipasa ko na ito sa aming team, at kokontakin ka ng live agent.",
-                    "Ang iyong reference number ay CB-2026-0142."),
+                    "Ang iyong reference number ay `CB-2026-0142`."),
         ("Chinese", "好的，我已将所有资料转交给我们的团队，专员会尽快联系您。还有什么可以帮您？",
-                    "联系您。您的参考编号是 CB-2026-0142。"),
+                    "联系您。您的参考编号是 `CB-2026-0142`。"),
         ("Burmese", "ကျေးဇူးတင်ပါတယ်။ live agent တစ်ဦး မကြာမီ ဆက်သွယ်ပါမယ်။ အခြားကူညီစရာ ရှိပါသလား။",
-                    "ဆက်သွယ်ပါမယ်။ သင့်ရည်ညွှန်းနံပါတ်မှာ CB-2026-0142"),
+                    "ဆက်သွယ်ပါမယ်။ သင့်ရည်ညွှန်းနံပါတ်မှာ `CB-2026-0142`"),
         # Live replay: the model ended an Indonesian reply with stray Chinese.
         ("Indonesian with stray Chinese", "Agen kami sedang menangani perpanjangan Work Permit "
                                           "dan akan menghubungi Anda segera. 天天彩票中奖",
-                    "segera. Nomor referensi Anda adalah CB-2026-0142."),
+                    "segera. Nomor referensi Anda adalah `CB-2026-0142`."),
     ):
         got = ref.add_reference(text, "CB-2026-0142", "")
         results.append((f"reference 2e: in the reply's language ({code})",
@@ -3549,7 +3549,7 @@ async def _reference_checks() -> list[tuple[str, bool]]:
         results.append(("reference 2e: switch off -> the bracket, as before",
                         ref.add_reference(held, "CB-2026-0142", "")
                         == "A live agent is handling this and will connect with you shortly "
-                           "(reference CB-2026-0142)."))
+                           "(reference `CB-2026-0142`)."))
     return results
 
 
@@ -3755,7 +3755,7 @@ async def _stray_script_checks() -> list[tuple[str, bool]]:
 
     glitch = "天天彩票中奖"
     written = ("Permintaan Anda sedang ditangani agen kami. Nomor referensi Anda "
-               "adalah CB-2026-0033." + glitch)
+               "adalah `CB-2026-0033`." + glitch)
 
     class _Graph:
         def __init__(self, reply):
@@ -3772,24 +3772,41 @@ async def _stray_script_checks() -> list[tuple[str, bool]]:
         with patch.object(graph_module, "get_graph", new=lambda: _Graph(written)):
             got = (await graph_module.run_turn("t", payload))["reply"]
             out.append(("stray script: run_turn cuts the Step 2e glitch",
-                        glitch not in got and got.endswith("CB-2026-0033.")))
+                        glitch not in got and got.endswith("`CB-2026-0033`.")))
             with patch.object(guards_module, "STRAY_SCRIPT_GUARD", False):
                 got = (await graph_module.run_turn("t", payload))["reply"]
             out.append(("stray script: STRAY_SCRIPT_GUARD off -> as written",
                         got == written))
         # A name the client wrote earlier, in Chinese, survives in an English reply.
-        named = "Hi 王小明, your reference number is CB-2026-0033."
+        named = "Hi 王小明, your reference number is `CB-2026-0033`."
         with patch.object(graph_module, "get_graph", new=lambda: _Graph(named)):
             got = (await graph_module.run_turn("t", {
                 "incoming_text": "any update?",
                 "history_text": "Client: my name is 王小明\nYou: Thanks."}))["reply"]
             out.append(("stray script: the client's own Chinese name stays", got == named))
         # A Burmese reply keeps Burmese, Claire and the reference; loses the CJK.
-        burmese = "မင်္ဂလာပါ Claire CB-2026-0033 " + glitch
+        burmese = "မင်္ဂလာပါ Claire `CB-2026-0033` " + glitch
         with patch.object(graph_module, "get_graph", new=lambda: _Graph(burmese)):
             got = (await graph_module.run_turn("t", {"incoming_text": "ဆရာ"}))["reply"]
             out.append(("stray script: a Burmese reply keeps Burmese, Claire, the reference",
                         got == burmese.replace(" " + glitch, "")))
+        # Step 5 Batch F item 6: WhatsApp linkifies "2026-0100"; inline code
+        # does not. A reference the model wrote bare is wrapped, and no other
+        # backtick survives.
+        from app.graph import reference as reference_module
+        bare = "It is with a live agent. Your reference is CB-2026-0100. Use `this` code."
+        with patch.object(graph_module, "get_graph", new=lambda: _Graph(bare)):
+            got = (await graph_module.run_turn("t", {"incoming_text": "any update?"}))["reply"]
+            out.append(("F6 reference: wrapped in backticks, no other backtick kept",
+                        got == "It is with a live agent. Your reference is `CB-2026-0100`. "
+                               "Use this code."))
+            with patch.object(reference_module, "REFERENCE_AS_CODE", False):
+                got = (await graph_module.run_turn("t", {"incoming_text": "any update?"}))["reply"]
+            out.append(("F6 reference: REFERENCE_AS_CODE off -> as written", got == bare))
+        out.append(("F6 reference: the sentence reference.py writes carries it as code",
+                    "`CB-2026-0100`" in reference_module.add_reference(
+                        "I've passed this to our team, and a live agent will connect with "
+                        "you shortly.", "CB-2026-0100", "")))
     return out
 
 

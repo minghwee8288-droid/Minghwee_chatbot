@@ -5869,6 +5869,14 @@ rows += [
    "Reply in Indonesian, NOT Malay" in _sys.build_system_prompt(
       {"incoming_text": "my employer hit me", "history_text": ""})),
   (True, False)),
+ # Batch F item 6: the reference in inline code, which WhatsApp does not linkify.
+ ("F6: references wrapped, other backticks dropped, and the format guards allow it",
+  (_guards.references_as_code("Your reference number is CB-2026-0100."),
+   _guards.references_as_code("`CB-2026-0100` and `x`"),
+   _guards.looks_like_document("Your reference number is `CB-2026-0100`."),
+   "`CB-2026-0042`" in _complaint.complaint_closing("Thomas", "CB-2026-0042"),
+   _guards.ungrounded_figures("Your reference number is `CB-2026-0100`.", "")),
+  ("Your reference number is `CB-2026-0100`.", "`CB-2026-0100` and x", False, True, [])),
  # Batch E item 11: the religion question is one plain question, short reason.
  ("E11: a short reason, and the invitation is not read out as an option",
   (len(_ic_b._WHY_WE_ASK["helper_religion"]) < 60,

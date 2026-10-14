@@ -524,6 +524,10 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             and language.client_writes_indonesian(
                 payload.get("incoming_text") or "", payload.get("history_text") or "")):
         result["reply"] = language.to_indonesian(result["reply"])
+    # Step 5 Batch F item 6: a reference in backticks is not a phone link.
+    from app.graph import reference as _reference
+    if _reference.REFERENCE_AS_CODE and result.get("reply"):
+        result["reply"] = guards.references_as_code(result["reply"])
     return result
 
 

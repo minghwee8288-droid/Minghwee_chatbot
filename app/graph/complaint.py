@@ -124,7 +124,8 @@ def complaint_opening(name: str, missing_keys: list[str], introduce: bool) -> st
 def complaint_closing(name: str, ticket_number: str | None) -> str:
     """The reply once it is logged: the reference, the wait, the number to call."""
     first = _first_name(name)
-    reference = f" under reference {ticket_number}" if ticket_number else ""
+    from app.graph.reference import shown  # reference imports guards; keep this lazy
+    reference = f" under reference {shown(ticket_number)}" if ticket_number else ""
     return (
         f"Thank you{', ' + first if first else ''}. Your complaint has been "
         f"logged{reference}, and a senior team member will contact you "

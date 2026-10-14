@@ -2124,3 +2124,18 @@ def without_names_addressed(reply: str, names: list[str]) -> str:
     if out != (reply or "").strip():
         logger.info("Took a name out of the safety reply")
     return out
+
+
+# Phase 3 Step 5 Batch F item 6. The ONE inline-code pattern a reply may carry
+# is a ticket reference in backticks (reference.REFERENCE_AS_CODE), which
+# WhatsApp does not linkify. Run once in run_turn (and the preview): any other
+# backtick is dropped, and a reference the model wrote bare is wrapped.
+_CODE_REFERENCE = re.compile(r"`(CB-\d{4}-\d{4})`")
+
+
+def references_as_code(reply: str) -> str:
+    """Every ticket reference in backticks, and no other backtick."""
+    if not reply or ("`" not in reply and not TICKET_REFERENCE.search(reply)):
+        return reply
+    bare = _CODE_REFERENCE.sub(lambda m: m.group(1), reply).replace("`", "")
+    return TICKET_REFERENCE.sub(lambda m: f"`{m.group(0)}`", bare)

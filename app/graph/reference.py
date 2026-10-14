@@ -118,8 +118,22 @@ def enabled() -> bool:
     return bool(settings.handover_reference)
 
 
+# Phase 3 Step 5 Batch F item 6 (Step 5 item 16), 2026-10-14. WhatsApp turns
+# the "2026-0100" in "CB-2026-0100" into a tappable phone number. Inline code
+# (the reference in single backticks) is shown in monospace and not linkified,
+# so every reference a client is SHOWN is wrapped; the stored ticket_number is
+# unchanged, and guards.only_reference_as_code keeps backticks round nothing
+# else. False = the bare reference, as before.
+REFERENCE_AS_CODE = True
+
+
+def shown(ticket_number: str) -> str:
+    """The reference as the client sees it."""
+    return f"`{ticket_number}`" if REFERENCE_AS_CODE else ticket_number
+
+
 def mention(ticket_number: str) -> str:
-    return f"(reference {ticket_number})"
+    return f"(reference {shown(ticket_number)})"
 
 
 def mentions_agent(reply: str) -> bool:
@@ -134,7 +148,7 @@ def reference_sentence(reply: str, ticket_number: str, history_text: str = "") -
     first time, the short one once our earlier messages carry the number."""
     first, later = _SENTENCES.get(reply_language(reply), _SENTENCES["en"])
     told = ticket_number in (history_text or "")
-    return (later if told else first).format(ref=ticket_number)
+    return (later if told else first).format(ref=shown(ticket_number))
 
 
 def _after_sentence(reply: str, start: int, sentence: str) -> str:

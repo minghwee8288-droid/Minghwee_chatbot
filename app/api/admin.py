@@ -261,6 +261,9 @@ async def run_preview(body: PreviewRequest) -> dict[str, Any]:
             if (_language.INDONESIAN_NOT_MALAY and reply  # as run_turn does
                     and _language.client_writes_indonesian(text, payload["history_text"])):
                 reply = _language.to_indonesian(reply)
+            from app.graph import reference as _reference
+            if _reference.REFERENCE_AS_CODE and reply:  # as run_turn does
+                reply = guards.references_as_code(reply)
             turns.append({
                 "message": text,
                 "reply": reply,
