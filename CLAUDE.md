@@ -505,7 +505,7 @@ because the lead is opened early and the ticket is created much later.
 | A known helper is named once, inside the question that confirms her | `info_collector.ASK_ONCE_ABOUT_KNOWN_HELPER` (the note) + `guards.one_mention_of_known_helper` (after `_write`) | Never stated and then asked about ("We have Devi on record. Is this for Devi...?"), and never asked twice. Any other sentence naming her is dropped; a reply with no confirmation question is left alone. |
 | No cost is "approximate" without a figure, on any service | `guards.without_figureless_approximate` in `graph.run_turn` (and the preview) behind `NO_APPROXIMATE_COST_ANYWHERE` | Step 4b covered the nationality-priced services; this covers direct hire, replacement and the rest. Only a sentence with no digit at all is replaced (with the deferral, or dropped where the reply already defers), so "approximately 2 weeks ... our agent will confirm the cost" stays. |
 | A fixed message promises only what happens | `blocked_topic_responder.CHASE_REPLY` / `PROBE_REPLY` (`NO_UNDELIVERED_PROMISES`) | "I am chasing them for you now" and "Let me put together exactly what it covers" promised work nobody does. Now "It is with a live agent, who will connect with you shortly" and "Our agent will take you through exactly what it covers", both with the reference. The old chase wording still counts as the chase already sent. |
-| A ticket reference is never issued twice | `ticket.next_ticket_number` -> `cb_next_ticket_number` (`scripts/sql/ticket_number_001_counter.sql`, `TICKET_NUMBER_COUNTER`) | CB-2026-0033 went out three times in one day: the number was the highest ticket still on `cb_tickets` plus one, and reset-ui deletes tickets. A per-year counter in `cb_ticket_counters` only ever goes up, and the UPSERT gives two simultaneous tickets two numbers. 2026 starts after 0099, since numbers issued and deleted cannot be read back. **Not yet applied to any database**: until it is, the function is missing and the old path runs, logged as an error. |
+| A ticket reference is never issued twice | `ticket.next_ticket_number` -> `cb_next_ticket_number` (`scripts/sql/ticket_number_001_counter.sql`, `TICKET_NUMBER_COUNTER`) | CB-2026-0033 went out three times in one day: the number was the highest ticket still on `cb_tickets` plus one, and reset-ui deletes tickets. A per-year counter in `cb_ticket_counters` only ever goes up, and the UPSERT gives two simultaneous tickets two numbers. 2026 starts after 0099, since numbers issued and deleted cannot be read back. **Applied on production (verified 2026-10-14)**; references start at CB-2026-0100. Where the function is missing, the old path runs, logged as an error. |
 | A fee the records state exactly is stated exactly | `guards.state_fixed_fee_plainly` in `graph.run_turn` (and the preview) + prompt rule 5, `style.py`, `FEE_HANDOVER_INSTRUCTION`, `BLOCKED_TOPIC_ANSWER_INSTRUCTION` (`FIXED_FEE_STATED_PLAINLY`) | "Work permit renewal is $695" went out as "The approximate fee is $695" (3 of 3 replays), because rule 5 told the model to call every figure approximate and promise to confirm it. A figure the retrieved records only ever state plainly loses "approximately/about/around" and any clause promising the exact amount. A figure the records qualify (the passport row's "approximately $450", a range, "from", "subject to change") is left alone, and so is a reply that also carries one. Salary, levy and bond sentences are never touched. |
 | "Why this much?" is told what the fee covers, never the price again | `guards.asks_why_the_price` / `without_repeated_price` + `blocked_topic_responder.PRICE_PROBE_NOTE` (`WHY_THE_PRICE_EXPLAINED`) | Live, after the renewal closing, "why this much" got the figure back with "the exact amount will be confirmed". On a parked topic with records the model is told to say what the fee covers and not restate the figure; any sentence that only restates a figure we already sent (or promises to confirm the amount) is dropped, and if nothing explaining the fee is left, or there are no records, `PROBE_REPLY` goes out with the reference. Replayed: 6 of 6 explain the coverage. |
 | A helper's name typed in capitals or lower case is shown in title case | `guards.tidy_name_case` where `helper_name` is filed (`info_collector`) + `guards.tidy_helper_names_in_reply` in `graph.run_turn` (and the preview) (`TIDY_HELPER_NAME_CASE`) | "DEVI's home leave" went out live. "DEVI"/"devi" -> "Devi", "mary-jane" -> "Mary-Jane"; a mixed-case name ("McDonald", "de Silva") is the client's spelling and stays. In a reply an all-lower copy is only changed when the name is not also an everyday word, so "may I know" survives a helper called May. Helper names only; the client's own name is as typed (§9.24). |
@@ -1331,12 +1331,15 @@ Ordered by what will hurt first.
     (`json-file`, `max-size` 10m, `max-file` 5). Until then the repo's file
     published 8000 on every interface.
 
-38. **The ticket-number counter is not applied to any database yet** (Step 5
-    B2 item 1). `scripts/sql/ticket_number_001_counter.sql` must be run on
-    production with `apply_sql.py --expect-ref <ref>` (a go-word is needed).
-    Until then `cb_next_ticket_number` is missing, the bot logs an error per
-    ticket and falls back to the highest number on the table plus one, which
-    re-issues a deleted ticket's number - the defect the file fixes.
+38. ~~**The ticket-number counter is not applied to any database yet**~~
+    **RESOLVED: applied on production (verified 2026-10-14).**
+    `scripts/sql/ticket_number_001_counter.sql` (Step 5 B2 item 1) is live, so
+    `cb_next_ticket_number` exists and references now start at
+    **CB-2026-0100** (phone-tested: 0100 to 0106, all unique). The fallback to
+    the highest number on the table plus one, which re-issued a deleted
+    ticket's number, no longer runs there. Rollback:
+    `scripts/sql/rollback/rollback_ticket_number_001_counter.sql`, never run
+    without an explicit go-word.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -1720,6 +1723,12 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-14** - **Docs only: the ticket-number counter is applied on
+  production.** `scripts/sql/ticket_number_001_counter.sql` was verified live
+  on 2026-10-14; references now start at CB-2026-0100 and the phone test
+  issued 0100 to 0106, all unique. §9.38 marked resolved and the §5 row
+  corrected. Rollback: `scripts/sql/rollback/rollback_ticket_number_001_counter.sql`.
 
 - **2026-10-14** - **Step 5 Batch C (behaviour): items 6, 7, 8, 10, 12.** Each
   behind its own switch (section 7).
