@@ -5814,6 +5814,17 @@ rows += [
       ("new_hiring", "budget", "Do you have a monthly salary in mind, such as SGD 600-700?"),
       ("new_hiring", "rest_day", "How would you like to arrange her days off?"))),
   (True, True, True, True)),
+ # item 7
+ ("C item 7: no rest day, or too few unpaid, is recognised",
+  tuple(_ic_b.too_few_rest_days(t) for t in (
+      "no rest day", "she will work every day", "one day off a month", "2 off days per month",
+      "1 day a month, I will pay extra for the rest", "a weekly day off", "flexible")),
+  (True, True, True, True, False, False, False)),
+ ("...and the rule is quoted only from its knowledge base row",
+  ("{rule}" in _ic_b.REST_DAY_RULE_NOTE, "adding nothing to it" in _ic_b.REST_DAY_RULE_NOTE,
+   "Do not refuse, do not lecture" in _ic_b.REST_DAY_RULE_NOTE,
+   "REST_DAY_RULE_QUERY" in inspect.getsource(_ic_b.rest_day_rule_record)),
+  (True, True, True, True)),
  ("...and the collector runs it on every ordinary question turn",
   ("with_the_question_asked(reply, next_field)" in inspect.getsource(_ic_b),
    _ic_b.REPLY_ASKS_ITS_QUESTION),

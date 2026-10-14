@@ -43,6 +43,7 @@ from app.graph.guards import (
 )
 from app import timing
 from app.graph.llm import complete, complete_json
+from app.config import settings
 from app.services import kb_rules
 from app.graph.nodes.intent_classifier import _WANTS_SERVICE, _named_service
 from app.graph.prompts.system import build_system_prompt
@@ -1850,6 +1851,62 @@ def with_the_question_asked(reply: str, field: ticket_service.Field) -> str:
             + body[cut + len(last):]).strip()
 
 
+# Phase 3 Step 5 Batch C item 7 (2026-10-14): asked about rest days, a client
+# who wants none, or fewer than one a week with nothing said about paying for
+# them, is acknowledged, told the MOM rule in one sentence, and the intake
+# carries on - never refused, never lectured. The rule is quoted ONLY from the
+# knowledge base row that holds it ("Does my helper have to get a day off
+# every week?", fetched by its own search); if that row cannot be found the
+# turn goes ahead as before and nothing is said. False = no rule sentence.
+REST_DAY_RULE = True
+REST_DAY_RULE_QUERY = "Does my helper have to get a day off every week?"
+_NO_REST_DAY = re.compile(
+    r"\b(?:no|zero|without)\s+(?:rest|off)\s*days?\b|\bno\s+days?\s+off\b|\bno\s+off\b"
+    r"|\b(?:none|never|nil)\b|\bwork\w*\s+every\s*day\b|\bevery\s*day\b"
+    r"|\b(?:7|seven)\s+days\s+a\s+week\b|\bdo(?:es)?\s*n[o']?t\s+need\s+(?:a\s+|any\s+)?(?:rest|off|day)",
+    re.IGNORECASE,
+)
+_FEW_REST_DAYS = re.compile(
+    r"\b(?:once|one|1|twice|two|2)\s+(?:(?:rest|off)\s+days?\s+|days?\s+off\s+|days?\s+)?"
+    r"(?:a|per|each|every)\s+month\b|\bonce\s+monthly\b",
+    re.IGNORECASE,
+)
+_PAID_FOR = re.compile(r"\b(?:compensat\w*|pay|paid|extra|in\s+lieu)\b", re.IGNORECASE)
+REST_DAY_RULE_NOTE = (
+    "\n\nThey have said she would have no rest day, or fewer than one a week. "
+    "Acknowledge their answer, then state the MOM rest-day rule in ONE short sentence, "
+    "taken only from this record and adding nothing to it: \"{rule}\" Do not refuse, do "
+    "not lecture, do not tell them what they must do beyond that one sentence, and do "
+    "not ask about it again - then ask your next question."
+)
+
+
+def too_few_rest_days(text: str) -> bool:
+    """'no rest day', 'she works every day', 'one day off a month'."""
+    t = text or ""
+    if _NO_REST_DAY.search(t):
+        return True
+    return bool(_FEW_REST_DAYS.search(t) and not _PAID_FOR.search(t))
+
+
+async def rest_day_rule_record() -> str:
+    """The knowledge base row that states the MOM rest-day rule, or ''."""
+    from app.services import rag  # local: rag pulls in the embeddings client
+
+    try:
+        rows = await rag.search(REST_DAY_RULE_QUERY, match_count=3)
+    except Exception:  # noqa: BLE001 - no rule sentence is the safe outcome
+        logger.exception("Rest-day rule search failed - saying nothing about it")
+        return ""
+    for row in rows or []:
+        # The row carries "a week ." with a space before the stop; it is copied.
+        text = re.sub(r"\s+([.,;])", r"\1", str(row.get("answer") or row.get("content") or "")).strip()
+        if (float(row.get("similarity") or 0.0) >= settings.rag_soft_floor
+                and re.search(r"\brest day\b", text, re.I) and re.search(r"\bweek\b", text, re.I)):
+            return text
+    return ""
+
+
 # Step 5 Batch B2 item 7: the fields that hold a phone number, and what the
 # question says when the number given did not look like one. The number is
 # never read back - it may be somebody's real number with a digit wrong.
@@ -3526,6 +3583,19 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
                 state.get("conversation_id"), ", ".join(bad_phone_keys),
             )
 
+    # Batch C item 7: no rest day, or too few - the MOM rule, once, from the KB.
+    rest_day_rule = ""
+    if REST_DAY_RULE and extracted.get("rest_day") and (
+        too_few_rest_days(state.get("incoming_text") or "")
+        or too_few_rest_days(str(extracted.get("rest_day")))
+    ):
+        rest_day_rule = await rest_day_rule_record()
+        logger.info(
+            "Conversation %s: rest day answer is none or too few - %s",
+            state.get("conversation_id"),
+            "stating the MOM rule from the KB" if rest_day_rule else "no KB rule found, saying nothing",
+        )
+
     # A case ID the client does not have has max_asks=1, so it is asked once and
     # then let go (§23.5); email likewise (§2 step 4).
     exhausted = {
@@ -4451,6 +4521,7 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             + requirement_note
             + closed_note
             + follow_up_notes.get(next_field.key, "")
+            + (REST_DAY_RULE_NOTE.format(rule=rest_day_rule) if rest_day_rule else "")
             + answer_first
             + (COMPLAINT_COLLECT_NOTE if service_type == ticket_service.COMPLAINT else "")
         )
@@ -4464,7 +4535,10 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         # If generation degenerates, fall back to the field's own hand-written
         # question from SERVICE_FIELDS — less warm, but always correct.
         reply = await _write(
-            state,
+            # The rule's own row is grounding for this one turn, so its date is
+            # not binned as an invented figure (Batch C item 7).
+            {**dict(state), "rag_context": (state.get("rag_context") or "") + "\n" + rest_day_rule}
+            if rest_day_rule else state,
             system_prompt_state,
             instruction,
             fallback=next_field.question,

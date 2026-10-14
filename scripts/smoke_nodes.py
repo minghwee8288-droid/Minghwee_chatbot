@@ -100,6 +100,13 @@ _PASSPORT_FEE_ROW = (
     "   A: It is $450 for a Filipino helper and $450 for an Indonesian helper. If your "
     "helper is of another nationality, tell us and our agent will confirm the cost."
 )
+# The knowledge base row the rest-day rule is quoted from (Batch C item 7).
+_REST_DAY_RULE_ROW = (
+    "Your helper is entitled to one rest day a week. If she agrees, a weekly rest day can "
+    "be worked and compensated with at least one day's wage on top of her salary. However, "
+    "since 1 January 2023, at least one rest day a month must actually be taken and cannot "
+    "be compensated away."
+)
 _RENEWAL_FEE_ROW = (
     "Based on our records:\n1. Q: How much does it cost to renew my helper's work permit?\n"
     "   A: Work permit renewal is $695. That covers us handling the whole thing for you - "
@@ -158,6 +165,28 @@ CASES = [
       "_expect_prompt": "Name her ONLY inside this one question",
       "_expect_reply": "Is this home leave for Yoyo, or for another helper?",
       "_forbid_reply": "details on record"}),
+    # Step 5 Batch C item 7: no rest day - acknowledged, the MOM rule from the
+    # KB in one sentence, then the next question.
+    ("info_collector", "C7: 'no rest day' gets the MOM rule from the KB, then carries on",
+     {"service_type": "new_hiring", "intent": "new_hiring", "contact_type": "employer",
+      "incoming_text": "no rest day, she can work every day",
+      "history_text": "You: How would you want to handle her rest days?",
+      "collected_info": {"full_name": "VD", "requirement": "childcare", "budget": "SGD 600-700"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "budget": 1, "rest_day": 1},
+      "_stub_extraction": {"rest_day": "no rest day"},
+      "_stub_reply": "Noted. Under MOM rules she is entitled to one rest day a week, and since "
+                     "1 January 2023 at least one a month must actually be taken. Any other "
+                     "requirements, house rules or preferences we should note?",
+      "_expect_prompt": "state the MOM rest-day rule in ONE short sentence",
+      "_expect_reply": "1 January 2023"}),
+    ("info_collector", "C7: ...a weekly day off gets no rule sentence",
+     {"service_type": "new_hiring", "intent": "new_hiring", "contact_type": "employer",
+      "incoming_text": "a weekly day off on Sundays",
+      "history_text": "You: How would you want to handle her rest days?",
+      "collected_info": {"full_name": "VD", "requirement": "childcare", "budget": "SGD 600-700"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "budget": 1, "rest_day": 1},
+      "_stub_extraction": {"rest_day": "a weekly day off"},
+      "_forbid_prompt": "MOM rest-day rule"}),
     # Step 5 Batch C item 6: the opening asks the question it was meant to ask.
     # The e2e direct hire asked whether she was in Singapore instead of the
     # client's name.
@@ -2998,7 +3027,8 @@ async def _run_info_collector(state, stub=None):
          patch.object(retriever, "briefing_records",
                       new=AsyncMock(return_value=dict(_BRIEFING_RECORDS))), \
          patch("app.graph.nodes.info_collector._open_lead_early",
-               new=AsyncMock(return_value={})):
+               new=AsyncMock(return_value={})),          patch("app.graph.nodes.info_collector.rest_day_rule_record",
+               new=AsyncMock(return_value=_REST_DAY_RULE_ROW)):
         from app.graph.nodes.info_collector import info_collector
         return await info_collector(state)
 
