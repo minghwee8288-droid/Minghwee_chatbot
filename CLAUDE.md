@@ -531,7 +531,10 @@ because the lead is opened early and the ticket is created much later.
 | The safety reply addresses nobody by name | `handover_executor._assault_reply` + `guards.without_names_addressed` (`SAFETY_REPLY_NO_NAME`) | A helper may write on her employer's thread, and no record confirms whose number it is. No record name or full_name in its prompt; any held name used to address them is removed (item 4 = Step 5 item 13). |
 | Bahasa Indonesia is answered in Indonesian, not Malay | `language.client_writes_indonesian` / `to_indonesian` + a system-prompt line (`INDONESIAN_NOT_MALAY`), in `run_turn` (and the preview) | From the client's words (their message, else their last lines), never a nationality. Malay-only words ("polis", "sila", "ejen", "sesiapa") swapped; a client writing Malay keeps Malay (item 5 = Step 5 item 14). |
 | A ticket reference is shown as inline code | `reference.shown` + `guards.references_as_code` in `run_turn` (and the preview) (`REFERENCE_AS_CODE`) | WhatsApp linkified "2026-0100" as a phone number; inline code is not linkified. Every reference is wrapped, any other backtick dropped; the stored number is unchanged (item 6 = Step 5 item 16). |
-| Two fields are asked together only when paired, adjacent and decided | `ticket.paired_field` + `Field.ask_with` + `info_collector.PAIRED_QUESTION_NOTE` (`PAIRED_QUESTIONS`) | Step 6 part 1. Only the next outstanding field, only the one `ask_with` names, only when both gates are decided, never three. Both are counted asked (max_asks per field); entry 26's closed note says "the two details". `ask_with` is not `group`, which names a topic for the transition line. **No pair is wired** (asserted) until the agency approves the list. |
+| Two fields are asked together only when paired, adjacent and decided | `ticket.paired_field` + `Field.ask_with` + `info_collector.PAIRED_QUESTION_NOTE` (`PAIRED_QUESTIONS`) | Step 6 part 1. Only the next outstanding field, only the one `ask_with` names, only when both gates are decided, never three. Both are counted asked (max_asks per field); entry 26's closed note says "the two details". `ask_with` is not `group`, which names a topic for the transition line. Part 4: exactly the agency's approved pairs are wired (`ticket.APPROVED_PAIRS`, `APPROVED_PAIRS_WIRED`), per service via `dataclasses.replace` so a shared Field never pairs in another flow; each partner is the next field (asserted), and budget+rest_day, helper_profile+hire_source and the replacement pairs are not wired (asserted). |
+| The client chooses one question at a time or all at once | `info_collector.QUESTION_STYLE_OFFER` (+ `QUESTION_STYLE_OFFER_SHORT` for renewal and passport renewal), `state.question_style` | Step 6c. Offered once, in the reply that thanks them for their name (for a name from our records, the turn after Claire's first question); never before the introduction, on a greeting, a complaint, a safety or a missing-helper report, or in a non-English conversation (fixed wording). "All at once" = one numbered message of every remaining question, pairs on one line, then only what is still missing; anything else = the normal flow. Remembered for the conversation. |
+| An answer to our own question is extracted beside the classifier | `info_collector.start_speculative_extraction` from `graph._classify_with_prefetch` (`SPECULATIVE_EXTRACTION`) | Step 6b. Used only when its inputs (service, message, history, answers, ask counts) are exactly the collector's own; otherwise discarded and extracted as before. |
+| Anyone who is not the helper herself is a third party | `ticket.resolve_service` + `THIRD_PARTY_EMPLOYER_RELAY` | Batch G F3 (section 9.41). An employer on file relaying "my friend's maid is looking for a new employer" is handed over like a supplier, never asked "your name" as the helper. An unknown sender is left to the classifier. |
 | Rule 8 and the style guide agree: one topic per message | `system._RULE_8_ONE_TOPIC` + `style._ONE_TOPIC_LINE` (`ONE_TOPIC_RULE`) | Step 6 part 2: two closely related details may be asked in one natural sentence when the instruction names them; otherwise one question. Changed together so neither forbids what the other allows. |
 | No stray script reaches the client | `guards.without_stray_script`, applied once in `graph.run_turn` (and the preview) behind `STRAY_SCRIPT_GUARD` | The model ended an Indonesian reply with "天天彩票中奖" (Step 2e replay). `GLITCH_STRINGS` always go; a run of letters in a script that is neither the reply's main script nor one in the client's own lines or the names we hold for them goes too. Latin is never a cut script, so "Claire", "Ming Hwee", the address, a CB reference and Latin names survive in a Burmese or Chinese reply; digits and punctuation are not letters. Han and kana are one bucket. A cut is logged. |
 | A finished reply is not held back by Whapi | `message.send_bot_reply` (`SEND_WITHOUT_TYPING_TIME`) | With our own typing indicator running, no `typing_time` is sent: it only delayed delivery (whapi.send 1.4 s with 0.5 s asked). The channel's `/settings` holds no typing default. |
@@ -831,6 +834,13 @@ Easy to get wrong:
   `ticket.PAIRED_QUESTIONS` (a Field's `ask_with` partner asked in the same
   message; no Field sets one yet) and `style.ONE_TOPIC_RULE` (rule 8 and the
   style guide say one topic per message, read by system.py too).
+  Batch G and Step 6 parts 4, 6c and 6b, each `False` for the earlier
+  behaviour: `ticket.THIRD_PARTY_EMPLOYER_RELAY` (F3: an employer relaying a
+  helper is handed over), `ticket.APPROVED_PAIRS_WIRED` (the approved pairs),
+  `info_collector.QUESTION_STYLE_OFFER` and `QUESTION_STYLE_OFFER_SHORT` (the
+  one-by-one / all-at-once choice; the second covers work permit and passport
+  renewal), `info_collector.SPECULATIVE_EXTRACTION` (extraction beside the
+  classifier).
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1398,7 +1408,12 @@ Ordered by what will hurt first.
     figures per nationality (Filipino S$650/S$670, Indonesian from S$550, a
     general S$450-850) but no budget bands. An open question would remove the
     floor behaviour the agency asked for, so it waits on a decision.
-41. **A third party offering a helper is not always handed over** (Batch F
+41. **RESOLVED 2026-10-14 (Batch G F3)**: the agency decided anyone who is
+    not the helper herself is a third party, an existing employer included;
+    `ticket.THIRD_PARTY_EMPLOYER_RELAY` hands the employer's relay over and
+    prompt.md entry 53 now says so. Replayed 3 of 3 handed over. What was
+    recorded:
+    **A third party offering a helper is not always handed over** (Batch F
     item 3 = Step 5 item 2, stopped as instructed: the code differs from the
     rule). Measured read-only, 2 runs each: a helper offering herself is
     collected (`candidate_new_hiring`), and an agent or an unknown sender with
@@ -1724,9 +1739,12 @@ behaviour behind one switch. Details of each step are in §11.
 | 5E | Batch E (14 Oct phone test): items 1-11; 12 waits on a decision (section 9.40) | see git log |
 | 6 (1-3) | Combined questions: `Field.ask_with` + `paired_field`, rule 8 / style guide to one topic per message; no pair wired | see git log |
 | 5F | Batch F: "immediately" as said, no bare-name opening, safety reply names nobody (item 13), Indonesian not Malay (item 14), reference as inline code (item 16); item 2 stopped (section 9.41) | see git log |
+| 5G | Batch G F3 (item 2): an employer relaying a helper is a third party, handed over | `62c78a7` |
+| 6 (4) | The approved question pairs wired | `e9f0ca9` |
+| 6c | One question at a time or all at once, the client's choice | `4d7b251` |
+| 6b | Extraction beside the classifier when the client answers our question | `a9754ba` |
 
-**Still to do, in order:** Step 5 (below; done: 15 in 5a, Batch B, B2, Batch C, Batch E and Batch F (13, 14, 16); item 2 stopped, section 9.41), Step 6 (combined questions: parts 1-3 done, pairs proposed and waiting for approval, stop before
-wiring), Step 7 (escalation audit, read-only, report outside the repo),
+**Still to do, in order:** Step 5 is done (every item, the last being item 2 in Batch G), Step 6 is done (parts 1-4, 6b, 6c), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
 the webhook builds `known_helpers` only when `contact_type == "employer"`).
 Final report: the unused `_carries_an_overview` in `scripts/e2e_services.py`
@@ -1741,8 +1759,8 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 
 1. **DONE in Batch B.** Questions per message: the style guide's "ask 2-3 at most" against rule 8's
    one per message. Make the style guide match rule 8 (Step 6 changes both).
-2. **STOPPED in Batch F, section 9.41** (the code differs for an employer
-   relaying a helper). A helper offering herself for work: report what the code does for her and
+2. **DONE in Batch G** (`THIRD_PARTY_EMPLOYER_RELAY`, the agency's decision
+   after Batch F stopped on it, section 9.41). A helper offering herself for work: report what the code does for her and
    for a supplier or agent offering a helper; make prompt.md entry 53 match
    (she is collected, a third party is handed over). Stop if the code differs.
 3. **DONE in Batch B.** "Depends on the case" (entry 50), banned 2026-09-17: if they asked about
@@ -1801,6 +1819,28 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-14** - **Batch G F3 and Step 6 parts 4, 6c and 6b.** Each behind
+  its own switch (section 7), each its own commit.
+  (F3) The agency's decision on section 9.41: anyone who is not the helper
+  herself is a third party. An employer on file relaying "my friend's maid is
+  looking for a new employer" is handed over, never asked "your name" as the
+  helper (`THIRD_PARTY_EMPLOYER_RELAY`); prompt.md entry 53 rewritten. Replayed
+  3 of 3 handed over; a helper herself is still collected.
+  (Part 4) Only the approved pairs are wired (`APPROVED_PAIRS`), per service so
+  a shared Field never pairs elsewhere. Direct hire replayed 8/7/9 turns.
+  (6c) One question at a time or all at once, offered once in the reply that
+  thanks the client for their name. All at once: new hire in 4 turns and 23
+  fields (3 of 3). Fixed English wording, so not offered in other languages;
+  the numbered list carries no "why we ask" reasons (the e2e grades for those
+  and for one question per message fail in that mode, by design).
+  (6b) Extraction starts beside the classifier when the client answers our
+  question: classifier + extraction p50 3.46 s -> 2.01 s (6 runs each).
+  **e2e** (the client picks one at a time, so every service has the offer
+  turn): new hire 21 -> 20, direct hire 9 -> 8, replacement 8 -> 9, transfer
+  19 -> 18, renewal 5 -> 6, home leave 6 -> 7, passport 6 -> 7. 7 of 7 pass,
+  0 refused writes, no row count changed. `smoke_nodes.py` 524 (was 507),
+  `selfcheck_flows.py` 928 (was 924); 4 faults injected, 4 red.
 
 - **2026-10-14** - **Step 6 parts 1-3: the combined-question mechanism, no
   pair wired.** `Field.ask_with` names the field asked in the same message

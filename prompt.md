@@ -3161,3 +3161,58 @@ Address them by NO name at all - not a name from our records and not one from ea
 The client writes Bahasa Indonesia. Reply in Indonesian, NOT Malay: "silakan" or "mohon" (not "sila"), "polisi" (not "polis"), "tim" (not "pasukan"), "agen" (not "ejen"), "nomor" (not "nombor"), "karena" (not "kerana"), "siapa pun" (not "sesiapa"), "Anda" (not "awak").
 ```
 
+
+---
+
+## 69. Asking the Questions: Pairs and the Client's Choice (14 October)
+
+### What is this prompt used for?
+
+How a run of questions is put to the client, after the agency approved the
+pairs and the choice of style (Step 6). Each part has its own switch.
+
+### What does it make the chatbot do?
+
+- **Pairs** (`ticket.APPROVED_PAIRS_WIRED`): two closely related details are
+  asked in one natural sentence, using the "Ask this together with..." line
+  in the collector instruction. Only these: new hire - type of home with its
+  size, cooking with extra duties; employer transfer - the same two, plus the
+  helper's name with the reason (when releasing); direct hire - the helper's
+  name with her nationality; a helper's own home leave - her employer's name
+  with their number; a helper registering - years of experience with the
+  areas, where she is with when she can start, rest days with salary; a
+  helper's own transfer - her employer's release with when she is free. Not
+  paired: budget with rest days, age/experience with where it was gained, and
+  the replacement questions.
+- **The client's choice** (`info_collector.QUESTION_STYLE_OFFER`; work permit
+  and passport renewal also need `QUESTION_STYLE_OFFER_SHORT`): once per
+  conversation, in the reply that thanks the client for their name, never
+  before Claire's introduction and never on a greeting, a complaint, a safety
+  report or a missing-helper report. Fixed wording, so it is offered only in
+  English conversations. "All at once" sends one numbered message with every
+  remaining question (a pair on one line, options named where the question
+  offers none), then only what is still missing or unclear. "One by one", no
+  answer or an unclear answer keeps the normal flow. The choice lasts the
+  whole conversation.
+
+### Fixed text - the offer (after "Thanks, <first name>.")
+
+```
+I can ask you one question at a time, or send all the questions at once so you can answer in one reply. Which would you prefer?
+```
+
+### Fixed text - the numbered list
+
+```
+Sure, here are the questions. You can answer them all in one reply:
+1. <question> (for example: <options>)
+2. <question> <its paired question>
+...
+If something does not apply, just say so.
+```
+
+and when details are still missing, the first line is instead:
+
+```
+Thank you. A few details are still missing or unclear:
+```
