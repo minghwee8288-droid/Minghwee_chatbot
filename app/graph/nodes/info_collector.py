@@ -2107,6 +2107,50 @@ REST_DAY_RULE_NOTE = (
 )
 
 
+# Phase 3 Step 5 Batch E item 9 (2026-10-14). Phone test: after "no rest day"
+# got the one-line MOM rule, "but I don't want to give any rest day" got "How
+# did you hear about Ming Hwee?" - ignored - and "what?? I am telling you I
+# don't give her any rest days" got the rule explained and no next question.
+# Reproduced 2 of 2 (one pushback ignored in each run). The C item 7 rule only
+# fires when THIS turn extracts rest_day, and a pushback does not re-answer it.
+# Now a pushback - rest days already filed as none or too few, and this message
+# refuses again - is acknowledged once with the rule in one sentence from the
+# KB row, then the pending question; a later pushback is acknowledged without
+# the rule and the question still asked. Never ignored, never a lecture.
+# False = the C item 7 behaviour alone.
+REST_DAY_PUSHBACK = True
+_REST_DAY_WORDS = re.compile(r"\brest\s*days?\b|\bdays?\s+off\b|\boff\s*days?\b", re.IGNORECASE)
+_REFUSES = re.compile(
+    r"\b(?:don'?t|dont|do\s+not|won'?t|wont|will\s+not|not\s+going\s+to|no|never|refuse\w*"
+    r"|can'?t|cannot|without)\b",
+    re.IGNORECASE,
+)
+REST_DAY_PUSHBACK_NOTE = (
+    "\n\nThey are pushing back on the rest-day rule. In ONE short sentence acknowledge "
+    "that you have noted their preference and restate the MOM rule, taken only from this "
+    "record and adding nothing to it: \"{rule}\" Our agent will go through it with them. "
+    "Do not argue, do not lecture, do not refuse them and do not ask about rest days "
+    "again - then ask your next question."
+)
+REST_DAY_PUSHBACK_AGAIN_NOTE = (
+    "\n\nThey are pushing back on the rest-day rule again. You have already told them "
+    "the rule: do NOT repeat it. In one short clause say you have noted it and our agent "
+    "will go through it with them, then ask your next question."
+)
+
+
+def pushes_back_on_rest_day(text: str, collected: dict) -> bool:
+    """Rest days already filed as none or too few, and this message refuses again."""
+    filed = str((collected or {}).get("rest_day") or "")
+    if not filed or filed.lower() == UNANSWERED or not too_few_rest_days(filed):
+        return False
+    message = text or ""
+    return bool(
+        too_few_rest_days(message)
+        or (_REST_DAY_WORDS.search(message) and _REFUSES.search(message))
+    )
+
+
 def too_few_rest_days(text: str) -> bool:
     """'no rest day', 'she works every day', 'one day off a month'."""
     t = text or ""
@@ -3873,6 +3917,31 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             "stating the MOM rule from the KB" if rest_day_rule else "no KB rule found, saying nothing",
         )
 
+    # Batch E item 9: a pushback on the rule is answered, once with the rule.
+    rest_day_note = ""
+    pushback_flag: list[str] = []
+    if (
+        REST_DAY_PUSHBACK
+        # Filed BEFORE this turn: a pushback that re-extracts rest_day is still
+        # a pushback, not a first answer (the C item 7 note would go again).
+        and pushes_back_on_rest_day(state.get("incoming_text") or "", previous)
+    ):
+        if "rest_day_pushback" not in (state.get("flagged_once") or []):
+            rest_day_rule = rest_day_rule or await rest_day_rule_record()
+            rest_day_note = (
+                REST_DAY_PUSHBACK_NOTE.format(rule=rest_day_rule)
+                if rest_day_rule
+                else REST_DAY_PUSHBACK_AGAIN_NOTE
+            )
+            pushback_flag = ["rest_day_pushback"]
+        else:
+            rest_day_note = REST_DAY_PUSHBACK_AGAIN_NOTE
+        logger.info(
+            "Conversation %s: pushback on the rest-day rule - acknowledging it%s",
+            state.get("conversation_id"),
+            " with the rule" if pushback_flag and rest_day_rule else " without repeating the rule",
+        )
+
     # A case ID the client does not have has max_asks=1, so it is asked once and
     # then let go (§23.5); email likewise (§2 step 4).
     # Batch E item 4: a question asked INSTEAD of answering the pending field
@@ -4864,7 +4933,9 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             + requirement_note
             + closed_note
             + follow_up_notes.get(next_field.key, "")
-            + (REST_DAY_RULE_NOTE.format(rule=rest_day_rule) if rest_day_rule else "")
+            + (rest_day_note or (
+                REST_DAY_RULE_NOTE.format(rule=rest_day_rule) if rest_day_rule else ""
+            ))
             + answer_first
             + (COMPLAINT_COLLECT_NOTE if service_type == ticket_service.COMPLAINT else "")
         )
@@ -4955,7 +5026,7 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             # alone. Recorded ONLY when the reply is not the bare fallback,
             # for the reason briefing_lost exists (2026-09-08): a note a
             # guard threw away must be tried again, not filed as delivered.
-            "flagged_once": passport_flags + (
+            "flagged_once": passport_flags + pushback_flag + (
                 ["workload"]
                 if workload_note
                 and (reply or "").strip() != (next_field.question or "").strip()

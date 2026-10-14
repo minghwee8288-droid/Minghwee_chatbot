@@ -187,6 +187,29 @@ CASES = [
       "asked_field_counts": {"full_name": 1, "requirement": 1, "budget": 1, "rest_day": 1},
       "_stub_extraction": {"rest_day": "a weekly day off"},
       "_forbid_prompt": "MOM rest-day rule"}),
+    # Step 5 Batch E item 9: pushback on the rest-day rule is answered - once
+    # with the rule, then without it - and the next question is still asked.
+    ("info_collector", "E9: a rest-day pushback gets the rule once, then the next question",
+     {"service_type": "new_hiring", "intent": "new_hiring", "contact_type": "employer",
+      "incoming_text": "but I dont want to give any rest day",
+      "history_text": "You: Noted. She is entitled to one rest day a week. Any other house rules?",
+      "collected_info": {"full_name": "VD", "requirement": "childcare", "budget": "SGD 600-700",
+                         "rest_day": "no rest day"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "budget": 1, "rest_day": 1},
+      "_stub_extraction": {},
+      "_expect_prompt": "They are pushing back on the rest-day rule. In ONE",
+      "_expect_state": {"flagged_once": ["rest_day_pushback"]}}),
+    ("info_collector", "E9: ...a second pushback is acknowledged without the rule",
+     {"service_type": "new_hiring", "intent": "new_hiring", "contact_type": "employer",
+      "incoming_text": "I am telling you I dont give her any rest days",
+      "history_text": "You: Noted. She is entitled to one rest day a week. Any other house rules?",
+      "flagged_once": ["rest_day_pushback"],
+      "collected_info": {"full_name": "VD", "requirement": "childcare", "budget": "SGD 600-700",
+                         "rest_day": "no rest day"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "budget": 1, "rest_day": 1},
+      "_stub_extraction": {},
+      "_expect_prompt": "do NOT repeat it",
+      "_forbid_prompt": "They are pushing back on the rest-day rule. In ONE"}),
     # Step 5 Batch C item 6: the opening asks the question it was meant to ask.
     # The e2e direct hire asked whether she was in Singapore instead of the
     # client's name.

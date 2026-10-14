@@ -5813,6 +5813,18 @@ rows += [
         for m in (importlib.import_module("app.graph.graph").run_turn,
                   importlib.import_module("app.api.admin"))),
   (True, True)),
+ # Batch E item 9: a rest-day pushback is recognised against what was filed.
+ ("E9: pushback is told apart from an ordinary answer",
+  tuple(_ic_b.pushes_back_on_rest_day(t, f) for t, f in (
+      ("but I dont want to give any rest day", {"rest_day": "no rest day"}),
+      ("what?? I am telling you I dont give her any rest days", {"rest_day": "no rest day"}),
+      ("google", {"rest_day": "no rest day"}),
+      ("no rest day", {"rest_day": "a weekly day off"}))),
+  (True, True, False, False)),
+ ("...once with the rule, then without it",
+  (_ic_b.REST_DAY_PUSHBACK, "{rule}" in _ic_b.REST_DAY_PUSHBACK_NOTE,
+   "do NOT repeat it" in _ic_b.REST_DAY_PUSHBACK_AGAIN_NOTE),
+  (True, True, True)),
  # Batch E item 8: every inbound message is logged on arrival, and no drop is silent.
  ("E8: every message id in a payload reaches an INFO line, with no phone number",
   _inbound_receipt_check(),
