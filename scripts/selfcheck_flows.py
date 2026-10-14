@@ -5768,6 +5768,27 @@ rows += [
         for m in (importlib.import_module("app.graph.graph").run_turn,
                   importlib.import_module("app.api.admin"))),
   (True, True)),
+ # Batch E item 6: no service-intro opening mid-thread, no name asked twice.
+ ("E6: every introduction shape is taken out once Claire has spoken",
+  tuple(_guards.without_reintroduction(r, "Client: hi\nYou: x", "I want a direct hire") for r in (
+      "Hi, I’m Claire, Ming Hwee’s AI assistant — you want a direct hire.",
+      "Good afternoon, Vaidik! I’m Claire, Ming Hwee’s AI assistant. You want a direct hire.",
+      "Hello! This is Claire from Ming Hwee. You want a direct hire.",
+      "Claire here, Ming Hwee’s AI assistant; you want a direct hire.")),
+  ("You want a direct hire.",) * 4),
+ ("...while 'are you a bot?' keeps its answer, and a plain greeting stays",
+  (_guards.without_reintroduction("Yes, I am Claire, Ming Hwee's AI assistant.", "You: x",
+                                  "are you a bot?"),
+   _guards.without_reintroduction("Hi Vaidik, welcome back. You want a direct hire.",
+                                  "You: x", "hey")),
+  ("Yes, I am Claire, Ming Hwee's AI assistant.",
+   "Hi Vaidik, welcome back. You want a direct hire.")),
+ ("E6: a name given to our 'your name?' is known; a helper's name is not",
+  (_ic_b.name_given_earlier("You: May I know your name?\nClient: Vaidik Dubey\nYou: Thanks"),
+   _ic_b.name_given_earlier("You: May I know your name?\nClient: my name is Vaidik"),
+   _ic_b.name_given_earlier("You: May I know your helper's name?\nClient: Siti"),
+   _ic_b.name_given_earlier("You: May I know your name?\nClient: why do you need it?")),
+  ("Vaidik Dubey", "Vaidik", None, None)),
  # Batch E item 5: an overseas direct hire wanted sooner than its timeline.
  ("E5: overseas + immediately / within a week fires; a transfer case or next year does not",
   tuple(_ic_b.overseas_start_too_soon(c) for c in (

@@ -331,6 +331,16 @@ CASES = [
       "_stub_extraction": {"update_channel": "WhatsApp"},
       "_expect_state": {"info_complete": True},
       "_expect_prompt": "THIS message is the one that"}),
+    # Step 5 Batch E item 6: a new service in the same chat does not ask a
+    # name the client gave three minutes ago on another path.
+    ("info_collector", "E6: a name given earlier in the chat is not asked again",
+     {"service_type": "direct_hiring", "intent": "direct_hiring", "contact_type": "employer",
+      "incoming_text": "hey I want to direct hire one helper",
+      "history_text": "Client: How much is a replacement?\nYou: Our agent will confirm the "
+                      "replacement cost. May I know your name?\nClient: Vaidik Dubey\n"
+                      "You: Thanks, Vaidik.",
+      "_stub_extraction": {},
+      "_expect_collected": {"full_name": "Vaidik Dubey"}}),
     # Step 5 Batch E item 5: an overseas direct hire wanted "immediately" is
     # told the overseas timeline applies; a transfer case is not.
     ("info_collector", "E5: an overseas direct hire starting immediately is told it cannot",

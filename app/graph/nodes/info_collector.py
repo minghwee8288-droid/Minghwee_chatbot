@@ -143,6 +143,46 @@ _NOT_A_PERSON = {
 _NAME_PUNCTUATION = set(" .'-")
 
 
+# Phase 3 Step 5 Batch E item 6 (2026-10-14). Phone test, one chat, no
+# clearing: a replacement question at 3:00 pm, then "hey I want to direct hire
+# one helper" at 3:01 pm got "Hi, I'm Claire ... May I know your name?" - the
+# client's name had been given three minutes earlier. A switch carries the name
+# only when the earlier COLLECTION held it; a name given on another path is
+# lost. A name the client gave in this conversation, in reply to us asking for
+# THEIR name (never "your helper's name"), now counts as known.
+# guards.NO_REINTRODUCTION_ANYWHERE covers the introduction half.
+# False = names come only from the collection, the record and the lead.
+NO_NAME_REASK = True
+_ASKED_THEIR_NAME = re.compile(
+    r"\b(?:may\s+i\s+(?:know|have|get)|what(?:'s|\s+is)|could\s+(?:you\s+)?(?:share|tell\s+me|give\s+me)"
+    r"|can\s+i\s+(?:have|get|know))\s+your\s+(?:full\s+)?name\b",
+    re.IGNORECASE,
+)
+_NAME_LEAD_IN = re.compile(
+    r"^\s*(?:(?:hi|hello|hey)[,!.]?\s+)?(?:(?:my\s+name\s+is|my\s+name's|i\s+am|i'm|im|it\s+is"
+    r"|it's|this\s+is|myself|name\s*:)\s+)?",
+    re.IGNORECASE,
+)
+
+
+def name_given_earlier(history_text: str) -> str | None:
+    """The client's own answer to our 'may I know your name?', if any."""
+    found = None
+    lines = (history_text or "").splitlines()
+    for index, line in enumerate(lines):
+        if not (line.startswith("You:") and _ASKED_THEIR_NAME.search(line)):
+            continue
+        for answer in lines[index + 1:]:
+            if answer.startswith(("You:", "Agent:")):
+                break
+            if answer.startswith("Client:"):
+                name = _NAME_LEAD_IN.sub("", answer[7:].strip()).strip(" .!")
+                if _looks_like_a_person(name):
+                    found = name
+                break
+    return found
+
+
 def _looks_like_a_person(name: str) -> bool:
     """Whether a WhatsApp push name can stand in for the client's own name."""
     cleaned = " ".join((name or "").split())
@@ -1267,6 +1307,12 @@ def _known_fields(
         known["helper_from_us"] = (
             "placed with us before - this helper not matched on file"
         )
+
+    # Batch E item 6: a name they already gave us in this chat is not asked again.
+    if NO_NAME_REASK and not known.get("full_name"):
+        earlier = name_given_earlier(state.get("history_text") or "")
+        if earlier:
+            known["full_name"] = earlier[:300]
 
     lead = state.get("matched_lead")
     if not isinstance(lead, dict):

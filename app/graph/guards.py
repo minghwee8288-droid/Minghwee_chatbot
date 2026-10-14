@@ -1226,12 +1226,35 @@ _ASKS_WHO_WE_ARE = re.compile(
 )
 
 
+# Phase 3 Step 5 Batch E item 6 (2026-10-14). Phone test: a new service in the
+# same chat, 3 minutes after Claire's last reply, opened "Hi, I'm Claire, Ming
+# Hwee's AI assistant. You're looking to process a direct hire..." The B2 item 6
+# pattern above knew one shape: a greeting with no comma inside it, "I'm
+# Claire", then ".", "!" or ",". Measured: "Good afternoon, Vaidik! I'm Claire"
+# and "This is Claire" did not match at all, and a dash, colon or semicolon
+# after "assistant" stripped only "Hi, I'm Claire," and left "Ming Hwee's AI
+# assistant - you're..." behind. This one takes the greeting with a name in it,
+# "I'm / this is / it's Claire" or "Claire here", "from Ming Hwee" as well as
+# "Ming Hwee's AI assistant", and any of . ! ; : , - after it.
+# False = the B2 item 6 pattern alone.
+NO_REINTRODUCTION_ANYWHERE = True
+_ANY_INTRODUCTION = re.compile(
+    r"^\s*(?:(?:hi|hello|hey|good\s+(?:morning|afternoon|evening))\b[^.!?\n]{0,30}?[,!.]?\s*)?"
+    r"(?:(?:I(?:'|\u2019|\s+a)m|this\s+is|it(?:'|\u2019)s)\s+Claire\b|Claire\s+here\b)"
+    r"(?:\s*,?\s*(?:from|at|with)\s+Ming\s+Hwee\b"
+    r"|\s*,?\s*(?:Ming\s+Hwee(?:'|\u2019)s\s+)?(?:AI\s+)?assistant\b)?"
+    r"(?:\s*(?:[.!;:]|\s[\u2014\u2013-]|[\u2014\u2013])\s*|\s*,\s*(?:and\s+)?|\s*$)",
+    re.IGNORECASE,
+)
+
+
 def without_reintroduction(reply: str, history_text: str, message: str = "") -> str:
     """'Hi, I'm Claire, Ming Hwee's AI assistant. A replacement...' ->
     'A replacement...' once Claire has spoken on this thread."""
     if not reply or not claire_has_spoken(history_text) or _ASKS_WHO_WE_ARE.search(message or ""):
         return reply
-    out = _INTRODUCTION.sub("", reply, count=1).strip()
+    pattern = _ANY_INTRODUCTION if NO_REINTRODUCTION_ANYWHERE else _INTRODUCTION
+    out = pattern.sub("", reply, count=1).strip()
     if out == reply or not out:
         return reply
     logger.info("Claire re-introduced herself mid-thread - introduction removed")
