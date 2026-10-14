@@ -5768,6 +5768,12 @@ rows += [
         for m in (importlib.import_module("app.graph.graph").run_turn,
                   importlib.import_module("app.api.admin"))),
   (True, True)),
+ # Batch E item 4: a side question keeps the pending field; once only.
+ ("E4: a side question does not exhaust the pending field, once only",
+  (_ic_b.SIDE_QUESTION_KEEPS_PENDING,
+   "side_question\n            and field.key == pending_key" in inspect.getsource(_ic_b._collect),
+   "and not briefing_waits" in inspect.getsource(_ic_b._collect)),
+  (True, True, True)),
  # Batch E item 2: "why this much?" on every path, reading our whole messages.
  ("E2: a price inside a multi-line message counts as already sent",
   (_guards.recent_bot_messages("Client: a\nYou: Here:\n\nThe cost is $450.\nClient: b", 1),

@@ -1525,6 +1525,18 @@ _PREFERENCE_FIELDS = {"replacement_preferences", "reason"}
 # towards asking: a volunteered reason that slips past costs one question.
 # False = the extraction as returned.
 LEAVE_REASON_ASKED = True
+
+# Phase 3 Step 5 Batch E item 4 (2026-10-14). Phone test, direct hire: asked
+# "Would you prefer updates by email, here on WhatsApp, both...?", the client
+# asked "how much does a direct hire cost" instead; Claire answered and closed
+# CB-2026-0104 with no closing summary. Reproduced 1 of 1: update_channel
+# (max_asks=1) was filed "not provided" on that turn, the collection completed,
+# and the briefing was skipped because the client had asked a question. Now a
+# question asked INSTEAD of answering the pending field does not use up its
+# ask (it is answered, then asked again), and a collection that does complete
+# on a question turn still gets its closing summary, with the answer first.
+# False = the old behaviour on both.
+SIDE_QUESTION_KEEPS_PENDING = True
 _NAMES_A_LEAVE_REASON = re.compile(
     r"\b(?:regular|annual|yearly|routine|usual|normal|holiday|vacation|break|contract"
     r"|festival|eid|raya|lebaran|christmas|new\s+year|thingyan|wedding|marr\w*|visit\w*"
@@ -3765,11 +3777,39 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
 
     # A case ID the client does not have has max_asks=1, so it is asked once and
     # then let go (§23.5); email likewise (§2 step 4).
+    # Batch E item 4: a question asked INSTEAD of answering the pending field
+    # does not use up that field's ask - it is answered and the field asked
+    # again. See SIDE_QUESTION_KEEPS_PENDING.
+    pending_key = (state.get("last_question") or {}).get("key") if isinstance(
+        state.get("last_question"), dict
+    ) else None
+    side_question = (
+        SIDE_QUESTION_KEEPS_PENDING
+        and bool(pending_key)
+        and bool(_ASKS_SOMETHING.search(state.get("incoming_text") or ""))
+        and not str(extracted.get(pending_key) or "").strip()
+    )
     exhausted = {
         field.key: UNANSWERED
         for field in ticket_service.missing_fields(service_type, collected)
         if asked.get(field.key, 0) >= min(field.max_asks, MAX_ASKS_PER_FIELD)
+        # Once only: one extra ask per field, so a client who keeps asking
+        # questions instead is not asked the same thing forever.
+        and not (
+            side_question
+            and field.key == pending_key
+            and asked.get(field.key, 0) <= min(field.max_asks, MAX_ASKS_PER_FIELD)
+        )
     }
+    if side_question and pending_key in {
+        f.key for f in ticket_service.missing_fields(service_type, collected)
+    }:
+        logger.info(
+            "Conversation %s: the client asked a question instead of answering "
+            "'%s' - answering it and asking again rather than filing it unanswered",
+            state.get("conversation_id"),
+            pending_key,
+        )
     if exhausted:
         logger.info(
             "Conversation %s: giving up on %s — recording as unanswered",
@@ -4126,6 +4166,11 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     # the 2026-09-04 failure that silenced the bot on every single turn, and
     # smoke_nodes.py caught this one the same way.
     client_asked = bool(_ASKS_SOMETHING.search(state.get("incoming_text") or ""))
+    # Batch E item 4: on the turn the collection completes, a question does not
+    # cost the client the closing summary - it is answered first, then the
+    # briefing (the ticket is raised on this turn, so there is no later one).
+    completing_now = not ticket_service.missing_fields(service_type, collected)
+    briefing_waits = client_asked and not (SIDE_QUESTION_KEEPS_PENDING and completing_now)
 
     # The push-name suppression that used to live here moved into
     # `system._contact_block` on 2026-09-17, because it was scoped to this node
@@ -4140,7 +4185,7 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     # words and the fee row was never fetched. Fetch the briefing set now.
     if (
         BRIEFING_FETCHES_ITS_OWN_RECORDS
-        and not client_asked
+        and not briefing_waits
         and ticket_service.briefing_due(
             service_type, collected, state.get("briefed_services")
         )
@@ -4153,12 +4198,22 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         from app.graph.nodes.rag_retriever import briefing_records
 
         try:
-            state = {
-                **state,
-                **await briefing_records(
-                    {**state, "service_type": service_type, "collected_info": collected}
-                ),
-            }
+            fetched = await briefing_records(
+                {**state, "service_type": service_type, "collected_info": collected}
+            )
+            if client_asked and fetched.get("rag_matches"):
+                # Batch E item 4: the question's own records are kept beside
+                # the briefing's, so it can be answered first.
+                fetched = {
+                    **fetched,
+                    "rag_matches": list(state.get("rag_matches") or [])
+                    + list(fetched.get("rag_matches") or []),
+                    "rag_context": "\n\n".join(
+                        part for part in (state.get("rag_context"), fetched.get("rag_context"))
+                        if part
+                    ),
+                }
+            state = {**state, **fetched}
         except Exception:  # noqa: BLE001
             logger.exception("Briefing records could not be fetched - using this turn's")
 
@@ -4173,7 +4228,7 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             service_type, collected, state.get("briefed_services")
         )
         and bool(state.get("rag_matches"))
-        and not client_asked
+        and not briefing_waits
     )
     if briefing_due:
         # A job seeker gets her own version. SERVICE_BRIEFING_NOTE is written
