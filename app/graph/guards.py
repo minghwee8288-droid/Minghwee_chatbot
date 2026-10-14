@@ -1176,12 +1176,28 @@ _ALREADY_CARING = re.compile(
 )
 
 
+# Phase 3 Step 5 Batch E item 7 (2026-10-14). Phone test: "I hope everything
+# is alright at home. I'm sorry it's a family matter." - two caring sentences,
+# because the model wrote its own and _ALREADY_CARING only knew "sorry to
+# hear". Any sympathy the reply already carries ("I'm sorry", "so sorry about
+# her mother") now counts, so the line is added only to a reply with none.
+# An apology ("Sorry, I meant...") does not count. False = the B2 test alone.
+CARING_LINE_ONCE = True
+_SAYS_SORRY = re.compile(
+    r"\b(?:i(?:'|’)?m|i\s+am|we(?:'|’)?re|we\s+are|so|very|really|truly|deeply)"
+    r"\s+sorry\b|\bsorry\s+(?:to|about|that|it|for\s+(?:your|her|his|their|the))\b",
+    re.IGNORECASE,
+)
+
+
 def with_caring_line(reply: str, message: str, leave_reason: str | None) -> str:
     """'I hope everything is alright at home.' before the reply, once, when the
     reason just given for a home leave is a family matter or an emergency."""
     if not reply or not leave_reason or not _FAMILY_MATTER.search(message or ""):
         return reply
     if not _FAMILY_MATTER.search(str(leave_reason)) or _ALREADY_CARING.search(reply):
+        return reply
+    if CARING_LINE_ONCE and _SAYS_SORRY.search(reply):
         return reply
     logger.info("Home leave for a family matter - caring line added")
     return f"{CARING_LINE} {reply}"

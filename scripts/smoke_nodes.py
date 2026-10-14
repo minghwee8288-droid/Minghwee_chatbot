@@ -3763,6 +3763,19 @@ async def _batch_b2_checks() -> list[tuple[str, bool]]:
                 == "I'm sorry to hear that. " + ask))
     out.append(("caring line: only on the turn the reason is given",
                 await leave(ask, "Philippines", "family emergency") == ask))
+    # Batch E item 7: "I hope everything is alright at home. I'm sorry it's a
+    # family matter." - the model's own sympathy counts, an apology does not.
+    sorry = "I'm sorry it's a family matter. When is she planning to travel?"
+    out.append(("E7 caring line: not added over the model's own 'I'm sorry'",
+                await leave(sorry, "it is a family matter", "family matter") == sorry))
+    out.append(("E7 caring line: ...but an apology is not sympathy",
+                await leave("Sorry, I meant her dates. " + ask, "it is a family matter",
+                            "family matter")
+                == "I hope everything is alright at home. Sorry, I meant her dates. " + ask))
+    with patch.object(guards_module, "CARING_LINE_ONCE", False):
+        out.append(("E7 caring line: CARING_LINE_ONCE off -> the B2 behaviour",
+                    await leave(sorry, "it is a family matter", "family matter")
+                    == "I hope everything is alright at home. " + sorry))
     with patch.object(guards_module, "CARING_LINE_FOR_FAMILY_MATTERS", False):
         out.append(("caring line: CARING_LINE_FOR_FAMILY_MATTERS off -> as written",
                     await leave(ask, "her mother is in hospital", "family emergency") == ask))

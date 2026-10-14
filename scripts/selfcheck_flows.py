@@ -5768,6 +5768,13 @@ rows += [
         for m in (importlib.import_module("app.graph.graph").run_turn,
                   importlib.import_module("app.api.admin"))),
   (True, True)),
+ # Batch E item 7: one caring sentence, never two.
+ ("E7: no caring line over sympathy the reply already carries",
+  tuple(_guards.with_caring_line(r, "it is a family matter", "family matter") == r for r in (
+      "I'm sorry it's a family matter. When does she travel?",
+      "I am so sorry about her mother. When does she travel?",
+      "I’m sorry to learn that. When does she travel?")),
+  (True, True, True)),
  # item 6
  ("B2 item 6: the opening introduction is not repeated mid-thread",
   (_guards.without_reintroduction("Hi, I'm Claire, Ming Hwee's AI assistant. It is $695.",
