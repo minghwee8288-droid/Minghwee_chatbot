@@ -1187,6 +1187,41 @@ def with_caring_line(reply: str, message: str, leave_reason: str | None) -> str:
     return f"{CARING_LINE} {reply}"
 
 
+# Phase 3 Step 5 Batch B2 item 6 (2026-10-14). Phone test: "How much is a
+# replacement?" got "Hi, I'm Claire..." two minutes after Claire's previous
+# reply on the same thread. 9 replays of that exact sequence never did it, and
+# the live thread had been cleared, so the cause there is unknown. This holds
+# the rule wherever the transcript shows Claire has already spoken: the
+# introduction is taken out of the reply and the rest stands.
+# False = the reply as written.
+NO_REINTRODUCTION = True
+# The OPENING introduction only - a greeting, then "I'm Claire". "Yes, I am
+# Claire, an AI assistant" answering "are you a bot?" is rule 1, and stays.
+_INTRODUCTION = re.compile(
+    r"^\s*(?:hi|hello|hey|good\s+(?:morning|afternoon|evening))\b[^.!?,]{0,30}[,!.]?\s*"
+    r"I(?:'|’|\s+a)m\s+Claire\b,?\s*(?:Ming\s+Hwee(?:'|’)s\s+)?(?:AI\s+)?(?:assistant)?"
+    r"(?:\s*[.!]\s*|\s*,\s*(?:and\s+)?|\s*$)",
+    re.IGNORECASE,
+)
+_ASKS_WHO_WE_ARE = re.compile(
+    r"\b(?:who\s+(?:are|is)\s+(?:you|this)|are\s+you\s+(?:a\s+)?(?:bot|robot|human|real|ai|person)"
+    r"|is\s+this\s+(?:a\s+)?(?:bot|ai|robot|human)|your\s+name|what\s+are\s+you)\b",
+    re.IGNORECASE,
+)
+
+
+def without_reintroduction(reply: str, history_text: str, message: str = "") -> str:
+    """'Hi, I'm Claire, Ming Hwee's AI assistant. A replacement...' ->
+    'A replacement...' once Claire has spoken on this thread."""
+    if not reply or not claire_has_spoken(history_text) or _ASKS_WHO_WE_ARE.search(message or ""):
+        return reply
+    out = _INTRODUCTION.sub("", reply, count=1).strip()
+    if out == reply or not out:
+        return reply
+    logger.info("Claire re-introduced herself mid-thread - introduction removed")
+    return out[:1].upper() + out[1:]
+
+
 # Phase 3 Step 5 Batch B2 item 3 (2026-10-14). Live: "why this much?" after
 # the renewal fee was answered with the price again ("...the exact amount will
 # be confirmed by our team"). Asking WHY a fee is what it is wants what it

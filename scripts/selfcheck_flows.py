@@ -5767,6 +5767,19 @@ rows += [
         for m in (importlib.import_module("app.graph.graph").run_turn,
                   importlib.import_module("app.api.admin"))),
   (True, True)),
+ # item 6
+ ("B2 item 6: the opening introduction is not repeated mid-thread",
+  (_guards.without_reintroduction("Hi, I'm Claire, Ming Hwee's AI assistant. It is $695.",
+                                  "You: Hi, I'm Claire."),
+   _guards.without_reintroduction("Hi, I'm Claire, Ming Hwee's AI assistant. It is $695.", ""),
+   _guards.without_reintroduction("Yes, I am Claire, an AI assistant.", "You: Hello.")),
+  ("It is $695.", "Hi, I'm Claire, Ming Hwee's AI assistant. It is $695.",
+   "Yes, I am Claire, an AI assistant.")),
+ ("...run in run_turn and in the preview",
+  tuple("NO_REINTRODUCTION" in inspect.getsource(m)
+        for m in (importlib.import_module("app.graph.graph").run_turn,
+                  importlib.import_module("app.api.admin"))),
+  (True, True)),
  ("...run once, in run_turn and in the preview",
   tuple("FIXED_FEE_STATED_PLAINLY" in inspect.getsource(m)
         for m in (importlib.import_module("app.graph.graph").run_turn,

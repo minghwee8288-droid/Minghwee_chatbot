@@ -3558,6 +3558,29 @@ async def _batch_b2_checks() -> list[tuple[str, bool]]:
     with patch.object(guards_module, "CARING_LINE_FOR_FAMILY_MATTERS", False):
         out.append(("caring line: CARING_LINE_FOR_FAMILY_MATTERS off -> as written",
                     await leave(ask, "her mother is in hospital", "family emergency") == ask))
+
+    # Item 6: no introduction once Claire has spoken on the thread.
+    intro = "Hi, I'm Claire, Ming Hwee's AI assistant. Our agent will confirm the replacement cost."
+    spoken = ("Client: How much does a direct hire cost?\nYou: Hi, I'm Claire, Ming Hwee's AI "
+              "assistant. A direct hire costs less than a full recruitment.")
+
+    async def intro_turn(reply, history, message="How much is a replacement?"):
+        with patch.object(graph_module.kb_rules, "refresh", new=AsyncMock()), \
+                patch.object(graph_module, "get_graph", new=lambda: _Graph({"reply": reply})):
+            return (await graph_module.run_turn(
+                "t", {"history_text": history, "incoming_text": message}))["reply"]
+
+    out.append(("no re-intro: taken out once Claire has spoken",
+                await intro_turn(intro, spoken) == "Our agent will confirm the replacement cost."))
+    out.append(("no re-intro: the first reply keeps it",
+                await intro_turn(intro, "") == intro))
+    out.append(("no re-intro: kept after only our team's lines",
+                await intro_turn(intro, "Agent: Good morning, please send the form") == intro))
+    out.append(("no re-intro: 'are you a bot?' keeps the answer",
+                await intro_turn(intro, spoken, "are you a bot?") == intro))
+    with patch.object(guards_module, "NO_REINTRODUCTION", False):
+        out.append(("no re-intro: NO_REINTRODUCTION off -> as written",
+                    await intro_turn(intro, spoken) == intro))
     return out
 
 
