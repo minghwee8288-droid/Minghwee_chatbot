@@ -5780,6 +5780,16 @@ rows += [
         for m in (importlib.import_module("app.graph.graph").run_turn,
                   importlib.import_module("app.api.admin"))),
   (True, True)),
+ # item 7
+ ("B2 item 7: a phone number is digits, one leading +, 8 to 15 of them",
+  tuple(_guards.looks_like_phone_number(t) for t in (
+      "+9612+654+941", "12345", "9123 456", "+65 9123 4567", "(65) 6534-2277",
+      "her number is 91234567", "I don't know")),
+  (False, False, False, True, True, True, True)),
+ ("...checked on both phone fields, never read back",
+  (tuple(_ic_b.PHONE_FIELDS), "Do NOT repeat back the number" in _ic_b.PHONE_RECHECK_NOTE,
+   "VALIDATE_PHONE_NUMBERS" in inspect.getsource(_ic_b)),
+  (("employer_contact", "helper_contact"), True, True)),
  ("...run once, in run_turn and in the preview",
   tuple("FIXED_FEE_STATED_PLAINLY" in inspect.getsource(m)
         for m in (importlib.import_module("app.graph.graph").run_turn,

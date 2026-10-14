@@ -1803,6 +1803,18 @@ _BARE_NO = re.compile(r"^\W*(?:no|nope|nah|none|nothing)\W*$", re.IGNORECASE)
 _ASKS_FOR_ANY = re.compile(r"^\W*(?:any(?:thing|one)?|(?:is|are)\s+there)\b", re.IGNORECASE)
 
 
+# Step 5 Batch B2 item 7: the fields that hold a phone number, and what the
+# question says when the number given did not look like one. The number is
+# never read back - it may be somebody's real number with a digit wrong.
+PHONE_FIELDS = ("employer_contact", "helper_contact")
+PHONE_RECHECK_NOTE = (
+    "\n\nThe phone number they just gave does not look like a phone number (a "
+    "digit may be missing, or there are + signs in the middle of it), so it has "
+    "NOT been recorded. Ask for it once more and say why, in one short sentence. "
+    "Do NOT repeat back the number they wrote, and do not guess at it."
+)
+
+
 # An address that parses but is almost certainly mistyped. Live, same round:
 # "Vd@gmail.con" went onto the lead exactly as written. Email is the only
 # channel the office has for sending helper profiles, so a wrong one does not
@@ -3445,6 +3457,28 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     # is recorded as unanswered rather than asked again. Sales sees the gap
     # honestly, which is more use than a value invented to close it — the live
     # loop ended up filing "case reference: singapore branch".
+    # Step 5 Batch B2 item 7: a phone number that does not look like one is not
+    # kept, and the question is asked again with the reason. Live: the
+    # employer's number "+9612+654+941" was accepted and read back in the
+    # closing message. Never stored, so it can never be repeated back; the ask
+    # count still bounds it, so a client who gives two bad numbers is let go
+    # as "not provided" by the line below.
+    bad_phone_keys: list[str] = []
+    if guards.VALIDATE_PHONE_NUMBERS:
+        for key in PHONE_FIELDS:
+            given = extracted.get(key)
+            if given and not guards.looks_like_phone_number(str(given)):
+                bad_phone_keys.append(key)
+                extracted = {k: v for k, v in extracted.items() if k != key}
+                collected = {k: v for k, v in collected.items() if k != key}
+                if previous.get(key) and guards.looks_like_phone_number(str(previous[key])):
+                    collected[key] = previous[key]
+        if bad_phone_keys:
+            logger.info(
+                "Conversation %s: %s does not look like a phone number - asking again",
+                state.get("conversation_id"), ", ".join(bad_phone_keys),
+            )
+
     # A case ID the client does not have has max_asks=1, so it is asked once and
     # then let go (§23.5); email likewise (§2 step 4).
     exhausted = {
@@ -4043,6 +4077,12 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             ", ".join(field.key for field in unfinished),
         )
         missing = unfinished + [f for f in missing if f.key not in follow_up_notes]
+    # ...and a phone number we just dropped goes to the front, with the reason.
+    for key in bad_phone_keys:
+        retry = next((f for f in missing if f.key == key), None)
+        if retry:
+            follow_up_notes[key] = PHONE_RECHECK_NOTE
+            missing = [retry] + [f for f in missing if f.key != key]
 
     # The lead is opened the moment the client has given a name, not at the end
     # of collection. A client who answers two questions and then stops used to

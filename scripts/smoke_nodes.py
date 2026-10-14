@@ -158,6 +158,38 @@ CASES = [
       "_expect_prompt": "Name her ONLY inside this one question",
       "_expect_reply": "Is this home leave for Yoyo, or for another helper?",
       "_forbid_reply": "details on record"}),
+    # Step 5 B2 item 7: a phone number that is not one is never filed, and the
+    # question is asked again with the reason - never read back.
+    ("info_collector", "B2: '+9612+654+941' is not filed, asked again with the reason",
+     {"service_type": "home_leave", "intent": "home_leave", "contact_type": "employer",
+      "incoming_text": "+9612+654+941",
+      "history_text": "You: What is your employer's phone number, so our agent can contact "
+                      "them to arrange your leave?",
+      "flagged_once": ["helper_home_leave"],
+      "collected_info": {"full_name": "Siti", "helper_name": "Siti", "requested_by": "helper",
+                         "nationality": "Indonesian", "leave_dates": "1 to 30 November",
+                         "leave_reason": "regular home leave", "employer_name": "Mr Tan"},
+      "asked_field_counts": {"full_name": 1, "nationality": 1, "leave_dates": 1,
+                             "leave_reason": 1, "employer_name": 1, "employer_contact": 1},
+      "_stub_extraction": {"employer_contact": "+9612+654+941"},
+      "_stub_reply": "Thanks. That number does not look complete - could you send your "
+                     "employer's phone number again?",
+      "_expect_prompt": "does not look like a phone number",
+      "_expect_not_collected": ["employer_contact"],
+      "_forbid_reply": "+9612"}),
+    ("info_collector", "B2: ...while a real number is filed",
+     {"service_type": "home_leave", "intent": "home_leave", "contact_type": "employer",
+      "incoming_text": "+65 9123 4567",
+      "history_text": "You: What is your employer's phone number, so our agent can contact "
+                      "them to arrange your leave?",
+      "flagged_once": ["helper_home_leave"],
+      "collected_info": {"full_name": "Siti", "helper_name": "Siti", "requested_by": "helper",
+                         "nationality": "Indonesian", "leave_dates": "1 to 30 November",
+                         "leave_reason": "regular home leave", "employer_name": "Mr Tan"},
+      "asked_field_counts": {"full_name": 1, "nationality": 1, "leave_dates": 1,
+                             "leave_reason": 1, "employer_name": 1, "employer_contact": 1},
+      "_stub_extraction": {"employer_contact": "+65 9123 4567"},
+      "_expect_collected": {"employer_contact": "+65 9123 4567"}}),
     # Step 5 B2 item 4: a helper name typed in capitals is filed in title case.
     ("info_collector", "B2: 'DEVI' is filed as 'Devi'",
      {"service_type": "home_leave", "intent": "home_leave",

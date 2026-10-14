@@ -1222,6 +1222,27 @@ def without_reintroduction(reply: str, history_text: str, message: str = "") -> 
     return out[:1].upper() + out[1:]
 
 
+# Phase 3 Step 5 Batch B2 item 7 (2026-10-14). Live: an employer's number
+# "+9612+654+941" was accepted and read back in the closing. A phone number is
+# digits with at most one + at the very start, 8 to 15 digits in all, spaces,
+# dashes, dots and brackets aside. An answer with fewer than 3 digits is not a
+# number at all ("I don't know it") and is left to the ordinary handling.
+# False = any answer is filed as given.
+VALIDATE_PHONE_NUMBERS = True
+
+
+def looks_like_phone_number(text: str) -> bool:
+    """'+65 9123 4567' yes; '+9612+654+941' and '12345' no."""
+    raw = (text or "").strip()
+    if sum(c.isdigit() for c in raw) < 3:
+        return True  # not a number attempt - nothing to validate
+    runs = re.findall(r"\+?\(?\d[\d\s\-.()+]*\d", raw)
+    compact = re.sub(r"[\s\-.()]", "", max(runs, key=len) if runs else raw)
+    if not re.fullmatch(r"\+?\d+", compact):
+        return False
+    return 8 <= len(compact.lstrip("+")) <= 15
+
+
 # Phase 3 Step 5 Batch B2 item 3 (2026-10-14). Live: "why this much?" after
 # the renewal fee was answered with the price again ("...the exact amount will
 # be confirmed by our team"). Asking WHY a fee is what it is wants what it
