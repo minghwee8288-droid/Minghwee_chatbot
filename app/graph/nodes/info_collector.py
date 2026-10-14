@@ -1994,6 +1994,43 @@ def wants_sooner_than_a_new_hire(collected: dict) -> bool:
     return days is not None and days < _TIMELINE_MISMATCH_DAYS
 
 
+# Phase 3 Step 5 Batch E item 5 (2026-10-14). Phone test, direct hire: a
+# Myanmar helper still overseas, start "immediately", and nothing said about
+# an overseas hire taking weeks. The Batch C item 8 rule, applied to direct
+# hire: when she is NOT a transfer case (the overseas route) and they want her
+# sooner than 4 weeks or immediately, the closing briefing says so in one
+# sentence after the timing line, from the records' timeline only. No
+# transfer-helper suggestion here - they have already chosen her. And the
+# start date has to be ASKED for this to work: the replay found "no, she is
+# still in the Philippines" filed as helper_availability, so an unasked start
+# date is now kept only when the client's own message states a time.
+# False = the old behaviour on both.
+DIRECT_HIRE_TIMELINE_MISMATCH = True
+DIRECT_HIRE_TIMELINE_NOTE = (
+    "\n\nThey want her to start {when}, but she is overseas and this is the overseas "
+    "route. Say so plainly in ONE sentence right after the timing line: she cannot start "
+    "that soon, because the timeline you are giving applies. Use only the timeline in the "
+    "records above. Do not promise a date and do not suggest the timeline can be "
+    "shortened."
+)
+
+
+def overseas_start_too_soon(collected: dict) -> bool:
+    """Direct hire, overseas route, and a start sooner than 4 weeks or 'immediately'."""
+    if ticket_service._STILL_EMPLOYED.state(collected) != "closed":
+        return False
+    value = str(collected.get("helper_availability") or "")
+    if _ASAP.search(value) or re.search(r"\b(?:now|today|tomorrow)\b", value, re.IGNORECASE):
+        return True
+    days = _expiry_in_days(value)
+    return days is not None and days < _TIMELINE_MISMATCH_DAYS
+
+
+def states_a_time(text: str) -> bool:
+    """A date, a span, or 'immediately' / ASAP."""
+    return states_a_date(text) or bool(_ASAP.search(text or ""))
+
+
 # Phase 3 Step 5 Batch C item 7 (2026-10-14): asked about rest days, a client
 # who wants none, or fewer than one a week with nothing said about paying for
 # them, is acknowledged, told the MOM rule in one sentence, and the intake
@@ -3119,6 +3156,21 @@ async def _extract(
             logger.info(
                 "Conversation %s: ignoring '%s' for 'leave_reason' - the client's "
                 "message gave no reason, so the value was inferred",
+                state.get("conversation_id"),
+                text[:40],
+            )
+            continue
+        # Batch E item 5: "still in the Philippines" is where she is, not
+        # when she can start. See DIRECT_HIRE_TIMELINE_MISMATCH.
+        if (
+            DIRECT_HIRE_TIMELINE_MISMATCH
+            and key == "helper_availability"
+            and not asked.get(key)
+            and not states_a_time(state.get("incoming_text") or "")
+        ):
+            logger.info(
+                "Conversation %s: ignoring '%s' for 'helper_availability' - the "
+                "client's message gave no time, so the value was inferred",
                 state.get("conversation_id"),
                 text[:40],
             )
@@ -4295,6 +4347,12 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
                 briefing_note += TIMELINE_MISMATCH_NOTE.format(
                     when=str(collected.get("start_timeline")).strip()
                 )
+        # Batch E item 5: the same for a direct hire whose helper is overseas.
+        if (service_type == "direct_hiring" and DIRECT_HIRE_TIMELINE_MISMATCH
+                and overseas_start_too_soon(collected)):
+            briefing_note += DIRECT_HIRE_TIMELINE_NOTE.format(
+                when=str(collected.get("helper_availability")).strip()
+            )
         if service_type == "home_leave":
             briefing_note += HOME_LEAVE_TICKET_NOTE
             # Batch E item 3: urgent - flagged once, with no faster promise.

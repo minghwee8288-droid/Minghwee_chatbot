@@ -5768,6 +5768,15 @@ rows += [
         for m in (importlib.import_module("app.graph.graph").run_turn,
                   importlib.import_module("app.api.admin"))),
   (True, True)),
+ # Batch E item 5: an overseas direct hire wanted sooner than its timeline.
+ ("E5: overseas + immediately / within a week fires; a transfer case or next year does not",
+  tuple(_ic_b.overseas_start_too_soon(c) for c in (
+      {"helper_transfer_case": "no", "helper_availability": "immediately"},
+      {"helper_transfer_case": "no, she is in Myanmar", "helper_availability": "in 1 week"},
+      {"helper_transfer_case": "yes she works for another employer", "helper_availability": "immediately"},
+      {"helper_transfer_case": "no", "helper_availability": "in 3 months"},
+      {"helper_availability": "immediately"})),
+  (True, True, False, False, False)),
  # Batch E item 4: a side question keeps the pending field; once only.
  ("E4: a side question does not exhaust the pending field, once only",
   (_ic_b.SIDE_QUESTION_KEEPS_PENDING,
