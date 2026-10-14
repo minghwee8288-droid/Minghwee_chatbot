@@ -2023,6 +2023,15 @@ _ASAP = re.compile(
     re.IGNORECASE,
 )
 
+# Phase 3 Step 6 part 1 (2026-10-14): added to the collector's instruction
+# when a second field is asked with the first (ticket.paired_field). Nothing
+# sets Field.ask_with yet, so this is never added until the pairs are approved.
+PAIRED_QUESTION_NOTE = (
+    "\n\nAsk this together with one closely related detail, in ONE natural "
+    "sentence - not two questions one after the other: {label}. For that one: "
+    "{guidance}"
+)
+
 # Phase 3 Step 5 Batch F item 1 (2026-10-14). The extractor filed
 # "immediately" as "as soon as possible - within 2 weeks", and replies echoed
 # "within 2 weeks". A timing value carrying a timeframe the client's message
@@ -4942,6 +4951,10 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
 
     if missing:
         next_field = missing[0]
+        # Step 6 part 1: a second, closely related field asked in the same
+        # sentence - only the next one, only the one next_field names, only
+        # when both gates are decided. None while no Field sets ask_with.
+        partner = ticket_service.paired_field(next_field, missing, collected)
         previous = last_bot_line(state.get("history_text", ""))
         # The question our last message put is CLOSED when the field we ask now
         # has never been asked: the previous one was answered (or given up on),
@@ -4966,6 +4979,10 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             if previous_answered
             else ""
         )
+        if partner and closed_note:  # Step 6: the pair is asked, not one question
+            closed_note = closed_note.replace(
+                "ask only the question below.", "ask only the two details below, together."
+            )
         # A helper we know they have is CONFIRMED, not asked for - on the first
         # ask only. If they say it is someone else, the second ask is the
         # field's own plain question.
@@ -5003,6 +5020,10 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             ))
             + answer_first
             + (COMPLAINT_COLLECT_NOTE if service_type == ticket_service.COMPLAINT else "")
+            + (PAIRED_QUESTION_NOTE.format(
+                label=partner.label,
+                guidance=_field_guidance(service_type, collected, partner),
+            ) if partner else "")
         )
         if next_field.optional:
             # §2 step 4 / §23.6: asked once, and a no is taken as an answer.
@@ -5020,7 +5041,8 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             if rest_day_rule else state,
             system_prompt_state,
             instruction,
-            fallback=next_field.question,
+            fallback=(f"{next_field.question} {partner.question}" if partner
+                      else next_field.question),
             # Answering their question and then asking ours does not fit in two,
             # and neither does introducing yourself before asking anything.
             # Four only where all three are genuinely required: the
@@ -5040,7 +5062,9 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             # The SAME filtered tuple the question was built from. If these
             # two ever disagree the model is told to offer a figure and then
             # binned by ungrounded_figures for offering it (2026-09-09 D).
-            grounded_options=_effective_options(next_field, collected),
+            grounded_options=_effective_options(next_field, collected) + (
+                _effective_options(partner, collected) if partner else ()
+            ),
             previous_answered=previous_answered,
             stepped=overview,
         )
@@ -5064,6 +5088,12 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
                 service_type,
             )
         counts[next_field.key] = 1
+        if partner:
+            counts[partner.key] = 1
+            logger.info(
+                "Conversation %s asking '%s' together with '%s'",
+                state.get("conversation_id"), partner.key, next_field.key,
+            )
         logger.info(
             "Conversation %s collecting '%s' for %s (attempt %d, %s field(s) outstanding)",
             state.get("conversation_id"),

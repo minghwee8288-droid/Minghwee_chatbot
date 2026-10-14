@@ -435,6 +435,30 @@ _FINISHED = {
 }
 
 
+def _paired_field_cases():
+    """Step 6 part 1: ticket.paired_field on synthetic fields. Returns the
+    partner's key or None for: a plain pair; the partner not next in the
+    queue; a gate still undecided; the switch off; current not first; and a
+    chain of three (only the first two are paired)."""
+    F, G = t.Field, t.Gate
+    a = F("a", "a", "A?", ask_with="b")
+    b = F("b", "b", "B?", ask_with="c")
+    c = F("c", "c", "C?")
+    gated = F("b", "b", "B?", gate=G("x", ("yes",)))
+    out = [t.paired_field(a, [a, b, c], {})]
+    out.append(t.paired_field(a, [a, c, b], {}))
+    out.append(t.paired_field(a, [a, gated], {}))
+    saved = t.PAIRED_QUESTIONS
+    t.PAIRED_QUESTIONS = False
+    try:
+        out.append(t.paired_field(a, [a, b], {}))
+    finally:
+        t.PAIRED_QUESTIONS = saved
+    out.append(t.paired_field(a, [b, a], {}))
+    out.append(t.paired_field(a, [a, b, c], {}))  # b is returned; b's own ask_with is not followed
+    return tuple(p.key if p else None for p in out)
+
+
 def _inbound_receipt_check():
     """Batch E item 8: parse a payload holding a normal message, a group
     message, a self-chat message and one with no readable counterparty, and
@@ -5643,10 +5667,21 @@ _PROMPT_MD = open("prompt.md", encoding="utf-8").read()
 
 rows += [
  # item 1
- ("item 1: the style guide asks one question per message, as rule 8 does",
-  ("Ask 2-3 at most" in _style.STYLE_BLOCK, _style._ASK_ONE in _style.STYLE_BLOCK,
-   _style._ASK_ONE in _bsp({"contact_type": "employer", "history_text": ""})),
+ ("item 1: the style guide says what rule 8 says (one topic per message since Step 6)",
+  ("Ask 2-3 at most" in _style.STYLE_BLOCK, _style._ASK_ONE_TOPIC in _style.STYLE_BLOCK,
+   _style._ASK_ONE_TOPIC in _bsp({"contact_type": "employer", "history_text": ""})),
   (False, True, True)),
+ # Step 6 parts 1-3: the pairing mechanism, with no pair wired.
+ ("Step 6: rule 8 and the style guide both say one topic, and neither says one question",
+  (_sys._RULE_8_ONE_TOPIC in _sys.RULES, _sys._RULE_8_ONE_QUESTION in _sys.RULES,
+   _style._ONE_TOPIC_LINE in _style.STYLE_BLOCK, _style._ONE_QUESTION_LINE in _style.STYLE_BLOCK),
+  (True, False, True, False)),
+ ("Step 6: no pair is wired yet, so every message still asks one field",
+  sorted(f"{s}.{f.key}" for s, fs in t.SERVICE_FIELDS.items() for f in fs if f.ask_with),
+  []),
+ ("Step 6: a pair is the NEXT field, the one named, both gates decided, never three",
+  _paired_field_cases(),
+  ("b", None, None, None, None, "b")),
  # item 3
  ("item 3: the list instruction never says the timing depends on the case",
   (_templates._TIMING_DEPENDS_ON_CASE in _templates.PROCESS_INSTRUCTION,

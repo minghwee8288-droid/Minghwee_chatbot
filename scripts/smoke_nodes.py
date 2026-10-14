@@ -3810,6 +3810,59 @@ async def _stray_script_checks() -> list[tuple[str, bool]]:
     return out
 
 
+async def _step6_checks() -> list[tuple[str, bool]]:
+    """Step 6 parts 1-3: the pairing mechanism, run through the real collector
+    with ONE pair patched in (home_type with home_size) and taken out again.
+    Nothing in SERVICE_FIELDS is paired, so the live flows are untouched."""
+    import dataclasses
+    from app.services import ticket as ticket_module
+    global _EXTRACTION
+    fields = ticket_module.SERVICE_FIELDS["new_hiring"]
+    keys = [f.key for f in fields]
+    i = keys.index("home_type")
+    collected = {k: "x" for k in keys[:i]}
+    collected["requirement"] = "general housework"
+    state = {"service_type": "new_hiring", "intent": "new_hiring", "contact_type": "employer",
+             "incoming_text": "4 of us", "conversation_id": 0,
+             "history_text": "You: How many people live in your household?\nClient: 4 of us",
+             "collected_info": collected,
+             "asked_field_counts": {k: 1 for k in keys[:i]}}
+    _EXTRACTION = {}
+    out = []
+
+    unpaired = await _run_info_collector(dict(state))
+    out.append(("Step 6: with no pair, one field is counted and the prompt names one",
+                set(unpaired.get("asked_field_counts") or {}) == {"home_type"}
+                and "Ask this together with" not in _LAST_SYSTEM_PROMPT))
+
+    paired = list(fields)
+    paired[i] = dataclasses.replace(fields[i], ask_with="home_size")
+    with patch.dict(ticket_module.SERVICE_FIELDS, {"new_hiring": paired}):
+        got = await _run_info_collector(dict(state))
+        prompt = _LAST_SYSTEM_PROMPT
+        out.append(("Step 6: a pair counts BOTH fields asked (max_asks still per field)",
+                    set(got.get("asked_field_counts") or {}) == {"home_type", "home_size"}))
+        out.append(("Step 6: ...the instruction names the second, in one sentence",
+                    "Ask this together with one closely related detail, in ONE natural "
+                    "sentence" in prompt))
+        out.append(("Step 6: ...and entry 26 says the two details, not 'the question below'",
+                    "ask only the two details below, together." in prompt
+                    and "ask only the question below." not in prompt))
+        # A gate the earlier answer has not decided yet: no pair.
+        gated = list(paired)
+        gated[i + 1] = dataclasses.replace(
+            fields[i + 1], gate=ticket_module.Gate("pets", ("yes",)))
+        with patch.dict(ticket_module.SERVICE_FIELDS, {"new_hiring": gated}):
+            got = await _run_info_collector(dict(state))
+        out.append(("Step 6: an undecided gate on the partner -> one field only",
+                    set(got.get("asked_field_counts") or {}) == {"home_type"}))
+        with patch.object(ticket_module, "PAIRED_QUESTIONS", False):
+            got = await _run_info_collector(dict(state))
+        out.append(("Step 6: PAIRED_QUESTIONS off -> one field only",
+                    set(got.get("asked_field_counts") or {}) == {"home_type"}))
+    return out
+
+
 async def _batch_b_checks() -> list[tuple[str, bool]]:
     """Step 5 items 9 and 17, through the real run_turn."""
     from app.graph import graph as graph_module
@@ -5500,6 +5553,9 @@ async def main() -> int:
         failures += not ok
     for label, ok in await _batch_b_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  wording  {label:44}")
+        failures += not ok
+    for label, ok in await _step6_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  step-6  {label:44}")
         failures += not ok
     for label, ok in await _stray_script_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  wording  {label:44}")

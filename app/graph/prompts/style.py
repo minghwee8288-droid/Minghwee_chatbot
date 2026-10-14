@@ -114,6 +114,36 @@ assert _ASK_TWO_OR_THREE in STYLE_BLOCK, "style.py: the item 1 line moved"
 if ONE_QUESTION_STYLE:
     STYLE_BLOCK = STYLE_BLOCK.replace(_ASK_TWO_OR_THREE, _ASK_ONE)
 
+# Phase 3 Step 6 part 2 (2026-10-14): one TOPIC per message, not one question.
+# The collector can now name two closely related details for one message
+# (Field.ask_with, Step 6 part 1); rule 8 and these two lines change together
+# so the prompt never forbids what the instruction asks for. With no pairs
+# wired, no instruction names two details, so every message still asks one.
+# system.py reads the same switch for rule 8. False = one question per message.
+ONE_TOPIC_RULE = True
+_ONE_QUESTION_LINE = (
+    "Ask ONE question per message (rule 8), wait for the answer, then ask the next. "
+    "That one question may cover a few details that naturally belong together — "
+    "\"how old is she, and is she still mobile?\" is one question — but two separate "
+    "questions in one message is a form, not a conversation."
+)
+_ONE_TOPIC_LINE = (
+    "One topic per message (rule 8): when the instruction for this message names two "
+    "closely related details, ask them together in one natural sentence — \"how old is "
+    "she, and is she still mobile?\" — otherwise ask one question, wait for the answer, "
+    "then ask the next. Two unrelated questions in one message is a form, not a "
+    "conversation."
+)
+_ASK_ONE_TOPIC = (
+    "Ask about ONE topic per message (rule 8), then follow up with the next once "
+    "they answer."
+)
+assert _ONE_QUESTION_LINE in STYLE_BLOCK, "style.py: the Step 6 line moved"
+if ONE_TOPIC_RULE:
+    STYLE_BLOCK = STYLE_BLOCK.replace(_ONE_QUESTION_LINE, _ONE_TOPIC_LINE).replace(
+        _ASK_ONE, _ASK_ONE_TOPIC
+    )
+
 # Phase 3 Step 5 item 9 (2026-10-13): whether this is their first helper is
 # not on our file ("no placement on record" is about OUR records), so it is
 # said as a condition. The same switch turns off the guard that rewrites it

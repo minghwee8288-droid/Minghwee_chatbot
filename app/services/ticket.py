@@ -127,6 +127,13 @@ class Field:
     multiple_answers: bool = True
     # Only asked once an earlier answer opens it. See Gate.
     gate: Gate | None = None
+    # Phase 3 Step 6 part 1 (2026-10-14): the key of the field asked TOGETHER
+    # with this one, in one natural sentence. Not `group` above, which names a
+    # topic for the transition line. Only the field straight after this one in
+    # the outstanding queue, at most two per message, and only when both
+    # gates are already decided (paired_field). Empty everywhere until the
+    # agency approves the pairs, so no message asks two things yet.
+    ask_with: str = ""
 
 
 # --- Fields per service ----------------------------------------------------
@@ -2618,6 +2625,37 @@ def briefing_due(
         return False
     value = str((collected or {}).get(key) or "").strip()
     return bool(value) and value.lower() != UNANSWERED
+
+
+# Phase 3 Step 6 part 1: ask two closely related fields in one message.
+# False = always one field per message, whatever ask_with says.
+PAIRED_QUESTIONS = True
+
+
+def _gate_decided(field: Field, collected: dict[str, Any]) -> bool:
+    return field.gate is None or field.gate.state(collected) != "undecided"
+
+
+def paired_field(
+    current: Field, missing: list[Field], collected: dict[str, Any]
+) -> Field | None:
+    """The field asked together with `current`, or None.
+
+    Only the next outstanding field, only the one `current.ask_with` names,
+    and only when both gates can already be decided - so a pair never asks
+    a question whose answer could still close it. At most two per message:
+    the partner's own ask_with is not followed.
+    """
+    if not PAIRED_QUESTIONS or not current.ask_with or len(missing) < 2:
+        return None
+    if missing[0].key != current.key:
+        return None
+    partner = missing[1]
+    if partner.key != current.ask_with:
+        return None
+    if not (_gate_decided(current, collected) and _gate_decided(partner, collected)):
+        return None
+    return partner
 
 
 def missing_fields(service_type: str | None, collected: dict[str, Any]) -> list[Field]:

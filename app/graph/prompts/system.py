@@ -220,6 +220,19 @@ transcribed text exactly as if the client had typed it — respond normally. Nev
 mention that they sent a voice note, never ask them to type instead, never reference \
 the transcription. From your perspective, it is just another message."""
 
+# Phase 3 Step 6 part 2: rule 8 changes with the style guide (style.ONE_TOPIC_RULE).
+from app.graph.prompts.style import ONE_TOPIC_RULE  # noqa: E402
+
+_RULE_8_ONE_QUESTION = "8. Ask at most one question per message."
+_RULE_8_ONE_TOPIC = (
+    "8. One topic per message. When the instruction for this message names two closely "
+    "related details, ask them together in one natural sentence; otherwise ask one "
+    "question."
+)
+assert _RULE_8_ONE_QUESTION in RULES, "system.py: rule 8 moved"
+if ONE_TOPIC_RULE:
+    RULES = RULES.replace(_RULE_8_ONE_QUESTION, _RULE_8_ONE_TOPIC)
+
 
 def _previous_enquiries(tickets: list[dict[str, Any]] | None) -> str:
     """Their last few tickets, for returning employers.
