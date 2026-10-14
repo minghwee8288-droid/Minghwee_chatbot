@@ -1540,6 +1540,47 @@ def names_a_leave_reason(text: str) -> bool:
     """Does the client's own message say WHY she is going home?"""
     return bool(_NAMES_A_LEAVE_REASON.search(text or ""))
 
+
+# Phase 3 Step 5 Batch E item 3 (2026-10-14). Phone test: "My helper needs to
+# go home urgently, her father is in hospital" was asked name, helper and
+# country, then closed - the travel dates were never asked. Reproduced 2 of 2:
+# "urgently" was extracted as leave_dates "as soon as possible - within 2
+# weeks", the second half invented. Urgent or not, the agent needs the dates
+# for the embassy paperwork. An UNASKED leave_dates is kept only when the
+# client's own message states a date or a time; once asked, their answer
+# stands. The closing briefing also says once that we will flag it as urgent,
+# without promising it will be any faster (URGENT_LEAVE_NOTE).
+# False = the extraction as returned, and no urgency line.
+LEAVE_DATES_ASKED = True
+_STATES_A_DATE = re.compile(
+    r"\d|\b(?:jan(?:uary)?|feb(?:ruary)?|march|april|june|july|aug(?:ust)?"
+    r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|in\s+may|may\s+\d"
+    r"|mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?"
+    r"|sat(?:urday)?|sun(?:day)?|weekend|today|tonight|tomorrow|next\s+(?:week|month|year)"
+    r"|this\s+(?:week|month|year)|end\s+of|(?:a|one|two|three|four|five|six|few)\s+"
+    r"(?:days?|weeks?|months?)|christmas|new\s+year|raya|lebaran|eid|thingyan)\b",
+    re.IGNORECASE,
+)
+
+
+def states_a_date(text: str) -> bool:
+    """Does the client's own message say WHEN she is travelling?"""
+    return bool(_STATES_A_DATE.search(text or ""))
+
+
+URGENT_LEAVE_NOTE = (
+    "\n\nTHIS LEAVE IS URGENT (the client gave a family matter or an emergency as "
+    "the reason). Add ONE short sentence saying we will flag it as urgent with our "
+    "team, on its own just before the handover line - never as a numbered step. Do "
+    "NOT promise it will be done faster than the timing stated above, do not "
+    "invent a quicker route or a date, and say it once only."
+)
+
+
+def urgent_leave(collected: dict) -> bool:
+    """A home leave whose filed reason is a family matter or an emergency."""
+    return bool(guards._FAMILY_MATTER.search(str(collected.get("leave_reason") or "")))
+
 _PREFERENCE_FILLER = re.compile(
     # `current` and `existing` joined 2026-09-18: "replace current helper" was
     # the value the extractor filed for `reason` off the opening message, and
@@ -3070,6 +3111,20 @@ async def _extract(
                 text[:40],
             )
             continue
+        # Batch E item 3: "urgently" is not a travel date. See states_a_date.
+        if (
+            LEAVE_DATES_ASKED
+            and key == "leave_dates"
+            and not asked.get(key)
+            and not states_a_date(state.get("incoming_text") or "")
+        ):
+            logger.info(
+                "Conversation %s: ignoring '%s' for 'leave_dates' - the client's "
+                "message gave no date, so the value was inferred",
+                state.get("conversation_id"),
+                text[:40],
+            )
+            continue
         if key in _PREFERENCE_FIELDS and not _states_a_preference(text):
             logger.info(
                 "Conversation %s: ignoring '%s' for '%s' - it restates the request "
@@ -4187,6 +4242,9 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
                 )
         if service_type == "home_leave":
             briefing_note += HOME_LEAVE_TICKET_NOTE
+            # Batch E item 3: urgent - flagged once, with no faster promise.
+            if LEAVE_DATES_ASKED and urgent_leave(collected):
+                briefing_note += URGENT_LEAVE_NOTE
         if leave_by_helper:
             briefing_note += HELPER_HOME_LEAVE_BRIEFING_NOTE
 

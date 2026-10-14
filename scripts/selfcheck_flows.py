@@ -5878,6 +5878,21 @@ rows += [
   (_ic_b.LEAVE_REASON_ASKED,
    'key == "leave_reason"\n            and not asked.get(key)' in inspect.getsource(_ic_b._extract)),
   (True, True)),
+ # Step 5 Batch E item 3: "urgently" is not a travel date; urgency is flagged.
+ ("E3: a date or time is told apart from urgency",
+  tuple(_ic_b.states_a_date(t) for t in (
+      "My helper needs to go home urgently, her father is in hospital",
+      "as soon as possible", "she wants to go home", "this Saturday",
+      "on 20 October", "next week, back in a month", "for two weeks in December")),
+  (False, False, False, True, True, True, True)),
+ ("...and an urgent reason is recognised, a regular one is not",
+  (_ic_b.urgent_leave({"leave_reason": "her father is in hospital"}),
+   _ic_b.urgent_leave({"leave_reason": "family emergency"}),
+   _ic_b.urgent_leave({"leave_reason": "regular yearly leave"}),
+   _ic_b.LEAVE_DATES_ASKED,
+   "never as a numbered step" in _ic_b.URGENT_LEAVE_NOTE
+   and "Do NOT promise" in _ic_b.URGENT_LEAVE_NOTE),
+  (True, True, False, True, True)),
 ]
 
 bad = 0
