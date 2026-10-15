@@ -564,6 +564,8 @@ because the lead is opened early and the ticket is created much later.
 | A helper we know the client has is CONFIRMED by name, never asked for and never assumed | `info_collector.HELPER_CONFIRM_SERVICES` + `helper_confirm_note` / `confirmed_helper` + webhook `known_helpers` | Known = live placements, then helpers named on this number's earlier tickets (`placements` is empty live, so the tickets are usually all we have). First ask only: "Is this home leave for Yoyo, or for another helper?". A known name or a lone yes fills her name and what we hold about her; an unknown name or a "no/another" is the other helper. A single placed helper is no longer filled in silently on these services. Not direct_hiring (a NEW helper). |
 | "Welcome back" after a break, to anyone we have dealt with | `info_collector.existing_client` + `after_a_break` (`WELCOME_BACK_AFTER_HOURS` 6, webhook `hours_since_last_message`) | Was: placements only (none live) and on every new collection. Agency's choice, 2026-10-08: only after a real break. A client whose message already says what they want is not asked "follow-up or something new?". Batch G (2026-10-15) made it MORE than 6 hours (`STRICTLY_AFTER_BREAK`); the client's decision F the same day reverted it to 6 hours OR MORE (`STRICTLY_AFTER_BREAK = False`). A helper on our candidates file counts too (`CANDIDATE_WELCOME_BACK`); and the welcome and a known-helper or candidate-name confirmation come before the Step 6c question-style offer, which waits a turn and needs 4+ questions left (`WELCOME_BEFORE_STYLE_OFFER`). |
 | Languages, religion, cooking and house rules are asked of nobody | `ticket.ASK_LANGUAGES` / `ASK_RELIGION` / `ASK_COOKING` / `ASK_HOUSE_RULES` -> `_REMOVED_QUESTION_KEYS`, applied to `SERVICE_FIELDS` after every list is built | **Removed on Thomas's instruction, 2026-10-15; do not reintroduce unless he asks.** "A generic yes tells us nothing useful for matching." Every employer flow and the candidate registration (both sides stay matched); the replacement question no longer names languages, special_duties no longer says "cleaning and cooking" and is unpaired, her duties question no longer lists cooking, and the all-at-once list follows. Stop asking only: no column changes, collected values stay. `FIELDS_BEFORE_REMOVAL` keeps the old lists for the self-checks on the removed fields' wording. The religion / cooking / house-rules rows below describe the fields as they are if a switch is turned back on. A volunteered house rule is still acknowledged (`_VOLUNTEERED_REQUIREMENT`) but has no field to land in; it stays in the transcript. |
+| No yes/no form where a choice or a figure is wanted | `ticket.WHICH_DUTIES_WORDING`, `SALARY_AS_A_FIGURE`, `NATIONALITY_AS_A_CHOICE`; `info_collector._OFFERS_NONE` | Thomas's decisions, 2026-10-15. Extra duties (both sides) is "Which of these ... or none?" and the items are stored; a bare "no" there is "none" (like a no to "any...?"), a bare "yes" is asked again. Salary is "What monthly salary are you budgeting for her?" / "...hoping for?", examples from the bands (`_effective_options`, from the nationality floor). Nationality is "Which nationality would you prefer: Filipino, Indonesian, Myanmar, or no preference?". The helper's pets question is unchanged. |
+| A helper is never asked whether this is the best number to reach her | `ticket.CONTACT_NUMBER_FROM_WHATSAPP` + `info_collector._known_fields` | Thomas, 2026-10-15. `contact_number` (her own transfer) is filled as "the WhatsApp number she is writing from" - no digits, because collected values reach the prompt; the number is on the conversation. |
 | An answer to the all-at-once list is an answer to our question | `guards.QUESTION_LIST_HEADS` in `answering_our_question` (`LIST_ANSWER_IS_AN_ANSWER`) | Found 2026-10-15: only a message's first line is marked "You:", and the list's first line has no "?", so a transfer client answering it was moved to new_hiring and quoted $1,428 and 4-6 weeks (replayed before and after the question removals alike; introduced with Step 6c). The two list heads are defined once in guards and written by `info_collector`. Replayed 2 of 2: stays a transfer, $1,688, 1-2 weeks. |
 | No lead time where we hold none (a Myanmar home leave) | `guards.guard_unheld_timeline` inside `guard_nationality_fee`, all three reply paths (`NO_UNHELD_TIMELINE`, `TIMELINE_NOT_HELD`) | Fees document 2026-10-15: a helper's own Myanmar home leave was told "approximately 2 weeks" (the Indonesian span). A sentence giving a lead time is replaced with "Our agent will confirm the timeline for a Myanmar helper's home leave."; the embassy endorsement's ~10 working days (every nationality) is kept. |
 | The agency's fees document is the source of truth for fees, timelines and wording | `load_service_notes.py` (ROWS + generated UPDATES, `TEXT_REPLACEMENTS`), `kb_rules` floors | 2026-10-15, with the client's decisions A-G: $288 replacement fee everywhere, direct hire 1-2 weeks here and PH 5-6 / ID 4 / MM 2-4 weeks after MOM approval, salary floors PH 650 / ID 550 / MM 500, the +$60 lines in the document's words, "falls under her package" never "guarantee period". The .docx is in `docs/`, kept out of git. A closing briefing now also states a fixed fee plainly from its OWN records (`info_collector._write`). |
@@ -864,6 +866,10 @@ Easy to get wrong:
   question again (removed on his instruction; do not reintroduce unless he
   asks): `ticket.ASK_LANGUAGES`, `ticket.ASK_RELIGION`, `ticket.ASK_COOKING`
   (also re-pairs cooking + special_duties), `ticket.ASK_HOUSE_RULES`.
+  Thomas's wording decisions (2026-10-15), each `True` for the new wording and
+  `False` for the old question: `ticket.CONTACT_NUMBER_FROM_WHATSAPP`,
+  `ticket.WHICH_DUTIES_WORDING`, `ticket.SALARY_AS_A_FIGURE`,
+  `ticket.NATIONALITY_AS_A_CHOICE`.
   `guards.LIST_ANSWER_IS_AN_ANSWER` (2026-10-15), `False` for the Step 6c
   behaviour (answers to the all-at-once list not read as answers).
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
@@ -1902,6 +1908,21 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-15** - **Thomas's wording decisions on the low-value yes/no
+  questions.** Each behind its own switch in `ticket.py` (section 7). A helper's
+  own transfer no longer asks "Is this the best number to reach you on?"; the
+  WhatsApp number she writes from is used (`CONTACT_NUMBER_FROM_WHATSAPP`).
+  Extra duties asks WHICH on both sides ("Which of these would she need to do
+  / are you willing to do: window cleaning, car washing, gardening, grocery
+  shopping, hand-washing laundry, or none?") and a bare "no" counts as none
+  (`WHICH_DUTIES_WORDING`, `_OFFERS_NONE`). Salary asks for a figure ("What
+  monthly salary are you budgeting for her?" / "...hoping for?"), with the
+  nationality-floored bands as examples (`SALARY_AS_A_FIGURE`). Nationality
+  is a choice of the three or no preference (`NATIONALITY_AS_A_CHOICE`). The
+  candidate pets question is unchanged. The all-at-once list follows the same
+  wording. prompt.md entry 70. smoke 557, flows 948; each switch off turns its
+  own check red (4 of 4).
 
 - **2026-10-15** - **Four questions removed on Thomas's instruction; do not
   reintroduce unless he asks.** "A generic yes tells us nothing useful for

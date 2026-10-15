@@ -1027,9 +1027,14 @@ They have already told you she should be experienced - {what they said}. Do NOT 
 The answers the office works with here are: {options}. The written question above names them deliberately, so name them all - the client cannot choose an option they were never shown. Keep it one flowing sentence rather than a numbered menu.
 ```
 …followed by exactly one of these three:
-- *If the list is complete (used only for a job seeker's country):*
+- *If the list is complete (a job seeker's country, and since 2026-10-15 the employer's nationality choice):*
   ```text
-   That list is the whole of it - do NOT invite anything outside it, do not add 'or another country', 'or somewhere else' or 'or another option', and do not hint that other answers might work. If she names a country we do not recruit from, that is dealt with on the next turn - it is not for this question to invite it.
+   That list is the whole of it - do NOT invite anything outside it, do not add 'or another country', 'or somewhere else' or 'or another option', and do not hint that other answers might work.
+  ```
+  For the job seeker's country only, it goes on: "If she names a country we do not recruit from, that is dealt with on the next turn - it is not for this question to invite it."
+- *For extra duties, salary and nationality (since 2026-10-15):*
+  ```text
+  Keep it a WHICH / WHAT question, as the office wrote it. Do NOT turn it into a yes-or-no question ('Would she need...?', 'Do you have...?', 'Are you willing...?'): a bare yes tells us nothing.
   ```
 - *If several answers can be given:*
   ```text
@@ -3270,4 +3275,21 @@ generic "yes" tells us nothing useful for matching.
 Only the asking stops. No database column changes, and a value already
 collected stays on its ticket. The "all at once" numbered list leaves them out
 too. Setting a switch to True brings that one question back.
+
+### Reworded the same day (Thomas's decisions on the yes/no questions)
+
+Each switch is True for the new wording; False restores the old one. The
+"all at once" list uses the same wording.
+
+| Question | Now | Was | Switch |
+|---|---|---|---|
+| A helper's contact number (her own transfer) | not asked; the WhatsApp number she writes from is used | "Is this the best number to reach you on, or would you prefer we use another one?" | `ticket.CONTACT_NUMBER_FROM_WHATSAPP` |
+| Extra duties (employer) | "Which of these would she need to do: window cleaning, car washing, gardening, grocery shopping, hand-washing laundry, or none?" | "Beyond the usual housework, would she need to do things like...?" | `ticket.WHICH_DUTIES_WORDING` |
+| Extra duties (helper) | "Which of these are you willing to do: window cleaning, car washing, gardening, grocery shopping, hand-washing laundry, or none?" | "Would you be willing to do other duties such as...?" | `ticket.WHICH_DUTIES_WORDING` |
+| Salary (employer) | "What monthly salary are you budgeting for her?", with examples from the salary bands, which start at the nationality's basic | "Do you have a monthly salary budget in mind, in SGD?" | `ticket.SALARY_AS_A_FIGURE` |
+| Salary (helper) | "What monthly salary are you hoping for?" (examples in SGD) | "Do you have a monthly salary in mind, in SGD?" | `ticket.SALARY_AS_A_FIGURE` |
+| Nationality (employer) | "Which nationality would you prefer: Filipino, Indonesian, Myanmar, or no preference?" | "Do you have a preferred nationality?" | `ticket.NATIONALITY_AS_A_CHOICE` |
+
+The helper's pets question is unchanged. A bare "no" to a "Which of these ...
+or none?" question counts as "none"; a bare "yes" is asked again.
 

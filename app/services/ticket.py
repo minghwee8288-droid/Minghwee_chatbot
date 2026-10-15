@@ -608,6 +608,25 @@ ASK_COOKING = False     # cooking (employer), cooking_ability (candidate); the
                         # cooking + special_duties pair is unwired with it
 ASK_HOUSE_RULES = False  # additional_notes ("any other house rules ...")
 
+# Thomas's wording decisions on the low-value yes/no questions, 2026-10-15.
+# Each True is the new wording; False restores the old question.
+# A helper's own flows: "Is this the best number to reach you on?" is never
+# asked; the WhatsApp number she writes from is used (info_collector fills it).
+CONTACT_NUMBER_FROM_WHATSAPP = True
+# Extra duties asked as WHICH, not yes/no, on both sides; the items are stored.
+WHICH_DUTIES_WORDING = True
+# Salary asked as a figure, not "do you have one in mind?".
+SALARY_AS_A_FIGURE = True
+# Nationality asked as a choice, not "do you have a preferred nationality?".
+NATIONALITY_AS_A_CHOICE = True
+# The fields asked as which/what under those switches; info_collector tells the
+# model not to turn them back into yes/no.
+NOT_YES_NO_KEYS: frozenset[str] = frozenset(
+    (("special_duties", "duties_willing") if WHICH_DUTIES_WORDING else ())
+    + (("budget", "expected_salary") if SALARY_AS_A_FIGURE else ())
+    + (("preferred_nationality",) if NATIONALITY_AS_A_CHOICE else ())
+)
+
 
 SERVICE_FIELDS: dict[str, list[Field]] = {
     # §2 — employer lead flow.
@@ -792,9 +811,14 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         Field(
             "preferred_nationality",
             "nationality preference",
+            "Which nationality would you prefer: Filipino, Indonesian, Myanmar, "
+            "or no preference?" if NATIONALITY_AS_A_CHOICE else
             "Do you have a preferred nationality?",
             group="their preferences",
             options=("Filipino", "Indonesian", "Myanmar", "no preference"),
+            # The three we place, or none: nothing outside them to invite
+            # (the replay offered "or something else?").
+            options_are_exhaustive=NATIONALITY_AS_A_CHOICE,
         ),
         # Asked at the agency's instruction, 2026-09-17, and asked in place of
         # the pork/beef question rather than beside it - their words, after the
@@ -924,6 +948,9 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         Field(
             "special_duties",
             "duties beyond ordinary housework",
+            "Which of these would she need to do: window cleaning, car washing, "
+            "gardening, grocery shopping, hand-washing laundry, or none?"
+            if WHICH_DUTIES_WORDING else
             ("Beyond the usual cleaning and cooking, would she need to do things "
              if ASK_COOKING else
              "Beyond the usual housework, would she need to do things ")
@@ -967,6 +994,9 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         Field(
             "budget",
             "monthly salary budget",
+            # The examples come from the options, which _effective_options
+            # starts at the nationality's salary floor (kb_rules).
+            "What monthly salary are you budgeting for her?" if SALARY_AS_A_FIGURE else
             "Do you have a monthly salary budget in mind, in SGD?",
             max_asks=1,
             optional=True,
@@ -2131,6 +2161,9 @@ SERVICE_FIELDS[CANDIDATE_HIRING] += [
     Field(
         "duties_willing",
         "the extra duties she is willing to take on",
+        "Which of these are you willing to do: window cleaning, car washing, "
+        "gardening, grocery shopping, hand-washing laundry, or none?"
+        if WHICH_DUTIES_WORDING and not ASK_COOKING else
         ("Would you be willing to do other duties such as cooking, high-rise "
          if ASK_COOKING else
          "Would you be willing to do other duties such as high-rise ")
@@ -2219,6 +2252,7 @@ SERVICE_FIELDS[CANDIDATE_HIRING] += [
     Field(
         "expected_salary",
         "the salary she is looking for",
+        "What monthly salary are you hoping for?" if SALARY_AS_A_FIGURE else
         "Do you have a monthly salary in mind, in SGD?",
         max_asks=1,
         optional=True,

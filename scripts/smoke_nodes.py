@@ -149,7 +149,7 @@ CASES = [
                              "helper_room": 1, "pets": 1, "preferred_nationality": 1,
                              "helper_profile": 1, "hire_source": 1},
       "history_text": "You: Are you open to a first-timer?",
-      "_expect_prompt": "high-rise window cleaning",
+      "_expect_prompt": "Which of these would she need to do",
       "_forbid_prompt": "cooking requirements"}),
     ("info_collector", "Thomas 2026-10-15: no house-rules question before how they heard of us",
      {"service_type": "new_hiring", "intent": "new_hiring", "incoming_text": "within a month",

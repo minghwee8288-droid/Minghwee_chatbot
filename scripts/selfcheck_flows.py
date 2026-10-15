@@ -916,6 +916,33 @@ rows = [
   ico.all_questions_message(t.missing_fields("new_hiring", {"full_name": "Tan"}),
                             {"full_name": "Tan"}, True)[0].startswith(_guards_mod.QUESTION_LIST_HEADS),
   True),
+ # --- Thomas's wording decisions, 2026-10-15 ---------------------------
+ ("a helper is never asked whether this is the best number to reach her on",
+  "contact_number" in ico._known_fields({"phone": "+6590000001"}, "transfer"), True),
+ ("...and no digits of it go into what the model reads",
+  any(ch.isdigit() for ch in ico._known_fields({"phone": "+6590000001"}, "transfer")
+      .get("contact_number", "")), False),
+ ("extra duties, salary and nationality are asked as WHICH / WHAT, not yes/no",
+  [k for s, k in (("new_hiring", "special_duties"), ("candidate_new_hiring", "duties_willing"),
+                  ("new_hiring", "budget"), ("candidate_new_hiring", "expected_salary"),
+                  ("new_hiring", "preferred_nationality"))
+   if ico._yes_no_question(_question_of(s, k))], []),
+ ("...a bare 'no' to 'which of these ... or none?' is 'none'",
+  [f.key for f in ico._unfinished("candidate_new_hiring", {"duties_willing": "no"},
+                                  {"duties_willing": 1})[0]], []),
+ ("...but a bare 'yes' to it is asked again",
+  [f.key for f in ico._unfinished("new_hiring", {"special_duties": "yes"},
+                                  {"special_duties": 1})[0]], ["special_duties"]),
+ ("...and the model is told not to turn them back into yes/no",
+  [k for s, k in (("new_hiring", "special_duties"), ("candidate_new_hiring", "duties_willing"),
+                  ("new_hiring", "budget"), ("candidate_new_hiring", "expected_salary"),
+                  ("new_hiring", "preferred_nationality"))
+   if "Do NOT turn it into a yes-or-no question" not in _flat(_guidance_for(s, k))], []),
+ ("...and the nationality choice invites nothing outside the four",
+  "not on the list" in _guidance_for("new_hiring", "preferred_nationality"), False),
+ ("...and the salary bands still start at the nationality floor",
+  ico._effective_options(next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "budget"),
+                         {"preferred_nationality": "Filipino"})[0].startswith("SGD 650"), True),
  ("passport_renewal asks case id", any(f.key == "case_id" for f in t.SERVICE_FIELDS["passport_renewal"]), False),
  ("renewal asks case id", any(f.key == "case_id" for f in t.SERVICE_FIELDS["renewal"]), False),
  ("NO flow asks for a case id",
@@ -2276,9 +2303,10 @@ rows = [
  # "Beyond the usual cleaning and cooking, WOULD she need to..." is a yes/no
  # question wearing a subordinate clause, and "no" was being re-asked.
  ("an auxiliary after a comma still makes it a yes/no question",
-  ico._yes_no_question(
-      next(f for f in t.SERVICE_FIELDS["new_hiring"]
-           if f.key == "special_duties").question), True),
+  # The old special_duties wording (WHICH_DUTIES_WORDING off), the case
+  # this rule was written for.
+  ico._yes_no_question("Beyond the usual housework, would she need to do things "
+                       "like car washing?"), True),
  ("'no' to the extra-duties question is an answer",
   [f.key for f in ico._unfinished("new_hiring", {"special_duties": "no"},
                                   {"special_duties": 1})[0]], []),
@@ -3765,7 +3793,12 @@ rows = [
  ("hers is the only closed option set anywhere",
   sorted((svc, f.key) for svc, fields in t.SERVICE_FIELDS.items()
          for f in fields if f.options_are_exhaustive),
-  [("candidate_new_hiring", "nationality")]),
+  # Plus the employer's nationality choice since 2026-10-15 (Thomas: the three
+  # we place, or no preference), in every flow that asks it.
+  sorted([("candidate_new_hiring", "nationality")]
+         + ([(s, "preferred_nationality") for s in t.SERVICE_FIELDS
+             if "preferred_nationality" in {f.key for f in t.SERVICE_FIELDS[s]}]
+            if t.NATIONALITY_AS_A_CHOICE else []))),
 
  # What the refusal may not do. She has just been turned down, which is the
  # worst possible audience for a promise we cannot keep - there is no waiting
@@ -3799,8 +3832,12 @@ rows = [
  # "The bot should consistently use SGD, not USD/dollars." Only on her side:
  # an employer reading "$600-700" is in Singapore and cannot mean anything
  # else, while a helper answering from Manila or Jakarta reasonably can.
+ # Thomas's wording (2026-10-15) names no currency in the question itself;
+ # the examples it is asked with are the bands, and those say SGD.
  ("the salary she is asked for is in SGD",
-  "SGD" in _question_of("candidate_new_hiring", "expected_salary"), True),
+  "SGD" in _question_of("candidate_new_hiring", "expected_salary")
+  or all("SGD" in o for o in _options_of("candidate_new_hiring", "expected_salary")
+         if o != "not sure yet"), True),
  ("and the bands are still the employer's own, so the two match",
   _options_of("candidate_new_hiring", "expected_salary")
   == _options_of("new_hiring", "budget"), True),

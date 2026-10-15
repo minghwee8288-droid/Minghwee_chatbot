@@ -1220,6 +1220,12 @@ def _known_fields(
     if record_name:
         known["full_name"] = record_name[:300]
 
+    # Thomas, 2026-10-15: a helper is not asked "Is this the best number to
+    # reach you on?" - she is writing from it. No digits here: collected values
+    # reach the prompt, and the number is on the conversation already.
+    if ticket_service.CONTACT_NUMBER_FROM_WHATSAPP and state.get("phone"):
+        known["contact_number"] = "the WhatsApp number she is writing from"
+
     # Whether they are a returning client is a matter of record, not a question,
     # and as of 2026-09-04 it is NEVER asked either way. The webhook counts this
     # number's non-archived `placements` rows every turn and the answer is
@@ -1933,6 +1939,9 @@ _BARE_YES_NO = re.compile(
 # A bare YES to the same question still says nothing and is still followed up.
 _BARE_NO = re.compile(r"^\W*(?:no|nope|nah|none|nothing)\W*$", re.IGNORECASE)
 _ASKS_FOR_ANY = re.compile(r"^\W*(?:any(?:thing|one)?|(?:is|are)\s+there)\b", re.IGNORECASE)
+# "Which of these ... or none?" (the extra-duties wording, 2026-10-15): a bare
+# no IS "none", so it closes the question like a no to an "any...?" one.
+_OFFERS_NONE = re.compile(r"\bor\s+none\b", re.IGNORECASE)
 
 
 # Phase 3 Step 5 Batch C item 6 (2026-10-14): a collection-turn reply asks the
@@ -2431,7 +2440,8 @@ def _unfinished(
             asked.get(field.key, 0) <= min(field.max_asks, MAX_ASKS_PER_FIELD)
             and _BARE_YES_NO.match(value)
             and not _yes_no_question(field.question)
-            and not (_BARE_NO.match(value) and _ASKS_FOR_ANY.match(field.question))
+            and not (_BARE_NO.match(value) and (_ASKS_FOR_ANY.match(field.question)
+                                                or _OFFERS_NONE.search(field.question)))
         ):
             note = (
                 f'\n\nThey answered "{value}", which does not tell you anything '
@@ -3052,6 +3062,16 @@ def _field_guidance(
         "question that gets one of them is not this question. Never read it out "
         "verbatim like a form."
     )
+    # Thomas, 2026-10-15: these are asked as WHICH / WHAT, because a bare "yes"
+    # tells us nothing. The e2e replay right after the rewording still came
+    # back "Would she need to do any extra duties such as ...?" - the model
+    # turning the new question back into the old one - so it is said outright.
+    if field.key in ticket_service.NOT_YES_NO_KEYS:
+        parts.append(
+            "\n\nKeep it a WHICH / WHAT question, as the office wrote it. Do NOT turn "
+            "it into a yes-or-no question ('Would she need...?', 'Do you have...?', "
+            "'Are you willing...?'): a bare yes tells us nothing."
+        )
 
     # The household question overlaps the two care-detail questions, and a
     # client who has just answered one of those reads it as being asked again.
@@ -3170,9 +3190,11 @@ def _field_guidance(
                     " That list is the whole of it - do NOT invite anything "
                     "outside it, do not add 'or another country', 'or "
                     "somewhere else' or 'or another option', and do not hint "
-                    "that other answers might work. If she names a country we "
-                    "do not recruit from, that is dealt with on the next turn "
-                    "- it is not for this question to invite it."
+                    "that other answers might work."
+                    + (" If she names a country we "
+                       "do not recruit from, that is dealt with on the next turn "
+                       "- it is not for this question to invite it."
+                       if field.key == "nationality" else "")
                 )
             elif field.multiple_answers and SHORT_RELIGION_QUESTION and field.key == "helper_religion":
                 # Batch E item 11: the invitation was read out as two extra
