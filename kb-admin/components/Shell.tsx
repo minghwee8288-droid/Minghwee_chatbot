@@ -9,6 +9,17 @@ export const NAV = [
   { href: '/activity', label: 'Activity' },
 ];
 
+/** The sidebar for this viewer: Pending approval for approvers, and the
+ *  watcher's two pages only while the watcher is switched on. */
+export function navFor(viewer: Viewer): { href: string; label: string }[] {
+  const items = viewer.canApprove ? [...NAV.slice(0, 2), { href: '/pending', label: 'Pending approval' }, ...NAV.slice(2)] : [...NAV];
+  if (viewer.watcherOn) {
+    const at = items.findIndex((i) => i.href === '/test');
+    items.splice(at, 0, { href: '/sources', label: 'Watched pages' }, { href: '/watch', label: 'Page changes to review' });
+  }
+  return items;
+}
+
 /**
  * The frame every signed-in page is drawn in: dark sidebar on the left, page on
  * the right. It only draws - the page has already called requireViewer() and
@@ -35,7 +46,7 @@ export function Shell({
             </p>
           </div>
           <nav className="sidebar-nav">
-            {(viewer.canApprove ? [...NAV.slice(0, 2), { href: '/pending', label: 'Pending approval' }, ...NAV.slice(2)] : NAV).map((item) => (
+            {navFor(viewer).map((item) => (
               <Link
                 key={item.href}
                 href={item.href}

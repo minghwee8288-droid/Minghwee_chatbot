@@ -14,6 +14,8 @@ export type Viewer = {
   canEdit: boolean;
   /** True only when the editor is configured AND this role is approver. */
   canApprove: boolean;
+  /** True only when the KB watcher is switched on (lib/config.ts `watcher`). */
+  watcherOn: boolean;
 };
 export type AuthResult =
   | { ok: true; viewer: Viewer }
@@ -53,6 +55,7 @@ export async function checkRequest(): Promise<AuthResult> {
       role: decision.role,
       canEdit: editorOn && canEdit(decision.role),
       canApprove: editorOn && canApprove(decision.role),
+      watcherOn: cfg.watcher !== null,
     },
   };
 }

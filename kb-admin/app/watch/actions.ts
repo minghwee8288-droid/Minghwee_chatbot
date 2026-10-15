@@ -1,0 +1,209 @@
+'use server';
+
+import { redirect } from 'next/navigation';
+import type { ActionState } from '@/app/editor/actions';
+import { actorForWrite } from '@/lib/auth';
+import { errorMessage, hasNric } from '@/lib/editing';
+import { EmbedError, embedEntry, embedTexts } from '@/lib/embed';
+import { env } from '@/lib/env';
+import { addressProblem, PoliteFetcher } from '@/lib/watcher/fetcher';
+import { DraftingError, draftWithModel } from '@/lib/watcher/llm';
+import { approveAndPublish, checkSource, type WatchCall } from '@/lib/watcher/pipeline';
+import { lastGoodText, sourceById, watchDraft } from '@/lib/watchQueries';
+import { callWrite } from '@/lib/write';
+
+/**
+ * The KB watcher's actions (migration 015). Each one:
+ *   1. runs actorForWrite() FIRST - the session verified with Supabase Auth and
+ *      the role read from cb_kb_admin_users now;
+ *   2. refuses unless the watcher is switched on (KB_SOURCES_ENABLED);
+ *   3. calls only kb_admin_* functions (lib/write.ts), passing the verified
+ *      person; the database checks the role again and audit-logs the action.
+ * Nothing here changes what the chatbot answers until an APPROVER approves a
+ * draft, and even then only through the existing publish path.
+ */
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CATEGORIES = ['government_rule', 'process', 'embassy', 'other'];
+
+function text(form: FormData, name: string, max = 4000): string {
+  return String(form.get(name) ?? '').slice(0, max);
+}
+
+function id(form: FormData, name: string): string | null {
+  const value = String(form.get(name) ?? '');
+  return UUID.test(value) ? value : null;
+}
+
+function log(action: string, userId: string, target: string, outcome: string) {
+  console.info(`[watcher] ${action} user=${userId.slice(0, 8)} target=${target.slice(0, 8)} ${outcome}`);
+}
+
+function failure(action: string, userId: string, target: string, error: unknown): ActionState {
+  if (error instanceof EmbedError || error instanceof DraftingError) {
+    log(action, userId, target, `failed: ${error.message}`);
+    return { error: `Nothing was changed: ${error.message}.` };
+  }
+  const code = (error as { code?: string })?.code;
+  log(action, userId, target, `failed code=${code ?? 'none'}`);
+  if (!code?.startsWith('KB')) console.error('[watcher] unexpected error', code ?? '', String((error as Error)?.message ?? '').slice(0, 200));
+  return { error: errorMessage(code, (error as { message?: string })?.message) };
+}
+
+const call: WatchCall = <T,>(fn: string, params: unknown[]) => callWrite<T>(fn as Parameters<typeof callWrite>[0], params as Parameters<typeof callWrite>[1]);
+
+function watcherOff(): ActionState | null {
+  return env().watcher ? null : { error: 'The page watcher is switched off.' };
+}
+
+// ---------------------------------------------------------------------------
+
+export async function addSource(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const auth = await actorForWrite();
+  if (!auth.ok) return { error: auth.message };
+  const { actor } = auth;
+  const off = watcherOff();
+  if (off) return off;
+  const raw = text(form, 'url', 2000).trim();
+  const problem = addressProblem(raw);
+  if (problem) return { error: `That address cannot be watched: ${problem}.` };
+  const url = new URL(raw);
+  url.hash = '';
+  const label = text(form, 'label', 200).trim();
+  const category = text(form, 'category', 40);
+  if (!label) return { error: 'Give the page a label, for example "MOM - rest days".' };
+  if (!CATEGORIES.includes(category)) return { error: 'Choose a category.' };
+  let sourceId: string;
+  try {
+    sourceId = await callWrite<string>('kb_admin_source_add', [actor.userId, actor.email, url.toString(), label, category]);
+  } catch (error) {
+    return failure('source_add', actor.userId, 'new', error);
+  }
+  log('source_add', actor.userId, sourceId, 'ok');
+  redirect('/sources?added=1');
+}
+
+export async function removeSource(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const auth = await actorForWrite();
+  if (!auth.ok) return { error: auth.message };
+  const { actor } = auth;
+  const off = watcherOff();
+  if (off) return off;
+  const sourceId = id(form, 'source_id');
+  if (!sourceId) return { error: 'No page was named.' };
+  const reason = text(form, 'reason', 500).trim();
+  if (!reason) return { error: 'Please say why this page should no longer be watched.' };
+  try {
+    await callWrite('kb_admin_source_remove', [actor.userId, actor.email, sourceId, reason]);
+  } catch (error) {
+    return failure('source_remove', actor.userId, sourceId, error);
+  }
+  log('source_remove', actor.userId, sourceId, 'ok');
+  redirect('/sources?removed=1');
+}
+
+export async function fetchNow(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const auth = await actorForWrite();
+  if (!auth.ok) return { error: auth.message };
+  const { actor } = auth;
+  const off = watcherOff();
+  if (off) return off;
+  const sourceId = id(form, 'source_id');
+  if (!sourceId) return { error: 'No page was named.' };
+  const source = await sourceById(sourceId);
+  if (!source || !source.active) return { error: 'That page is no longer watched.' };
+  const fetcher = new PoliteFetcher({ fetch: (u, init) => fetch(u, { ...init, cache: 'no-store' }), now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) });
+  let result;
+  try {
+    result = await checkSource(source, {
+      call,
+      fetchPage: (u) => fetcher.fetchPage(u),
+      previousText: lastGoodText,
+      embed: embedTexts,
+      recorder: { userId: actor.userId, email: actor.email },
+      searcher: { userId: actor.userId, email: actor.email },
+      llm: draftWithModel,
+      model: env().watcher!.llm.model,
+      log: (line) => console.info(`[watcher] ${line}`),
+    });
+  } catch (error) {
+    return failure('fetch_now', actor.userId, sourceId, error);
+  }
+  log('fetch_now', actor.userId, sourceId, `${result.outcome} drafts=${result.drafts.length}`);
+  redirect(`/sources?checked=${result.outcome}&drafts=${result.drafts.length}&source=${sourceId}`);
+}
+
+export async function editWatchDraft(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const auth = await actorForWrite();
+  if (!auth.ok) return { error: auth.message };
+  const { actor } = auth;
+  const off = watcherOff();
+  if (off) return off;
+  const draftId = id(form, 'draft_id');
+  if (!draftId) return { error: 'No draft was named.' };
+  const question = text(form, 'question').trim();
+  const answer = text(form, 'answer').trim();
+  const heading = text(form, 'section_heading', 500).trim();
+  const reason = text(form, 'reason', 500).trim();
+  if (!reason) return { error: 'Please say why you are changing the proposal.' };
+  if (!question || !answer) return { error: 'The question and the answer are both needed.' };
+  if (hasNric(`${question} ${answer} ${heading}`)) return { error: errorMessage('KB006', '') };
+  try {
+    await callWrite('kb_admin_watch_edit', [actor.userId, actor.email, draftId, question, answer, heading, reason]);
+  } catch (error) {
+    return failure('watch_edit', actor.userId, draftId, error);
+  }
+  log('watch_edit', actor.userId, draftId, 'ok');
+  redirect(`/watch/${draftId}?edited=1`);
+}
+
+export async function rejectWatchDraft(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const auth = await actorForWrite();
+  if (!auth.ok) return { error: auth.message };
+  const { actor } = auth;
+  const off = watcherOff();
+  if (off) return off;
+  const draftId = id(form, 'draft_id');
+  if (!draftId) return { error: 'No draft was named.' };
+  const reason = text(form, 'reason', 500).trim();
+  if (!reason) return { error: 'Please say why you are rejecting this proposal.' };
+  try {
+    await callWrite('kb_admin_watch_reject', [actor.userId, actor.email, draftId, reason]);
+  } catch (error) {
+    return failure('watch_reject', actor.userId, draftId, error);
+  }
+  log('watch_reject', actor.userId, draftId, 'ok');
+  redirect(`/watch/${draftId}?rejected=1`);
+}
+
+export async function approveWatchDraft(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const auth = await actorForWrite();
+  if (!auth.ok) return { error: auth.message };
+  const { actor } = auth;
+  if (!actor.canApprove) return { error: 'Only an approver can approve a page change.' };
+  const off = watcherOff();
+  if (off) return off;
+  const draftId = id(form, 'draft_id');
+  if (!draftId) return { error: 'No draft was named.' };
+  const reason = text(form, 'reason', 500).trim();
+  if (!reason) return { error: 'Please say why you are approving this change.' };
+  const draft = await watchDraft(draftId);
+  if (!draft || (draft.status !== 'pending' && draft.status !== 'blocked')) return { error: 'This proposal is no longer open.' };
+  let result;
+  try {
+    result = await approveAndPublish(
+      { userId: actor.userId, email: actor.email },
+      { id: draftId, question: draft.proposed_question, answer: draft.proposed_answer },
+      reason,
+      { call, embed: embedEntry },
+    );
+  } catch (error) {
+    return failure('watch_approve', actor.userId, draftId, error);
+  }
+  if (!result.published) {
+    const state = failure('watch_publish', actor.userId, draftId, result.error);
+    return { error: '', notice: `Approved, but not yet live: ${state.error} Open the Q&A draft to publish it.` };
+  }
+  log('watch_approve', actor.userId, draftId, `ok entry=${result.entryId.slice(0, 8)} published`);
+  redirect(`/watch/${draftId}?published=1`);
+}

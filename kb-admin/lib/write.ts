@@ -4,17 +4,17 @@ import { isAllowedWrite, writeStatement, WRITE_FUNCTIONS, type WriteFunction } f
 import { env } from './env';
 
 /**
- * The ONLY way kb-admin changes anything: sixteen database functions
+ * The ONLY way kb-admin changes anything: twenty-four database functions
  * (lib/access.ts WRITE_FUNCTIONS; two of them only read, as the editor).
  *
  * Three layers, each enough on its own:
  *   1. GRANTS: the kb_admin_editor login has no privilege on any table. It can
  *      EXECUTE the kb_admin_* functions in lib/access.ts (scripts/sql,
- *      migrations 005, 008, 011, 014), each of which checks the caller's role
+ *      migrations 005, 008, 011, 014, 015), each of which checks the caller's role
  *      in cb_kb_admin_users itself.
  *   2. This module exports `callWrite` and nothing else, and sends only the
  *      exact statement lib/access.ts writeStatement() builds for one of the
- *      sixteen names - every value a bound parameter.
+ *      twenty-four names - every value a bound parameter.
  *   3. scripts/selfcheck.mjs fails if any other kb-admin file names a write.
  *
  * A separate pool from the reader's (lib/db.ts): reads never run as the

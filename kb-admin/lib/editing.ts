@@ -99,6 +99,8 @@ export function errorMessage(code: string | undefined, dbMessage: string | undef
       return 'This change needs an approver. It has been kept as a pending draft; an approver can open it and publish it.';
     case 'KB005':
       return 'The new text could not be given its search fingerprint, so nothing was published. Try again; if it keeps failing, tell the administrator.';
+    case 'KB007':
+      return `Needs agency confirmation: ${detail.replace(/^needs agency confirmation:\s*/i, '') || 'this change touches an agency fee'}. A page change can never alter an agency fee or a row from the agency's fees document; reject it, or raise it with Ming Hwee.`;
     case 'KB006':
       return 'The text contains what looks like an NRIC or FIN number. Remove it and try again: knowledge base text is shown to clients.';
     default:

@@ -16,6 +16,14 @@
  *      kb_admin_* functions and nothing else;
  *   5. an embedding API key, used only to embed an entry's new text.
  * With neither set the editor is off and kb-admin stays read-only.
+ *
+ * And, only when the knowledge-base watcher is switched on (see `watcher`):
+ *   6. an OpenRouter key for drafting (KB_ADMIN_LLM_API_KEY, or the embedding
+ *      key when that is already an OpenRouter key);
+ *   7. for the schedule only: CRON_SECRET (Vercel sends it on its cron call)
+ *      and KB_WATCHER_ACTOR_ID, the editor account whose access the scheduled
+ *      run uses for the read-only live search.
+ * KB_SOURCES_ENABLED unset (the default) = no watcher page, no fetch, nothing.
  */
 
 export type KbAdminConfig = {
@@ -29,7 +37,22 @@ export type KbAdminConfig = {
   editor: EditorConfig | null;
   /** Set when the editor is off because its settings are incomplete (never a value). */
   editorOffReason: string;
+  /** null = the KB watcher is off: no Sources or Review page, no fetching, no drafting. */
+  watcher: WatcherConfig | null;
+  /** Set when the watcher (or its schedule) is off because its settings are incomplete. */
+  watcherOffReason: string;
 };
+
+export type WatcherConfig = {
+  llm: { baseUrl: string; apiKey: string; model: string };
+  /** null = no scheduled checks (WATCHER_ENABLED unset): sources are fetched only on "Fetch now". */
+  schedule: { cronSecret: string; actorId: string; intervalDays: number } | null;
+};
+
+/** The bot's current model (app/config.py openrouter_model). */
+export const DEFAULT_DRAFT_MODEL = 'openai/gpt-5.6-luna';
+export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type EditorConfig = {
   db: { user: string; password: string };
@@ -124,6 +147,7 @@ export function validateConfig(
   }
 
   const { editor, editorOffReason } = editorConfig(source, readPasswordFile, ref, password);
+  const { watcher, watcherOffReason } = watcherConfig(source, editor);
 
   return {
     ref,
@@ -134,7 +158,50 @@ export function validateConfig(
     previewSecret,
     editor,
     editorOffReason,
+    watcher,
+    watcherOffReason,
   };
+}
+
+/**
+ * The watcher's settings. KB_SOURCES_ENABLED must be exactly "true", the
+ * editor must be on (every watcher write is a kb_admin_* function call), and
+ * a drafting key must exist - otherwise the watcher is off, with a reason.
+ * WATCHER_ENABLED=true adds the schedule, which also needs CRON_SECRET and
+ * KB_WATCHER_ACTOR_ID; without them the schedule is off and "Fetch now"
+ * still works. Present but wrong (a short secret, a malformed id, a key that
+ * is not OpenRouter's, an interval outside 1-90 days): refuse to start.
+ */
+function watcherConfig(source: ConfigSource, editor: EditorConfig | null): { watcher: WatcherConfig | null; watcherOffReason: string } {
+  const sourcesOn = (source.KB_SOURCES_ENABLED ?? '').trim() === 'true';
+  const scheduleOn = (source.WATCHER_ENABLED ?? '').trim() === 'true';
+  const llmKey = (source.KB_ADMIN_LLM_API_KEY ?? '').trim();
+  if (llmKey && !llmKey.startsWith('sk-or-')) refuse('KB_ADMIN_LLM_API_KEY must be an OpenRouter key (sk-or-...)');
+  const secret = (source.CRON_SECRET ?? '').trim();
+  if (secret && secret.length < 32) refuse('CRON_SECRET is shorter than 32 characters');
+  const actorId = (source.KB_WATCHER_ACTOR_ID ?? '').trim();
+  if (actorId && !UUID.test(actorId)) refuse('KB_WATCHER_ACTOR_ID is not a user id (uuid)');
+  const intervalRaw = (source.WATCHER_INTERVAL_DAYS ?? '').trim();
+  const intervalDays = intervalRaw ? Number(intervalRaw) : 7;
+  if (!Number.isInteger(intervalDays) || intervalDays < 1 || intervalDays > 90) refuse('WATCHER_INTERVAL_DAYS must be a whole number of days from 1 to 90');
+  const model = (source.KB_ADMIN_DRAFT_MODEL ?? '').trim() || DEFAULT_DRAFT_MODEL;
+  if (!/^[a-z0-9._-]+\/[a-z0-9._:-]+$/i.test(model)) refuse('KB_ADMIN_DRAFT_MODEL is not an OpenRouter model id');
+
+  if (!sourcesOn) {
+    return { watcher: null, watcherOffReason: scheduleOn ? 'watcher off: WATCHER_ENABLED needs KB_SOURCES_ENABLED=true' : '' };
+  }
+  if (!editor) return { watcher: null, watcherOffReason: 'watcher off: it needs the editor settings' };
+  const apiKey = llmKey || (editor.embedding.apiKey.startsWith('sk-or-') ? editor.embedding.apiKey : '');
+  if (!apiKey) return { watcher: null, watcherOffReason: 'watcher off: KB_ADMIN_LLM_API_KEY not set (and the embedding key is not an OpenRouter key)' };
+
+  let schedule: WatcherConfig['schedule'] = null;
+  let reason = '';
+  if (scheduleOn) {
+    const missing = [!secret && 'CRON_SECRET', !actorId && 'KB_WATCHER_ACTOR_ID'].filter(Boolean);
+    if (missing.length) reason = `watcher schedule off: ${missing.join(', ')} not set`;
+    else schedule = { cronSecret: secret, actorId, intervalDays };
+  }
+  return { watcher: { llm: { baseUrl: OPENROUTER_BASE_URL, apiKey, model }, schedule }, watcherOffReason: reason };
 }
 
 /**

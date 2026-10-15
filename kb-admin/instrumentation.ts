@@ -17,6 +17,10 @@ export async function register() {
           `editor ${cfg.editor ? `on (${cfg.editor.db.user}, embeddings via ${new URL(cfg.editor.embedding.baseUrl).host})` : 'off'}`,
       );
       if (cfg.editorOffReason) console.warn(`[kb-admin] ${cfg.editorOffReason}; the site stays read-only`);
+      if (cfg.watcher) {
+        console.info(`[kb-admin] KB watcher on (drafting model ${cfg.watcher.llm.model}), schedule ${cfg.watcher.schedule ? `every ${cfg.watcher.schedule.intervalDays} day(s)` : 'off'}`);
+      }
+      if (cfg.watcherOffReason) console.warn(`[kb-admin] ${cfg.watcherOffReason}`);
     } catch (error) {
       // Next.js would otherwise keep the process up and answer 500 to every
       // request. Exit instead, so a misconfigured server is plainly not running.

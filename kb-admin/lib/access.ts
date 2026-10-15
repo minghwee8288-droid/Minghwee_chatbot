@@ -52,10 +52,12 @@ export function isSingleRead(query: string): boolean {
 
 /**
  * The ONLY database calls kb-admin makes as kb_admin_editor: one call to one of
- * these sixteen functions. Each is SECURITY DEFINER in the database and checks
+ * these twenty-four functions. Each is SECURITY DEFINER in the database and checks
  * the caller's role itself; the editor login can call these and nothing else.
- * This list is the code-side twin of that grant: the same sixteen signatures
- * that migrations 005, 008, 011 and 014 grant to kb_admin_editor.
+ * This list is the code-side twin of that grant: the same twenty-four signatures
+ * that migrations 005, 008, 011, 014 and 015 grant to kb_admin_editor. The
+ * eight of 015 exist only once that migration is applied; until then nothing
+ * calls them, because the watcher pages are off unless KB_SOURCES_ENABLED=true.
  */
 export const WRITE_FUNCTIONS = {
   kb_admin_save_draft: ['uuid', 'text', 'uuid', 'text', 'text', 'text', 'text', 'text', 'text', 'boolean', 'text'],
@@ -78,6 +80,18 @@ export const WRITE_FUNCTIONS = {
   // staged batch in place, and what it returns now.
   kb_admin_match_with_batch: ['uuid', 'text', 'uuid', 'vector', 'text', 'text', 'text', 'integer', 'double precision'],
   kb_admin_match_live: ['uuid', 'text', 'vector', 'text', 'text', 'text', 'integer', 'double precision'],
+  // Migration 015: the KB watcher (watched pages, snapshots, proposals). None of
+  // these changes the knowledge base; kb_admin_watch_approve writes the text
+  // only through kb_admin_save_draft / kb_admin_create_entry, and it goes live
+  // only through kb_admin_publish above.
+  kb_admin_source_add: ['uuid', 'text', 'text', 'text', 'text'],
+  kb_admin_source_remove: ['uuid', 'text', 'uuid', 'text'],
+  kb_admin_source_record_fetch: ['uuid', 'text', 'uuid', 'boolean', 'integer', 'text', 'text', 'text', 'text'],
+  kb_admin_watch_propose: ['uuid', 'text', 'uuid', 'uuid', 'text', 'text', 'text', 'text', 'text', 'text', 'text', 'text', 'text'],
+  kb_admin_watch_edit: ['uuid', 'text', 'uuid', 'text', 'text', 'text', 'text'],
+  kb_admin_watch_reject: ['uuid', 'text', 'uuid', 'text'],
+  kb_admin_watch_approve: ['uuid', 'text', 'uuid', 'text'],
+  kb_admin_watch_mark_published: ['uuid', 'text', 'uuid'],
 } as const;
 export type WriteFunction = keyof typeof WRITE_FUNCTIONS;
 
