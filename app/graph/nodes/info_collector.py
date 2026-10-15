@@ -2123,8 +2123,7 @@ QUESTION_STYLE_OFFER_TEXT = (
     "I can ask you one question at a time, or send all the questions at once so you "
     "can answer in one reply. Which would you prefer?"
 )
-_STYLE_LIST_FIRST = "Sure, here are the questions. You can answer them all in one reply:"
-_STYLE_LIST_AGAIN = "Thank you. A few details are still missing or unclear:"
+_STYLE_LIST_FIRST, _STYLE_LIST_AGAIN = guards.QUESTION_LIST_HEADS
 _STYLE_LIST_END = "If something does not apply, just say so."
 _STYLE_ALL = re.compile(
     r"\bat\s+once\b|\ball\s+(?:together|in\s+one|of\s+them|the\s+questions|questions)\b"

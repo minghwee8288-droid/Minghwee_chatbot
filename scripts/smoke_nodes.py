@@ -126,7 +126,43 @@ _MM_PASSPORT_BRIEFING_REPLY = (
     "with you shortly."
 )
 
+# Thomas's removals, 2026-10-15 (ticket.ASK_*): the smoke states follow the switch.
+from app.services.ticket import ASK_RELIGION as _ASK_RELIGION  # noqa: E402
+
+_THOMAS_REMOVALS_BASE = {
+    "full_name": "Thomas", "requirement": "childcare", "children_detail": "two, aged 3 and 7",
+    "household": "4 adults and 2 children", "home_type": "condo", "helper_room": "own room",
+    "first_time_hire": "yes", "home_size": "3 bed 2 bath", "pets": "no pets",
+    "preferred_nationality": "Filipino",
+}
+
 CASES = [
+    # --- Thomas, 2026-10-15: languages, religion, cooking and house rules are
+    # no longer asked. Run through the real collector: after the experience
+    # question the extra-duties question goes out ON ITS OWN, with no cooking
+    # in it; after the start date the next question is how they heard of us,
+    # with no house-rules question in between.
+    ("info_collector", "Thomas 2026-10-15: extra duties asked alone, no cooking question",
+     {"service_type": "new_hiring", "intent": "new_hiring", "incoming_text": "first-timer is fine",
+      "collected_info": {**_THOMAS_REMOVALS_BASE, "helper_profile": "30s", "hire_source": "first-timer"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1, "home_type": 1,
+                             "helper_room": 1, "pets": 1, "preferred_nationality": 1,
+                             "helper_profile": 1, "hire_source": 1},
+      "history_text": "You: Are you open to a first-timer?",
+      "_expect_prompt": "high-rise window cleaning",
+      "_forbid_prompt": "cooking requirements"}),
+    ("info_collector", "Thomas 2026-10-15: no house-rules question before how they heard of us",
+     {"service_type": "new_hiring", "intent": "new_hiring", "incoming_text": "within a month",
+      "collected_info": {**_THOMAS_REMOVALS_BASE, "helper_profile": "30s", "hire_source": "first-timer",
+                         "special_duties": "none", "budget": "SGD 600-700",
+                         "rest_day": "a weekly day off", "start_timeline": "within 1 month"},
+      "asked_field_counts": {"full_name": 1, "requirement": 1, "household": 1, "home_type": 1,
+                             "helper_room": 1, "pets": 1, "preferred_nationality": 1,
+                             "helper_profile": 1, "hire_source": 1, "special_duties": 1,
+                             "budget": 1, "rest_day": 1, "start_timeline": 1},
+      "history_text": "You: How soon are you hoping to have someone start?",
+      "_expect_prompt": "How did you hear about Ming Hwee",
+      "_forbid_prompt": "house rules"}),
     ("info_collector", "first contact", {}),
     ("info_collector", "mid-conversation", {"history_text": "client: hi\nbot: Hello",
                                             "collected_info": {"helper_name": "Koko"},
@@ -1901,7 +1937,10 @@ CASES = [
     # The agency's decision, taken after the trade was put to them: "in place
     # of this 'are you able to handle pork or beef' and this 'would she need to
     # handle pork or beef?' ask the religion question because that is priority."
-    ("info_collector", "the employer is asked her religion, all options named",
+    # Thomas removed the religion question on 2026-10-15 (ticket.ASK_RELIGION):
+    # with the switch off, the same turns must NOT ask it. On, they must.
+    ("info_collector", "the employer is asked her religion, all options named"
+     if _ASK_RELIGION else "Thomas 2026-10-15: the employer is not asked her religion",
      {"service_type": "new_hiring", "intent": "new_hiring",
       "incoming_text": "Filipino",
       "collected_info": {"full_name": "Thomas", "requirement": "childcare",
@@ -1915,11 +1954,12 @@ CASES = [
                              "home_type": 1, "helper_room": 1, "pets": 1,
                              "languages": 1, "preferred_nationality": 1},
       "history_text": "bot: Do you have a preferred nationality?",
-      "_expect_prompt": "Buddhist"}),
+      ("_expect_prompt" if _ASK_RELIGION else "_forbid_prompt"): "Buddhist"}),
     # ...and it says WHY. Religion is the most personal thing either side is
     # asked for, and a question like that arriving bare is the complaint that
     # created _WHY_WE_ASK in the first place.
-    ("info_collector", "...and it explains why it is asking",
+    ("info_collector", "...and it explains why it is asking" if _ASK_RELIGION
+     else "...nor anything about religion at all",
      {"service_type": "new_hiring", "intent": "new_hiring",
       "incoming_text": "Filipino",
       "collected_info": {"full_name": "Thomas", "requirement": "childcare",
@@ -1933,9 +1973,11 @@ CASES = [
                              "home_type": 1, "helper_room": 1, "pets": 1,
                              "languages": 1, "preferred_nationality": 1},
       "history_text": "bot: Do you have a preferred nationality?",
-      "_expect_prompt": "say WHY you are asking before you ask it"}),
+      **({"_expect_prompt": "say WHY you are asking before you ask it"} if _ASK_RELIGION
+         else {"_forbid_prompt": "religion"})}),
     # Her side of the pairing, asked of her about her.
-    ("info_collector", "the helper is asked her own religion",
+    ("info_collector", "the helper is asked her own religion" if _ASK_RELIGION
+     else "...nor is the helper asked hers",
      {"service_type": "candidate_new_hiring", "intent": "candidate_registration",
       "contact_type": "candidate",
       "incoming_text": "28",
@@ -1943,7 +1985,7 @@ CASES = [
                          "age": "28"},
       "asked_field_counts": {"full_name": 1, "nationality": 1, "age": 1},
       "history_text": "bot: May I know your age?",
-      "_expect_prompt": "May I know your religion"}),
+      ("_expect_prompt" if _ASK_RELIGION else "_forbid_prompt"): "May I know your religion"}),
     # ...and her reason is addressed to HER. _WHY_WE_ASK is keyed on the field
     # key with no idea which flow is asking, which is why the two sides have
     # different keys and different wording.

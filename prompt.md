@@ -885,7 +885,7 @@ Some fields list the answers the office works with. Match what the client said t
 - "Pinay", "Philippines" -> "Filipino"; "Burmese" -> "Myanmar"
 But return what the client actually said whenever it carries detail no listed answer does — "$680", "HDB 4 room with a store room", "8 of us including my in-laws". Never force a real answer into a bucket that loses information, and never invent a bucket value for a field the client said nothing about.
 
-A field that can hold several answers takes them all, comma-separated: languages "English, Mandarin, Hokkien", cooking "Chinese, halal kitchen", care type "childcare, eldercare".
+A field that can hold several answers takes them all, comma-separated: care type "childcare, eldercare", extra duties "car washing, gardening".
 
 If the client corrects an earlier answer, return the corrected value.
 ```
@@ -1050,8 +1050,9 @@ The answers the office works with here are: {options}. Use them to shape the que
 ## 15. Why We Ask the Personal Questions
 
 ### What is this prompt used for?
-It is added to entry 14 for questions that could feel intrusive: pets, rest
-days, house rules, and religion (on both the employer's and the helper's side).
+It is added to entry 14 for questions that could feel intrusive: pets and rest
+days. (House rules and religion were here too; Thomas removed both questions on
+2026-10-15, so their reasons are never used while those switches are off.)
 
 ### Why is this prompt needed?
 A personal question with no reason given feels arbitrary. The agency also asked
@@ -1075,11 +1076,11 @@ Explaining yourself is NOT an invitation to give examples. Quote no figure, no r
 
 | Question | Reason given to the AI |
 |---|---|
-| Helper's religion (asked of the employer) | so her faith and your household's practices fit together from day one, and anything she does not eat or handle is agreed before she starts |
-| Religion (asked of the helper) | so we place you with a household whose practices you are comfortable with, and so anything you do not eat or handle is agreed before you accept the job |
+| Helper's religion (asked of the employer) - not asked since 2026-10-15 | so her faith and your household's practices fit together from day one, and anything she does not eat or handle is agreed before she starts |
+| Religion (asked of the helper) - not asked since 2026-10-15 | so we place you with a household whose practices you are comfortable with, and so anything you do not eat or handle is agreed before you accept the job |
 | Pets | so we can match her with a suitable house - one with animals she is comfortable around, since every helper is asked about pets |
 | Rest days | so we can set the expectation with the helper before she accepts, which is where most rest-day disagreements start |
-| House rules / anything else | so your house rules are set out clearly with the helper and agreed before she starts |
+| House rules / anything else - not asked since 2026-10-15 | so your house rules are set out clearly with the helper and agreed before she starts |
 
 ---
 
@@ -3104,7 +3105,8 @@ Short notes added to Claire's instructions on particular turns, from the 14 Octo
 - **An urgent home leave**: one sentence that we will flag it as urgent, with no faster timeline promised.
 - **A direct hire from overseas wanted immediately**: one sentence that she cannot start that soon, using the timeline in our records.
 - **Pushback on the rest-day rule**: acknowledged once with the rule, then without it, always followed by the next question.
-- **The religion question**: one plain question with a short reason.
+- **The religion question**: one plain question with a short reason. (Not asked
+  since 2026-10-15, on Thomas's instruction; see entry 70.)
 
 ### Prompt — "Why this much?"
 
@@ -3184,8 +3186,10 @@ pairs and the choice of style (Step 6). Each part has its own switch.
   (section 9.44) a collector message with two question marks is merged into
   one sentence ("A, and b?"), or, if it will not merge, asks only the first
   field's written question (`info_collector.ONE_QUESTION_MARK`). Only these: new hire - type of home with its
-  size, cooking with extra duties; employer transfer - the same two, plus the
-  helper's name with the reason (when releasing); direct hire - the helper's
+  size; employer transfer - the same, plus the helper's name with the reason
+  (when releasing). Cooking with extra duties was a pair until 2026-10-15, when
+  the cooking question was removed (entry 70); extra duties is now asked on its
+  own; direct hire - the helper's
   name with her nationality; a helper's own home leave - her employer's name
   with their number; a helper registering - years of experience with the
   areas, where she is with when she can start, rest days with salary; a
@@ -3244,3 +3248,26 @@ Added to the question instruction when a helper messages from a number that is o
 ```
 Do NOT ask for her name. Our records have a helper on this number named <her name on file>. Confirm it instead, once - ask whether you are speaking with her, for example: "Am I speaking with <her name on file>?". Write the name exactly as given, and say nothing else from her file. If she says it is not her, the next message asks her name.
 ```
+
+
+---
+
+## 70. Questions Removed on Thomas's Instruction (15 October)
+
+### What is this about?
+
+Four questions are no longer asked, in any flow. Removed on Thomas's
+instruction, 2026-10-15; do not reintroduce unless he asks. His reason: a
+generic "yes" tells us nothing useful for matching.
+
+| Question | Employer flows (new hire, employer transfer) | Helper registration | Switch |
+|---|---|---|---|
+| Languages ("What languages are spoken at home?" / "Which languages do you speak?") | removed; the replacement question no longer names languages | removed | `ticket.ASK_LANGUAGES` |
+| Religion preference / her religion | removed | removed | `ticket.ASK_RELIGION` |
+| Cooking ("Would she need to do any cooking...?" / "What kind of cooking are you able to do?") | removed; extra duties is asked on its own, and no longer says "the usual cleaning and cooking" | removed, and cooking is no longer listed in her extra-duties question | `ticket.ASK_COOKING` |
+| House rules ("Anything else I should note down...?") | removed | (already not asked) | `ticket.ASK_HOUSE_RULES` |
+
+Only the asking stops. No database column changes, and a value already
+collected stays on its ticket. The "all at once" numbered list leaves them out
+too. Setting a switch to True brings that one question back.
+

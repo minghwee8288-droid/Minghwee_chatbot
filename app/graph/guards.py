@@ -1951,10 +1951,25 @@ def asks_again(text: str) -> bool:
 # closure.needs_no_reply() has held the mirror image of this rule from the
 # start - it never silences a bare yes/no when our own last line contained a
 # question mark. This is the same fact used the other way round.
+# Step 6c's "all at once" numbered list opens with one of these. In the
+# transcript only a message's FIRST line carries "You:", and these carry no
+# "?", so the answers to the list were not read as answers: found 2026-10-15
+# replaying a transfer in all-at-once mode, where the classifier then moved the
+# turn to new_hiring and the client was quoted the new-hire fee ($1,428, 4-6
+# weeks) - before and after that day's question removals alike. One definition,
+# read by info_collector when it writes the list. False = the old test.
+LIST_ANSWER_IS_AN_ANSWER = True
+QUESTION_LIST_HEADS = (
+    "Sure, here are the questions. You can answer them all in one reply:",
+    "Thank you. A few details are still missing or unclear:",
+)
+
+
 def answering_our_question(history_text: str, message: str) -> bool:
     """Whether this message is an answer to a question we just asked."""
     previous = last_bot_line(history_text or "")
-    if "?" not in (previous or ""):
+    asked_a_list = LIST_ANSWER_IS_AN_ANSWER and (previous or "").startswith(QUESTION_LIST_HEADS)
+    if "?" not in (previous or "") and not asked_a_list:
         return False
     body = (message or "").strip()
     if not body:

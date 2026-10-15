@@ -191,9 +191,8 @@ does — "$680", "HDB 4 room with a store room", "8 of us including my in-laws".
 force a real answer into a bucket that loses information, and never invent a bucket \
 value for a field the client said nothing about.
 
-A field that can hold several answers takes them all, comma-separated: languages \
-"English, Mandarin, Hokkien", cooking "Chinese, halal kitchen", care type "childcare, \
-eldercare".
+A field that can hold several answers takes them all, comma-separated: care type \
+"childcare, eldercare", extra duties "car washing, gardening".
 
 If the client corrects an earlier answer, return the corrected value."""
 

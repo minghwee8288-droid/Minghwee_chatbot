@@ -258,8 +258,21 @@ async def run_service(
                                state.get("collected_info"))
         if len(listed) > 2:
             asked_keys.append(listed[0])
-            said = "\n".join(f"{n}. {scripted.get(k, 'not sure')}"
-                             for n, k in enumerate(listed, 1))
+            # One answer per numbered LINE: a pair (Step 6) shares a line, so
+            # numbering per field shifted every answer after it by one
+            # (found 2026-10-15; the transfer then drifted into new hiring).
+            partners = {f.key: f.ask_with for f in
+                        __import__("app.services.ticket", fromlist=["x"]).SERVICE_FIELDS.get(
+                            state.get("service_type") or service, []) if f.ask_with}
+            lines, i = [], 0
+            while i < len(listed):
+                text = scripted.get(listed[i], "not sure")
+                if i + 1 < len(listed) and partners.get(listed[i]) == listed[i + 1]:
+                    text = f"{text}, {scripted.get(listed[i + 1], 'not sure')}"
+                    i += 1
+                lines.append(text)
+                i += 1
+            said = "\n".join(f"{n}. {a}" for n, a in enumerate(lines, 1))
             unscripted.extend(k for k in listed if k not in scripted)
             continue
         field = _asked_field(before, state.get("asked_field_counts"),
@@ -432,6 +445,16 @@ def grade(result: dict) -> list[tuple[str, bool, str]]:
         result["complete"], f"{result['turns']} turns, complete={result['complete']}")
     add("every field it asked for was one it knows about",
         not result["unscripted"], ", ".join(result["unscripted"]))
+    # Thomas, 2026-10-15: languages, religion, cooking and house rules are
+    # never asked (ticket.ASK_*). The scripted answers above stay, for a
+    # switch turned back on.
+    from app.services import ticket as _ticket
+    removed_asked = sorted(set(result.get("asked_keys") or ()) & _ticket._REMOVED_QUESTION_KEYS)
+    removed_said = [w for w in ("religion", "language", "house rule", "what kind of cooking",
+                                "any cooking") if w in joined.lower()]
+    add("asks none of the questions Thomas removed (2026-10-15)",
+        not removed_asked and not removed_said,
+        ", ".join(removed_asked + removed_said))
 
     # --- money ------------------------------------------------------------
     import app.graph.guards as guards

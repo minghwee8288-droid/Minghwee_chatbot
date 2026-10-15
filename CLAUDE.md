@@ -563,6 +563,8 @@ because the lead is opened early and the ticket is created much later.
 | Resolving one ticket does not close a conversation with others open | `portal-ui/.../TicketDetailDrawer.jsx` | A `resolved` conversation is a finished one: the bot starts a fresh thread on the next message and forgets everything collected. |
 | A helper we know the client has is CONFIRMED by name, never asked for and never assumed | `info_collector.HELPER_CONFIRM_SERVICES` + `helper_confirm_note` / `confirmed_helper` + webhook `known_helpers` | Known = live placements, then helpers named on this number's earlier tickets (`placements` is empty live, so the tickets are usually all we have). First ask only: "Is this home leave for Yoyo, or for another helper?". A known name or a lone yes fills her name and what we hold about her; an unknown name or a "no/another" is the other helper. A single placed helper is no longer filled in silently on these services. Not direct_hiring (a NEW helper). |
 | "Welcome back" after a break, to anyone we have dealt with | `info_collector.existing_client` + `after_a_break` (`WELCOME_BACK_AFTER_HOURS` 6, webhook `hours_since_last_message`) | Was: placements only (none live) and on every new collection. Agency's choice, 2026-10-08: only after a real break. A client whose message already says what they want is not asked "follow-up or something new?". Batch G (2026-10-15) made it MORE than 6 hours (`STRICTLY_AFTER_BREAK`); the client's decision F the same day reverted it to 6 hours OR MORE (`STRICTLY_AFTER_BREAK = False`). A helper on our candidates file counts too (`CANDIDATE_WELCOME_BACK`); and the welcome and a known-helper or candidate-name confirmation come before the Step 6c question-style offer, which waits a turn and needs 4+ questions left (`WELCOME_BEFORE_STYLE_OFFER`). |
+| Languages, religion, cooking and house rules are asked of nobody | `ticket.ASK_LANGUAGES` / `ASK_RELIGION` / `ASK_COOKING` / `ASK_HOUSE_RULES` -> `_REMOVED_QUESTION_KEYS`, applied to `SERVICE_FIELDS` after every list is built | **Removed on Thomas's instruction, 2026-10-15; do not reintroduce unless he asks.** "A generic yes tells us nothing useful for matching." Every employer flow and the candidate registration (both sides stay matched); the replacement question no longer names languages, special_duties no longer says "cleaning and cooking" and is unpaired, her duties question no longer lists cooking, and the all-at-once list follows. Stop asking only: no column changes, collected values stay. `FIELDS_BEFORE_REMOVAL` keeps the old lists for the self-checks on the removed fields' wording. The religion / cooking / house-rules rows below describe the fields as they are if a switch is turned back on. A volunteered house rule is still acknowledged (`_VOLUNTEERED_REQUIREMENT`) but has no field to land in; it stays in the transcript. |
+| An answer to the all-at-once list is an answer to our question | `guards.QUESTION_LIST_HEADS` in `answering_our_question` (`LIST_ANSWER_IS_AN_ANSWER`) | Found 2026-10-15: only a message's first line is marked "You:", and the list's first line has no "?", so a transfer client answering it was moved to new_hiring and quoted $1,428 and 4-6 weeks (replayed before and after the question removals alike; introduced with Step 6c). The two list heads are defined once in guards and written by `info_collector`. Replayed 2 of 2: stays a transfer, $1,688, 1-2 weeks. |
 | No lead time where we hold none (a Myanmar home leave) | `guards.guard_unheld_timeline` inside `guard_nationality_fee`, all three reply paths (`NO_UNHELD_TIMELINE`, `TIMELINE_NOT_HELD`) | Fees document 2026-10-15: a helper's own Myanmar home leave was told "approximately 2 weeks" (the Indonesian span). A sentence giving a lead time is replaced with "Our agent will confirm the timeline for a Myanmar helper's home leave."; the embassy endorsement's ~10 working days (every nationality) is kept. |
 | The agency's fees document is the source of truth for fees, timelines and wording | `load_service_notes.py` (ROWS + generated UPDATES, `TEXT_REPLACEMENTS`), `kb_rules` floors | 2026-10-15, with the client's decisions A-G: $288 replacement fee everywhere, direct hire 1-2 weeks here and PH 5-6 / ID 4 / MM 2-4 weeks after MOM approval, salary floors PH 650 / ID 550 / MM 500, the +$60 lines in the document's words, "falls under her package" never "guarantee period". The .docx is in `docs/`, kept out of git. A closing briefing now also states a fixed fee plainly from its OWN records (`info_collector._write`). |
 | A reply never reads out an internal case number | `guards.without_case_numbers` in `graph.run_turn` (and the preview) (`NO_CASE_NUMBER_READ_OUT`) | Batch G G4. The case numbers held for the client (`matched_cases`, the case row) and anything in the portal's case format (MH-YYYY-NNNN) are taken out, keeping the sentence ("Your case is at the documents stage"). The CB-YYYY-NNNN ticket reference is never touched. |
@@ -858,6 +860,12 @@ Easy to get wrong:
   `guards.NO_UNHELD_TIMELINE` (no lead time on a Myanmar home leave).
   Section 9.44 (2026-10-15), `False` for the Batch G behaviour:
   `info_collector.ONE_QUESTION_MARK` (one question mark per collector message).
+  Thomas's removals (2026-10-15), each `False` now and `True` to ask that
+  question again (removed on his instruction; do not reintroduce unless he
+  asks): `ticket.ASK_LANGUAGES`, `ticket.ASK_RELIGION`, `ticket.ASK_COOKING`
+  (also re-pairs cooking + special_duties), `ticket.ASK_HOUSE_RULES`.
+  `guards.LIST_ANSWER_IS_AN_ANSWER` (2026-10-15), `False` for the Step 6c
+  behaviour (answers to the all-at-once list not read as answers).
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1894,6 +1902,42 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-15** - **Four questions removed on Thomas's instruction; do not
+  reintroduce unless he asks.** "A generic yes tells us nothing useful for
+  matching." Languages (`languages`, `languages_spoken`), religion
+  (`helper_religion`, `religion`), cooking (`cooking`, `cooking_ability`) and
+  house rules (`additional_notes`) are dropped from every flow by four switches
+  in `ticket.py` (`ASK_LANGUAGES`, `ASK_RELIGION`, `ASK_COOKING`,
+  `ASK_HOUSE_RULES`), applied after all the lists are built, so the transfer
+  take-on copies, the candidate side and the all-at-once list follow. The
+  cooking + special_duties pair is unwired, and special_duties is asked alone
+  ("Beyond the usual housework..."). The replacement question no longer names
+  languages; her duties question no longer lists cooking. Stop asking only: no
+  column dropped, collected values stay, and an unasked field puts no line on a
+  ticket. new_hiring 26 -> 22 fields, transfer_employer 26 -> 22,
+  candidate_new_hiring 15 -> 13. The extraction prompt's multi-answer example no
+  longer names languages or cooking; prompt.md entry 70. Self-checks: the
+  removed fields' own wording is still checked against
+  `ticket.FIELDS_BEFORE_REMOVAL`; new checks assert the four are asked by no flow
+  and not in the all-at-once list, and each switch turned on turns them red
+  (4 of 4). The e2e grades "asks none of the questions Thomas removed".
+  Consequence noted: a volunteered house rule is acknowledged but no longer
+  filed in a field.
+  **Found while measuring, and fixed (`guards.LIST_ANSWER_IS_AN_ANSWER`):** in
+  all-at-once mode a transfer client's answers to the numbered list were not
+  read as answers (the list's first line, the only one marked "You:", has no
+  "?"), so the turn moved to new_hiring, asked new-hire questions and closed
+  with the new-hire briefing ($1,428, 4-6 weeks) - the same with the removals
+  undone, so it dates from Step 6c. Also fixed in the e2e harness: it numbered
+  its all-at-once answers per field, so a paired line shifted every later
+  answer by one.
+  **Turns** (real model, read-only, scripted client; "before" = this code with
+  the four switches on): one at a time - new_hiring 20 -> 17, transfer_employer
+  18 -> 15, replacement 9 -> 9 (one question reworded, none removed); all at
+  once - 4 -> 4, 4 -> 4 (6 before the list-answer fix), 4 -> 4, the list itself
+  shorter (new hire 17 -> 14 lines, transfer 15 -> 12, replacement 6 -> 6).
+  E2E 7 of 7.
 
 - **2026-10-15** - **The agency's approved fees and process document, applied.**
   `docs/Minghwee bot fees and process final structure.docx` (kept out of git,

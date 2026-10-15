@@ -227,13 +227,26 @@ _MATCHED_PAIRS = {
 }
 
 
+# Thomas removed four questions on 2026-10-15 (ticket.ASK_LANGUAGES,
+# ASK_RELIGION, ASK_COOKING, ASK_HOUSE_RULES). The checks on those fields' own
+# wording still run, against the lists as they were before the removal, so a
+# switch turned back on brings back a field that is still right.
+_ALL_FIELDS = t.FIELDS_BEFORE_REMOVAL
+import app.graph.guards as _guards_mod  # noqa: E402
+
+
+def _field_def(service: str, key: str):
+    return next((f for f in t.SERVICE_FIELDS[service] if f.key == key), None) or next(
+        (f for f in _ALL_FIELDS.get(service, []) if f.key == key), None)
+
+
 def _question_of(service: str, key: str) -> str:
-    field = next((f for f in t.SERVICE_FIELDS[service] if f.key == key), None)
+    field = _field_def(service, key)
     return field.question if field else ""
 
 
 def _options_of(service: str, key: str) -> tuple:
-    field = next((f for f in t.SERVICE_FIELDS[service] if f.key == key), None)
+    field = _field_def(service, key)
     return tuple(field.options or ()) if field else ()
 
 
@@ -245,7 +258,7 @@ def _guidance_for(service: str, key: str) -> str:
     "or another country?" on the end of a question whose own text named exactly
     three (2026-09-11).
     """
-    field = next(f for f in t.SERVICE_FIELDS[service] if f.key == key)
+    field = _field_def(service, key)
     return ico._field_guidance(service, {}, field)
 
 
@@ -797,7 +810,7 @@ _STEPS_PROMISE = (
 _OFFICE_TEXT = " ".join(
     f'{r["question"]} {r["answer"]}' for r in lsn.ROWS
     if r["section_heading"].startswith("Office - "))
-lang_f = next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "languages")
+lang_f = next(f for f in _ALL_FIELDS["new_hiring"] if f.key == "languages")
 money_on_top = {"intent": "fee_enquiry", "service_type": "passport_renewal",
                 "collected_service": "passport_renewal", "blocked_topics": {}}
 money_alone = {"intent": "fee_enquiry", "service_type": "fee_enquiry",
@@ -861,7 +874,48 @@ rows = [
  ("still quotes salary", q(f"Salaries range from {D}600 to {D}800."), False),
  # 26 since 2026-09-17: `helper_religion`, asked at the agency's instruction
  # and in place of the pork/beef half of `cooking`.
- ("new_hiring field count", len(t.SERVICE_FIELDS["new_hiring"]), 26),
+ # 22 since 2026-10-15: Thomas removed languages, religion, cooking and house
+ # rules (one switch each in ticket.py); 26 with all four switched back on.
+ ("new_hiring field count", len(t.SERVICE_FIELDS["new_hiring"]),
+  26 - len(t._REMOVED_QUESTION_KEYS & {f.key for f in _ALL_FIELDS["new_hiring"]})),
+ # --- Thomas, 2026-10-15: four questions removed from every flow ---------
+ # "A generic yes tells us nothing useful for matching." Stop asking only;
+ # columns and collected values are untouched. Each switch restores one.
+ ("the four removed questions are asked by no flow at all",
+  sorted({f.key for fl in t.SERVICE_FIELDS.values() for f in fl}
+         & {"languages", "languages_spoken", "helper_religion", "religion",
+            "cooking", "cooking_ability", "additional_notes"}), []),
+ ("...each behind its own switch, all off",
+  (t.ASK_LANGUAGES, t.ASK_RELIGION, t.ASK_COOKING, t.ASK_HOUSE_RULES),
+  (False, False, False, False)),
+ ("special_duties stays, asked on its own",
+  [s for s in ("new_hiring", "transfer_employer")
+   if "special_duties" not in {f.key for f in t.SERVICE_FIELDS[s]}], []),
+ ("...unpaired, and its question no longer presumes cooking",
+  (next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "special_duties").ask_with,
+   "cooking" in _question_of("new_hiring", "special_duties").lower()), ("", False)),
+ ("the replacement question no longer asks for languages",
+  "language" in _question_of("replacement", "replacement_preferences").lower(), False),
+ ("...nor the helper's duties question for cooking",
+  ("cooking" in _question_of("candidate_new_hiring", "duties_willing").lower(),
+   "cooking" in _options_of("candidate_new_hiring", "duties_willing")), (False, False)),
+ ("the all-at-once list carries none of them",
+  sorted({k for svc, got in (("new_hiring", {"full_name": "Tan"}),
+                             ("transfer_employer", {"transfer_direction": "taking on a transfer helper"}),
+                             ("candidate_new_hiring", {"full_name": "Siti"}))
+          for k in ico.all_questions_message(t.missing_fields(svc, got), got, True)[1]}
+         & {"languages", "languages_spoken", "helper_religion", "religion",
+            "cooking", "cooking_ability", "additional_notes"}), []),
+ # The answers to the all-at-once list ARE answers to our question. Its first
+ # line (the only one marked "You:") has no "?", so a transfer answering it was
+ # moved to new_hiring and quoted the new-hire fee (found 2026-10-15).
+ ("answers to the all-at-once list are answers to our question",
+  [_guards_mod.answering_our_question("You: " + head, "1. childcare 2. 5 people")
+   for head in _guards_mod.QUESTION_LIST_HEADS], [True, True]),
+ ("...the list is written with those same heads",
+  ico.all_questions_message(t.missing_fields("new_hiring", {"full_name": "Tan"}),
+                            {"full_name": "Tan"}, True)[0].startswith(_guards_mod.QUESTION_LIST_HEADS),
+  True),
  ("passport_renewal asks case id", any(f.key == "case_id" for f in t.SERVICE_FIELDS["passport_renewal"]), False),
  ("renewal asks case id", any(f.key == "case_id" for f in t.SERVICE_FIELDS["renewal"]), False),
  ("NO flow asks for a case id",
@@ -1968,7 +2022,7 @@ rows = [
    if f.key in ("household", "helper_profile")
    and (f.options or any(ch.isdigit() for ch in f.question))], []),
  ("but a field whose options ARE the answer keeps them",
-  bool(next(f for f in t.SERVICE_FIELDS["new_hiring"]
+  bool(next(f for f in _ALL_FIELDS["new_hiring"]
             if f.key == "languages").options), True),
  # ...and the same rule over the seven services as a SET, so a NEW field with
  # bracket options cannot land on a flow nobody thought to re-check. Three keys
@@ -2194,11 +2248,11 @@ rows = [
    if v.rstrip().endswith("later") or "discovered later" in v], []),
  ("...and the office's register is named in the instruction that builds it",
   "KEEP IT IN THE REGISTER OF THE OFFICE" in _flat(ico._field_guidance(
-      "new_hiring", {}, next(f for f in t.SERVICE_FIELDS["new_hiring"]
+      "new_hiring", {}, next(f for f in _ALL_FIELDS["new_hiring"]
                              if f.key == "additional_notes"))), True),
  ("...and the casual phrasing the agency objected to is named there too",
   "no surprises later" in _flat(ico._field_guidance(
-      "new_hiring", {}, next(f for f in t.SERVICE_FIELDS["new_hiring"]
+      "new_hiring", {}, next(f for f in _ALL_FIELDS["new_hiring"]
                              if f.key == "additional_notes"))), True),
  ("and explaining is never an excuse to quote a figure",
   "NOT an invitation to give examples" in ico._field_guidance(
@@ -3314,8 +3368,16 @@ rows = [
  # work scope and her years.
  ("every employer question about a helper has a candidate counterpart",
   sorted(emp for emp, cand in _MATCHED_PAIRS.items()
-         if cand not in {f.key for f in t.SERVICE_FIELDS["candidate_new_hiring"]}),
+         if cand not in {f.key for f in t.SERVICE_FIELDS["candidate_new_hiring"]}
+         and emp not in t._REMOVED_QUESTION_KEYS),
   []),
+ # ...and a pairing Thomas removed (2026-10-15) is gone from BOTH sides, so
+ # the two tickets still hold the same questions.
+ ("a removed question is removed from both sides of the desk",
+  sorted(k for emp, cand in _MATCHED_PAIRS.items() if emp in t._REMOVED_QUESTION_KEYS
+         for k, svc in ((emp, "new_hiring"), (emp, "transfer_employer"),
+                        (cand, "candidate_new_hiring"))
+         if k in {f.key for f in t.SERVICE_FIELDS[svc]}), []),
  # ...and both halves offer the SAME words. "eldercare" against "caring for
  # the elderly", or "$600-700" against "600 to 700 dollars", is a match made
  # by eye - which is what the note on work_scope has said since it was
@@ -3354,7 +3416,8 @@ rows = [
  # taking one on, releasing theirs, or returning her to us are exclusive.
  ("her religion and the transfer direction are the fields a single answer has to fit",
   sorted(f.key for svc in t.SERVICE_FIELDS for f in t.SERVICE_FIELDS[svc]
-         if not f.multiple_answers), ["religion", "transfer_direction"]),
+         if not f.multiple_answers),
+  ["religion", "transfer_direction"] if t.ASK_RELIGION else ["transfer_direction"]),
  # Checked through the guidance the model is HANDED, not on the flag, and both
  # halves separately: the "more than one" invitation goes, the "something not
  # on the list" invitation stays. Dropping both would be
@@ -3413,7 +3476,7 @@ rows = [
  # her, so a preference is not a question anyone can act on.
  ("the religion preference is asked wherever a helper is still being chosen",
   [svc for svc in ("new_hiring", "transfer_employer")
-   if "helper_religion" not in {f.key for f in t.SERVICE_FIELDS[svc]}], []),
+   if t.ASK_RELIGION and "helper_religion" not in {f.key for f in t.SERVICE_FIELDS[svc]}], []),
  ("...and not where the helper is already chosen",
   "helper_religion" in {f.key for f in t.SERVICE_FIELDS["direct_hiring"]}, False),
  # ...and cooking is on that list by name, which is the agency's own wording:
@@ -3422,7 +3485,7 @@ rows = [
  # laundry?"
  ("cooking is one of the duties she is asked about, not a question of its own",
   "cooking" in _question_of("candidate_new_hiring", "duties_willing").lower(),
-  True),
+  t.ASK_COOKING),
  # The detail question still exists for the helpers it applies to - an
  # employer IS asked whether she must handle pork or beef, and that has to be
  # matchable - but it is gated, so a helper who never mentions cooking is
@@ -3434,7 +3497,7 @@ rows = [
  ("and the cooking detail is gated on the work she says she does",
   (lambda f: f is not None and f.gate is not None
    and f.gate.field == "work_scope")(
-      next((f for f in t.SERVICE_FIELDS["candidate_new_hiring"]
+      next((f for f in _ALL_FIELDS["candidate_new_hiring"]
             if f.key == "cooking_ability"), None)), True),
  ("so a childcare-and-eldercare helper is never asked about cooking",
   [f.key for f in t.missing_fields(
@@ -3447,7 +3510,8 @@ rows = [
  ("but a helper who says she cooks still is",
   sorted({w for w in ("general housework and cooking", "all of the above")
           if "cooking_ability" not in [f.key for f in t.missing_fields(
-              "candidate_new_hiring", {"work_scope": w})]}), []),
+              "candidate_new_hiring", {"work_scope": w})]}),
+  [] if t.ASK_COOKING else ["all of the above", "general housework and cooking"]),
 
  # --- the candidate's closing briefing, 2026-09-10 ---------------------
  # "the bot did not explain the next steps/process to the candidate." An
@@ -4476,7 +4540,8 @@ rows = [
  ("...and each opens exactly one branch",
   [len(t.applicable_fields(t.TRANSFER_EMPLOYER, {"transfer_direction": v}))
    for v in (ico._TAKING_ON_VALUE, ico._RELEASING_VALUE)],
-  [19, 4]),
+  # 19 before Thomas's 2026-10-15 removals; each removed take-on question is one fewer.
+  [19 - len(t._REMOVED_QUESTION_KEYS & {f.key for f in _ALL_FIELDS[t.TRANSFER_EMPLOYER]}), 4]),
 
  # The household question does not ask again about the children it has
  # already been told about. Live 2026-09-18: "i have 4 childrens and all are
@@ -4516,11 +4581,11 @@ rows = [
  # than gated - a gate on `requirement` would make `_gates_are_exhaustive`
  # true for that field and reinstate the 2026-09-08 blank-and-re-ask defect.
  ("the cooking question asks IF, not only which kind",
-  next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "cooking").question,
+  next(f for f in _ALL_FIELDS["new_hiring"] if f.key == "cooking").question,
   "Would she need to do any cooking, and if so, any particular kind?"),
  ("...and a bare no closes it instead of being re-asked",
   ico._yes_no_question(
-      next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "cooking").question),
+      next(f for f in _ALL_FIELDS["new_hiring"] if f.key == "cooking").question),
   True),
  ("...and `requirement` is still NOT gate-exhaustive",
   ico._gates_are_exhaustive(
@@ -5457,7 +5522,7 @@ rows = [
   list(map(lambda v: [f.key for f in ico._unfinished(
       "new_hiring", {"additional_notes": v, "helper_profile": v},
       {"additional_notes": 1, "helper_profile": 1})[0]], ("No", "nope", "Yes"))),
-  [[], [], ["helper_profile", "additional_notes"]]),
+  [[], [], ["helper_profile", "additional_notes"] if t.ASK_HOUSE_RULES else ["helper_profile"]]),
  # 2026-10-09, conversation 26: "explain to me the cost and the processes"
  # for a replacement was told "$288" - a transfer package's fee - because the
  # money word dropped the replacement filter, and the plural "processes" kept
@@ -5712,8 +5777,10 @@ rows += [
   (True, False, True, False)),
  ("Step 6 part 4: exactly the approved pairs are wired, nothing else",
   sorted(f"{s}.{f.key}+{f.ask_with}" for s, fs in t.SERVICE_FIELDS.items() for f in fs if f.ask_with),
-  sorted(["new_hiring.home_type+home_size", "new_hiring.cooking+special_duties",
-          "transfer_employer.home_type+home_size", "transfer_employer.cooking+special_duties",
+  sorted(["new_hiring.home_type+home_size",
+          "transfer_employer.home_type+home_size",
+          *(["new_hiring.cooking+special_duties", "transfer_employer.cooking+special_duties"]
+            if t.ASK_COOKING else []),
           "transfer_employer.helper_name+reason", "direct_hiring.helper_name+helper_nationality",
           "home_leave.employer_name+employer_contact",
           "candidate_new_hiring.experience+experience_field",

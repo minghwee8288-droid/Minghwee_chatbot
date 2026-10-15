@@ -595,6 +595,20 @@ _RELIGIONS: tuple[str, ...] = (
 )
 
 
+# Removed on Thomas's instruction, 2026-10-15; do not reintroduce unless he
+# asks. "A generic yes tells us nothing useful for matching." Each switch
+# stops ONE question everywhere it is asked - every employer flow and the
+# candidate registration, so the two sides stay matched - by dropping its
+# fields from SERVICE_FIELDS after the lists are built (see
+# _REMOVED_QUESTION_KEYS below). Stop asking only: no column is touched and
+# a value already collected stays on its ticket. True puts the question back.
+ASK_LANGUAGES = False   # languages (employer), languages_spoken (candidate)
+ASK_RELIGION = False    # helper_religion (employer), religion (candidate)
+ASK_COOKING = False     # cooking (employer), cooking_ability (candidate); the
+                        # cooking + special_duties pair is unwired with it
+ASK_HOUSE_RULES = False  # additional_notes ("any other house rules ...")
+
+
 SERVICE_FIELDS: dict[str, list[Field]] = {
     # §2 — employer lead flow.
     #
@@ -910,8 +924,10 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
         Field(
             "special_duties",
             "duties beyond ordinary housework",
-            "Beyond the usual cleaning and cooking, would she need to do things "
-            "like high-rise window cleaning, car washing, gardening, grocery "
+            ("Beyond the usual cleaning and cooking, would she need to do things "
+             if ASK_COOKING else
+             "Beyond the usual housework, would she need to do things ")
+            + "like high-rise window cleaning, car washing, gardening, grocery "
             "marketing, or hand-washing laundry?",
             max_asks=1,
             optional=True,
@@ -1373,7 +1389,8 @@ SERVICE_FIELDS: dict[str, list[Field]] = {
             "replacement_preferences",
             "what they want in the replacement helper",
             "What are you looking for in the replacement helper — nationality, "
-            "experience, languages, or anything else that matters to you?",
+            + ("experience, languages, " if ASK_LANGUAGES else "experience, ")
+            + "or anything else that matters to you?",
             max_asks=2,
         ),
     ],
@@ -2114,13 +2131,15 @@ SERVICE_FIELDS[CANDIDATE_HIRING] += [
     Field(
         "duties_willing",
         "the extra duties she is willing to take on",
-        "Would you be willing to do other duties such as cooking, high-rise "
-        "window cleaning, car washing, gardening, grocery shopping, or "
+        ("Would you be willing to do other duties such as cooking, high-rise "
+         if ASK_COOKING else
+         "Would you be willing to do other duties such as high-rise ")
+        + "window cleaning, car washing, gardening, grocery shopping, or "
         "hand-washing laundry?",
         max_asks=1,
         optional=True,
         group="what else she can do",
-        options=("cooking",) + _matched_options("special_duties"),
+        options=(("cooking",) if ASK_COOKING else ()) + _matched_options("special_duties"),
     ),
     # ...and only THEN, and only if cooking is actually in play, the detail an
     # employer's `cooking` question has to be matched against - which cuisines,
@@ -2683,9 +2702,13 @@ def paired_field(
 # False = no field has a partner; PAIRED_QUESTIONS still guards the mechanism.
 APPROVED_PAIRS_WIRED = True
 APPROVED_PAIRS: dict[str, tuple[tuple[str, str], ...]] = {
-    "new_hiring": (("home_type", "home_size"), ("cooking", "special_duties")),
-    TRANSFER_EMPLOYER: (("home_type", "home_size"), ("cooking", "special_duties"),
-                        ("helper_name", "reason")),
+    # cooking + special_duties only while the cooking question exists
+    # (ASK_COOKING); special_duties is then asked on its own.
+    "new_hiring": (("home_type", "home_size"),)
+    + ((("cooking", "special_duties"),) if ASK_COOKING else ()),
+    TRANSFER_EMPLOYER: (("home_type", "home_size"),)
+    + ((("cooking", "special_duties"),) if ASK_COOKING else ())
+    + (("helper_name", "reason"),),
     "direct_hiring": (("helper_name", "helper_nationality"),),
     # The helper's own leave only: both fields are gated on requested_by.
     "home_leave": (("employer_name", "employer_contact"),),
@@ -2701,6 +2724,26 @@ if APPROVED_PAIRS_WIRED:
             replace(f, ask_with=_partner_of[f.key]) if f.key in _partner_of else f
             for f in SERVICE_FIELDS[_service]
         ]
+
+
+# The questions Thomas removed (2026-10-15), by switch. Applied last, so every
+# list built above - the transfer take-on copies and the candidate half
+# included - loses them in one place, and the all-at-once list, the extraction
+# and the ticket all follow from SERVICE_FIELDS.
+_REMOVED_QUESTION_KEYS: frozenset[str] = frozenset(
+    (() if ASK_LANGUAGES else ("languages", "languages_spoken"))
+    + (() if ASK_RELIGION else ("helper_religion", "religion"))
+    + (() if ASK_COOKING else ("cooking", "cooking_ability"))
+    + (() if ASK_HOUSE_RULES else ("additional_notes",))
+)
+# The lists as they were before the removal, for the self-checks that still
+# guard the removed fields' own wording in case a switch is turned back on.
+# Nothing in app/ reads it.
+FIELDS_BEFORE_REMOVAL: dict[str, list[Field]] = {k: list(v) for k, v in SERVICE_FIELDS.items()}
+for _service in SERVICE_FIELDS:
+    SERVICE_FIELDS[_service] = [
+        f for f in SERVICE_FIELDS[_service] if f.key not in _REMOVED_QUESTION_KEYS
+    ]
 
 
 def missing_fields(service_type: str | None, collected: dict[str, Any]) -> list[Field]:
