@@ -36,12 +36,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from app import readonly  # noqa: E402
 from app.services import kb_rules  # noqa: E402
@@ -268,6 +270,23 @@ async def loader_offline() -> None:
           '"metadata": {OWNER_KEY: LOADER_OWNER}' in src)
 
 
+def watcher_fee_lock_offline() -> None:
+    """The KB watcher's fee lock lists (kb-admin/lib/watcher/fee-locked.ts and
+    the arrays in kb_admin_015_watcher.sql) must be exactly what the loader
+    says the fees document set - regenerate with scripts/gen_fee_locked.py."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import gen_fee_locked as g  # noqa: E402
+
+    data = g.compute()
+    check("fee lock: 23 questions and 7 corrections come from the fees document",
+          len(data["questions"]) == 23 and len(data["needles"]) == 7,
+          f'{len(data["questions"])} / {len(data["needles"])}')
+    ts = g.OUT.read_text(encoding="utf-8") if g.OUT.exists() else ""
+    sql = g.SQL.read_text(encoding="utf-8") if g.SQL.exists() else ""
+    check("fee lock: kb-admin's list matches the loader", all(json.dumps(q, ensure_ascii=False) in ts for q in data["questions"] + data["needles"]))
+    check("fee lock: the 015 migration's arrays match the loader", bool(sql) and g.fill_sql(sql, data) == sql)
+
+
 def preview_offline() -> None:
     from app.services import rag
     check("the read-only RPC list is exactly the knowledge-base search",
@@ -476,6 +495,8 @@ async def amain() -> int:
     print("PREP 3 - preview (offline)")
     preview_offline()
     await preview_http_offline()
+    print("PREP 4 - KB watcher fee lock (offline)")
+    watcher_fee_lock_offline()
 
     if not args.offline:
         if not args.expect_ref:

@@ -114,8 +114,14 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
                      upload: tables, kb_admin_doc_owner, nine functions,
                      checks, probe seed) and kb_admin_014 (exact live search,
                      baseline batch on first replacement); 009..014 on TEST
-                     and production (2026-10-05; run 012 AFTER 014) — applied ONLY via
-                     apply_sql.py --expect-ref <project ref>
+                     and production (2026-10-05; run 012 AFTER 014); kb_admin_015_watcher
+                     (the KB watcher; NOT APPLIED anywhere yet, waits on the go-word;
+                     after it, 012's "exactly 16" check is superseded by 015's own,
+                     24) — applied ONLY via apply_sql.py --expect-ref <project ref>
+  gen_fee_locked.py  the watcher's fee lock: the 23 questions + 7 corrections the
+                     fees document set, read from the loader, written into
+                     kb-admin/lib/watcher/fee-locked.ts AND the 015 SQL arrays
+                     (--check fails on drift; run by selfcheck_kb_prep --offline)
   seed_kb_canary.py  writes (never applies) the SQL seeding cb_kb_canary with the bot's
                      own embed_query; kb-admin must reproduce that vector to publish
   target_guard.py    every writing script calls require_ref(): prints the ref and
@@ -148,13 +154,19 @@ kb-admin/            Next.js knowledge-base tool (Documents, Rows, Rules, Test a
                      the site. Access (cb_kb_admin_users, 2026-10-08): Mahin and Thomas
                      (Ming Hwee) approver, Ratna editor, Vaidik viewer; rows are
                      added only by a reviewed SQL file (kb_admin_users_*.sql).
-                     No service-role or LLM key. Test a question calls the bot's
+                     No service-role key; an LLM key only with the watcher on. Test a question calls the bot's
                      POST /admin/preview. See kb-admin/README.md; `npm run selfcheck`
                      before any change; `npm run dev:test` runs it against TEST.
                      RULES: the loader skips (and reports) every row tagged
                      metadata.managed_by='ui', which a published edit sets - never
                      "fix" that. The kb_admin rollback files are NEVER run without an
                      explicit go-word from the user.
+                     KB WATCHER (2026-10-15, stages 1-3, OFF): Watched pages
+                     (/sources), Page changes to review (/watch), scheduled route
+                     /api/watcher/run (vercel.json, daily; 404 unless WATCHER_ENABLED).
+                     lib/watcher/* is pure and offline-tested; eight more editor
+                     functions (24 in all) once 015 is applied. KB_SOURCES_ENABLED
+                     unset = no page, no fetch, nothing. See kb-admin/README.md.
 ```
 
 ---
@@ -573,6 +585,11 @@ because the lead is opened early and the ticket is created much later.
 | A dead pooled connection does not crash a turn, and a crash is not mislabelled | `checkpointer.CbAsyncPostgresSaver._retry` (`RETRY_ON_DEAD_CONNECTION`) + `handover.REASON_BOT_ERROR` (`DISTINCT_CRASH_REASON`) | Batch G G1. A checkpoint read or write that fails on the connection is tried once more on a fresh one (the read is a read, both writes are upserts). A real crash is `bot_error`; `bot_confused` now means only a turn that handed over because it could not answer. Both count as a standdown. |
 | One helper's details never become another helper's | `info_collector.nationality_carries` / `nationality_for_turn` + `_history_since` (`collected_since`) | `nationality` is portable for a hiring client (the nationality they want) and NOT across a switch into or out of `passport_renewal`/`home_leave`, where it is one helper's. Read by the collector's reset AND by `rag_retriever`, which runs before the reset. The extractor reads history only from the message that started the current request, on every turn after a switch, not just the switch turn. |
 | One salesperson per client conversation, and the portal inbox never loses a hand-assigned owner | `assignment.resolve_agent` (`_portal_owner`) + `claim_portal_owner` | A ticket goes to whoever owns the chat in the portal before the round robin is asked; the bot only ever FILLS an empty `wp_chat_conversations.assigned_user_id` (the IS NULL is in the UPDATE itself). `to_human` used to set it unconditionally, and the ordinary ticket path (`log_escalation`) never set it at all. Profile ↔ portal login is `cb_agent_portal_users`, ours, not `wp_chat_users.profile_id`, theirs. |
+| Nothing the KB watcher drafts reaches the chatbot without an APPROVER | `kb_admin_watch_approve` (015, `kb_admin__require_actor(..., 'approver')`) + `app/watch/actions.ts` (`canApprove` first) | A watched page's change becomes a PROPOSAL (`cb_kb_drafts`), never a live row. Approve writes the text through the existing `kb_admin_save_draft` / `kb_admin_create_entry` and it goes live only through the existing `kb_admin_publish` (canary-checked embedding). Proved on PGlite (real migrations 001-009 + 015): the live entry is unchanged until publish. |
+| A watcher proposal can never change an agency fee, a pricing rule or a fees-document row | `kb_admin__watch_fee_lock` (SQL) + `lib/watcher/feeLock.ts` (twin) + `scripts/gen_fee_locked.py` | Blocked ("needs agency confirmation", KB007) if the proposed OR current entry text carries a money figure, names an agency fee, or the target is one of the 23 fees-document questions / carries one of its 7 corrections. Re-checked at approval against the entry's CURRENT text. The lists are generated from the loader and compared three ways (loader, TS, SQL). `kb_admin_fn_owner` holds no privilege on `cb_kb_rules`. |
+| A page that only changed its whitespace or date stamps produces no proposal | `lib/watcher/change.ts` (`normalisedForm`, `contentHash`) | Hash of normalised paragraphs: whitespace, case, curly quotes, date-only lines and date stamps ("Last updated ...", "Reviewed on ...") dropped. A date INSIDE a sentence is kept on purpose: a changed effective date is a changed rule. Unchanged = no model call at all. |
+| The watcher fetches politely and never silently drops a failure | `lib/watcher/fetcher.ts` + `kb_admin_source_record_fetch(ok=false)` | Clear user-agent, https + public hosts only, robots.txt (and Crawl-delay) obeyed, 20 s timeout, 3 attempts with backoff on 5xx/429/network, no retry on other 4xx, 10 s minimum gap per host, 3 MB cap. A failure is a snapshot row and is shown on the source. |
+| A proposal cites the page word for word | `lib/watcher/drafting.ts` `parseDrafts` + the passage check in `kb_admin_watch_propose` | The model may only target an entry it was shown; the source passage must be on the fetched page (whitespace aside) or the draft is dropped (and refused by the database too). |
 | ...searched for the whole service, with the filter kept whatever money words it contains | `rag_retriever.ENQUIRY_OVERVIEW_QUERY` / `_service_filter` | "costs" dropped the service filter, and the wider search returned a no-agency comparison that told the client the permit and bond were theirs to do. 12 rows, never widened - plus `ENQUIRY_OVERVIEW_EXTRA_QUERIES`, a separate search per service for a question the agency named that the shared query cannot reach (direct hire's failed medical ranks 21st under it). |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -683,6 +700,16 @@ bot volunteered them to a client and was then asked for an address it could not 
 
 **RLS does not apply to the bot.** It uses the service-role key and bypasses RLS
 entirely. RLS exists only to constrain the portal's anon/authenticated key.
+
+**The KB watcher's tables (migration 015, NOT applied yet)** are kb-admin's and the bot
+reads none of them: `cb_kb_sources` (watched pages; removed = `active false`, never
+deleted), `cb_kb_source_snapshots` (every fetch: the main text + its normalised SHA-256,
+or the error), `cb_kb_drafts` (proposals, `kind` `edit`|`new`, status pending | blocked |
+approved | published | rejected | superseded, and the provenance of an approved one:
+`source_url`, `source_fetched_at`, `approved_by(_email)`, `approved_at`, `entry_id_after`,
+`version_id`). RLS on, nothing for anon/authenticated/service_role; `kb_admin_reader`
+SELECTs, `kb_admin_fn_owner` writes through the functions only. The live KB table gets no
+new column; `cb_kb_audit`'s action CHECK gains nine watcher actions.
 
 ---
 
@@ -872,6 +899,14 @@ Easy to get wrong:
   `ticket.NATIONALITY_AS_A_CHOICE`.
   `guards.LIST_ANSWER_IS_AN_ANSWER` (2026-10-15), `False` for the Step 6c
   behaviour (answers to the all-at-once list not read as answers).
+- **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
+  `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
+  needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
+  empty = the embedding key if it is an OpenRouter key), `KB_ADMIN_DRAFT_MODEL` (default
+  `openai/gpt-5.6-luna`, the bot's), `WATCHER_ENABLED` (the schedule), `WATCHER_INTERVAL_DAYS`
+  (7), `CRON_SECRET` (32+, Vercel sends it), `KB_WATCHER_ACTOR_ID` (an active editor whose
+  access the scheduled run uses for the read-only live search). A malformed value refuses
+  to start; a missing one leaves that part off with a logged reason.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1506,6 +1541,21 @@ Ordered by what will hurt first.
     (before Batch G) it failed 4 of 4 runs, on Batch G 3 of 4. The pair is meant
     to be one natural sentence (`PAIRED_QUESTION_NOTE`); not fixed here.
 
+45. **The KB watcher (2026-10-15) is built and switched off; four things to know before
+    switching it on.** (a) Migration `kb_admin_015_watcher.sql` is NOT applied anywhere;
+    until it is, the watcher pages say "not set up yet" and nothing calls its functions.
+    After it, `kb_admin_012`'s "editor executes exactly 16 functions" check fails if re-run
+    (it describes 001-014); 015's own checks state the new surface (24). (b) The scheduled
+    run needs `KB_WATCHER_ACTOR_ID`, an active editor, because `kb_admin_match_live` (the
+    read-only live search that finds the entries closest to a change) checks for one; its
+    snapshots and proposals are still recorded as "watcher (scheduled)". A dedicated
+    "kb-watcher" Supabase user with an editor row (a reviewed `kb_admin_users_*.sql`) is
+    the clean choice. (c) A date-only line and date stamps are ignored, but a date INSIDE a
+    sentence counts as a change on purpose (an effective date moving is a rule changing),
+    so such a page will produce a proposal. (d) The first fetch of a page sends its whole
+    main text (capped at 6,000 characters) to the drafting model and may propose several
+    entries; review them like any other.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
@@ -1692,6 +1742,8 @@ python scripts/load_service_notes.py --expect-ref <ref>   # the loader now REQUI
                                        #   the ref it may write to (not for --dry-run)
                                        #   and never touches a row tagged managed_by=ui
 python scripts/apply_sql.py --expect-ref <ref> scripts/sql/<file>.sql
+python scripts/gen_fee_locked.py [--check]   # the KB watcher's fee lock from the loader
+                                       #   -> kb-admin/lib/watcher/fee-locked.ts + the 015 SQL arrays
 python scripts/preflight.py            # go-live gate: KB, agents, branch, portal bridge
 python scripts/check_retrieval.py      # retrieval calibration; tunes RAG_SOFT_FLOOR
 python scripts/e2e_services.py         # walks all 7 services end to end against the
@@ -1832,6 +1884,7 @@ behaviour behind one switch. Details of each step are in §11.
 | 7 | Escalation audit, read-only; report outside the repo (`Minghwee_backups/step7_escalation_audit_2026-10-15.md`) | `0e80fac` |
 | 8 | Recognition harness `scripts/selfcheck_recognition.py`; no seeding (live run waits on a choice) | `84e59ff` |
 | 5G' | Batch G G1-G7: crash retry and label, welcome before the style offer, > 6 h, case-number guard, candidate name/country/welcome | see git log |
+| KBW | KB watcher stages 1-3 (Thomas's item 5): watched pages, scheduled re-check, review queue; migration 015 written, NOT applied; all off | see git log |
 
 **Still to do, in order:** Step 5 is done (every item, the last being item 2 in Batch G), Step 6 is done (parts 1-4, 6b, 6c), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
@@ -1908,6 +1961,40 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-15** - **The knowledge-base watcher, stages 1-3 ("watch, review,
+  publish"; Thomas's Phase 3 item 5). Built, switched off, migration NOT applied;
+  no bot reply behaviour changes** (the bot's code is untouched).
+  (1) **Watched pages** in kb-admin (`/sources`, `KB_SOURCES_ENABLED`): add, label,
+  remove a public page with a category; **Fetch now** fetches it politely, extracts
+  the main text (nav, header, footer, breadcrumbs, cookie banners, scripts dropped),
+  stores a snapshot, and drafts proposals with OpenRouter and the bot's model. Each
+  proposal carries the source URL and the exact passage it came from.
+  (2) **The schedule** (`WATCHER_ENABLED`, default off; `vercel.json` daily, each page
+  every `WATCHER_INTERVAL_DAYS`, default 7): re-fetch, compare the normalised hash
+  with the last good snapshot, diff the paragraphs, and draft only on a real change.
+  Polite: user-agent, robots.txt and Crawl-delay, timeouts, retries with backoff, a
+  per-host gap. A failed fetch is a snapshot row shown on the page, never silent.
+  (3) **The review queue** (`/watch`): source, old vs new page text, old vs proposed
+  entry; Approve (approvers) / Edit / Reject. Approve goes through
+  `kb_admin_save_draft` / `kb_admin_create_entry` and then the existing
+  `kb_admin_publish` with a canary-checked embedding; provenance (URL, fetched_at,
+  approved_by, approved_at, entry, version) stays on the proposal. **The fee lock**:
+  money figures, agency-fee wording and the fees document's 23 rows / 7 corrections
+  are blocked ("needs agency confirmation", KB007), in the database and in the UI.
+  Every action is audit-logged in `cb_kb_audit` (nine new actions).
+  **Data:** `scripts/sql/kb_admin_015_watcher.sql` (three new cb_* tables, RLS on,
+  nothing for the portal roles, eight SECURITY DEFINER functions) and
+  `rollback/rollback_kb_admin_015_watcher.sql` (refuses while watcher data exists).
+  **Verified:** on PGlite (real Postgres in WASM) the real migrations 001-006, 008,
+  009 and 015 over a stub KB table, 43 checks (every function, the fee lock, approve
+  -> save_draft -> publish -> live, stale refusal, audit rows, access) and the clean
+  rollback / re-apply; 4 SQL faults injected, 4 red. kb-admin self-check 289 (74 new,
+  saved HTML fixtures, no network); 12 faults injected, 12 red. Two real defects the
+  fixtures caught while building: a line wrap inside `<p>` split a paragraph, and a
+  "Reviewed on <date>" stamp survived as a change. `next build` passes;
+  `selfcheck_kb_prep --offline` gains the fee-lock drift check; the bot's suites
+  unchanged (smoke 557, flows, recognition 45/46, reset_ui).
 
 - **2026-10-15** - **Thomas's wording decisions on the low-value yes/no
   questions.** Each behind its own switch in `ticket.py` (section 7). A helper's

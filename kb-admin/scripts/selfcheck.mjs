@@ -108,10 +108,16 @@ const SIXTEEN = [
   'kb_admin_create_entry', 'kb_admin_discard_draft', 'kb_admin_doc_discard', 'kb_admin_doc_edit_chunk',
   'kb_admin_doc_mark_checked', 'kb_admin_doc_publish', 'kb_admin_doc_restore', 'kb_admin_doc_retire',
   'kb_admin_doc_stage', 'kb_admin_doc_upload', 'kb_admin_match_live', 'kb_admin_match_with_batch',
-  'kb_admin_publish', 'kb_admin_restore', 'kb_admin_save_draft', 'kb_admin_toggle',
+  'kb_admin_publish', 'kb_admin_restore', 'kb_admin_save_draft',
+  // Migration 015 (the KB watcher), sorted in with the rest.
+  'kb_admin_source_add', 'kb_admin_source_record_fetch', 'kb_admin_source_remove',
+  'kb_admin_toggle',
+  'kb_admin_watch_approve', 'kb_admin_watch_edit', 'kb_admin_watch_mark_published', 'kb_admin_watch_propose', 'kb_admin_watch_reject',
 ];
-const SIX = SIXTEEN; // the name the checks below grew up with
-const ACTION_FILES = ['app/docs/actions.ts', 'app/editor/actions.ts'];
+const SIX = SIXTEEN; // the name the checks below grew up with (now twenty-four)
+const ACTION_FILES = ['app/docs/actions.ts', 'app/editor/actions.ts', 'app/watch/actions.ts'];
+// The one module outside the action files that may write: the watcher's scheduled route.
+const SCHEDULED_WRITER = 'app/api/watcher/run/route.ts';
 const ROLE_NAMES = new Set(['kb_admin_reader', 'kb_admin_editor']);
 const named = new Map();
 for (const f of code) {
@@ -120,7 +126,7 @@ for (const f of code) {
   }
 }
 const strays = [...named.keys()].filter((n) => !SIX.includes(n));
-check('the only kb_admin_* functions named are the sixteen', strays.length === 0, strays.map((n) => `${n} in ${named.get(n)[0]}`).join(', '));
+check('the only kb_admin_* functions named are the twenty-four', strays.length === 0, strays.map((n) => `${n} in ${named.get(n)[0]}`).join(', '));
 const writeTs = src('lib/write.ts');
 check('lib/write.ts exports callWrite and nothing else', exportsOf(writeTs).join(',') === 'callWrite', exportsOf(writeTs).join(','));
 check('lib/write.ts sends only writeStatement(fn), after isAllowedWrite()',
@@ -129,14 +135,15 @@ check('lib/write.ts sends only writeStatement(fn), after isAllowedWrite()',
 const pgUsers = code.filter((f) => /from 'postgres'/.test(readFileSync(f, 'utf8'))).map(rel).sort();
 check('only lib/db.ts and lib/write.ts open a database connection', pgUsers.join(',') === 'lib/db.ts,lib/write.ts', pgUsers.join(','));
 const writeUsers = code.filter((f) => /from '@\/lib\/write'|from '\.\.?\/.*write'/.test(readFileSync(f, 'utf8'))).map(rel);
-check('only the two action modules call lib/write.ts', writeUsers.sort().join(',') === ACTION_FILES.join(','), writeUsers.join(','));
+check('only the three action modules and the scheduled watcher route call lib/write.ts',
+  writeUsers.sort().join(',') === [...ACTION_FILES, SCHEDULED_WRITER].sort().join(','), writeUsers.join(','));
 const actionsSrc = src('app/editor/actions.ts');
 for (const file of ACTION_FILES) {
   const text = src(file);
   check(`${file} is a 'use server' module`, /^'use server';/.test(text));
   const fns = [...text.matchAll(/export async function (\w+)\([^)]*\)[^{]*\{\s*\n\s*(.*)/g)];
   const unguarded = fns.filter((m) => m[2].trim() !== 'const auth = await actorForWrite();').map((m) => m[1]);
-  const expected = file === 'app/editor/actions.ts' ? 6 : 9;
+  const expected = { 'app/editor/actions.ts': 6, 'app/docs/actions.ts': 9, 'app/watch/actions.ts': 6 }[file];
   check(`every server action in ${file} checks the session and role first (actorForWrite)`, fns.length === expected && unguarded.length === 0,
     `${fns.length} action(s)${unguarded.length ? `; unguarded: ${unguarded.join(', ')}` : ''}`);
 }
@@ -156,7 +163,8 @@ for (const fn of ['previewDocument', 'runImpactCheck']) {
   check(`${fn} calls no function that writes`, calls.every((c) => c.startsWith('kb_admin_match_')), calls.join(',') || 'none');
 }
 const otherServer = code.filter((f) => /^'use server';/.test(readFileSync(f, 'utf8'))).map(rel).sort();
-check("no other 'use server' module than sign-in, the editor and documents", otherServer.join(',') === 'app/docs/actions.ts,app/editor/actions.ts,app/login/actions.ts', otherServer.join(','));
+check("no other 'use server' module than sign-in, the editor, documents and the watcher",
+  otherServer.join(',') === 'app/docs/actions.ts,app/editor/actions.ts,app/login/actions.ts,app/watch/actions.ts', otherServer.join(','));
 const toggleSrc = actionsSrc.slice(actionsSrc.indexOf('export async function toggleEntry'));
 check('switching on/off also checks canApprove before calling the database',
   toggleSrc.indexOf('actor.canApprove') > 0 && toggleSrc.indexOf('actor.canApprove') < toggleSrc.indexOf("callWrite('kb_admin_toggle'"));
@@ -164,7 +172,11 @@ check('switching on/off also checks canApprove before calling the database',
 const pages = code.filter((f) => /^app\/.*page\.tsx$/.test(rel(f)) && rel(f) !== 'app/login/page.tsx');
 for (const p of pages) check(`${rel(p)} requires a viewer`, /requireViewer(With)?\(/.test(readFileSync(p, 'utf8')));
 const apis = code.filter((f) => /^app\/api\/.*route\.ts$/.test(rel(f)));
-for (const a of apis) check(`${rel(a)} checks the session`, readFileSync(a, 'utf8').includes('checkRequest('));
+for (const a of apis) {
+  // The scheduled watcher route has no session: Vercel's cron call carries CRON_SECRET instead.
+  if (rel(a) === SCHEDULED_WRITER) check(`${rel(a)} checks the cron secret (it has no session)`, readFileSync(a, 'utf8').includes('checkCronRequest('));
+  else check(`${rel(a)} checks the session`, readFileSync(a, 'utf8').includes('checkRequest('));
+}
 check('found pages and API routes to check', pages.length >= 6 && apis.length >= 1, `${pages.length} pages, ${apis.length} api`);
 
 console.log('sessions:');
@@ -206,7 +218,7 @@ try {
   tracked = '(git unavailable)';
 }
 check('.env / .env.local / .env.test.local are not tracked by git', tracked === '', tracked);
-const SECRET_KEYS = /^\s*(SUPABASE_ANON_KEY|ADMIN_PREVIEW_SECRET|KB_ADMIN_DB_PASSWORD|KB_ADMIN_DB_PASSWORD_FILE|KB_ADMIN_DB_PASSWORD_EDITOR|KB_ADMIN_DB_PASSWORD_EDITOR_FILE|KB_ADMIN_EMBEDDING_API_KEY)\s*=\s*(.*)$/;
+const SECRET_KEYS = /^\s*(SUPABASE_ANON_KEY|ADMIN_PREVIEW_SECRET|KB_ADMIN_DB_PASSWORD|KB_ADMIN_DB_PASSWORD_FILE|KB_ADMIN_DB_PASSWORD_EDITOR|KB_ADMIN_DB_PASSWORD_EDITOR_FILE|KB_ADMIN_EMBEDDING_API_KEY|KB_ADMIN_LLM_API_KEY|CRON_SECRET)\s*=\s*(.*)$/;
 for (const envName of ['.env.local', '.env.test.local']) {
   const envFile = join(ROOT, envName);
   if (!existsSync(envFile)) {
@@ -331,8 +343,8 @@ check('token expiry read', secondsLeft(jwt({ exp: now + 300 }), now) === 300);
 check('garbage token reads as expired', secondsLeft('garbage', now) < 0);
 
 console.log('behaviour - writes:');
-check('exactly the sixteen functions are allowed', Object.keys(WRITE_FUNCTIONS).sort().join(',') === SIX.join(','), Object.keys(WRITE_FUNCTIONS).sort().join(','));
-check('each of the sixteen statements is allowed', SIX.every((fn) => isAllowedWrite(writeStatement(fn))));
+check('exactly the twenty-four functions are allowed', Object.keys(WRITE_FUNCTIONS).sort().join(',') === SIX.join(','), Object.keys(WRITE_FUNCTIONS).sort().join(','));
+check('each of the twenty-four statements is allowed', SIX.every((fn) => isAllowedWrite(writeStatement(fn))));
 const bound = (fn) => WRITE_FUNCTIONS[fn].map((t, i) => `$${i + 1}::${t}`).join(', ');
 check('every statement binds every value ($n) and splices nothing',
   SIX.every((fn) => writeStatement(fn) === (ROW_FUNCTIONS.includes(fn)
@@ -360,7 +372,7 @@ check('anything else is refused (internal helpers, a second statement, raw write
 // kb_admin_editor: five in 005, one in 008, nine in 011, one in 014 (014 also
 // grants kb_admin_doc_publish again, which it replaces).
 const sqlDir = resolve(ROOT, '..', 'scripts', 'sql');
-const grantFiles = ['kb_admin_005_editor_login.sql', 'kb_admin_008_create_entry.sql', 'kb_admin_011_doc_functions.sql', 'kb_admin_014_live_match_baseline.sql'];
+const grantFiles = ['kb_admin_005_editor_login.sql', 'kb_admin_008_create_entry.sql', 'kb_admin_011_doc_functions.sql', 'kb_admin_014_live_match_baseline.sql', 'kb_admin_015_watcher.sql'];
 if (grantFiles.every((f) => existsSync(join(sqlDir, f)))) {
   const norm = (t) => t.replace(/\s+/g, '').replace(/float8\[\]/g, 'doubleprecision[]').replace(/doubleprecision/g, 'double precision');
   const sig = (m) => `${m[1]}(${norm(m[2])})`;
@@ -373,7 +385,7 @@ if (grantFiles.every((f) => existsSync(join(sqlDir, f)))) {
   }
   const ours = SIX.map((fn) => `${fn}(${norm(WRITE_FUNCTIONS[fn].join(','))})`).sort().join(' ');
   const theirs = [...granted].sort().join(' ');
-  check('the sixteen signatures match the kb_admin_editor grants (005, 008, 011, 014)', theirs === ours, theirs);
+  check('the twenty-four signatures match the kb_admin_editor grants (005, 008, 011, 014, 015)', theirs === ours, theirs);
 } else {
   console.log('  (grant SQL files not found - grant comparison skipped)');
 }
@@ -685,6 +697,331 @@ console.log('login show/hide password (2026-10-05):');
     /name="password"/.test(lf) && /autoComplete="current-password"/.test(lf) && /useFormState<LoginState, FormData>\(login,/.test(lf) &&
     /<form action=\{action\}/.test(lf));
   check('the icons are inline SVG, no icon package', /<svg /.test(lf) && !/from '(lucide|react-icons|@heroicons)/.test(lf));
+}
+
+console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):');
+{
+  const fx = (n) => readFileSync(join(ROOT, 'scripts/fixtures/watcher', n), 'utf8');
+  const X = await import(pathToFileURL(join(ROOT, 'lib/watcher/extract.ts')).href);
+  const Ch = await import(pathToFileURL(join(ROOT, 'lib/watcher/change.ts')).href);
+  const Rb = await import(pathToFileURL(join(ROOT, 'lib/watcher/robots.ts')).href);
+  const Fe = await import(pathToFileURL(join(ROOT, 'lib/watcher/fetcher.ts')).href);
+  const FL = await import(pathToFileURL(join(ROOT, 'lib/watcher/feeLock.ts')).href);
+  const LK = await import(pathToFileURL(join(ROOT, 'lib/watcher/fee-locked.ts')).href);
+  const Dr = await import(pathToFileURL(join(ROOT, 'lib/watcher/drafting.ts')).href);
+  const Pl = await import(pathToFileURL(join(ROOT, 'lib/watcher/pipeline.ts')).href);
+  const Cr = await import(pathToFileURL(join(ROOT, 'lib/watcher/cron.ts')).href);
+  const { validateConfig: vc } = await import(pathToFileURL(join(ROOT, 'lib/config.ts')).href);
+
+  // --- extraction ------------------------------------------------------------
+  const v1 = X.extractMainText(fx('page_v1.html'));
+  const v1b = X.extractMainText(fx('page_v1_reflowed.html'));
+  const v2 = X.extractMainText(fx('page_v2_changed.html'));
+  const nm = X.extractMainText(fx('page_no_main.html'));
+  check('extraction: the page title is read', v1.title === 'Rest days for migrant domestic workers | Ministry of Manpower');
+  check('extraction: the main content is kept, paragraph by paragraph', v1.paragraphs.includes('Your migrant domestic worker (MDW) must get at least one rest day each week.') &&
+    v1.paragraphs.includes('Keeping a record'), v1.paragraphs.join(' | '));
+  check('extraction: nav, breadcrumbs, cookie banner, footer, aside, share links and scripts are dropped',
+    !/Passes and permits|cookies|Government of Singapore|Related: Work permit|Share this page|NAV-SCRIPT-TEXT|FOOTER-SCRIPT-TEXT|STYLE-TEXT|Skip to main|Home >/i.test(v1.text), v1.text.slice(0, 200));
+  check('extraction: a line wrap inside a paragraph is not a new paragraph', v1.paragraphs.some((p) => p.startsWith('If she agrees') && p.endsWith('within the same month.')));
+  check('extraction: entities are decoded', v1.text.includes('day’s salary') && nm.title === 'Embassy & consular notice');
+  check('extraction: a page with no <main> falls back to its body, still without nav and footer',
+    nm.paragraphs.length === 3 && nm.paragraphs[1].startsWith('Applicants must bring') && !/Embassy footer|Visa/.test(nm.text), nm.paragraphs.join(' | '));
+  check('extraction reaches no database, network or environment',
+    !/from '(postgres|\.\.?\/(db|write|env|embed)|@\/lib\/(db|write|env|embed))'|process\.env|(?<![.\w])fetch\(/.test(src('lib/watcher/extract.ts')));
+
+  // --- change detection ------------------------------------------------------
+  check('change: whitespace, line wraps, curly quotes, a new "last updated" date and a "reviewed on" stamp are NOT a change',
+    (await Ch.contentHash(v1.text)) === (await Ch.contentHash(v1b.text)) && Ch.pageChange(v1.text, v1b.text).changed === false);
+  const real = Ch.pageChange(v1.text, v2.text);
+  check('change: a real new rule IS a change, and only the new paragraph is reported',
+    real.changed && real.added.length === 1 && real.added[0].startsWith('From 1 January 2027') && real.removed.length === 0,
+    JSON.stringify(real));
+  check('change: a date-only line or a date stamp is ignored in any common format',
+    ['Last updated 3 March 2026', 'Last updated: March 12, 2026', 'Reviewed on 2026-04-09.', 'Page last reviewed 12/03/2026', 'As at Mar 2026', '9 April 2026']
+      .every((stamp) => Ch.normalisedForm(`Rule one.\n${stamp}`) === Ch.normalisedForm('Rule one.')));
+  check('change: a date INSIDE a sentence is kept - a changed effective date is a change',
+    Ch.pageChange('From 1 January 2027, record it.', 'From 1 July 2027, record it.').changed === true);
+  check('change: the hash is SHA-256 hex (the database refuses anything else)', /^[0-9a-f]{64}$/.test(await Ch.contentHash(v1.text)));
+  check('change: a first read reports every paragraph as new', Ch.pageChange(null, v1.text).added.length === v1.paragraphs.length);
+  check('change: the passages sent to the model are capped', Ch.changedPassages({ changed: true, added: Array(50).fill('x'.repeat(500)), removed: [] }).join('').length <= 6000);
+
+  // --- robots.txt ------------------------------------------------------------
+  const robots = Rb.parseRobots('User-agent: *\nDisallow: /private\nAllow: /private/ok\nCrawl-delay: 15\n\nUser-agent: BadBot\nDisallow: /', Fe.AGENT_TOKEN);
+  check('robots: a disallowed path is refused, the longer Allow wins, other paths allowed',
+    !Rb.robotsAllows(robots, '/private/x') && Rb.robotsAllows(robots, '/private/ok/page') && Rb.robotsAllows(robots, '/fdw'));
+  check('robots: Crawl-delay is read', robots.crawlDelaySeconds === 15);
+  const ours = Rb.parseRobots('User-agent: *\nDisallow:\n\nUser-agent: MingHweeKBWatcher\nDisallow: /fdw$\nDisallow: /*.pdf', Fe.AGENT_TOKEN);
+  check('robots: a group naming our user-agent wins over "*", with * and $ honoured',
+    !Rb.robotsAllows(ours, '/fdw') && Rb.robotsAllows(ours, '/fdw/rest-days') && !Rb.robotsAllows(ours, '/docs/a.pdf'));
+  check('robots: an empty file allows everything', Rb.robotsAllows(Rb.parseRobots('', Fe.AGENT_TOKEN), '/anything'));
+
+  // --- the polite fetcher (fake network, fake clock: no connection is opened) ---
+  const fakeNet = (routes) => {
+    const calls = [];
+    let clock = 0;
+    const sleeps = [];
+    const deps = {
+      now: () => clock,
+      sleep: async (ms) => { sleeps.push(ms); clock += ms; },
+      fetch: async (url, init) => {
+        calls.push({ url, ua: init.headers['user-agent'], redirect: init.redirect, hasSignal: Boolean(init.signal), at: clock });
+        const r = routes[url];
+        const next = Array.isArray(r) ? (r.length > 1 ? r.shift() : r[0]) : r;
+        if (!next) return { status: 404, headers: { get: () => null }, text: async () => '' };
+        if (next === 'neterr') throw new Error('ECONNRESET');
+        return { status: next.status, headers: { get: (h) => (next.headers ?? {})[h.toLowerCase()] ?? null }, text: async () => next.body ?? '' };
+      },
+    };
+    return { deps, calls, sleeps };
+  };
+  const html = { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: fx('page_v1.html') };
+  {
+    const n = fakeNet({ 'https://www.mom.gov.sg/robots.txt': { status: 200, body: 'User-agent: *\nDisallow: /private' }, 'https://www.mom.gov.sg/fdw': html });
+    const r = await new Fe.PoliteFetcher(n.deps).fetchPage('https://www.mom.gov.sg/fdw');
+    check('fetch: robots.txt is read first, then the page, with our user-agent, a timeout and manual redirects',
+      r.ok && n.calls[0].url.endsWith('/robots.txt') && n.calls[1].url === 'https://www.mom.gov.sg/fdw' &&
+      n.calls.every((c) => c.ua === Fe.USER_AGENT && c.hasSignal && c.redirect === 'manual'), JSON.stringify(n.calls.map((c) => c.url)));
+    check('fetch: the user-agent names the agency, the tool and robots.txt', /MingHweeKBWatcher/.test(Fe.USER_AGENT) && /Ming Hwee/.test(Fe.USER_AGENT) && /robots/.test(Fe.USER_AGENT));
+    check('fetch: two requests to one host are at least the minimum gap apart (per-domain rate limit)',
+      n.calls[1].at - n.calls[0].at >= Fe.MIN_GAP_MS, `${n.calls[1].at - n.calls[0].at} ms`);
+  }
+  {
+    const n = fakeNet({ 'https://www.mom.gov.sg/robots.txt': { status: 200, body: 'User-agent: *\nDisallow: /fdw' }, 'https://www.mom.gov.sg/fdw': html });
+    const r = await new Fe.PoliteFetcher(n.deps).fetchPage('https://www.mom.gov.sg/fdw');
+    check('fetch: a page robots.txt disallows is not requested at all, and the refusal is reported',
+      !r.ok && /robots\.txt/.test(r.error) && n.calls.length === 1, r.error ?? '');
+  }
+  {
+    const n = fakeNet({ 'https://a.gov.sg/robots.txt': { status: 503 }, 'https://a.gov.sg/p': html });
+    const r = await new Fe.PoliteFetcher(n.deps).fetchPage('https://a.gov.sg/p');
+    check('fetch: robots.txt that cannot be read (5xx) means "not this time" - the page is not fetched',
+      !r.ok && /could not be read/.test(r.error) && !n.calls.some((c) => c.url === 'https://a.gov.sg/p'));
+  }
+  {
+    const n = fakeNet({ 'https://a.gov.sg/robots.txt': { status: 404 }, 'https://a.gov.sg/p': [{ status: 503 }, 'neterr', html] });
+    const r = await new Fe.PoliteFetcher(n.deps).fetchPage('https://a.gov.sg/p');
+    check('fetch: a 5xx and a network error are retried with backoff, then succeed',
+      r.ok && n.calls.filter((c) => c.url === 'https://a.gov.sg/p').length === 3 && n.sleeps.some((ms) => ms >= 2000), JSON.stringify(n.sleeps));
+  }
+  {
+    const n = fakeNet({ 'https://a.gov.sg/robots.txt': { status: 404 }, 'https://a.gov.sg/p': [{ status: 503 }] });
+    const r = await new Fe.PoliteFetcher(n.deps).fetchPage('https://a.gov.sg/p');
+    check('fetch: retries stop after MAX_ATTEMPTS and the failure is reported, not hidden',
+      !r.ok && n.calls.filter((c) => c.url === 'https://a.gov.sg/p').length === Fe.MAX_ATTEMPTS && /HTTP 503/.test(r.error));
+  }
+  {
+    const n = fakeNet({ 'https://a.gov.sg/robots.txt': { status: 404 }, 'https://a.gov.sg/p': [{ status: 404 }] });
+    const r = await new Fe.PoliteFetcher(n.deps).fetchPage('https://a.gov.sg/p');
+    check('fetch: a 404 is not retried', !r.ok && n.calls.filter((c) => c.url === 'https://a.gov.sg/p').length === 1 && r.status === 404);
+  }
+  {
+    const n = fakeNet({ 'https://a.gov.sg/robots.txt': { status: 404 }, 'https://a.gov.sg/p': { status: 301, headers: { location: 'http://a.gov.sg/p' } } });
+    const r = await new Fe.PoliteFetcher(n.deps).fetchPage('https://a.gov.sg/p');
+    check('fetch: a redirect to http:// is refused', !r.ok && /redirected to a refused address/.test(r.error));
+  }
+  {
+    const n = fakeNet({ 'https://a.gov.sg/robots.txt': { status: 404 }, 'https://a.gov.sg/p': { status: 200, headers: { 'content-type': 'application/pdf' }, body: '%PDF' } });
+    const r = await new Fe.PoliteFetcher(n.deps).fetchPage('https://a.gov.sg/p');
+    check('fetch: a non-HTML document is refused', !r.ok && /not a web page/.test(r.error));
+  }
+  check('fetch: private and odd addresses are refused before any request',
+    ['http://www.mom.gov.sg/', 'https://localhost/x', 'https://127.0.0.1/x', 'https://intranet.local/x', 'https://user:pw@mom.gov.sg/', 'not a url']
+      .every((u) => Fe.addressProblem(u) !== null) && Fe.addressProblem('https://www.mom.gov.sg/passes-and-permits/work-permit-for-foreign-domestic-worker') === null);
+  check('the fetcher opens no connection of its own (the network call is passed in)', !/(?<![.\w])fetch\(|process\.env/.test(src('lib/watcher/fetcher.ts')));
+
+  // --- the fee lock -----------------------------------------------------------
+  const lock = (tq, ta, q, a) => FL.feeLockReason({ targetQuestion: tq, targetAnswer: ta, proposedQuestion: q, proposedAnswer: a });
+  check('fee lock: a plain rule change is approvable', lock('How many rest days?', 'One a week.', 'How many rest days?', 'One a week, plus one a month that cannot be compensated.') === null);
+  check('fee lock: any money figure blocks ($, S$, SGD, RM, "dollars")',
+    ['The fee is $450.', 'From S$650 a month.', 'SGD 300 levy.', 'RM 200 deposit.', 'It costs 450 dollars.'].every((a) => /money/.test(lock(null, null, 'Q?', a) ?? '')));
+  check('fee lock: a figure in the CURRENT entry blocks too (a change cannot remove a price either)', /money/.test(lock('Cost?', 'The agency fee is $1,428.', 'Cost?', 'Our agent will confirm.') ?? ''));
+  check('fee lock: naming an agency fee blocks even with no figure', /agency fee/.test(lock(null, null, 'Q?', 'A replacement fee applies.') ?? ''));
+  check('fee lock: every row from the fees document is locked, by question',
+    LK.LOCKED_QUESTIONS.length === 23 && LK.LOCKED_QUESTIONS.every((q) => /fees document/.test(lock(q, 'Our agent will confirm.', q, 'Changed wording.') ?? '')));
+  check('fee lock: a row carrying a fees-document correction is locked, by its text',
+    LK.LOCKED_NEEDLES.length === 7 && LK.LOCKED_NEEDLES.every((n) => /fees document/.test(lock('Some question?', `Intro. ${n} More.`, 'Some question?', 'x') ?? '')));
+  {
+    const sql015 = existsSync(join(ROOT, '..', 'scripts/sql/kb_admin_015_watcher.sql')) ? readFileSync(join(ROOT, '..', 'scripts/sql/kb_admin_015_watcher.sql'), 'utf8') : '';
+    const arr = (marker) => {
+      const m = new RegExp(`-- ${marker}:BEGIN\\n([\\s\\S]*?)-- ${marker}:END`).exec(sql015);
+      return m ? [...m[1].matchAll(/'((?:[^']|'')*)'/g)].map((x) => x[1].replace(/''/g, "'")) : null;
+    };
+    check('fee lock: the database migration carries exactly the same locked questions and needles',
+      JSON.stringify(arr('FEE_LOCKED_QUESTIONS')) === JSON.stringify([...LK.LOCKED_QUESTIONS]) &&
+      JSON.stringify(arr('FEE_LOCKED_NEEDLES')) === JSON.stringify([...LK.LOCKED_NEEDLES]));
+    check('fee lock: the database refuses to approve a blocked draft (KB007), re-checking the entry\'s current text',
+      /raise exception 'needs agency confirmation: %', v_lock using errcode = 'KB007'/.test(sql015) &&
+      /kb_admin__watch_fee_lock\(v_t\.question, v_t\.answer, v_d\.proposed_question, v_d\.proposed_answer\)/.test(sql015));
+    check('fee lock: the database approve needs an APPROVER', /kb_admin_watch_approve[\s\S]*?kb_admin__require_actor\(p_actor_id, 'approver'\)/.test(sql015));
+    check('fee lock: the watcher owner can never touch the pricing rules', /FAIL: kb_admin_fn_owner holds a privilege on cb_kb_rules/.test(sql015) && !/on public\.cb_kb_rules to kb_admin_fn_owner/.test(sql015));
+    // Audit: every public watcher function writes an audit row.
+    const fns = [...sql015.matchAll(/create or replace function public\.(kb_admin_(?:source|watch)_\w+)\(([\s\S]*?)\n\$\$;/g)];
+    const unaudited = fns.filter((m) => !/insert into public\.cb_kb_audit/.test(m[2])).map((m) => m[1]);
+    check('audit: all eight watcher functions write an audit row (the PGlite run proved each action lands)', fns.length === 8 && unaudited.length === 0,
+      `${fns.length} functions${unaudited.length ? `; unaudited: ${unaudited.join(', ')}` : ''}`);
+    check('access: RLS on and everything revoked from the portal roles for the three tables',
+      /enable row level security/.test(sql015) && /revoke all on public\.cb_kb_sources, public\.cb_kb_source_snapshots, public\.cb_kb_drafts\s+from public, anon, authenticated, service_role;/.test(sql015));
+    check('the live knowledge-base table gets no new column', !/alter table public\.cb_knowledge_base_updated\s+add/i.test(sql015));
+    const rb = existsSync(join(ROOT, '..', 'scripts/sql/rollback/rollback_kb_admin_015_watcher.sql')) ? readFileSync(join(ROOT, '..', 'scripts/sql/rollback/rollback_kb_admin_015_watcher.sql'), 'utf8') : '';
+    check('a rollback exists and refuses while watcher data exists', /ROLLBACK 015 REFUSED: sources exist/.test(rb) && /ROLLBACK 015 REFUSED: cb_kb_audit holds watcher actions/.test(rb));
+  }
+
+  // --- drafting: only verifiable proposals survive ----------------------------
+  const page = v2.text;
+  const cand = [{ id: '11111111-1111-1111-1111-111111111111', question: 'How many rest days?', answer: 'One a week.' }];
+  const goodDraft = { target_entry_id: cand[0].id, question: 'How many rest days?', answer: 'One a week; from 2027 it goes in the contract.', source_passage: 'From 1 January 2027, the rest-day arrangement must be recorded in the employment contract.', why: 'x' };
+  const parsed = Dr.parseDrafts(JSON.stringify({ drafts: [
+    goodDraft,
+    { ...goodDraft, target_entry_id: '99999999-9999-9999-9999-999999999999' },
+    { ...goodDraft, target_entry_id: null, source_passage: 'A sentence the page never said.' },
+    { ...goodDraft, target_entry_id: null, answer: 'x'.repeat(1300) },
+    { ...goodDraft, target_entry_id: null, answer: 'Her FIN is G1234567X.' },
+  ] }), { newText: page, candidateIds: cand.map((c) => c.id) });
+  check('drafting: a draft citing the page word for word, for an offered entry, survives', parsed.drafts.length === 1 && parsed.drafts[0].target_entry_id === cand[0].id);
+  check('drafting: an unoffered entry, a passage not on the page, over 1,200 characters and an NRIC are each dropped',
+    parsed.dropped.length === 4 && parsed.dropped.some((d) => /not offered/.test(d)) && parsed.dropped.some((d) => /not on the page/.test(d)) &&
+    parsed.dropped.some((d) => /1200/.test(d)) && parsed.dropped.some((d) => /NRIC/.test(d)), parsed.dropped.join(' | '));
+  check('drafting: an answer that is not JSON produces no draft', Dr.parseDrafts('sorry, I cannot', { newText: page, candidateIds: [] }).drafts.length === 0);
+  const prompt = Dr.buildPrompt({ label: 'MOM', url: 'https://www.mom.gov.sg/fdw', added: ['A'], removed: [], candidates: cand });
+  check('drafting: the prompt forbids invented facts and agency fees, and asks for the passage word for word',
+    /ONLY what the page passages say/.test(prompt.system) && /Never propose anything about agency fees/.test(prompt.system) && /word for word/.test(prompt.system));
+
+  // --- the pipeline, end to end on a fake database ---------------------------
+  // The fake database behaves like migration 015: it compares hashes with the
+  // last good snapshot and applies the fee lock to every proposal.
+  const fakeDb = () => {
+    const snaps = [];
+    const log = [];
+    const proposals = [];
+    const call = async (fn, params) => {
+      log.push(fn);
+      if (fn === 'kb_admin_source_record_fetch') {
+        const [, , , ok, , hash, text] = params;
+        if (!ok) { snaps.push({ ok: false }); return { ok: false, changed: false, first: false }; }
+        const prev = [...snaps].reverse().find((s) => s.ok);
+        snaps.push({ ok: true, hash, text });
+        return { ok: true, snapshot_id: `snap-${snaps.length}`, changed: !prev || prev.hash !== hash, first: !prev };
+      }
+      if (fn === 'kb_admin_match_live') return [{ id: cand[0].id, chunk_type: 'qa_pair', question: cand[0].question, answer: cand[0].answer, similarity: 0.7 }];
+      if (fn === 'kb_admin_watch_propose') {
+        const [, , , target, q, a, , , , , passage] = params;
+        const t = target ? cand.find((c) => c.id === target) : null;
+        const reason = FL.feeLockReason({ targetQuestion: t?.question ?? null, targetAnswer: t?.answer ?? null, proposedQuestion: q, proposedAnswer: a });
+        proposals.push({ target, q, a, passage, status: reason ? 'blocked' : 'pending' });
+        return { draft_id: `d-${proposals.length}`, status: reason ? 'blocked' : 'pending', blocked_reason: reason };
+      }
+      throw new Error(`unexpected call ${fn}`);
+    };
+    return { call, log, proposals, lastText: () => [...snaps].reverse().find((s) => s.ok)?.text ?? null };
+  };
+  const pageFrom = (file) => async () => ({ ok: true, status: 200, html: fx(file), finalUrl: 'https://www.mom.gov.sg/fdw' });
+  const src0 = { id: 'aaaaaaaa-0000-0000-0000-000000000000', url: 'https://www.mom.gov.sg/fdw', label: 'MOM rest days' };
+  const db1 = fakeDb();
+  let llmCalls = 0;
+  const llm = (answer) => async () => { llmCalls += 1; return answer; };
+  const deps = (fetchPage, answer) => ({
+    call: db1.call, fetchPage, previousText: async () => db1.lastText(),
+    embed: async (texts) => ({ vectors: texts.map(() => Array(1536).fill(0.01)), model: 'm' }),
+    recorder: null, searcher: { userId: 'u', email: 'watcher' }, llm: llm(answer), model: 'test-model',
+  });
+  const first = await Pl.checkSource(src0, deps(pageFrom('page_v1.html'), JSON.stringify({ drafts: [] })));
+  check('pipeline: the first read records a snapshot (and asks the model about the whole page)', first.outcome === 'first' && llmCalls === 1);
+  const same = await Pl.checkSource(src0, deps(pageFrom('page_v1_reflowed.html'), JSON.stringify({ drafts: [goodDraft] })));
+  check('pipeline: whitespace and date stamps only -> recorded as unchanged, NO model call, NO draft',
+    same.outcome === 'unchanged' && llmCalls === 1 && db1.proposals.length === 0);
+  const changed = await Pl.checkSource(src0, deps(pageFrom('page_v2_changed.html'), JSON.stringify({ drafts: [goodDraft] })));
+  check('pipeline: a real change -> the closest entries are found, the model is asked, one proposal is made with its passage',
+    changed.outcome === 'changed' && llmCalls === 2 && db1.proposals.length === 1 && db1.proposals[0].passage.startsWith('From 1 January 2027') &&
+    db1.log.includes('kb_admin_match_live'), JSON.stringify(changed));
+  const feeAnswer = JSON.stringify({ drafts: [{ ...goodDraft, answer: 'One a week, or S$40 in lieu.' }] });
+  const db2 = fakeDb();
+  const feeRun = await Pl.checkSource(src0, { ...deps(pageFrom('page_v2_changed.html'), feeAnswer), call: db2.call, previousText: async () => v1.text });
+  check('pipeline: a proposal touching money is still recorded - as BLOCKED, needing agency confirmation', feeRun.drafts.length === 1 && feeRun.drafts[0].status === 'blocked');
+  const db3 = fakeDb();
+  const failed = await Pl.checkSource(src0, { ...deps(async () => ({ ok: false, status: 503, error: 'HTTP 503 (after 3 attempts)' }), '{}'), call: db3.call });
+  check('pipeline: a failed fetch is recorded as a failed snapshot (shown in kb-admin), never silently skipped',
+    failed.outcome === 'failed' && db3.log.join() === 'kb_admin_source_record_fetch');
+  check('the pipeline imports no database, network or environment code (everything is passed in)',
+    !/from '(postgres|\.\.?\/(db|write|env|embed)|@\/lib\/(db|write|env|embed))'|process\.env|(?<![.\w])fetch\(/.test(src('lib/watcher/pipeline.ts')));
+
+  // --- approve -> the existing Q&A path -------------------------------------
+  const approveRun = async (failOn) => {
+    const calls = [];
+    const call = async (fn, params) => {
+      calls.push({ fn, params });
+      if (fn === failOn) throw Object.assign(new Error('refused'), { code: failOn === 'kb_admin_watch_approve' ? 'KB007' : 'KB005' });
+      if (fn === 'kb_admin_watch_approve') return { entry_id: 'e1', version_id: 'v1' };
+      return null;
+    };
+    let threw = null;
+    let result = null;
+    try {
+      result = await Pl.approveAndPublish({ userId: 'u1', email: 'a@x' }, { id: 'd1', question: 'Q?', answer: 'A.' }, 'page changed',
+        { call, embed: async (t) => ({ vector: Array(1536).fill(0.5), model: 'text-embedding-3-small', text: t }) });
+    } catch (e) {
+      threw = e;
+    }
+    return { calls, result, threw };
+  };
+  {
+    const ok = await approveRun(null);
+    check('approve: approve -> kb_admin_publish (the existing path, with the vector and the canary model) -> mark published, in that order',
+      ok.calls.map((c) => c.fn).join(',') === 'kb_admin_watch_approve,kb_admin_publish,kb_admin_watch_mark_published' &&
+      ok.calls[1].params[2] === 'v1' && /^\[0\.5(,0\.5){1535}\]$/.test(ok.calls[1].params[3]) && ok.calls[1].params[4] === 'text-embedding-3-small' &&
+      ok.result?.published === true);
+    const blocked = await approveRun('kb_admin_watch_approve');
+    check('approve: a refused approval (fee lock, KB007) stops everything - nothing embedded, nothing published',
+      blocked.threw?.code === 'KB007' && blocked.calls.length === 1);
+    const pubFail = await approveRun('kb_admin_publish');
+    check('approve: a publish that fails leaves the draft approved but NOT marked published, and says so',
+      pubFail.result?.published === false && pubFail.result.versionId === 'v1' && !pubFail.calls.some((c) => c.fn === 'kb_admin_watch_mark_published'));
+  }
+
+  // --- wiring: switched off unless asked for --------------------------------
+  const watchActions = src('app/watch/actions.ts');
+  const approveBody = watchActions.slice(watchActions.indexOf('export async function approveWatchDraft'));
+  check('approving checks canApprove before anything reaches the database',
+    approveBody.indexOf('actor.canApprove') > 0 && approveBody.indexOf('actor.canApprove') < approveBody.indexOf('approveAndPublish('));
+  check('every watcher action refuses while the watcher is off', (watchActions.match(/const off = watcherOff\(\);/g) ?? []).length === 6);
+  const watcherPages = ['app/sources/page.tsx', 'app/watch/page.tsx', 'app/watch/[id]/page.tsx'];
+  check('the watcher pages are 404 unless the watcher is on', watcherPages.every((p) => /if \(!viewer\.watcherOn[^)]*\) notFound\(\);/.test(src(p))));
+  const route = src('app/api/watcher/run/route.ts');
+  check('the scheduled route is 404 unless the schedule is on and the cron secret matches',
+    /if \(!cfg\.watcher \|\| !schedule\) return NextResponse\.json\(\{ error: 'not found' \}, \{ status: 404 \}\);/.test(route) &&
+    /if \(!checkCronRequest\(req\.headers\.get\('authorization'\), schedule\.cronSecret\)\) return NextResponse\.json\(\{ error: 'not found' \}, \{ status: 404 \}\);/.test(route));
+  check('the scheduled route records as the watcher (no person) and searches only as the configured account', /recorder: null,/.test(route) && /searcher,/.test(route));
+  check('the cron secret is compared in constant time, and only a Bearer header counts',
+    Cr.checkCronRequest(`Bearer ${'s'.repeat(40)}`, 's'.repeat(40)) && !Cr.checkCronRequest('s'.repeat(40), 's'.repeat(40)) &&
+    !Cr.checkCronRequest(`Bearer ${'t'.repeat(40)}`, 's'.repeat(40)) && !Cr.checkCronRequest(null, 's'.repeat(40)) && /timingSafeEqual/.test(src('lib/watcher/cron.ts')));
+  {
+    const matcher = /matcher: \[('[^']*')\]/.exec(src('middleware.ts'))?.[1] ?? '';
+    check('middleware lets only the scheduled route through without a session',
+      matcher === "'/((?!login|api/watcher/run|_next/static|_next/image|favicon.ico).*)'", matcher);
+  }
+  check('vercel.json schedules the route daily (it answers 404 until WATCHER_ENABLED is set)',
+    (() => { try { const v = JSON.parse(src('vercel.json')); return v.crons?.length === 1 && v.crons[0].path === '/api/watcher/run'; } catch { return false; } })());
+
+  // --- configuration ----------------------------------------------------------
+  const on = { ...good, KB_ADMIN_DB_PASSWORD_EDITOR: 'e'.repeat(24), KB_ADMIN_EMBEDDING_API_KEY: 'sk-or-v1-dummy', KB_ADMIN_EMBEDDING_BASE_URL: 'https://openrouter.ai/api/v1' };
+  const cf = (o) => vc(o, noFile);
+  const refusesW = (o) => { try { cf(o); return false; } catch (e) { return /refuses to start/.test(String(e.message)); } };
+  check('config: the watcher is OFF by default, with no warning', cf(on).watcher === null && cf(on).watcherOffReason === '' && cf(good).watcher === null);
+  check('config: KB_SOURCES_ENABLED=true turns it on, drafting with the bot\'s model via OpenRouter',
+    cf({ ...on, KB_SOURCES_ENABLED: 'true' }).watcher?.llm.model === 'openai/gpt-5.6-luna' && cf({ ...on, KB_SOURCES_ENABLED: 'true' }).watcher?.llm.baseUrl === 'https://openrouter.ai/api/v1' &&
+    cf({ ...on, KB_SOURCES_ENABLED: 'true' }).watcher?.schedule === null);
+  check('config: without the editor the watcher stays off (with a reason)', cf({ ...good, KB_SOURCES_ENABLED: 'true' }).watcher === null && /editor/.test(cf({ ...good, KB_SOURCES_ENABLED: 'true' }).watcherOffReason));
+  check('config: WATCHER_ENABLED alone does nothing without KB_SOURCES_ENABLED', cf({ ...on, WATCHER_ENABLED: 'true' }).watcher === null && /KB_SOURCES_ENABLED/.test(cf({ ...on, WATCHER_ENABLED: 'true' }).watcherOffReason));
+  check('config: the schedule needs CRON_SECRET and KB_WATCHER_ACTOR_ID; weekly by default, configurable',
+    cf({ ...on, KB_SOURCES_ENABLED: 'true', WATCHER_ENABLED: 'true' }).watcher?.schedule === null &&
+    cf({ ...on, KB_SOURCES_ENABLED: 'true', WATCHER_ENABLED: 'true', CRON_SECRET: 'c'.repeat(40), KB_WATCHER_ACTOR_ID: '11111111-1111-1111-1111-111111111111' }).watcher?.schedule?.intervalDays === 7 &&
+    cf({ ...on, KB_SOURCES_ENABLED: 'true', WATCHER_ENABLED: 'true', CRON_SECRET: 'c'.repeat(40), KB_WATCHER_ACTOR_ID: '11111111-1111-1111-1111-111111111111', WATCHER_INTERVAL_DAYS: '14' }).watcher?.schedule?.intervalDays === 14);
+  check('config: a short cron secret, a malformed actor id, a non-OpenRouter drafting key or a silly interval refuses to start',
+    refusesW({ ...on, CRON_SECRET: 'short' }) && refusesW({ ...on, KB_WATCHER_ACTOR_ID: 'nope' }) &&
+    refusesW({ ...on, KB_ADMIN_LLM_API_KEY: 'sk-proj-x' }) && refusesW({ ...on, WATCHER_INTERVAL_DAYS: '0' }) && refusesW({ ...on, WATCHER_INTERVAL_DAYS: '2.5' }));
+  check('config: an OpenAI embedding key is not used for drafting (needs KB_ADMIN_LLM_API_KEY)',
+    cf({ ...good, KB_ADMIN_DB_PASSWORD_EDITOR: 'e'.repeat(24), KB_ADMIN_EMBEDDING_API_KEY: 'sk-dummy', KB_SOURCES_ENABLED: 'true' }).watcher === null);
+  check('the sidebar shows the watcher pages only while it is on', /if \(viewer\.watcherOn\)/.test(src('components/Shell.tsx')));
 }
 
 console.log(failures ? `RESULT: ${failures} FAIL(S)` : 'RESULT: ALL PASS');

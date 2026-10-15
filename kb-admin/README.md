@@ -46,7 +46,7 @@ Every credential is server-side (nothing is `NEXT_PUBLIC_`).
 4. The embedding key (only when the editor is on), to embed an entry's new text.
 5. The bot's **preview secret**, for Test a question.
 
-It holds no service-role key and no LLM key. Nothing it does can touch the rules, the
+It holds no service-role key, and no LLM key unless the KB watcher is switched on (below). Nothing it does can touch the rules, the
 access list, a Q&A entry outside the Q&A functions, or a document chunk outside the
 document functions (which never touch a Q&A row, never delete, and switch rows on and off
 only by publish, restore and retire) - the database refuses, whatever the app sends.
@@ -100,6 +100,33 @@ pending draft and appears under Pending approval.
 kb-admin cannot add, change or remove anyone - access rows are managed by a separate,
 reviewed SQL change. Sessions are httpOnly, SameSite=Strict cookies and end 12 hours after
 sign-in.
+
+## KB watcher (watch, review, publish) - off by default
+
+Migration `scripts/sql/kb_admin_015_watcher.sql` (NOT applied until the go-word) plus
+`KB_SOURCES_ENABLED=true` turn on two pages:
+
+- **Watched pages** (`/sources`): add / label / remove a public page (category: government
+  rule, process, embassy, other). **Fetch now** reads it politely (our user-agent, robots.txt
+  obeyed, timeouts, retries with backoff, one request per host at least 10 s apart), keeps a
+  snapshot of the main text, and - only if the normalised text changed (whitespace, curly
+  quotes, date stamps and date-only lines ignored; a date inside a sentence still counts) -
+  asks the drafting model for knowledge-base proposals. A failed fetch is recorded and shown
+  against the page.
+- **Page changes to review** (`/watch`): each proposal shows the page, the exact source
+  passage, what changed on the page, and old vs proposed entry. **Approve** (approvers only)
+  goes through the existing Q&A path: `kb_admin_save_draft` / `kb_admin_create_entry`, the
+  canary-checked embedding, `kb_admin_publish`; provenance (source URL, fetched_at,
+  approved_by, approved_at) stays on the proposal. **Edit** and **Reject** for editors.
+- **The fee lock**: a proposal touching a money figure, naming an agency fee, or aimed at a row
+  from the agency's fees document (23 questions, 7 corrections - generated from the loader by
+  `scripts/gen_fee_locked.py`) is shown as **Needs agency confirmation** and cannot be
+  approved; the database refuses it too (KB007).
+
+`WATCHER_ENABLED=true` (+ `CRON_SECRET`, `KB_WATCHER_ACTOR_ID`) adds the schedule:
+`vercel.json` calls `/api/watcher/run` daily and each page is re-checked every
+`WATCHER_INTERVAL_DAYS` (default 7). Without them the route answers 404. Nothing the watcher
+does reaches the chatbot without an approver.
 
 ## Edits the loader will not undo
 
