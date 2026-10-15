@@ -61,6 +61,7 @@ export type WatchDraftRow = {
   id: string;
   source_id: string;
   source_label: string;
+  source_category: string;
   source_url: string;
   source_fetched_at: string;
   kind: 'edit' | 'new';
@@ -80,6 +81,8 @@ export type WatchDraftRow = {
   new_source_text: string | null;
   status: string;
   blocked_reason: string | null;
+  figure_check: boolean;
+  figure_confirmed: boolean;
   created_at: string;
   created_by_email: string | null;
   edited_by_email: string | null;
@@ -93,10 +96,10 @@ export type WatchDraftRow = {
 };
 
 const DRAFT_COLUMNS = `
-    d.id::text, d.source_id::text, s.label as source_label, d.source_url, d.source_fetched_at::text, d.kind,
+    d.id::text, d.source_id::text, s.label as source_label, s.category as source_category, d.source_url, d.source_fetched_at::text, d.kind,
     d.target_entry_id::text, d.old_question, d.old_answer, k.question as current_question, k.answer as current_answer,
     d.proposed_question, d.proposed_answer, d.section_heading, d.service, d.audience, d.nationality,
-    d.source_passage, d.old_source_text, d.new_source_text, d.status, d.blocked_reason, d.created_at::text,
+    d.source_passage, d.old_source_text, d.new_source_text, d.status, d.blocked_reason, d.figure_check, d.figure_confirmed, d.created_at::text,
     d.created_by_email, d.edited_by_email, d.reviewed_by_email, d.review_reason, d.approved_by_email,
     d.approved_at::text, d.entry_id_after::text, d.version_id::text, d.published_at::text`;
 

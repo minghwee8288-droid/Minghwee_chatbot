@@ -6,7 +6,7 @@ import { Shell } from '@/components/Shell';
 import { AmberNotice, PageHeader, Pill, formatDate } from '@/components/ui';
 import { requireViewerWith } from '@/lib/auth';
 import { wordDiff, type DiffPart } from '@/lib/editing';
-import { feeLockReason } from '@/lib/watcher/feeLock';
+import { reviewState } from '@/lib/watcher/feeLock';
 import { watchDraft } from '@/lib/watchQueries';
 import { DRAFT_STATUS } from '../status';
 import { EditProposalForm } from './EditProposalForm';
@@ -49,6 +49,8 @@ function Compare({ title, leftLabel, rightLabel, before, after }: { title: strin
  * knowledge-base change it implies, side by side; then Approve / Edit / Reject.
  * A proposal under the fee lock shows "Needs agency confirmation" and no
  * Approve button - and the database refuses its approval anyway (KB007).
+ * A government page's money figure is approvable, with a warning and a
+ * required tick (the database refuses without it, KB008).
  */
 export default async function WatchDraftPage({ params, searchParams }: { params: { id: string }; searchParams: Record<string, string | undefined> }) {
   const id = /^[0-9a-f-]{36}$/i.test(params.id) ? params.id : null;
@@ -56,16 +58,15 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
   if (!viewer.watcherOn || !draft) notFound();
 
   const open = draft.status === 'pending' || draft.status === 'blocked';
-  const lock =
-    draft.blocked_reason ??
-    (open
-      ? feeLockReason({
-          targetQuestion: draft.current_question,
-          targetAnswer: draft.current_answer,
-          proposedQuestion: draft.proposed_question,
-          proposedAnswer: draft.proposed_answer,
-        })
-      : null);
+  const review = reviewState({
+    targetQuestion: draft.current_question,
+    targetAnswer: draft.current_answer,
+    proposedQuestion: draft.proposed_question,
+    proposedAnswer: draft.proposed_answer,
+    category: draft.source_category,
+  });
+  const lock = draft.blocked_reason ?? (open ? review.lock : null);
+  const figure = open && !lock && (review.figure || draft.figure_check);
   const stale = draft.kind === 'edit' && open && (draft.current_question !== draft.old_question || draft.current_answer !== draft.old_answer);
   const status = DRAFT_STATUS[draft.status] ?? { text: draft.status, tone: 'off' as const };
   const oldEntry = draft.kind === 'edit' ? `${draft.current_question ?? ''}\n\n${draft.current_answer ?? ''}` : '';
@@ -91,6 +92,11 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
       {lock ? (
         <AmberNotice title="Needs agency confirmation">
           This proposal cannot be approved here: {lock}. A page change may never alter an agency fee, a pricing rule or a row from the agency&apos;s fees document. Reject it, or raise it with Ming Hwee.
+        </AmberNotice>
+      ) : null}
+      {figure ? (
+        <AmberNotice title="This changes a figure">
+          This changes a figure: check it against the source before approving. Open the source page above and confirm the amount word for word; approving asks you to tick that you did.
         </AmberNotice>
       ) : null}
       {stale ? (
@@ -133,6 +139,7 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
           <h2 className="text-[15px] font-semibold">Provenance</h2>
           <p>Approved by {draft.approved_by_email} on {formatDate(draft.approved_at)}{draft.published_at ? `; live since ${formatDate(draft.published_at)}` : ''}.</p>
           <p>From {draft.source_url}, fetched {formatDate(draft.source_fetched_at)}.</p>
+          {draft.figure_confirmed ? <p>The approver confirmed the figure against the source.</p> : null}
           {draft.entry_id_after ? <p><Link className="link" href={`/rows/${draft.entry_id_after}`}>Open the entry</Link></p> : null}
         </section>
       ) : null}
@@ -146,6 +153,7 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
             <ReasonAction
               action={approveWatchDraft}
               hidden={{ draft_id: draft.id }}
+              confirm={figure ? { name: 'confirm_figure', label: 'I have checked this figure against the source page.' } : undefined}
               openLabel="Approve"
               submitLabel="Approve and publish"
               busyLabel="Publishing…"

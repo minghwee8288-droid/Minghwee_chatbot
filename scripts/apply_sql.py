@@ -40,6 +40,8 @@ def main() -> None:
         conn = psycopg.connect(settings.supabase_db_url, autocommit=True)
     except Exception as exc:
         sys.exit(f"[apply_sql] could not connect ({type(exc).__name__})")
+    # Print the files' own RAISE NOTICE lines (their "PASS: ..." checks).
+    conn.add_notice_handler(lambda diag: print(f"[apply_sql] notice: {diag.message_primary}", flush=True))
     with conn:
         for path in args.files:
             print(f"[apply_sql] running {path}", flush=True)

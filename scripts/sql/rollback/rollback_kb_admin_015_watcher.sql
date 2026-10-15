@@ -1,6 +1,6 @@
 -- ROLLBACK of kb_admin_015_watcher.sql (the knowledge-base watcher).
 --
--- Drops the eight watcher functions and the two helpers, the three tables
+-- Drops the eight watcher functions and the three helpers, the three tables
 -- (cb_kb_drafts, cb_kb_source_snapshots, cb_kb_sources), the extra column
 -- grant 015 gave kb_admin_fn_owner (SELECT source_document on the live table),
 -- and narrows cb_kb_audit's action CHECK back to the 009 list.
@@ -50,14 +50,15 @@ end
 $$;
 
 drop function if exists public.kb_admin_watch_mark_published(uuid, text, uuid);
-drop function if exists public.kb_admin_watch_approve(uuid, text, uuid, text);
+drop function if exists public.kb_admin_watch_approve(uuid, text, uuid, text, boolean);
 drop function if exists public.kb_admin_watch_reject(uuid, text, uuid, text);
 drop function if exists public.kb_admin_watch_edit(uuid, text, uuid, text, text, text, text);
 drop function if exists public.kb_admin_watch_propose(uuid, text, uuid, uuid, text, text, text, text, text, text, text, text, text);
 drop function if exists public.kb_admin_source_record_fetch(uuid, text, uuid, boolean, integer, text, text, text, text);
 drop function if exists public.kb_admin_source_remove(uuid, text, uuid, text);
 drop function if exists public.kb_admin_source_add(uuid, text, text, text, text);
-drop function if exists public.kb_admin__watch_fee_lock(text, text, text, text);
+drop function if exists public.kb_admin__watch_fee_lock(text, text, text, text, text);
+drop function if exists public.kb_admin__watch_money(text, text, text, text);
 drop function if exists public.kb_admin__watch_actor(uuid);
 
 drop table if exists public.cb_kb_drafts;

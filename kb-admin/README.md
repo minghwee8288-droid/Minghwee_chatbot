@@ -29,7 +29,7 @@ Every credential is server-side (nothing is `NEXT_PUBLIC_`).
    embeddings), the rules, the access list, the version history, the audit log and the
    canary. Every query runs inside `BEGIN READ ONLY`; `lib/db.ts` exports `select` only.
 3. **`kb_admin_editor`** (only when the editor is on) - holds **no table privilege at all**.
-   It can do one thing: EXECUTE sixteen database functions (`lib/access.ts`
+   It can do one thing: EXECUTE 24 database functions (`lib/access.ts`
    `WRITE_FUNCTIONS`), all SECURITY DEFINER and owned by NOLOGIN roles:
    - Q&A entries (owner `kb_admin_fn_owner`, migrations 004 and 008): `kb_admin_save_draft`,
      `kb_admin_publish`, `kb_admin_discard_draft`, `kb_admin_restore`, `kb_admin_toggle`,
@@ -38,11 +38,15 @@ Every credential is server-side (nothing is `NEXT_PUBLIC_`).
      `kb_admin_doc_stage`, `kb_admin_doc_edit_chunk`, `kb_admin_doc_mark_checked`,
      `kb_admin_doc_publish`, `kb_admin_doc_restore`, `kb_admin_doc_discard`,
      `kb_admin_doc_retire`, and two read-only searches, `kb_admin_match_with_batch` and
-     `kb_admin_match_live`.
+     `kb_admin_match_live`;
+   - the KB watcher (owner `kb_admin_fn_owner`, migration 015): `kb_admin_source_add`,
+     `kb_admin_source_remove`, `kb_admin_source_record_fetch`, `kb_admin_watch_propose`,
+     `kb_admin_watch_edit`, `kb_admin_watch_reject`, `kb_admin_watch_approve`,
+     `kb_admin_watch_mark_published`.
    They enforce every rule themselves: the caller's role, the character limits, no
    NRIC/FIN, which changes need an approver, stale drafts and impact checks, the canary,
    and an audit row for each write. `lib/write.ts` exports only `callWrite`, which sends
-   one of those sixteen fixed statements.
+   one of those fixed statements.
 4. The embedding key (only when the editor is on), to embed an entry's new text.
 5. The bot's **preview secret**, for Test a question.
 
@@ -103,7 +107,7 @@ sign-in.
 
 ## KB watcher (watch, review, publish) - off by default
 
-Migration `scripts/sql/kb_admin_015_watcher.sql` (NOT applied until the go-word) plus
+Migration `scripts/sql/kb_admin_015_watcher.sql` (on production since 2026-10-15) plus
 `KB_SOURCES_ENABLED=true` turn on two pages:
 
 - **Watched pages** (`/sources`): add / label / remove a public page (category: government
@@ -118,10 +122,15 @@ Migration `scripts/sql/kb_admin_015_watcher.sql` (NOT applied until the go-word)
   goes through the existing Q&A path: `kb_admin_save_draft` / `kb_admin_create_entry`, the
   canary-checked embedding, `kb_admin_publish`; provenance (source URL, fetched_at,
   approved_by, approved_at) stays on the proposal. **Edit** and **Reject** for editors.
-- **The fee lock**: a proposal touching a money figure, naming an agency fee, or aimed at a row
-  from the agency's fees document (23 questions, 7 corrections - generated from the loader by
-  `scripts/gen_fee_locked.py`) is shown as **Needs agency confirmation** and cannot be
-  approved; the database refuses it too (KB007).
+- **The fee lock**: a proposal naming an agency fee, putting a money figure beside a helper's
+  salary, or aimed at a row from the agency's fees document (23 questions, 7 corrections -
+  generated from the loader by `scripts/gen_fee_locked.py`) is shown as **Needs agency
+  confirmation** and cannot be approved; the database refuses it too (KB007). So is any money
+  figure from a page that is not in the **government rule** category.
+- **Government figures**: a money figure from a government rule page (levy, security bond, MOM
+  fees, minimum income, insurance minimums) can be approved, under the banner "This changes a
+  figure: check it against the source before approving" and only with the approver's tick; the
+  database refuses it without the tick (KB008) and records it.
 
 `WATCHER_ENABLED=true` (+ `CRON_SECRET`, `KB_WATCHER_ACTOR_ID`) adds the schedule:
 `vercel.json` calls `/api/watcher/run` daily and each page is re-checked every

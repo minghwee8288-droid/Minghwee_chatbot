@@ -90,7 +90,7 @@ export const WRITE_FUNCTIONS = {
   kb_admin_watch_propose: ['uuid', 'text', 'uuid', 'uuid', 'text', 'text', 'text', 'text', 'text', 'text', 'text', 'text', 'text'],
   kb_admin_watch_edit: ['uuid', 'text', 'uuid', 'text', 'text', 'text', 'text'],
   kb_admin_watch_reject: ['uuid', 'text', 'uuid', 'text'],
-  kb_admin_watch_approve: ['uuid', 'text', 'uuid', 'text'],
+  kb_admin_watch_approve: ['uuid', 'text', 'uuid', 'text', 'boolean'],
   kb_admin_watch_mark_published: ['uuid', 'text', 'uuid'],
 } as const;
 export type WriteFunction = keyof typeof WRITE_FUNCTIONS;

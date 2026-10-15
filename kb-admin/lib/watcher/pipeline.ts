@@ -131,11 +131,11 @@ export type ApproveResult =
 /** Approve, publish through the existing path, then record it. Throws only if the approval itself is refused. */
 export async function approveAndPublish(
   actor: Actor,
-  draft: { id: string; question: string; answer: string },
+  draft: { id: string; question: string; answer: string; confirmFigure: boolean },
   reason: string,
   deps: ApproveDeps,
 ): Promise<ApproveResult> {
-  const approved = await deps.call<{ entry_id: string; version_id: string }>('kb_admin_watch_approve', [actor.userId, actor.email, draft.id, reason]);
+  const approved = await deps.call<{ entry_id: string; version_id: string }>('kb_admin_watch_approve', [actor.userId, actor.email, draft.id, reason, draft.confirmFigure]);
   try {
     const { vector, model } = await deps.embed(entryText(draft.question, draft.answer));
     await deps.call('kb_admin_publish', [actor.userId, actor.email, approved.version_id, vectorLiteral(vector), model]);

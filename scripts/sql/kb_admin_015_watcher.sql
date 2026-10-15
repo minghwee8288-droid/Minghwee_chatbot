@@ -32,12 +32,21 @@
 -- agency confirmation"), and kb_admin_watch_approve refuses it (KB007) - it
 -- re-checks against the target's CURRENT text at approval, so a row edited in
 -- between cannot slip through. Blocked if ANY of:
---   * the proposed or the current entry text carries a money figure
---     ($ / S$ / SGD / RM / Rp / PHP before a digit, or "<n> dollars");
---   * it names an agency fee ("agency fee", "replacement fee", "placement
---     fee", "documentation fee", "processing fee", ...);
 --   * the target row's question is one of the 23 the fees document set, or its
---     text carries one of the 7 fees-document corrections.
+--     text carries one of the 7 fees-document corrections;
+--   * it names an agency fee ("agency fee", "replacement fee", "placement
+--     fee", "documentation fee", "processing fee", ...) - a government fee
+--     named as such ("MOM processing fee", "work permit fee") is not one;
+--   * it carries a money figure next to a helper's salary (the salary floors
+--     are cb_kb_rules values);
+--   * it carries a money figure ($ / S$ / SGD / RM / Rp / PHP before a digit,
+--     or "<n> dollars") and the page is NOT in the "government rule" category.
+-- GOVERNMENT FIGURES (decision 2026-10-15). A money figure from a "government
+-- rule" page (levy, security bond, MOM fees, minimum income, insurance
+-- minimums) is approvable, but the draft carries figure_check: kb-admin shows
+-- "This changes a figure: check it against the source before approving", and
+-- kb_admin_watch_approve refuses (KB008) unless the approver ticked that they
+-- did (p_confirm_figure); the tick is recorded (figure_confirmed) and audited.
 -- The two lists are generated from the loader (scripts/gen_fee_locked.py ->
 -- kb-admin/lib/watcher/fee-locked.ts); kb-admin's self-check fails if the
 -- arrays below and that module disagree. cb_kb_rules is untouched by
@@ -56,13 +65,13 @@
 -- ERRORS: KB001 not an active editor/approver, KB002 invalid input, KB003
 -- conflict (the draft is not open, or the entry changed since it was drafted),
 -- KB004 needs an approver, KB006 NRIC/FIN in the text, KB007 needs agency
--- confirmation (the fee lock).
+-- confirmation (the fee lock), KB008 a government figure not confirmed.
 --
 -- ACCESS. RLS on, everything revoked from public, anon, authenticated and
 -- service_role (the 009 pattern). kb_admin_reader may SELECT the three tables;
 -- kb_admin_fn_owner reads and writes them through the functions only.
 --
--- NOT APPLIED. Apply only on the user's go-word, AFTER 001-014:
+-- Apply only on the user's go-word, AFTER 001-014:
 --   python scripts/apply_sql.py --expect-ref <project ref> scripts/sql/kb_admin_015_watcher.sql
 -- After 015, kb_admin_editor executes 24 functions (16 + 8): kb_admin_012's
 -- "exactly 16" check describes the 001-014 state and will fail if re-run; the
@@ -146,6 +155,9 @@ create table if not exists public.cb_kb_drafts (
     model_name            text,
     status                text        not null default 'pending',
     blocked_reason        text,
+    -- A government page's money figure: approvable only with the approver's tick.
+    figure_check          boolean     not null default false,
+    figure_confirmed      boolean     not null default false,
     created_at            timestamptz not null default now(),
     created_by            uuid,
     created_by_email      text,
@@ -199,7 +211,7 @@ grant update (label, category, active, removed_by, removed_by_email, removed_at,
               last_status, last_error, last_snapshot_id, added_by, added_by_email, added_at)
     on public.cb_kb_sources to kb_admin_fn_owner;
 grant update (proposed_question, proposed_answer, section_heading, status, blocked_reason,
-              edited_at, edited_by, edited_by_email, reviewed_at, reviewed_by, reviewed_by_email,
+              figure_check, figure_confirmed, edited_at, edited_by, edited_by_email, reviewed_at, reviewed_by, reviewed_by_email,
               review_reason, approved_by, approved_by_email, approved_at, entry_id_after,
               version_id, published_at)
     on public.cb_kb_drafts to kb_admin_fn_owner;
@@ -273,11 +285,26 @@ begin
 end;
 $$;
 
+-- Does the change carry a money figure? ($ / S$ / SGD / RM / Rp / PHP / ₱
+-- before a digit, or "<n> dollars"/"<n> SGD"), in the current or the new text.
+create or replace function public.kb_admin__watch_money(
+    p_target_question text, p_target_answer text, p_new_question text, p_new_answer text)
+returns boolean
+language sql immutable
+set search_path = pg_catalog, public, pg_temp
+as $$
+    select concat_ws(E'\n', p_target_question, p_target_answer, p_new_question, p_new_answer) ~* '(\$|₱|\m(sgd|rm|rp|php)\s?)\s?[0-9]'
+        or concat_ws(E'\n', p_target_question, p_target_answer, p_new_question, p_new_answer) ~* '[0-9][0-9,.]*\s*(dollars|sgd)\M';
+$$;
+
 -- The fee lock: why a draft needs agency confirmation, or NULL.
+-- p_category is the source page's category: only a 'government_rule' page may
+-- change a money figure (and then only with the approver's tick, KB008), and
+-- never an agency fee, a helper's salary, or a fees-document row.
 -- The two arrays are generated by scripts/gen_fee_locked.py (do not hand-edit;
 -- kb-admin's self-check compares them with kb-admin/lib/watcher/fee-locked.ts).
 create or replace function public.kb_admin__watch_fee_lock(
-    p_target_question text, p_target_answer text, p_new_question text, p_new_answer text)
+    p_target_question text, p_target_answer text, p_new_question text, p_new_answer text, p_category text)
 returns text
 language plpgsql immutable
 set search_path = pg_catalog, public, pg_temp
@@ -322,6 +349,10 @@ declare
 -- FEE_LOCKED_NEEDLES:END
     ]::text[];
     all_text text := concat_ws(E'\n', p_target_question, p_target_answer, p_new_question, p_new_answer);
+    -- A government fee named as such is not an agency fee.
+    fee_text text := regexp_replace(all_text,
+        '\m(mom|ministry of manpower|government|work permit|application|issuance|levy)\s+(processing\s+)?fees?\M', ' ', 'gi');
+    money    boolean := public.kb_admin__watch_money(p_target_question, p_target_answer, p_new_question, p_new_answer);
     n text;
 begin
     if p_target_question is not null and btrim(p_target_question) = any (locked_questions) then
@@ -332,11 +363,14 @@ begin
             return 'the entry carries a correction from the agency''s fees document';
         end if;
     end loop;
-    if all_text ~* '(\$|₱|\m(sgd|rm|rp|php)\s?)\s?[0-9]' or all_text ~* '[0-9][0-9,.]*\s*(dollars|sgd)\M' then
-        return 'the change touches a money figure';
-    end if;
-    if all_text ~* '\m(agency|service|placement|replacement|documentation|processing|administrative|admin|recruitment)\s+fees?\M' then
+    if fee_text ~* '\m(agency|service|placement|replacement|documentation|processing|administrative|admin|recruitment)\s+fees?\M' then
         return 'the change concerns an agency fee';
+    end if;
+    if money and all_text ~* '\msalar(y|ies)\M' then
+        return 'the change touches a helper salary figure (an agency pricing rule)';
+    end if;
+    if money and coalesce(p_category, '') <> 'government_rule' then
+        return 'the change touches a money figure and the page is not a government rule page';
     end if;
     return null;
 end;
@@ -521,6 +555,7 @@ declare
     v_nat     text := coalesce(nullif(btrim(p_nationality), ''), 'all');
     v_old_q   text;
     v_old_a   text;
+    v_figure  boolean;
 begin
     select * into v_snap from public.cb_kb_source_snapshots where id = p_snapshot_id;
     if v_snap.id is null or not v_snap.fetch_ok then
@@ -549,10 +584,9 @@ begin
         v_h := coalesce(v_h, v_t.section_heading);
         v_old_q := v_t.question;
         v_old_a := v_t.answer;
-        v_lock := public.kb_admin__watch_fee_lock(v_old_q, v_old_a, v_q, v_a);
-    else
-        v_lock := public.kb_admin__watch_fee_lock(null, null, v_q, v_a);
     end if;
+    v_lock := public.kb_admin__watch_fee_lock(v_old_q, v_old_a, v_q, v_a, v_src.category);
+    v_figure := v_lock is null and public.kb_admin__watch_money(v_old_q, v_old_a, v_q, v_a);
 
     -- An older open draft for the same entry from the same page is superseded.
     if p_target_entry_id is not null then
@@ -566,24 +600,25 @@ begin
         source_id, snapshot_id, source_url, source_fetched_at, kind, target_entry_id,
         old_question, old_answer, proposed_question, proposed_answer, section_heading,
         service, audience, nationality, source_passage, old_source_text, new_source_text,
-        model_name, status, blocked_reason, created_by, created_by_email)
+        model_name, status, blocked_reason, figure_check, created_by, created_by_email)
     values (
         v_snap.source_id, v_snap.id, v_src.url, v_snap.fetched_at,
         case when p_target_entry_id is null then 'new' else 'edit' end, p_target_entry_id,
         v_old_q, v_old_a,
         v_q, v_a, v_h, v_service, v_aud, v_nat, v_passage, left(p_old_source_text, 20000),
         left(v_passage, 20000), left(p_model, 200),
-        case when v_lock is null then 'pending' else 'blocked' end, v_lock, p_actor_id, v_email)
+        case when v_lock is null then 'pending' else 'blocked' end, v_lock, v_figure, p_actor_id, v_email)
     returning id into v_id;
 
     insert into public.cb_kb_audit (entry_id, action, actor_id, actor_email, new_values, reason)
     values (p_target_entry_id, 'watch_proposed', p_actor_id, v_email,
             jsonb_build_object('draft_id', v_id, 'source_id', v_snap.source_id, 'snapshot_id', v_snap.id,
-                               'question', v_q, 'answer', v_a, 'blocked_reason', v_lock, 'by', v_who),
+                               'question', v_q, 'answer', v_a, 'blocked_reason', v_lock,
+                               'figure_check', v_figure, 'by', v_who),
             case when v_lock is null then 'drafted from a source page change'
                  else 'drafted from a source page change; needs agency confirmation' end);
     return jsonb_build_object('draft_id', v_id, 'status', case when v_lock is null then 'pending' else 'blocked' end,
-                              'blocked_reason', v_lock);
+                              'blocked_reason', v_lock, 'figure_check', v_figure);
 end;
 $$;
 
@@ -605,6 +640,8 @@ declare
     v_tq     text;
     v_ta     text;
     v_lock   text;
+    v_cat    text;
+    v_figure boolean;
 begin
     perform public.kb_admin__require_actor(p_actor_id, 'editor');
     if v_reason = '' then
@@ -621,19 +658,23 @@ begin
     if v_d.target_entry_id is not null then
         select k.question, k.answer into v_tq, v_ta from public.cb_knowledge_base_updated k where k.id = v_d.target_entry_id;
     end if;
-    v_lock := public.kb_admin__watch_fee_lock(v_tq, v_ta, v_q, v_a);
+    select s.category into v_cat from public.cb_kb_sources s where s.id = v_d.source_id;
+    v_lock := public.kb_admin__watch_fee_lock(v_tq, v_ta, v_q, v_a, v_cat);
+    v_figure := v_lock is null and public.kb_admin__watch_money(v_tq, v_ta, v_q, v_a);
     update public.cb_kb_drafts
        set proposed_question = v_q, proposed_answer = v_a, section_heading = coalesce(v_h, section_heading),
            status = case when v_lock is null then 'pending' else 'blocked' end, blocked_reason = v_lock,
+           figure_check = v_figure,
            edited_at = now(), edited_by = p_actor_id, edited_by_email = p_actor_email
      where id = p_draft_id;
     insert into public.cb_kb_audit (entry_id, action, actor_id, actor_email, old_values, new_values, reason)
     values (v_d.target_entry_id, 'watch_edited', p_actor_id, p_actor_email,
             jsonb_build_object('draft_id', v_d.id, 'question', v_d.proposed_question, 'answer', v_d.proposed_answer),
-            jsonb_build_object('draft_id', v_d.id, 'question', v_q, 'answer', v_a, 'blocked_reason', v_lock),
+            jsonb_build_object('draft_id', v_d.id, 'question', v_q, 'answer', v_a, 'blocked_reason', v_lock,
+                               'figure_check', v_figure),
             v_reason);
     return jsonb_build_object('status', case when v_lock is null then 'pending' else 'blocked' end,
-                              'blocked_reason', v_lock);
+                              'blocked_reason', v_lock, 'figure_check', v_figure);
 end;
 $$;
 
@@ -668,12 +709,14 @@ begin
 end;
 $$;
 
--- 4.7 Approve a draft: an APPROVER only, never a blocked one. Writes the text
--- through the existing Q&A path (save_draft / create_entry) and records the
--- provenance; kb-admin then publishes that version with kb_admin_publish
--- (canary-checked embedding) and calls 4.8.
+-- 4.7 Approve a draft: an APPROVER only, never a blocked one, and a draft that
+-- changes a (government) money figure only with p_confirm_figure - the
+-- approver ticked that they checked it against the source (KB008 otherwise).
+-- Writes the text through the existing Q&A path (save_draft / create_entry)
+-- and records the provenance; kb-admin then publishes that version with
+-- kb_admin_publish (canary-checked embedding) and calls 4.8.
 create or replace function public.kb_admin_watch_approve(
-    p_actor_id uuid, p_actor_email text, p_draft_id uuid, p_reason text)
+    p_actor_id uuid, p_actor_email text, p_draft_id uuid, p_reason text, p_confirm_figure boolean)
 returns jsonb
 language plpgsql
 security definer
@@ -688,6 +731,8 @@ declare
     v_entry   uuid;
     v_created jsonb;
     v_note    text;
+    v_cat     text;
+    v_figure  boolean;
 begin
     perform public.kb_admin__require_actor(p_actor_id, 'approver');
     if v_reason = '' then
@@ -698,6 +743,7 @@ begin
         raise exception 'this draft is no longer open' using errcode = 'KB003';
     end if;
 
+    select s.category into v_cat from public.cb_kb_sources s where s.id = v_d.source_id;
     if v_d.target_entry_id is not null then
         select k.question, k.answer, k.section_heading, k.service_type, k.contact_type, k.nationality
           into v_t from public.cb_knowledge_base_updated k where k.id = v_d.target_entry_id;
@@ -705,13 +751,18 @@ begin
             raise exception 'the entry no longer exists' using errcode = 'KB003';
         end if;
         v_lock := coalesce(v_d.blocked_reason,
-                           public.kb_admin__watch_fee_lock(v_t.question, v_t.answer, v_d.proposed_question, v_d.proposed_answer));
+                           public.kb_admin__watch_fee_lock(v_t.question, v_t.answer, v_d.proposed_question, v_d.proposed_answer, v_cat));
+        v_figure := public.kb_admin__watch_money(v_t.question, v_t.answer, v_d.proposed_question, v_d.proposed_answer);
     else
         v_lock := coalesce(v_d.blocked_reason,
-                           public.kb_admin__watch_fee_lock(null, null, v_d.proposed_question, v_d.proposed_answer));
+                           public.kb_admin__watch_fee_lock(null, null, v_d.proposed_question, v_d.proposed_answer, v_cat));
+        v_figure := public.kb_admin__watch_money(null, null, v_d.proposed_question, v_d.proposed_answer);
     end if;
     if v_lock is not null then
         raise exception 'needs agency confirmation: %', v_lock using errcode = 'KB007';
+    end if;
+    if v_figure and not coalesce(p_confirm_figure, false) then
+        raise exception 'this changes a figure: confirm you checked it against the source' using errcode = 'KB008';
     end if;
 
     v_note := left(v_reason || ' [from ' || v_d.source_url || ', fetched '
@@ -737,12 +788,14 @@ begin
        set status = 'approved', approved_by = p_actor_id, approved_by_email = p_actor_email,
            approved_at = now(), reviewed_at = now(), reviewed_by = p_actor_id,
            reviewed_by_email = p_actor_email, review_reason = v_reason,
-           entry_id_after = v_entry, version_id = v_version
+           entry_id_after = v_entry, version_id = v_version,
+           figure_check = v_figure, figure_confirmed = v_figure
      where id = p_draft_id;
     insert into public.cb_kb_audit (entry_id, version_id, action, actor_id, actor_email, new_values, reason)
     values (v_entry, v_version, 'watch_approved', p_actor_id, p_actor_email,
             jsonb_build_object('draft_id', v_d.id, 'source_url', v_d.source_url,
-                               'source_fetched_at', v_d.source_fetched_at, 'kind', v_d.kind),
+                               'source_fetched_at', v_d.source_fetched_at, 'kind', v_d.kind,
+                               'source_category', v_cat, 'figure_confirmed', v_figure),
             v_reason);
     return jsonb_build_object('entry_id', v_entry, 'version_id', v_version);
 end;
@@ -784,19 +837,21 @@ $$;
 -- =============================================================================
 grant create on schema public to kb_admin_fn_owner;
 alter function public.kb_admin__watch_actor(uuid) owner to kb_admin_fn_owner;
-alter function public.kb_admin__watch_fee_lock(text, text, text, text) owner to kb_admin_fn_owner;
+alter function public.kb_admin__watch_fee_lock(text, text, text, text, text) owner to kb_admin_fn_owner;
+alter function public.kb_admin__watch_money(text, text, text, text) owner to kb_admin_fn_owner;
 alter function public.kb_admin_source_add(uuid, text, text, text, text) owner to kb_admin_fn_owner;
 alter function public.kb_admin_source_remove(uuid, text, uuid, text) owner to kb_admin_fn_owner;
 alter function public.kb_admin_source_record_fetch(uuid, text, uuid, boolean, integer, text, text, text, text) owner to kb_admin_fn_owner;
 alter function public.kb_admin_watch_propose(uuid, text, uuid, uuid, text, text, text, text, text, text, text, text, text) owner to kb_admin_fn_owner;
 alter function public.kb_admin_watch_edit(uuid, text, uuid, text, text, text, text) owner to kb_admin_fn_owner;
 alter function public.kb_admin_watch_reject(uuid, text, uuid, text) owner to kb_admin_fn_owner;
-alter function public.kb_admin_watch_approve(uuid, text, uuid, text) owner to kb_admin_fn_owner;
+alter function public.kb_admin_watch_approve(uuid, text, uuid, text, boolean) owner to kb_admin_fn_owner;
 alter function public.kb_admin_watch_mark_published(uuid, text, uuid) owner to kb_admin_fn_owner;
 revoke create on schema public from kb_admin_fn_owner;
 
 revoke all on function public.kb_admin__watch_actor(uuid) from public, anon, authenticated, service_role;
-revoke all on function public.kb_admin__watch_fee_lock(text, text, text, text) from public, anon, authenticated, service_role;
+revoke all on function public.kb_admin__watch_fee_lock(text, text, text, text, text) from public, anon, authenticated, service_role;
+revoke all on function public.kb_admin__watch_money(text, text, text, text) from public, anon, authenticated, service_role;
 revoke all on function
     public.kb_admin_source_add(uuid, text, text, text, text),
     public.kb_admin_source_remove(uuid, text, uuid, text),
@@ -804,7 +859,7 @@ revoke all on function
     public.kb_admin_watch_propose(uuid, text, uuid, uuid, text, text, text, text, text, text, text, text, text),
     public.kb_admin_watch_edit(uuid, text, uuid, text, text, text, text),
     public.kb_admin_watch_reject(uuid, text, uuid, text),
-    public.kb_admin_watch_approve(uuid, text, uuid, text),
+    public.kb_admin_watch_approve(uuid, text, uuid, text, boolean),
     public.kb_admin_watch_mark_published(uuid, text, uuid)
     from public, anon, authenticated, service_role;
 
@@ -815,7 +870,7 @@ grant execute on function
     public.kb_admin_watch_propose(uuid, text, uuid, uuid, text, text, text, text, text, text, text, text, text),
     public.kb_admin_watch_edit(uuid, text, uuid, text, text, text, text),
     public.kb_admin_watch_reject(uuid, text, uuid, text),
-    public.kb_admin_watch_approve(uuid, text, uuid, text),
+    public.kb_admin_watch_approve(uuid, text, uuid, text, boolean),
     public.kb_admin_watch_mark_published(uuid, text, uuid)
     to kb_admin_editor;
 
@@ -865,7 +920,7 @@ begin
         'public.kb_admin_watch_propose(uuid, text, uuid, uuid, text, text, text, text, text, text, text, text, text)',
         'public.kb_admin_watch_edit(uuid, text, uuid, text, text, text, text)',
         'public.kb_admin_watch_reject(uuid, text, uuid, text)',
-        'public.kb_admin_watch_approve(uuid, text, uuid, text)',
+        'public.kb_admin_watch_approve(uuid, text, uuid, text, boolean)',
         'public.kb_admin_watch_mark_published(uuid, text, uuid)'] loop
         if not exists (select 1 from pg_proc p where p.oid = f::regprocedure and p.prosecdef
                          and pg_get_userbyid(p.proowner) = 'kb_admin_fn_owner'
@@ -881,8 +936,11 @@ begin
             end if;
         end loop;
     end loop;
-    if has_function_privilege('kb_admin_editor', 'public.kb_admin__watch_fee_lock(text, text, text, text)', 'EXECUTE') then
+    if has_function_privilege('kb_admin_editor', 'public.kb_admin__watch_fee_lock(text, text, text, text, text)', 'EXECUTE') then
         raise exception 'FAIL: kb_admin_editor can call the internal fee-lock helper';
+    end if;
+    if has_function_privilege('kb_admin_editor', 'public.kb_admin__watch_money(text, text, text, text)', 'EXECUTE') then
+        raise exception 'FAIL: kb_admin_editor can call the internal money helper';
     end if;
 
     select count(*) into n from pg_proc p join pg_namespace s on s.oid = p.pronamespace
@@ -898,16 +956,22 @@ begin
     end if;
 
     -- The fee lock, exercised on fixed text.
-    if public.kb_admin__watch_fee_lock(null, null, 'How long does a transfer take?', 'About 1 to 2 weeks from the interview.') is not null then
+    if public.kb_admin__watch_fee_lock(null, null, 'How long does a transfer take?', 'About 1 to 2 weeks from the interview.', 'process') is not null then
         raise exception 'FAIL: the fee lock blocks a plain timing change';
     end if;
-    if public.kb_admin__watch_fee_lock(null, null, 'Cost?', 'The agency fee is S$1,428.') is null
-       or public.kb_admin__watch_fee_lock(null, null, 'Cost?', 'It costs 450 dollars.') is null
-       or public.kb_admin__watch_fee_lock(null, null, 'Cost?', 'A replacement fee applies.') is null
-       or public.kb_admin__watch_fee_lock('How much does a replacement cost?', 'x', 'y', 'z') is null then
-        raise exception 'FAIL: the fee lock lets a fee change through';
+    if public.kb_admin__watch_fee_lock(null, null, 'Cost?', 'The agency fee is S$1,428.', 'government_rule') is null
+       or public.kb_admin__watch_fee_lock(null, null, 'Cost?', 'It costs 450 dollars.', 'process') is null
+       or public.kb_admin__watch_fee_lock(null, null, 'Cost?', 'A replacement fee applies.', 'government_rule') is null
+       or public.kb_admin__watch_fee_lock(null, null, 'Salary?', 'The minimum salary is S$700.', 'government_rule') is null
+       or public.kb_admin__watch_fee_lock('How much does a replacement cost?', 'x', 'y', 'z', 'government_rule') is null then
+        raise exception 'FAIL: the fee lock lets an agency fee change through';
     end if;
-    raise notice 'PASS: 015 - three tables, RLS on, no portal/public access, 8 functions granted (24 in all), audit widened, fee lock works';
+    if public.kb_admin__watch_fee_lock(null, null, 'Levy?', 'The monthly levy is $300; the security bond is $5,000.', 'government_rule') is not null
+       or public.kb_admin__watch_fee_lock(null, null, 'MOM fee?', 'The MOM processing fee is $35.', 'government_rule') is not null
+       or not public.kb_admin__watch_money(null, null, 'Levy?', 'The monthly levy is $300.') then
+        raise exception 'FAIL: a government figure is not approvable with the confirmation';
+    end if;
+    raise notice 'PASS: 015 - three tables, RLS on, no portal/public access, 8 functions granted (24 in all), audit widened, fee lock works (government figures need the tick)';
 end
 $$;
 

@@ -135,7 +135,10 @@ $$;
 
 -- -----------------------------------------------------------------------------
 -- 3. kb_admin_editor: EXECUTE on exactly 16 functions, no table, no helper
---    (6 Q&A + 9 document from 011 + kb_admin_match_live from 014)
+--    (6 Q&A + 9 document from 011 + kb_admin_match_live from 014) - or 24
+--    once kb_admin_015_watcher is applied (+ its 8 watcher functions; applied
+--    to production 2026-10-15). The count follows what is installed, so this
+--    file stays re-runnable before and after 015.
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -156,9 +159,21 @@ declare
         'kb_admin_doc_retire(uuid,text,uuid,text)',
         'kb_admin_match_with_batch(uuid,text,uuid,vector,text,text,text,integer,double precision)',
         'kb_admin_match_live(uuid,text,vector,text,text,text,integer,double precision)'];
+    watcher text[] := array[
+        'kb_admin_source_add(uuid,text,text,text,text)',
+        'kb_admin_source_remove(uuid,text,uuid,text)',
+        'kb_admin_source_record_fetch(uuid,text,uuid,boolean,integer,text,text,text,text)',
+        'kb_admin_watch_propose(uuid,text,uuid,uuid,text,text,text,text,text,text,text,text,text)',
+        'kb_admin_watch_edit(uuid,text,uuid,text,text,text,text)',
+        'kb_admin_watch_reject(uuid,text,uuid,text)',
+        'kb_admin_watch_approve(uuid,text,uuid,text,boolean)',
+        'kb_admin_watch_mark_published(uuid,text,uuid)'];
     got text[];
     t record;
 begin
+    if to_regclass('public.cb_kb_drafts') is not null then
+        expected := expected || watcher;
+    end if;
     select array_agg(p.oid::regprocedure::text order by 1) into got
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
      where n.nspname = 'public' and has_function_privilege('kb_admin_editor', p.oid, 'EXECUTE')
@@ -173,7 +188,8 @@ begin
             raise exception 'FAIL: kb_admin_editor holds a privilege on public.%', t.relname;
         end if;
     end loop;
-    raise notice 'PASS: kb_admin_editor executes exactly 16 functions (6 Q&A + 9 document + live match) and holds no table privilege';
+    raise notice 'PASS: kb_admin_editor executes exactly % functions (6 Q&A + 9 document + live match%) and holds no table privilege',
+        cardinality(expected), case when cardinality(expected) = 24 then ' + 8 watcher' else '' end;
 end
 $$;
 

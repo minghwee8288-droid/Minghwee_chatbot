@@ -8,6 +8,7 @@ import { EmbedError, embedEntry, embedTexts } from '@/lib/embed';
 import { env } from '@/lib/env';
 import { addressProblem, PoliteFetcher } from '@/lib/watcher/fetcher';
 import { DraftingError, draftWithModel } from '@/lib/watcher/llm';
+import { touchesMoney } from '@/lib/watcher/feeLock';
 import { approveAndPublish, checkSource, type WatchCall } from '@/lib/watcher/pipeline';
 import { lastGoodText, sourceById, watchDraft } from '@/lib/watchQueries';
 import { callWrite } from '@/lib/write';
@@ -189,11 +190,16 @@ export async function approveWatchDraft(_prev: ActionState, form: FormData): Pro
   if (!reason) return { error: 'Please say why you are approving this change.' };
   const draft = await watchDraft(draftId);
   if (!draft || (draft.status !== 'pending' && draft.status !== 'blocked')) return { error: 'This proposal is no longer open.' };
+  // A money figure (only approvable from a government rule page) needs the
+  // approver's tick; the database checks it again (KB008).
+  const confirmFigure = String(form.get('confirm_figure') ?? '') === 'yes';
+  const figure = touchesMoney({ targetQuestion: draft.current_question, targetAnswer: draft.current_answer, proposedQuestion: draft.proposed_question, proposedAnswer: draft.proposed_answer });
+  if (figure && !confirmFigure) return { error: errorMessage('KB008', '') };
   let result;
   try {
     result = await approveAndPublish(
       { userId: actor.userId, email: actor.email },
-      { id: draftId, question: draft.proposed_question, answer: draft.proposed_answer },
+      { id: draftId, question: draft.proposed_question, answer: draft.proposed_answer, confirmFigure },
       reason,
       { call, embed: embedEntry },
     );

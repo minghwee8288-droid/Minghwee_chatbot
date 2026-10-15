@@ -81,7 +81,7 @@ export const APPROVAL_WORDS: Record<ApprovalReason, string> = {
 };
 
 /**
- * The database's error codes (SQLSTATE KB001-KB006) in plain English. For
+ * The database's error codes (SQLSTATE KB001-KB008) in plain English. For
  * KB002 and KB003 the database's own sentence says which rule was hit, so it
  * is shown after the plain one; it never carries anyone's data but an email
  * of the colleague whose draft is open.
@@ -101,6 +101,8 @@ export function errorMessage(code: string | undefined, dbMessage: string | undef
       return 'The new text could not be given its search fingerprint, so nothing was published. Try again; if it keeps failing, tell the administrator.';
     case 'KB007':
       return `Needs agency confirmation: ${detail.replace(/^needs agency confirmation:\s*/i, '') || 'this change touches an agency fee'}. A page change can never alter an agency fee or a row from the agency's fees document; reject it, or raise it with Ming Hwee.`;
+    case 'KB008':
+      return 'This changes a figure: check it against the source page, then tick the box confirming you did, and approve again.';
     case 'KB006':
       return 'The text contains what looks like an NRIC or FIN number. Remove it and try again: knowledge base text is shown to clients.';
     default:

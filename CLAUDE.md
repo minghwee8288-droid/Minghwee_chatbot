@@ -115,9 +115,9 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
                      checks, probe seed) and kb_admin_014 (exact live search,
                      baseline batch on first replacement); 009..014 on TEST
                      and production (2026-10-05; run 012 AFTER 014); kb_admin_015_watcher
-                     (the KB watcher; NOT APPLIED anywhere yet, waits on the go-word;
-                     after it, 012's "exactly 16" check is superseded by 015's own,
-                     24) — applied ONLY via apply_sql.py --expect-ref <project ref>
+                     (the KB watcher; on PRODUCTION since 2026-10-15, not on TEST;
+                     012's editor check now expects 16, or 24 once 015 is there)
+                     — applied ONLY via apply_sql.py --expect-ref <project ref>
   gen_fee_locked.py  the watcher's fee lock: the 23 questions + 7 corrections the
                      fees document set, read from the loader, written into
                      kb-admin/lib/watcher/fee-locked.ts AND the 015 SQL arrays
@@ -139,9 +139,10 @@ kb-admin/            Next.js knowledge-base tool (Documents, Rows, Rules, Test a
                      row (viewer | editor | approver), checked on every request.
                      READS as kb_admin_reader inside BEGIN READ ONLY. WRITES only as
                      kb_admin_editor, which holds no table privilege and can only
-                     EXECUTE sixteen SECURITY DEFINER functions (lib/access.ts) -
+                     EXECUTE 24 SECURITY DEFINER functions (lib/access.ts) -
                      the six Q&A ones (kb_admin_004, 008), the nine document ones
-                     (011) and kb_admin_match_live (014) - which enforce roles,
+                     (011), kb_admin_match_live (014) and the eight watcher ones
+                     (015, production 2026-10-15) - which enforce roles,
                      the 1200-char limit, no NRIC, approval, stale drafts and the
                      embedding canary, and audit every write (cb_kb_audit, append-only;
                      cb_kb_entry_versions holds drafts and history; the bot reads
@@ -164,9 +165,9 @@ kb-admin/            Next.js knowledge-base tool (Documents, Rows, Rules, Test a
                      KB WATCHER (2026-10-15, stages 1-3, OFF): Watched pages
                      (/sources), Page changes to review (/watch), scheduled route
                      /api/watcher/run (vercel.json, daily; 404 unless WATCHER_ENABLED).
-                     lib/watcher/* is pure and offline-tested; eight more editor
-                     functions (24 in all) once 015 is applied. KB_SOURCES_ENABLED
-                     unset = no page, no fetch, nothing. See kb-admin/README.md.
+                     lib/watcher/* is pure and offline-tested; migration 015 is on
+                     production (2026-10-15). KB_SOURCES_ENABLED unset (as now) =
+                     no page, no fetch, nothing. See kb-admin/README.md.
 ```
 
 ---
@@ -586,7 +587,8 @@ because the lead is opened early and the ticket is created much later.
 | One helper's details never become another helper's | `info_collector.nationality_carries` / `nationality_for_turn` + `_history_since` (`collected_since`) | `nationality` is portable for a hiring client (the nationality they want) and NOT across a switch into or out of `passport_renewal`/`home_leave`, where it is one helper's. Read by the collector's reset AND by `rag_retriever`, which runs before the reset. The extractor reads history only from the message that started the current request, on every turn after a switch, not just the switch turn. |
 | One salesperson per client conversation, and the portal inbox never loses a hand-assigned owner | `assignment.resolve_agent` (`_portal_owner`) + `claim_portal_owner` | A ticket goes to whoever owns the chat in the portal before the round robin is asked; the bot only ever FILLS an empty `wp_chat_conversations.assigned_user_id` (the IS NULL is in the UPDATE itself). `to_human` used to set it unconditionally, and the ordinary ticket path (`log_escalation`) never set it at all. Profile ↔ portal login is `cb_agent_portal_users`, ours, not `wp_chat_users.profile_id`, theirs. |
 | Nothing the KB watcher drafts reaches the chatbot without an APPROVER | `kb_admin_watch_approve` (015, `kb_admin__require_actor(..., 'approver')`) + `app/watch/actions.ts` (`canApprove` first) | A watched page's change becomes a PROPOSAL (`cb_kb_drafts`), never a live row. Approve writes the text through the existing `kb_admin_save_draft` / `kb_admin_create_entry` and it goes live only through the existing `kb_admin_publish` (canary-checked embedding). Proved on PGlite (real migrations 001-009 + 015): the live entry is unchanged until publish. |
-| A watcher proposal can never change an agency fee, a pricing rule or a fees-document row | `kb_admin__watch_fee_lock` (SQL) + `lib/watcher/feeLock.ts` (twin) + `scripts/gen_fee_locked.py` | Blocked ("needs agency confirmation", KB007) if the proposed OR current entry text carries a money figure, names an agency fee, or the target is one of the 23 fees-document questions / carries one of its 7 corrections. Re-checked at approval against the entry's CURRENT text. The lists are generated from the loader and compared three ways (loader, TS, SQL). `kb_admin_fn_owner` holds no privilege on `cb_kb_rules`. |
+| A watcher proposal can never change an agency fee, a pricing rule or a fees-document row | `kb_admin__watch_fee_lock` (SQL) + `lib/watcher/feeLock.ts` (twin) + `scripts/gen_fee_locked.py` | Blocked ("needs agency confirmation", KB007) if the target is one of the 23 fees-document questions / carries one of its 7 corrections, the text names an agency fee (a "MOM processing fee" / "work permit fee" is not one), a money figure sits beside a helper's salary, or a money figure comes from a page that is NOT in the "government rule" category. Re-checked at approval against the entry's CURRENT text and the page's category. The lists are generated from the loader and compared three ways (loader, TS, SQL). `kb_admin_fn_owner` holds no privilege on `cb_kb_rules`. |
+| A government figure goes live only after the approver checked it against the source | `kb_admin__watch_money` + `kb_admin_watch_approve(..., p_confirm_figure)` (KB008) + `app/watch/[id]/page.tsx` / `app/watch/actions.ts` | Decision 2026-10-15: a money figure from a "government rule" page (levy, security bond, MOM fees, minimum income, insurance minimums) is approvable, with the banner "This changes a figure: check it against the source before approving" and a required tick. Refused without the tick in the action and in the database; recorded as `figure_confirmed` on the draft and in the audit. |
 | A page that only changed its whitespace or date stamps produces no proposal | `lib/watcher/change.ts` (`normalisedForm`, `contentHash`) | Hash of normalised paragraphs: whitespace, case, curly quotes, date-only lines and date stamps ("Last updated ...", "Reviewed on ...") dropped. A date INSIDE a sentence is kept on purpose: a changed effective date is a changed rule. Unchanged = no model call at all. |
 | The watcher fetches politely and never silently drops a failure | `lib/watcher/fetcher.ts` + `kb_admin_source_record_fetch(ok=false)` | Clear user-agent, https + public hosts only, robots.txt (and Crawl-delay) obeyed, 20 s timeout, 3 attempts with backoff on 5xx/429/network, no retry on other 4xx, 10 s minimum gap per host, 3 MB cap. A failure is a snapshot row and is shown on the source. |
 | A proposal cites the page word for word | `lib/watcher/drafting.ts` `parseDrafts` + the passage check in `kb_admin_watch_propose` | The model may only target an entry it was shown; the source passage must be on the fetched page (whitespace aside) or the draft is dropped (and refused by the database too). |
@@ -701,13 +703,13 @@ bot volunteered them to a client and was then asked for an address it could not 
 **RLS does not apply to the bot.** It uses the service-role key and bypasses RLS
 entirely. RLS exists only to constrain the portal's anon/authenticated key.
 
-**The KB watcher's tables (migration 015, NOT applied yet)** are kb-admin's and the bot
+**The KB watcher's tables (migration 015, on production since 2026-10-15, empty)** are kb-admin's and the bot
 reads none of them: `cb_kb_sources` (watched pages; removed = `active false`, never
 deleted), `cb_kb_source_snapshots` (every fetch: the main text + its normalised SHA-256,
 or the error), `cb_kb_drafts` (proposals, `kind` `edit`|`new`, status pending | blocked |
 approved | published | rejected | superseded, and the provenance of an approved one:
 `source_url`, `source_fetched_at`, `approved_by(_email)`, `approved_at`, `entry_id_after`,
-`version_id`). RLS on, nothing for anon/authenticated/service_role; `kb_admin_reader`
+`version_id`; `figure_check` / `figure_confirmed` for a government figure). RLS on, nothing for anon/authenticated/service_role; `kb_admin_reader`
 SELECTs, `kb_admin_fn_owner` writes through the functions only. The live KB table gets no
 new column; `cb_kb_audit`'s action CHECK gains nine watcher actions.
 
@@ -1542,10 +1544,10 @@ Ordered by what will hurt first.
     to be one natural sentence (`PAIRED_QUESTION_NOTE`); not fixed here.
 
 45. **The KB watcher (2026-10-15) is built and switched off; four things to know before
-    switching it on.** (a) Migration `kb_admin_015_watcher.sql` is NOT applied anywhere;
-    until it is, the watcher pages say "not set up yet" and nothing calls its functions.
-    After it, `kb_admin_012`'s "editor executes exactly 16 functions" check fails if re-run
-    (it describes 001-014); 015's own checks state the new surface (24). (b) The scheduled
+    switching it on.** (a) Migration `kb_admin_015_watcher.sql` is applied on PRODUCTION
+    (2026-10-15, its checks PASS, every existing row unchanged) and on no other database;
+    TEST has no service-role key. `kb_admin_012`'s editor check now follows what is
+    installed (16 before 015, 24 after). (b) The scheduled
     run needs `KB_WATCHER_ACTOR_ID`, an active editor, because `kb_admin_match_live` (the
     read-only live search that finds the entries closest to a change) checks for one; its
     snapshots and proposals are still recorded as "watcher (scheduled)". A dedicated
@@ -1884,7 +1886,8 @@ behaviour behind one switch. Details of each step are in §11.
 | 7 | Escalation audit, read-only; report outside the repo (`Minghwee_backups/step7_escalation_audit_2026-10-15.md`) | `0e80fac` |
 | 8 | Recognition harness `scripts/selfcheck_recognition.py`; no seeding (live run waits on a choice) | `84e59ff` |
 | 5G' | Batch G G1-G7: crash retry and label, welcome before the style offer, > 6 h, case-number guard, candidate name/country/welcome | see git log |
-| KBW | KB watcher stages 1-3 (Thomas's item 5): watched pages, scheduled re-check, review queue; migration 015 written, NOT applied; all off | see git log |
+| KBW | KB watcher stages 1-3 (Thomas's item 5): watched pages, scheduled re-check, review queue; all off | see git log |
+| KBW2 | Fee lock eased for government figures (warning + required tick, KB008); migration 015 applied to production | see git log |
 
 **Still to do, in order:** Step 5 is done (every item, the last being item 2 in Batch G), Step 6 is done (parts 1-4, 6b, 6c), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
@@ -1961,6 +1964,34 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-15** - **KB watcher: government figures approvable with a tick, and
+  migration 015 applied to production.** No bot behaviour changes; the watcher is
+  still off (`KB_SOURCES_ENABLED` unset).
+  (1) **The fee lock was too strict** (user decision): a levy or security bond from a
+  MOM page could never be approved. Agency fees stay fully locked exactly as before -
+  the fees document's 23 rows and 7 corrections, any agency-fee wording, and now
+  explicitly a money figure beside a helper's salary (the `cb_kb_rules` floors). A
+  money figure from a page in the "government rule" category is approvable: the draft
+  carries `figure_check`, the review page shows "This changes a figure: check it against
+  the source before approving", and Approve needs a tick that the action and
+  `kb_admin_watch_approve(..., p_confirm_figure)` both enforce (KB008). "MOM processing
+  fee" / "work permit fee" are government fees, not agency fees. From any other
+  category a money figure stays locked. The tick is recorded (`figure_confirmed`) and
+  audited with the page category.
+  (2) **Migration 015 on production** (`qizcnyuzgylzoyfvymfo`, user's go-word):
+  read-only pre-check first (editor 16 functions, no 015 objects, audit CHECK the 009
+  list), full-column export of the six tables 015 touches or reads, then
+  `apply_sql.py --expect-ref`: its checks printed PASS. After: editor 24 functions, the
+  three tables empty, and every column of every row of `cb_knowledge_base_updated`
+  (412), `cb_kb_audit` (54), `cb_kb_entry_versions`, `cb_kb_rules`, `cb_kb_admin_users`
+  and `cb_kb_canary` identical to the export
+  (`Minghwee_backups/kb_admin_015_2026-10-15/`). `apply_sql.py` now prints a file's
+  NOTICE lines. `kb_admin_012`'s editor check expects 24 once 015 is there (block run
+  read-only on production: PASS, 24).
+  **Verified:** kb-admin self-check 298 (9 new); 19 faults injected, 19 red (8 new).
+  PGlite with the real migrations: 51 checks; 7 SQL faults, 7 red (3 new). `next build`;
+  bot suites unchanged (smoke 557, flows, recognition 45/46, kb_prep, reset_ui).
 
 - **2026-10-15** - **The knowledge-base watcher, stages 1-3 ("watch, review,
   publish"; Thomas's Phase 3 item 5). Built, switched off, migration NOT applied;

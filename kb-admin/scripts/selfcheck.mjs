@@ -831,16 +831,28 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
   check('the fetcher opens no connection of its own (the network call is passed in)', !/(?<![.\w])fetch\(|process\.env/.test(src('lib/watcher/fetcher.ts')));
 
   // --- the fee lock -----------------------------------------------------------
-  const lock = (tq, ta, q, a) => FL.feeLockReason({ targetQuestion: tq, targetAnswer: ta, proposedQuestion: q, proposedAnswer: a });
-  check('fee lock: a plain rule change is approvable', lock('How many rest days?', 'One a week.', 'How many rest days?', 'One a week, plus one a month that cannot be compensated.') === null);
-  check('fee lock: any money figure blocks ($, S$, SGD, RM, "dollars")',
-    ['The fee is $450.', 'From S$650 a month.', 'SGD 300 levy.', 'RM 200 deposit.', 'It costs 450 dollars.'].every((a) => /money/.test(lock(null, null, 'Q?', a) ?? '')));
-  check('fee lock: a figure in the CURRENT entry blocks too (a change cannot remove a price either)', /money/.test(lock('Cost?', 'The agency fee is $1,428.', 'Cost?', 'Our agent will confirm.') ?? ''));
-  check('fee lock: naming an agency fee blocks even with no figure', /agency fee/.test(lock(null, null, 'Q?', 'A replacement fee applies.') ?? ''));
-  check('fee lock: every row from the fees document is locked, by question',
-    LK.LOCKED_QUESTIONS.length === 23 && LK.LOCKED_QUESTIONS.every((q) => /fees document/.test(lock(q, 'Our agent will confirm.', q, 'Changed wording.') ?? '')));
-  check('fee lock: a row carrying a fees-document correction is locked, by its text',
-    LK.LOCKED_NEEDLES.length === 7 && LK.LOCKED_NEEDLES.every((n) => /fees document/.test(lock('Some question?', `Intro. ${n} More.`, 'Some question?', 'x') ?? '')));
+  const lock = (tq, ta, q, a, category = 'process') => FL.feeLockReason({ targetQuestion: tq, targetAnswer: ta, proposedQuestion: q, proposedAnswer: a, category });
+  const gov = (tq, ta, q, a) => FL.reviewState({ targetQuestion: tq, targetAnswer: ta, proposedQuestion: q, proposedAnswer: a, category: 'government_rule' });
+  check('fee lock: a plain rule change is approvable, with no figure to confirm',
+    lock('How many rest days?', 'One a week.', 'How many rest days?', 'One a week, plus one a month that cannot be compensated.') === null &&
+    !gov('How many rest days?', 'One a week.', 'How many rest days?', 'One a week, plus one.').figure);
+  check('fee lock: any money figure blocks from a page that is NOT a government rule page ($, S$, SGD, RM, "dollars")',
+    ['process', 'embassy', 'other', null].every((c) =>
+      ['The levy is $450.', 'From S$650 a month.', 'SGD 300 levy.', 'RM 200 deposit.', 'It costs 450 dollars.'].every((a) => /money figure/.test(lock(null, null, 'Q?', a, c) ?? ''))));
+  check('fee lock: a figure in the CURRENT entry blocks too (a change cannot remove a price either)', /money/.test(lock('Levy?', 'The levy is $300.', 'Levy?', 'Our agent will confirm.') ?? ''));
+  check('government figures: levy, security bond, MOM fee, minimum income and insurance minimum from a government rule page are APPROVABLE, with the figure warning',
+    ['The monthly levy is $300 ($60 with a concession).', 'The security bond is S$5,000.', 'The MOM processing fee is $35.',
+      'The work permit fee is $35.', 'Employers need a monthly household income of at least S$3,000.', 'Medical insurance must cover at least S$60,000 a year.']
+      .every((a) => { const r = gov(null, null, 'Q?', a); return r.lock === null && r.figure === true; }));
+  check('government figures: a figure only in the CURRENT entry still asks for the confirmation', gov('Levy?', 'The levy is $300.', 'Levy?', 'Our agent will confirm the levy.').figure === true);
+  check('fee lock: naming an agency fee blocks even with no figure, and even from a government rule page',
+    /agency fee/.test(lock(null, null, 'Q?', 'A replacement fee applies.') ?? '') && /agency fee/.test(gov(null, null, 'Q?', 'The agency fee is S$1,428.').lock ?? '') &&
+    /agency fee/.test(gov(null, null, 'Q?', 'Our processing fee is $120.').lock ?? ''));
+  check('fee lock: a helper salary figure is locked even from a government rule page (cb_kb_rules)', /salary/.test(gov(null, null, 'Salary?', 'The minimum salary is S$700.').lock ?? ''));
+  check('fee lock: every row from the fees document is locked, by question, whatever the category',
+    LK.LOCKED_QUESTIONS.length === 23 && LK.LOCKED_QUESTIONS.every((q) => /fees document/.test(lock(q, 'Our agent will confirm.', q, 'Changed wording.', 'government_rule') ?? '')));
+  check('fee lock: a row carrying a fees-document correction is locked, by its text, whatever the category',
+    LK.LOCKED_NEEDLES.length === 7 && LK.LOCKED_NEEDLES.every((n) => /fees document/.test(lock('Some question?', `Intro. ${n} More.`, 'Some question?', 'x', 'government_rule') ?? '')));
   {
     const sql015 = existsSync(join(ROOT, '..', 'scripts/sql/kb_admin_015_watcher.sql')) ? readFileSync(join(ROOT, '..', 'scripts/sql/kb_admin_015_watcher.sql'), 'utf8') : '';
     const arr = (marker) => {
@@ -850,9 +862,15 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
     check('fee lock: the database migration carries exactly the same locked questions and needles',
       JSON.stringify(arr('FEE_LOCKED_QUESTIONS')) === JSON.stringify([...LK.LOCKED_QUESTIONS]) &&
       JSON.stringify(arr('FEE_LOCKED_NEEDLES')) === JSON.stringify([...LK.LOCKED_NEEDLES]));
-    check('fee lock: the database refuses to approve a blocked draft (KB007), re-checking the entry\'s current text',
+    check('fee lock: the database refuses to approve a blocked draft (KB007), re-checking the entry\'s current text and the page category',
       /raise exception 'needs agency confirmation: %', v_lock using errcode = 'KB007'/.test(sql015) &&
-      /kb_admin__watch_fee_lock\(v_t\.question, v_t\.answer, v_d\.proposed_question, v_d\.proposed_answer\)/.test(sql015));
+      /kb_admin__watch_fee_lock\(v_t\.question, v_t\.answer, v_d\.proposed_question, v_d\.proposed_answer, v_cat\)/.test(sql015));
+    check('government figures: the database refuses an unconfirmed figure (KB008) and records the confirmation',
+      /if v_figure and not coalesce\(p_confirm_figure, false\) then\s+raise exception '[^']*' using errcode = 'KB008'/.test(sql015) &&
+      /figure_confirmed = v_figure/.test(sql015) && /'figure_confirmed', v_figure/.test(sql015) &&
+      /kb_admin_watch_approve\(\s*p_actor_id uuid, p_actor_email text, p_draft_id uuid, p_reason text, p_confirm_figure boolean\)/.test(sql015));
+    check('government figures: only a government_rule page may carry a money figure in the database rule too',
+      /if money and coalesce\(p_category, ''\) <> 'government_rule' then/.test(sql015) && /if money and all_text ~\* '\\msalar\(y\|ies\)\\M' then/.test(sql015));
     check('fee lock: the database approve needs an APPROVER', /kb_admin_watch_approve[\s\S]*?kb_admin__require_actor\(p_actor_id, 'approver'\)/.test(sql015));
     check('fee lock: the watcher owner can never touch the pricing rules', /FAIL: kb_admin_fn_owner holds a privilege on cb_kb_rules/.test(sql015) && !/on public\.cb_kb_rules to kb_admin_fn_owner/.test(sql015));
     // Audit: every public watcher function writes an audit row.
@@ -907,7 +925,7 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
       if (fn === 'kb_admin_watch_propose') {
         const [, , , target, q, a, , , , , passage] = params;
         const t = target ? cand.find((c) => c.id === target) : null;
-        const reason = FL.feeLockReason({ targetQuestion: t?.question ?? null, targetAnswer: t?.answer ?? null, proposedQuestion: q, proposedAnswer: a });
+        const reason = FL.feeLockReason({ targetQuestion: t?.question ?? null, targetAnswer: t?.answer ?? null, proposedQuestion: q, proposedAnswer: a, category: 'process' });
         proposals.push({ target, q, a, passage, status: reason ? 'blocked' : 'pending' });
         return { draft_id: `d-${proposals.length}`, status: reason ? 'blocked' : 'pending', blocked_reason: reason };
       }
@@ -946,7 +964,7 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
     !/from '(postgres|\.\.?\/(db|write|env|embed)|@\/lib\/(db|write|env|embed))'|process\.env|(?<![.\w])fetch\(/.test(src('lib/watcher/pipeline.ts')));
 
   // --- approve -> the existing Q&A path -------------------------------------
-  const approveRun = async (failOn) => {
+  const approveRun = async (failOn, confirmFigure = false) => {
     const calls = [];
     const call = async (fn, params) => {
       calls.push({ fn, params });
@@ -957,7 +975,7 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
     let threw = null;
     let result = null;
     try {
-      result = await Pl.approveAndPublish({ userId: 'u1', email: 'a@x' }, { id: 'd1', question: 'Q?', answer: 'A.' }, 'page changed',
+      result = await Pl.approveAndPublish({ userId: 'u1', email: 'a@x' }, { id: 'd1', question: 'Q?', answer: 'A.', confirmFigure }, 'page changed',
         { call, embed: async (t) => ({ vector: Array(1536).fill(0.5), model: 'text-embedding-3-small', text: t }) });
     } catch (e) {
       threw = e;
@@ -973,6 +991,9 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
     const blocked = await approveRun('kb_admin_watch_approve');
     check('approve: a refused approval (fee lock, KB007) stops everything - nothing embedded, nothing published',
       blocked.threw?.code === 'KB007' && blocked.calls.length === 1);
+    const ticked = await approveRun(null, true);
+    check('approve: the approver\'s figure confirmation reaches the database (the 5th, boolean argument)',
+      ok.calls[0].params.length === 5 && ok.calls[0].params[4] === false && ticked.calls[0].params[4] === true);
     const pubFail = await approveRun('kb_admin_publish');
     check('approve: a publish that fails leaves the draft approved but NOT marked published, and says so',
       pubFail.result?.published === false && pubFail.result.versionId === 'v1' && !pubFail.calls.some((c) => c.fn === 'kb_admin_watch_mark_published'));
@@ -983,6 +1004,16 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
   const approveBody = watchActions.slice(watchActions.indexOf('export async function approveWatchDraft'));
   check('approving checks canApprove before anything reaches the database',
     approveBody.indexOf('actor.canApprove') > 0 && approveBody.indexOf('actor.canApprove') < approveBody.indexOf('approveAndPublish('));
+  check('approving a money figure without the tick is refused before anything reaches the database (KB008)',
+    /if \(figure && !confirmFigure\) return \{ error: errorMessage\('KB008', ''\) \};/.test(approveBody) &&
+    approveBody.indexOf('!confirmFigure') < approveBody.indexOf('approveAndPublish(') && /confirmFigure \}/.test(approveBody));
+  {
+    const page = src('app/watch/[id]/page.tsx');
+    check('the review page shows the figure warning and makes the approver tick the box',
+      /This changes a figure: check it against the source before approving/.test(page) &&
+      /confirm=\{figure \? \{ name: 'confirm_figure'/.test(page) && /category: draft\.source_category/.test(page));
+    check('the tick box is required in the form', /type="checkbox" name=\{confirm\.name\} value="yes" required/.test(src('components/ReasonAction.tsx')));
+  }
   check('every watcher action refuses while the watcher is off', (watchActions.match(/const off = watcherOff\(\);/g) ?? []).length === 6);
   const watcherPages = ['app/sources/page.tsx', 'app/watch/page.tsx', 'app/watch/[id]/page.tsx'];
   check('the watcher pages are 404 unless the watcher is on', watcherPages.every((p) => /if \(!viewer\.watcherOn[^)]*\) notFound\(\);/.test(src(p))));

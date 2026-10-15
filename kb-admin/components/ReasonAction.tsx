@@ -19,6 +19,8 @@ function Submit({ label, busyLabel, tone }: { label: string; busyLabel: string; 
  * A button that opens a short form asking why, then runs a server action.
  * Every change kb-admin makes carries a reason; the database refuses one
  * without it. The action re-checks the session and role itself.
+ * `confirm` adds a required tick box (sent as name=yes); the action and the
+ * database check it again, so the box is a prompt, not the guard.
  */
 export function ReasonAction({
   action,
@@ -28,6 +30,7 @@ export function ReasonAction({
   busyLabel = 'Working…',
   help,
   tone = 'secondary',
+  confirm,
 }: {
   action: Action;
   hidden: Record<string, string>;
@@ -36,6 +39,7 @@ export function ReasonAction({
   busyLabel?: string;
   help?: string;
   tone?: 'primary' | 'secondary';
+  confirm?: { name: string; label: string };
 }) {
   const [open, setOpen] = useState(false);
   const [raw, formAction] = useFormState(action, { error: '' });
@@ -69,6 +73,12 @@ export function ReasonAction({
           placeholder="Why this change is being made"
         />
       </div>
+      {confirm ? (
+        <label className="flex items-start gap-2 text-[13px]">
+          <input type="checkbox" name={confirm.name} value="yes" required className="mt-0.5" />
+          <span>{confirm.label}</span>
+        </label>
+      ) : null}
       {state.error ? (
         <div className="notice notice-red" role="alert">
           {state.error}
