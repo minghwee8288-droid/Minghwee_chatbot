@@ -1,0 +1,3 @@
+{
+  "crons": [{ "path": "/api/watcher/run", "schedule": "0 1 * * *" }]
+}

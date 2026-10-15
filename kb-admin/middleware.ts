@@ -19,7 +19,9 @@ import {
  */
 
 export const config = {
-  matcher: ['/((?!login|_next/static|_next/image|favicon.ico).*)'],
+  // /api/watcher/run is Vercel's scheduled call: it carries CRON_SECRET, not a
+  // session, and checks that secret itself (app/api/watcher/run/route.ts).
+  matcher: ['/((?!login|api/watcher/run|_next/static|_next/image|favicon.ico).*)'],
 };
 
 function turnAway(req: NextRequest): NextResponse {
