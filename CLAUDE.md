@@ -1430,6 +1430,23 @@ Ordered by what will hurt first.
     `resolve_service` treats an employer sender as a third party for
     `candidate_registration`), and entry 53 is then rewritten to match.
 
+42. **Existing-customer recognition: seven code gaps found by
+    `scripts/selfcheck_recognition.py` (2026-10-15), none fixed yet.**
+    (a) A returning employer back after a break whose question style was never
+    chosen gets the Step 6c offer ("Thanks, Tan. I can ask you one question at
+    a time...") on the opening turn, which pre-empts the welcome back and the
+    known-helper confirmation; on the next turn the break is minutes old, so
+    the welcome is lost. `name_turn` fires on `record_name_note` for a record
+    name. (b) `after_a_break` is `>= 6`, so exactly 6 hours counts as a break.
+    (c) Only a prompt rule stops a case number being read out; no guard.
+    (d) A candidate on our file: `get_record_name` reads `employers` only, so
+    her `candidates.full_name` is never used and she is asked her name; her
+    nationality on file is not read either; and `existing_client()` ignores
+    `matched_candidate_id`, so she is never welcomed back. (d) is a design
+    question as much as a gap (2026-09-10 chose to always ask her name).
+    Plus one missing-data item: a placement with no `candidate_id` (most live
+    rows) gives no helper to confirm.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
@@ -1597,6 +1614,11 @@ python scripts/selfcheck_flows.py      # behavioural assertions; also runs IN th
                                        #   docker compose exec chatbot python /app/scripts/selfcheck_flows.py
                                        # Note the `/.` — see "the second copy" below.
                                        # Verifies BEHAVIOUR, not grep counts — see the note below.
+python scripts/selfcheck_recognition.py   # 4 contacts (case employer, past placement,
+                                       #   candidate, new) through identify, the webhook
+                                       #   payload and the real nodes on a fake DB; no
+                                       #   network. Findings labelled code / missing data;
+                                       #   exit 1 only on a network attempt or a crash.
 python scripts/selfcheck_kb_prep.py --offline   # rules table, fallbacks, loader
                                        #   ownership, preview guard. No DB.
 python scripts/selfcheck_kb_prep.py --expect-ref <ref> [--preview]
@@ -1743,7 +1765,8 @@ behaviour behind one switch. Details of each step are in §11.
 | 6 (4) | The approved question pairs wired | `e9f0ca9` |
 | 6c | One question at a time or all at once, the client's choice | `4d7b251` |
 | 6b | Extraction beside the classifier when the client answers our question | `a9754ba` |
-| 7 | Escalation audit, read-only; report outside the repo (`Minghwee_backups/step7_escalation_audit_2026-10-15.md`) | see git log |
+| 7 | Escalation audit, read-only; report outside the repo (`Minghwee_backups/step7_escalation_audit_2026-10-15.md`) | `0e80fac` |
+| 8 | Recognition harness `scripts/selfcheck_recognition.py`; no seeding (live run waits on a choice) | see git log |
 
 **Still to do, in order:** Step 5 is done (every item, the last being item 2 in Batch G), Step 6 is done (parts 1-4, 6b, 6c), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
@@ -1820,6 +1843,18 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-15** - **Step 8: existing-customer recognition harness, no behaviour
+  change.** `scripts/selfcheck_recognition.py` runs four contacts (employer with an
+  active case and a named helper; employer with one past placement naming no
+  candidate; a candidate; a new number) through the real `contact.identify`, the
+  webhook's own `_process_locked` (stopped at `run_turn`), the real collector,
+  retriever, response generator and `run_turn` post-guards, on an in-memory fake DB
+  of production-shaped rows, with the model stubbed and its prompt captured.
+  Non-loopback sockets are refused and counted. 39 checks: 31 pass, 7 code, 1
+  missing data (section 9.42). Four faults injected (record name dropped, always
+  welcome back, no helper confirmation, push name in the prompt), four runs with
+  more failures. No data seeded.
 
 - **2026-10-15** - **Step 7: escalation audit, read-only, no code change.** 30 days of
   production inside `app/readonly.py` (0 refused writes). Report outside the repo:
