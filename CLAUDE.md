@@ -1743,6 +1743,7 @@ behaviour behind one switch. Details of each step are in §11.
 | 6 (4) | The approved question pairs wired | `e9f0ca9` |
 | 6c | One question at a time or all at once, the client's choice | `4d7b251` |
 | 6b | Extraction beside the classifier when the client answers our question | `a9754ba` |
+| 7 | Escalation audit, read-only; report outside the repo (`Minghwee_backups/step7_escalation_audit_2026-10-15.md`) | see git log |
 
 **Still to do, in order:** Step 5 is done (every item, the last being item 2 in Batch G), Step 6 is done (parts 1-4, 6b, 6c), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
@@ -1819,6 +1820,17 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-15** - **Step 7: escalation audit, read-only, no code change.** 30 days of
+  production inside `app/readonly.py` (0 refused writes). Report outside the repo:
+  `Minghwee_backups/step7_escalation_audit_2026-10-15.md`. 202 handovers (145
+  agent_takeover, 12 bot_confused on 9 days, 3 media, 3 ticket_raised); 8 tickets left
+  after resets; 5 holding lines in 87 bot messages. The bot's own misses are too few to
+  rank, so 1,161 real inbound questions were run through its KB search: 742 under the
+  floor, mostly case-specific or staff chat. KB-fixable gaps, in order: timeline and
+  next steps after confirming, fee breakdown, medical results, refund/cancellation/
+  exchange terms, financial proof and payment methods. Caveat: the test/other split
+  used the local `.env` allowlist (11 numbers), not the server's.
 
 - **2026-10-14** - **Batch G F3 and Step 6 parts 4, 6c and 6b.** Each behind
   its own switch (section 7), each its own commit.
