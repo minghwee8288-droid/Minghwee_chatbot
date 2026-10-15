@@ -225,9 +225,11 @@ from app.graph.prompts.style import ONE_TOPIC_RULE  # noqa: E402
 
 _RULE_8_ONE_QUESTION = "8. Ask at most one question per message."
 _RULE_8_ONE_TOPIC = (
-    "8. One topic per message. When the instruction for this message names two closely "
-    "related details, ask them together in one natural sentence; otherwise ask one "
-    "question."
+    "8. One question per message, with ONE question mark. Only when the instruction for "
+    "this message explicitly says to ask a second detail together with the first may "
+    "you cover both, and then in one sentence ending in one question mark. Otherwise "
+    "ask exactly one question, even when that question covers a few details - never a "
+    "second question after it."
 )
 assert _RULE_8_ONE_QUESTION in RULES, "system.py: rule 8 moved"
 if ONE_TOPIC_RULE:

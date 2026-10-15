@@ -128,11 +128,11 @@ _ONE_QUESTION_LINE = (
     "questions in one message is a form, not a conversation."
 )
 _ONE_TOPIC_LINE = (
-    "One topic per message (rule 8): when the instruction for this message names two "
-    "closely related details, ask them together in one natural sentence — \"how old is "
-    "she, and is she still mobile?\" — otherwise ask one question, wait for the answer, "
-    "then ask the next. Two unrelated questions in one message is a form, not a "
-    "conversation."
+    "One question per message (rule 8), with one question mark: wait for the answer, "
+    "then ask the next. Only when the instruction for this message says to ask two "
+    "details together do you cover both, in one sentence — \"how old is she, and is she "
+    "still mobile?\" — never as two questions one after the other. Two questions in one "
+    "message is a form, not a conversation."
 )
 _ASK_ONE_TOPIC = (
     "Ask about ONE topic per message (rule 8), then follow up with the next once "

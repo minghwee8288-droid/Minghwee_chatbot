@@ -3568,6 +3568,53 @@ _REAL_NOTES = (
 )
 
 
+async def _one_question_mark_checks() -> list[tuple[str, bool]]:
+    import importlib
+    """Section 9.44: a collector message carries one question mark."""
+    ic = importlib.import_module("app.graph.nodes.info_collector")
+    out: list[tuple[str, bool]] = []
+    pair = ("Got it. Would she need to do any cooking, and if so, what type? Also, would "
+            "she need to handle window cleaning or car washing?")
+    got = ic.one_question_mark(pair, "FALLBACK?")
+    out.append(("9.44: the cooking + duties pair is merged into one sentence",
+                got.count("?") == 1 and "window cleaning" in got and "Also" not in got
+                and got.startswith("Got it.")))
+    house = ("Thanks. How many people live in your household apart from your two "
+             "children? Who are the other household members?")
+    got = ic.one_question_mark(house, "FALLBACK?")
+    out.append(("9.44: the household question is merged into one",
+                got.count("?") == 1 and "and who are the other" in got))
+    got = ic.one_question_mark("Noted. Is it A? Is it B? Is it C?", "How many people?")
+    out.append(("9.44: three questions fall back to the first field's question",
+                got == "Noted. How many people?"))
+    out.append(("9.44: one question is left alone",
+                ic.one_question_mark("Which country is she from?", "X?")
+                == "Which country is she from?"))
+    out.append(("9.44: a numbered list is left alone",
+                ic.one_question_mark("1. Her name?\n2. Her age?", "X?").count("?") == 2))
+    with patch.object(ic, "ONE_QUESTION_MARK", False):
+        out.append(("9.44: switch off leaves the reply as written",
+                    ic.one_question_mark(pair, "X?") == pair))
+    # Through the real collector: the model writes two questions, one goes out.
+    state = {**BASE, "service_type": "new_hiring", "intent": "new_hiring",
+             "collected_info": {"full_name": "Tan"}, "asked_field_counts": {"full_name": 1},
+             "history_text": "You: May I know your name?\nClient: Tan",
+             "incoming_text": "Tan", "question_style": "one_by_one"}
+    with patch.object(ic, "QUESTION_STYLE_OFFER", False):
+        got = await _run_info_collector(
+            state, stub="Thanks, Tan. What would you mainly need help with? Is it childcare?")
+    out.append(("9.44: the collector sends one question mark",
+                (got.get("reply") or "").count("?") == 1))
+    from app.graph.prompts import style as _st, system as _sy
+    out.append(("9.44: rule 8 lets only an instructed pair combine two details",
+                "ONE question mark" in _sy.RULES and "never a second question" in _sy.RULES))
+    out.append(("9.44: the style guide says one question mark",
+                "one question mark" in _st.STYLE_BLOCK))
+    out.append(("9.44: the paired note says one question mark",
+                "exactly ONE question mark" in ic.PAIRED_QUESTION_NOTE))
+    return out
+
+
 async def _batch_g_checks() -> list[tuple[str, bool]]:
     """Batch G (2026-10-15): G1 the crash path, G4 the case-number guard.
     G2/G3/G5/G6/G7 are run end to end by scripts/selfcheck_recognition.py."""
@@ -5784,6 +5831,9 @@ async def main() -> int:
         failures += not ok
     for label, ok in await _batch_g_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  batch-g  {label:44}")
+        failures += not ok
+    for label, ok in await _one_question_mark_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  9.44     {label:44}")
         failures += not ok
     for label, ok in await _harm_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  safety  {label:44}")

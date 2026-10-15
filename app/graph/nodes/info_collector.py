@@ -2032,8 +2032,69 @@ _ASAP = re.compile(
 PAIRED_QUESTION_NOTE = (
     "\n\nAsk this together with one closely related detail, in ONE natural "
     "sentence - not two questions one after the other: {label}. For that one: "
-    "{guidance}"
+    "{guidance} The message has exactly ONE question mark, at the end of that one "
+    "sentence (for example \"Would she need to cook, and are there any extra duties "
+    "like window cleaning or car washing?\")."
 )
+
+# Section 9.44 (2026-10-15): a collector message carries ONE question mark.
+# The approved cooking + extra-duties pair went out as "...what type? Also,
+# would she need to...?" and the household question as "...apart from your
+# two children? Who are the other household members?". Two questions at the
+# end are merged into one sentence ("A, and b?"); anything else (three
+# questions, a question in the middle) keeps the text before the first
+# question and asks only the first field's written question. Not on an
+# overview or a numbered list, which may carry their own.
+# False = the reply as the model wrote it.
+ONE_QUESTION_MARK = True
+_LEADING_CONNECTOR = re.compile(
+    r"^(?:also|and|plus|additionally|as\s+well)\b[\s,]*", re.IGNORECASE
+)
+
+
+def _merged_questions(first: str, second: str) -> str:
+    """Two questions as one sentence, or '' if they do not join cleanly."""
+    a = first.strip().rstrip("?").rstrip(" ,;")
+    b = _LEADING_CONNECTOR.sub("", second.strip()).strip()
+    if not a or not b or b.count("?") != 1:
+        return ""
+    # Lower-case the opening word only when it is a question word, so a name
+    # ("Devi ...") or "I" keeps its capital.
+    head = b.split(" ", 1)[0]
+    if head.lower() in _QUESTION_OPENERS:
+        b = b[0].lower() + b[1:]
+    return f"{a}, and {b}"
+
+
+_QUESTION_OPENERS = frozenset(
+    "what when where which who whom whose why how would could should will can do does "
+    "did is are was were has have any anything may".split()
+)
+
+
+def one_question_mark(reply: str, fallback: str) -> str:
+    """The reply with at most one question mark (section 9.44)."""
+    body = (reply or "").strip()
+    if not ONE_QUESTION_MARK or body.count("?") <= 1:
+        return reply
+    if re.search(r"(?m)^\s*\d+[.)]\s", body):
+        return reply
+    questions = list(re.finditer(r"[^.!?\n]*\?", body))
+    if len(questions) == 2 and not body[questions[0].end():questions[1].start()].strip():
+        merged = _merged_questions(questions[0].group(), questions[1].group())
+        if merged and merged.count("?") == 1:
+            start = questions[0].start()
+            lead = body[:start]
+            tail = body[questions[1].end():]
+            out = (lead + (" " if lead and not lead.endswith((" ", "\n")) else "")
+                   + merged.strip() + tail).strip()
+            logger.info("Collector reply had two questions - merged into one sentence")
+            return out
+    lead = body[:questions[0].start()].strip() if questions else ""
+    logger.info("Collector reply had %d question marks - only the first field asked",
+                body.count("?"))
+    return (f"{lead} {fallback}".strip() if lead else fallback.strip())
+
 
 # Phase 3 Step 6c (2026-10-14): the client chooses how the questions come.
 # Offered once per conversation, in the same reply that thanks them for their
@@ -5433,6 +5494,10 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         if REPLY_ASKS_ITS_QUESTION and not (workload_note or nationality_note or location_note
                                             or candidate_note):
             reply = with_the_question_asked(reply, next_field)
+        # Section 9.44: one question mark. A pair that will not merge falls
+        # back to asking only the first field.
+        if not overview:
+            reply = one_question_mark(reply, next_field.question)
         if overview and (reply or "").strip() == (next_field.question or "").strip():
             logger.error(
                 "Conversation %s: the %s overview was discarded by a guard - the "

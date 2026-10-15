@@ -535,6 +535,7 @@ because the lead is opened early and the ticket is created much later.
 | The client chooses one question at a time or all at once | `info_collector.QUESTION_STYLE_OFFER` (+ `QUESTION_STYLE_OFFER_SHORT` for renewal and passport renewal), `state.question_style` | Step 6c. Offered once, in the reply that thanks them for their name (for a name from our records, the turn after Claire's first question); never before the introduction, on a greeting, a complaint, a safety or a missing-helper report, or in a non-English conversation (fixed wording). "All at once" = one numbered message of every remaining question, pairs on one line, then only what is still missing; anything else = the normal flow. Remembered for the conversation. |
 | An answer to our own question is extracted beside the classifier | `info_collector.start_speculative_extraction` from `graph._classify_with_prefetch` (`SPECULATIVE_EXTRACTION`) | Step 6b. Used only when its inputs (service, message, history, answers, ask counts) are exactly the collector's own; otherwise discarded and extracted as before. |
 | Anyone who is not the helper herself is a third party | `ticket.resolve_service` + `THIRD_PARTY_EMPLOYER_RELAY` | Batch G F3 (section 9.41). An employer on file relaying "my friend's maid is looking for a new employer" is handed over like a supplier, never asked "your name" as the helper. An unknown sender is left to the classifier. |
+| A collector message carries ONE question mark | `info_collector.one_question_mark` (`ONE_QUESTION_MARK`) + rule 8, the style line and `PAIRED_QUESTION_NOTE` | Section 9.44 (2026-10-15). Two questions at the end of the message are merged into one sentence ("A, and b?"); three, or a question in the middle, keep the text before the first question and ask only the first field's written question. Not on an overview or a numbered list. Rule 8 now lets only an instructed pair combine two details. |
 | Rule 8 and the style guide agree: one topic per message | `system._RULE_8_ONE_TOPIC` + `style._ONE_TOPIC_LINE` (`ONE_TOPIC_RULE`) | Step 6 part 2: two closely related details may be asked in one natural sentence when the instruction names them; otherwise one question. Changed together so neither forbids what the other allows. |
 | No stray script reaches the client | `guards.without_stray_script`, applied once in `graph.run_turn` (and the preview) behind `STRAY_SCRIPT_GUARD` | The model ended an Indonesian reply with "天天彩票中奖" (Step 2e replay). `GLITCH_STRINGS` always go; a run of letters in a script that is neither the reply's main script nor one in the client's own lines or the names we hold for them goes too. Latin is never a cut script, so "Claire", "Ming Hwee", the address, a CB reference and Latin names survive in a Burmese or Chinese reply; digits and punctuation are not letters. Han and kana are one bucket. A cut is logged. |
 | A finished reply is not held back by Whapi | `message.send_bot_reply` (`SEND_WITHOUT_TYPING_TIME`) | With our own typing indicator running, no `typing_time` is sent: it only delayed delivery (whapi.send 1.4 s with 0.5 s asked). The channel's `/settings` holds no typing default. |
@@ -850,6 +851,8 @@ Easy to get wrong:
   (G3), `guards.NO_CASE_NUMBER_READ_OUT` (G4), `info_collector.CONFIRM_CANDIDATE_NAME`
   (G5), `info_collector.CANDIDATE_COUNTRY_ON_FILE` (G6),
   `info_collector.CANDIDATE_WELCOME_BACK` (G7).
+  Section 9.44 (2026-10-15), `False` for the Batch G behaviour:
+  `info_collector.ONE_QUESTION_MARK` (one question mark per collector message).
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1472,7 +1475,8 @@ Ordered by what will hurt first.
     2026-10-06 07:40:24 - the `Graph execution failed` line just before each
     names the exception. Hardened anyway: one retry on a dead connection, and
     crashes are now `bot_error` so the next audit counts them apart.
-44. **Two question marks in one message on new hiring and transfer (e2e "one
+44. **FIXED 2026-10-15 (`ONE_QUESTION_MARK`), see the change log.**
+    **Two question marks in one message on new hiring and transfer (e2e "one
     question per message", seen 2026-10-15).** The approved cooking + extra-duties
     pair comes out as two questions ("...what type? Also, would she need to
     handle...?"), and the household question as "...apart from your two
@@ -1881,6 +1885,28 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-15** - **One question mark per collector message (section 9.44).**
+  The approved cooking + extra-duties pair went out as two questions ("...what
+  type? Also, would she need to...?") and the household question as "...apart
+  from your two children? Who are the other household members?".
+  (1) `info_collector.one_question_mark`, after `with_the_question_asked`:
+  two questions at the end are merged into one sentence ("A, and b?"); if they
+  will not merge, the text before the first question is kept and only the
+  first field's written question is asked. Overviews and numbered lists are
+  left alone. `PAIRED_QUESTION_NOTE` now asks for exactly one question mark.
+  (2) The Step 6 rule-8 wording ("one topic per message ... names two
+  closely related details") let a single field's multi-part question be split
+  into two. Rule 8 and the style line now say one question, one question mark,
+  and that only an instruction to ask a second detail together may combine two.
+  prompt.md updated. `ONE_QUESTION_MARK = False` restores the reply as written.
+  **Verified:** `smoke_nodes.py` 544 (10 new checks), flows, recognition 45/46
+  (0 code), reset_ui and kb_prep green; E2E "one question per message": new hiring
+  and transfer 4 of 4 runs each (3 dedicated + the full run), all 7 services
+  7 of 7 in the full run (was 5 of 7). One unrelated grade missed once: new
+  hiring's opening said "recommend someone suitable", which the
+  _COLLECTION_PURPOSE word list does not contain (the opening is not touched
+  here).
 
 - **2026-10-15** - **Batch G G1-G7: crashes, and recognising a returning client
   or helper.** Each behind its own switch (section 7).
