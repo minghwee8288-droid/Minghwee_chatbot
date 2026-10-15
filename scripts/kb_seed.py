@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 SEED_FILE = Path(__file__).resolve().parent / "sql" / "kb_rules_002_seed.sql"
-EXPECTED_ROWS = 17
+EXPECTED_ROWS = 19
 
 _TUPLE = re.compile(
     r"\('(\w+)',\s*'(\w+)',\s*'(\w+)',\s*"

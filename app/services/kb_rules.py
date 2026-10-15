@@ -98,7 +98,8 @@ DEFAULTS = Rules(
         "transfer": frozenset({"PH", "ID", "MM"}),
         "transfer_employer": frozenset({"PH", "ID", "MM"}),
     },
-    salary_floor={"PH": 650},
+    # Fees document 2026-10-15, decision C: basic salary per nationality.
+    salary_floor={"PH": 650, "ID": 550, "MM": 500},
     contact={
         "whatsapp_number": "+65 6534 2277",
         "office_address": (

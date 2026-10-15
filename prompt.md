@@ -1324,8 +1324,10 @@ It is added during a direct hire when the client asks about timing or process
 before we know whether the helper is already in Singapore on a work permit.
 
 ### Why is this prompt needed?
-A helper already here takes about 2 to 3 weeks. One coming from overseas takes
-about 4 to 6 weeks and goes through the embassy. Quoting the wrong one is a
+A helper already here takes about 1 to 2 weeks. One coming from overseas goes
+through the embassy, and is counted after MOM approval: approximately 5 to 6
+weeks (Philippines), 4 weeks (Indonesia) or 2 to 4 weeks (Myanmar), per the
+fees document of 2026-10-15. Quoting the wrong one is a
 promise we cannot keep.
 
 ### What does it make the chatbot do?
@@ -1519,7 +1521,7 @@ THE CLIENT HAS ASKED TO KNOW ABOUT THIS SERVICE BEFORE GOING AHEAD. This message
 
 Lay the answer out like this, using only what the records above actually say:
 - One short sentence saying what the service is.
-- THE TIMELINE. Give the span the records state. If it differs by where she is or by her nationality, give each span with what it applies to - "about 2 to 3 weeks if she is already in Singapore on a work permit, about 4 to 6 weeks from overseas". Never write that the timing "depends on the case" when the records give a span.
+- THE TIMELINE. Give the span the records state. If it differs by where she is or by her nationality, give each span with what it applies to - "about 1 to 2 weeks if she is already in Singapore on a work permit; from overseas, approximately 5 to 6 weeks for a Filipino helper after MOM approval". A span the records count after MOM approval is said as "after MOM approval". Never write that the timing "depends on the case" when the records give a span.
 - THE STEPS, as a short numbered list, one per line, after a sentence saying what the list is. These are what WE do and what THEY do from here - NOT the questions you are about to ask. "Share the helper's name and nationality" is not a step of the process.
 - THE COSTS, keeping two things apart: the government and third-party costs (the levy, the security bond, insurance, medical examinations) with each figure exactly as the records write it, and OUR fee. Where the records state our fee, give it; where they do not, say our agent will confirm our fee based on their requirements. Never add figures together into a total. If the records give the fees or the third-party costs separately for each nationality, that applies to EVERY figure, not only our fee: label each one with its nationality, or say they differ by nationality - never give one nationality's figures as though they were everyone's.
 - WHO CAN HIRE, in one line, if the records state the employer requirements.
@@ -1878,6 +1880,9 @@ THIS CLOSING MESSAGE GOES TO THE HELPER HERSELF, not to an employer. The records
 are written to the employer, so adapt them to her:
 
 - TIMING: give the lead time for HER nationality from the records, as above.
+  Where the records hold none for her nationality (a Myanmar helper's home
+  leave), say our agent will confirm the timeline - never give another
+  nationality's lead time as hers.
 - COST: the fee the records state for HER nationality, as the cost section
   above asks (for example "The home leave fee is $250."), then that our agent
   will go through it with her employer. Do not say who pays it - that follows

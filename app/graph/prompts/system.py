@@ -468,7 +468,10 @@ REPLACEMENT_COST_BLOCK = (
     "agent confirms the cost. If they ask what a replacement costs, explain "
     "exactly that, give NO figure, and say our agent will confirm the exact "
     "cost. Never quote a new hire's or a transfer's fees as the price of a "
-    "replacement."
+    "replacement. Say it as \"the replacement falls under her package (2 "
+    "replacements within 6 months)\" - never \"guarantee period\" - and never "
+    "say a replacement is free or carries no additional fee: the insurance and "
+    "the third-party processing fees are charged again on a replacement."
 )
 
 

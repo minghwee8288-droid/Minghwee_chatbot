@@ -1044,6 +1044,9 @@ THIS CLOSING MESSAGE GOES TO THE HELPER HERSELF, not to an employer. The records
 are written to the employer, so adapt them to her:
 
 - TIMING: give the lead time for HER nationality from the records, as above.
+  Where the records hold none for her nationality (a Myanmar helper's home
+  leave), say our agent will confirm the timeline - never give another
+  nationality's lead time as hers.
 - COST: the fee the records state for HER nationality, as the cost section
   above asks (for example "The home leave fee is $250."), then that our agent
   will go through it with her employer. Do not say who pays it - that follows
@@ -1083,8 +1086,8 @@ insurance and the third-party processing fees are charged again on the
 replacement. The helper being replaced is from: {nationality}. If the records
 give the fee for more than one nationality, or for both a new hire and a
 transfer helper, and you cannot tell which applies to her, give each figure
-labelled (for example "$238 for a Filipino new hire, $288 for a transfer
-helper") - never pick one and never add them up. Never quote a new hire's or a
+labelled - never pick one and never add them up. (The agency's fee is $288 for
+every nationality and package, new hire and transfer alike, since 2026-10-15.) Never quote a new hire's or a
 transfer's AGENCY fee as the price of a replacement. Then say our agent will
 confirm which applies. This replaces the instruction to defer the fee.
 """
@@ -1347,10 +1350,11 @@ what they asked properly FIRST, from our records, and only then ask your questio
 Lay the answer out like this, using only what the records above actually say:
 - One short sentence saying what the service is.
 - THE TIMELINE. Give the span the records state. If it differs by where she is \
-or by her nationality, give each span with what it applies to - "about 2 to 3 \
-weeks if she is already in Singapore on a work permit, about 4 to 6 weeks from \
-overseas". Never write that the timing "depends on the case" when the records give \
-a span.
+or by her nationality, give each span with what it applies to - "about 1 to 2 \
+weeks if she is already in Singapore on a work permit; from overseas, approximately \
+5 to 6 weeks for a Filipino helper after MOM approval". A span the records count \
+after MOM approval is said as "after MOM approval". Never write that the timing \
+"depends on the case" when the records give a span.
 - THE STEPS, as a short numbered list, one per line, after a sentence saying what \
 the list is. These are what WE do and what THEY do from here - NOT the questions \
 you are about to ask. "Share the helper's name and nationality" is not a step of \

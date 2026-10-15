@@ -27,6 +27,9 @@ from app.graph.guards import (
     asks_for_process,
     clamp_reply,
     guard_nationality_fee,
+    FIXED_FEE_STATED_PLAINLY,
+    state_fixed_fee_plainly,
+    with_after_mom_approval,
     quotes_hiring_package_cost,
     is_degenerate,
     last_bot_line,
@@ -2878,7 +2881,9 @@ RETURNING_NOTE = (
 # band anchored on 670 would read as a price for something that is negotiated.
 #
 # 2026-09-24: the floor now lives in cb_kb_rules (salary_floor), read through
-# kb_rules.salary_floor(). Code default: {"PH": 650} and nothing else.
+# kb_rules.salary_floor(). Code default: {"PH": 650, "ID": 550, "MM": 500}
+# since the fees document of 2026-10-15 (decision C: bands never below the
+# basic salary for that nationality).
 
 _BAND_DIGITS = re.compile(r"(\d{3,4})")
 
@@ -3875,7 +3880,9 @@ def helper_confirm_note(helpers: list[dict[str, Any]], service_label: str) -> st
 
 # Batch G (2026-10-15), each False for the Step 6 behaviour:
 # G3 - "welcome back" only when the gap is MORE than 6 hours (it was >=).
-STRICTLY_AFTER_BREAK = True
+# Reverted by the client's decision F (fees document, 2026-10-15): a break of
+# 6 hours OR MORE. Kept as a switch; True = the Batch G "> 6" reading.
+STRICTLY_AFTER_BREAK = False
 # G7 - a helper on our candidates file is welcomed back like an employer.
 CANDIDATE_WELCOME_BACK = True
 # G5 - a helper on our file is asked "Am I speaking with <name>?" instead of
@@ -5856,6 +5863,21 @@ async def _write(
         strip_repeated_opener(reply, *recent_bot_lines(state.get("history_text", ""))),
         str((state.get("collected_info") or {}).get("full_name") or ""),
     )
+
+    # Fees document 2026-10-15: "approximately $400 ... our agent will confirm"
+    # on a Filipino home leave. A closing briefing fetches its own records
+    # (BRIEFING_FETCHES_ITS_OWN_RECORDS), which run_turn's copy of this guard
+    # never sees, so the fixed fee is stated plainly here, from those records.
+    if (prompt_state.get("service_type") or state.get("service_type")) == "direct_hiring":
+        collected_now = prompt_state.get("collected_info") or state.get("collected_info") or {}
+        reply = with_after_mom_approval(reply, lead_service.nationality_code(
+            str(collected_now.get("helper_nationality") or "")))
+    if FIXED_FEE_STATED_PLAINLY:
+        reply = state_fixed_fee_plainly(reply, "\n".join(
+            [state.get("rag_context") or ""]
+            + [str(m.get("answer") or m.get("content") or "")
+               for m in (state.get("rag_matches") or []) if isinstance(m, dict)]
+        ))
 
     # Another nationality's fee, or any fee where we hold none for hers
     # (guards.guard_nationality_fee, Phase 3 Step 4). Last, so the rewrite

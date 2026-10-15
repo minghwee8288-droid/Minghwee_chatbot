@@ -1632,16 +1632,22 @@ rows = [
  ("her own nationality narrows it the same way",
   ico._effective_options(_budget_field, {"nationality": "Philippines"}),
   ico._effective_options(_budget_field, {"preferred_nationality": "Filipino"})),
- # We hold a floor for the Philippines and for nothing else. Indonesia and
- # Myanmar keep every band, because the agency gave figures for one country
- # and inferring the other two from it is the mistake section 9 records twice
- # for Myanmar already.
- ("a nationality we hold no floor for is untouched",
-  [n for n in ("Indonesian", "Myanmar", "no preference")
-   if ico._effective_options(_budget_field, {"preferred_nationality": n})
-   != _budget_field.options], []),
- ("...and the floor table names exactly one country, on purpose",
-  sorted(_kbr.rules().salary_floor), ["PH"]),
+ # Since the fees document of 2026-10-15 (decision C) we hold a floor for all
+ # three: Indonesia S$550 and Myanmar S$500, the agency's own basic salaries.
+ # No band below the basic is offered; "no preference" keeps every band.
+ ("no preference keeps every band",
+  ico._effective_options(_budget_field, {"preferred_nationality": "no preference"}),
+  _budget_field.options),
+ ("Indonesia: no band below S$550, and the straddling band starts AT it",
+  ([o for o in ico._effective_options(_budget_field, {"preferred_nationality": "Indonesian"})
+    if (lambda b: b[1] is not None and b[1] <= 550)(ico._band_bounds(o))],
+   ico._effective_options(_budget_field, {"preferred_nationality": "Indonesian"})[0]),
+  ([], "SGD 550-600")),
+ ("Myanmar: no band below S$500 ('below SGD 500' is dropped)",
+  [o for o in ico._effective_options(_budget_field, {"preferred_nationality": "Myanmar"})
+   if (lambda b: b[1] is not None and b[1] <= 500)(ico._band_bounds(o))], []),
+ ("...and the floor table names all three countries",
+  dict(_kbr.rules().salary_floor), {"PH": 650, "ID": 550, "MM": 500}),
  # Only `budget` is filtered. A filter that reached any field with digits in
  # its options would quietly edit the languages list or the home types.
  ("no other field's options are touched",
@@ -2972,16 +2978,16 @@ rows = [
          if r["section_heading"].startswith("Employer - fees for")
          and sum(1 for f in _FEE_FIGURES if f in r["answer"]) != 1),
   []),
- # The REPLACEMENT fees. $288 is shared by four of the six legitimately, so
- # the two that are unique are what this can test: a Filipino new hire is $238
- # and a Myanmar new hire is $328, and neither may carry the other's.
- ("the replacement fee is its own service's",
+ # The REPLACEMENT fees. Decision A (fees document, 2026-10-15): $288 for
+ # every nationality and package - the $238 (PH new hire) and $328 (MM new
+ # hire) are gone, and neither may come back.
+ ("the replacement fee is $288 everywhere",
   sorted((r["service_type"], r["nationality"],
           next(f for f in (f"{D}238", f"{D}288", f"{D}328") if f in r["answer"]))
          for r in lsn.ROWS
          if r["section_heading"].startswith("Employer - replacement for")),
-  [("new_hiring", "ID", f"{D}288"), ("new_hiring", "MM", f"{D}328"),
-   ("new_hiring", "PH", f"{D}238"), ("transfer", "ID", f"{D}288"),
+  [("new_hiring", "ID", f"{D}288"), ("new_hiring", "MM", f"{D}288"),
+   ("new_hiring", "PH", f"{D}288"), ("transfer", "ID", f"{D}288"),
    ("transfer", "MM", f"{D}288"), ("transfer", "PH", f"{D}288")]),
  ("no replacement row names two different replacement fees",
   sorted(r["section_heading"] for r in lsn.ROWS
@@ -3005,16 +3011,27 @@ rows = [
          if r["section_heading"].startswith("Employer - fees for")
          and "charged separately" not in r["answer"]),
   []),
- # The Myanmar transfer surcharge for an experienced worker or a caregiver is
- # $80 where the other two are $60. One digit, and it is the kind of thing a
- # copy-paste row gets wrong.
- ("the Myanmar transfer surcharge is its own figure",
-  [(r["nationality"], f"{D}80" in r["answer"], f"{D}60" in r["answer"])
-   for r in lsn.ROWS
-   if r["section_heading"].startswith("Employer - third-party fees")
-   and r["service_type"] == "transfer"
-   and r["nationality"] == "MM"],
-  [("MM", True, False)]),
+ # The optional +$60 lines, worded as the fees document words them (decision
+ # D): "+$60 for an ex-boarded helper" (PH), "+$60 for an ex-abroad or
+ # Christian helper" (ID, MM). The Myanmar transfer's $80 is gone.
+ ("the +$60 lines are the document's, on every fee row",
+  sorted((r["service_type"], r["nationality"],
+          "ex-boarded helper" in r["answer"],
+          "ex-abroad or Christian helper" in r["answer"], f"{D}80" in r["answer"])
+         for r in lsn.ROWS
+         if r["section_heading"].startswith("Employer - third-party fees")),
+  [("new_hiring", "ID", False, True, False), ("new_hiring", "MM", False, True, False),
+   ("new_hiring", "PH", True, False, False), ("transfer", "ID", False, True, False),
+   ("transfer", "MM", False, True, False), ("transfer", "PH", True, False, False)]),
+ ("direct hire: 1 to 2 weeks here, and overseas counted after MOM approval",
+  [("2 to 3 weeks" in r["answer"], "after MOM approval" in r["answer"])
+   for r in lsn.ROWS if r["question"] in (
+       "How long does a direct hire take if the helper is already in Singapore?",
+       "How long does a direct hire take if the helper is overseas?")],
+  [(False, False), (False, True)]),
+ ("no loader row or replacement says 'guarantee period' or 'no additional agency'",
+  [r["question"] for r in lsn.ROWS
+   if "guarantee period" in r["answer"] or "no additional agency" in r["answer"]], []),
  # Rule 7 of the brief, mechanically: the PH new hire is the only one whose
  # recruitment fee is a month of salary, and it is the only one that says so.
  ("only the Filipino new hire names a salary-based recruitment fee",

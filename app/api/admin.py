@@ -236,6 +236,10 @@ async def run_preview(body: PreviewRequest) -> dict[str, Any]:
                 reply = guards.without_figureless_approximate(reply)
             if guards.FIXED_FEE_STATED_PLAINLY and reply:  # as run_turn does
                 reply = guards.state_fixed_fee_plainly(reply, graph_module.records_text(result))
+            if reply and result.get("service_type") == "direct_hiring":  # as run_turn does
+                from app.services import lead as _lead
+                reply = guards.with_after_mom_approval(reply, _lead.nationality_code(str(
+                    (result.get("collected_info") or {}).get("helper_nationality") or "")))
             if (guards.WHY_THE_PRICE_EVERY_PATH and reply  # as run_turn does
                     and guards.asks_why_the_price(text)):
                 reply = guards.price_probe_reply(

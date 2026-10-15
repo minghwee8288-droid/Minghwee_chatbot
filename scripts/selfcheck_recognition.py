@@ -400,11 +400,12 @@ async def contact_1() -> None:
     check(n, "renewal: no welcome back one hour after the last message",
           not welcomes(prompt), "code")
 
+    # Decision F (fees document, 2026-10-15): a break of 6 hours OR MORE.
     for hours, want, why in ((10, True, "10 h"), (5.9, False, "5.9 h"),
-                             (6.0, False, "exactly 6 h is not 'more than 6'")):
+                             (6.0, True, "exactly 6 h counts - 6 hours or more")):
         p = await payload_for(n, "I want to renew my helper's work permit", hours_ago=hours)
         _, prompt = await run_collector(p, "renewal", "renewal", question_style="one")
-        check(n, f"welcome back only after more than 6 h ({why})",
+        check(n, f"welcome back after 6 h or more ({why})",
               welcomes(prompt) == want, "code",
               f"hours_since_last_message={p.get('hours_since_last_message')}")
 

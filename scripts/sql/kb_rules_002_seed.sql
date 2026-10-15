@@ -33,6 +33,10 @@ values
 
     -- info_collector._SALARY_FLOOR_BY_NATIONALITY
     ('salary_floor', 'all', 'PH', '650', false),
+    -- Added 2026-10-15 (fees document, decision C); an existing database gets
+    -- them from kb_rules_003_salary_floors.sql.
+    ('salary_floor', 'all', 'ID', '550', false),
+    ('salary_floor', 'all', 'MM', '500', false),
 
     -- The agency's WhatsApp number (2026-09-11) and its one office (2026-09-16).
     -- No bot code reads these; the knowledge-base rows carry them, and

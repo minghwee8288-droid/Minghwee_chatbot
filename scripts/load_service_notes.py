@@ -874,7 +874,7 @@ ROWS: list[dict[str, Any]] = [
         "section_heading": "Direct hire - timing, helper already here",
         "question": "How long does a direct hire take if the helper is already in Singapore?",
         "answer": (
-            "Usually about 2 to 3 weeks. A helper already here on a valid work permit "
+            "Usually about 1 to 2 weeks. A helper already here on a valid work permit "
             "transfers across without going through her embassy and without travelling, "
             "which is what makes it the shorter of the two routes. It is an estimate - "
             "it moves with how quickly the documents come back and with MOM's own "
@@ -887,11 +887,13 @@ ROWS: list[dict[str, Any]] = [
         "section_heading": "Direct hire - timing, helper overseas",
         "question": "How long does a direct hire take if the helper is overseas?",
         "answer": (
-            "Usually about 4 to 6 weeks. A helper coming from overseas goes through her "
-            "own country's embassy once the approval is issued and then has to travel, "
-            "which is what makes it longer than bringing across someone already here. It "
-            "is an estimate - it moves with embassy appointment availability, with how "
-            "quickly documents come back, and with MOM's own processing."
+            "It depends on her nationality, and it is counted after MOM approval: "
+            "approximately 5 to 6 weeks for a Filipino helper, approximately 4 weeks "
+            "for an Indonesian helper, and approximately 2 to 4 weeks for a Myanmar "
+            "helper, after MOM approval. In that time her papers go through her own "
+            "country's embassy and she travels in. It is an estimate - it moves with "
+            "embassy appointment availability, with how quickly documents come back, "
+            "and with MOM's own processing."
         ),
     },
     {
@@ -1637,13 +1639,14 @@ ROWS: list[dict[str, Any]] = [
         "section_heading": "Replacement - cost",
         "question": "How much does a replacement cost?",
         "answer": (
-            "That depends on your original agreement and the circumstances, so our "
-            "agent will confirm it rather than have me give you half a picture. "
-            "What I can tell you is that a replacement within your guarantee period "
-            "carries no additional agency service fee, and that you sign a Replacement "
-            "Services and Fees form rather than the full new-hire schedule. Government "
-            "and third-party costs such as insurance and the medical are separate "
-            "either way."
+            "If the helper being replaced was placed by Ming Hwee less than 6 months "
+            "ago, the replacement falls under her package (2 replacements within 6 "
+            "months), for the replacement and documentation fee that package sets. "
+            "The insurance and the third-party processing fees are charged again on "
+            "the replacement. If she was placed with us 6 months ago or more, was not "
+            "placed by us, or we cannot tell, our agent will confirm the cost. Either "
+            "way you sign a Replacement Services and Fees form rather than the full "
+            "new-hire schedule."
         ),
     },
     {
@@ -2346,10 +2349,10 @@ _PACKAGES = [
     ("transfer", "PH", "transfer helper from the Philippines", "$1,688", "$288", ""),
     ("transfer", "ID", "transfer helper from Indonesia", "$1,588", "$288", ""),
     ("transfer", "MM", "transfer helper from Myanmar", "$1,288", "$288", ""),
-    ("new_hiring", "PH", "new hire from the Philippines", "$1,428", "$238", ""),
+    ("new_hiring", "PH", "new hire from the Philippines", "$1,428", "$288", ""),
     ("new_hiring", "ID", "new hire from Indonesia", "$1,188", "$288",
      " This documentation fee is subject to change."),
-    ("new_hiring", "MM", "new hire from Myanmar", "$1,168", "$328",
+    ("new_hiring", "MM", "new hire from Myanmar", "$1,168", "$288",
      " This documentation fee is subject to change."),
 ]
 
@@ -2415,8 +2418,7 @@ ROWS += [
             "insurance at $590, MOM processing at $70 and lodging at $120. "
             "Two further charges apply only in particular cases: a bond waiver "
             "of indemnity is $55 if you want it, and there is an additional "
-            "$60 on the agency fee for a worker with a year or more of "
-            "overseas experience or for a caregiver."
+            "$60 for an ex-boarded helper."
         ),
     },
     {
@@ -2434,8 +2436,7 @@ ROWS += [
             "hospital expenses, MOM processing at $70 and lodging at $120. Two "
             "further charges apply only in particular cases: a bond waiver of "
             "indemnity is $55 if you want it, and there is an additional $60 "
-            "on the agency fee for a worker with a year or more of overseas "
-            "experience or for a caregiver."
+            "for an ex-abroad or Christian helper."
         ),
     },
     {
@@ -2451,9 +2452,8 @@ ROWS += [
             "On top of the agency fee for a Myanmar transfer helper there is "
             "insurance at $590, MOM processing at $70 and lodging at $120. Two "
             "further charges apply only in particular cases: a bond waiver of "
-            "indemnity is $55 if you want it, and there is an additional $80 "
-            "on the agency fee for a worker with a year or more of overseas "
-            "experience or for a caregiver."
+            "indemnity is $55 if you want it, and there is an additional $60 "
+            "for an ex-abroad or Christian helper."
         ),
     },
     {
@@ -2474,8 +2474,7 @@ ROWS += [
             "and the air ticket at $250. The Philippine recruitment fee is one "
             "month of the helper's salary, so it follows whatever salary you "
             "agree with her. A bond waiver of indemnity is $55 if you want it, "
-            "and there is an additional $60 on the agency fee for an "
-            "ex-boarded domestic worker."
+            "and there is an additional $60 for an ex-boarded helper."
         ),
     },
     {
@@ -2495,7 +2494,7 @@ ROWS += [
             "the Indonesia agency processing and air ticket at $440. These "
             "third-party processing fees are payable upfront. A bond waiver of "
             "indemnity is $55 if you want it, and there is an additional $60 "
-            "for an ex-abroad or Christian domestic worker."
+            "for an ex-abroad or Christian helper."
         ),
     },
     {
@@ -2512,9 +2511,10 @@ ROWS += [
             "insurance at $590, MOM processing at $70, the medical, MOM "
             "thumbprint, transport and lodging at $350, and the Myanmar agency "
             "processing and air ticket at $440. The Settling-In Programme "
-            "training is $77 where it applies. There is an additional $60 for "
-            "an ex-abroad or Christian domestic worker, and the placement fee "
-            "is payable upfront by the employer."
+            "training is $77 where it applies. A bond waiver of indemnity is "
+            "$55 if you want it, and there is an additional $60 for an "
+            "ex-abroad or Christian helper for all Nursing Aid certificate. "
+            "The placement fee is payable upfront by the employer."
         ),
     },
 ]
@@ -2710,12 +2710,14 @@ UPDATES: list[dict[str, Any]] = [
         "set": {
             "answer": (
                 "It depends on where she is. If she is already in Singapore on a valid "
-                "work permit, usually about 2 to 3 weeks - she transfers across without "
+                "work permit, usually about 1 to 2 weeks - she transfers across without "
                 "an embassy step and without travelling. If she is coming from "
-                "overseas, usually about 4 to 6 weeks, because her papers go through "
-                "her own country's embassy once approval is issued and she then has to "
-                "travel. Both are estimates, and they move with document turnaround, "
-                "embassy appointments and MOM's own processing."
+                "overseas it is counted after MOM approval: approximately 5 to 6 weeks "
+                "for a Filipino helper, approximately 4 weeks for an Indonesian helper "
+                "and approximately 2 to 4 weeks for a Myanmar helper, because her papers "
+                "go through her own country's embassy and she then has to travel. Both "
+                "are estimates, and they move with document turnaround, embassy "
+                "appointments and MOM's own processing."
             ),
         },
     },
@@ -3294,7 +3296,7 @@ UPDATES.append(
             "answer": (
                 "It depends on which country she is from. The agency fee is "
                 "$1,688 for a Filipino transfer helper, $1,588 for an "
-                "Indonesian one and $1,288 for a helper from Myanmar. That is "
+                "Indonesian one and $1,288 for a Myanmar one. That is "
                 "the agency fee on its own - the insurance, the MOM processing "
                 "fee and the lodging are charged separately, and a transfer is "
                 "a good deal less involved than a full overseas recruitment "
@@ -3355,12 +3357,83 @@ UPDATES += [
                 "permit application with MOM and arrange the security bond and "
                 "insurance, and finally either transfer her across here or bring "
                 "her in from overseas, and go through the handover with you. It "
-                "usually takes about 2 to 3 weeks if she is already in Singapore "
-                "on a valid work permit, and about 4 to 6 weeks if she is coming "
-                "from overseas."
+                "usually takes about 1 to 2 weeks if she is already in Singapore "
+                "on a valid work permit. From overseas it is counted after MOM "
+                "approval: approximately 5 to 6 weeks for a Filipino helper, "
+                "approximately 4 weeks for an Indonesian helper and approximately "
+                "2 to 4 weeks for a Myanmar helper."
             ),
         },
     },
+]
+
+# --- 2026-10-15: the agency's approved fees and process document ----------
+#
+# "Minghwee bot fees and process final structure.docx" (kept out of git) is
+# the source of truth for fees, timelines, documents and wording, with the
+# client's decisions A-G on its own conflicts. ROWS above now say what it says;
+# a row already on the table is corrected by the generated UPDATES below,
+# from the SAME text, so the two cannot drift (and no question here has a
+# second UPDATES entry - asserted when the module loads).
+ROWS += [
+    {
+        "service_type": "general",
+        "nationality": "ID",
+        "contact_type": "employer",
+        "section_heading": "Employer - Indonesian helper salary",
+        "question": (
+            "What is the minimum salary for an Indonesian helper, and how much "
+            "should I budget to pay a helper from Indonesia?"
+        ),
+        "answer": (
+            "An Indonesian helper's basic salary is S$550 a month, and an "
+            "experienced one starts from S$600 a month onwards; where she sits "
+            "above that depends on her years of experience and her profile. For "
+            "an Indonesian helper, budget from S$550 upwards rather than below it."
+        ),
+    },
+    {
+        "service_type": "general",
+        "nationality": "MM",
+        "contact_type": "employer",
+        "section_heading": "Employer - Myanmar helper salary",
+        "question": (
+            "What is the minimum salary for a Myanmar helper, and how much should "
+            "I budget to pay a helper from Myanmar?"
+        ),
+        "answer": (
+            "A Myanmar helper's basic salary is S$500 a month, and an experienced "
+            "one starts from S$550 a month onwards; where she sits above that "
+            "depends on her years of experience and her profile. For a Myanmar "
+            "helper, budget from S$500 upwards rather than below it."
+        ),
+    },
+]
+
+_FEES_DOC_QUESTIONS = {
+    "What is the replacement fee for a new hire from the Philippines?",
+    "What is the replacement fee for a new hire from Myanmar?",
+    "What third-party and processing fees apply to a transfer helper from the Philippines?",
+    "What third-party and processing fees apply to a transfer helper from Indonesia?",
+    "What third-party and processing fees apply to a transfer helper from Myanmar?",
+    "What third-party and processing fees apply to a new hire from the Philippines?",
+    "What third-party and processing fees apply to a new hire from Indonesia?",
+    "What third-party and processing fees apply to a new hire from Myanmar?",
+    "How long does a direct hire take if the helper is already in Singapore?",
+    "How long does a direct hire take if the helper is overseas?",
+    "How much does a replacement cost?",
+}
+_already_updated = {u["where"].get("question") for u in UPDATES}
+assert not (_FEES_DOC_QUESTIONS & _already_updated), _FEES_DOC_QUESTIONS & _already_updated
+_fees_doc_rows = [r for r in ROWS if r["question"] in _FEES_DOC_QUESTIONS]
+assert len(_fees_doc_rows) == len(_FEES_DOC_QUESTIONS), len(_fees_doc_rows)
+UPDATES += [
+    {
+        "where": {"question": r["question"], "service_type": r["service_type"]},
+        "reason": "fees document 2026-10-15 (decisions A, B, D, E, G)",
+        "set": {"answer": r["answer"]},
+    }
+    for r in _fees_doc_rows
 ]
 
 TEXT_REPLACEMENTS: list[dict[str, str]] = [
@@ -3696,6 +3769,55 @@ for _r in TEXT_REPLACEMENTS:
 #
 # The salary line of Form A is deliberately NOT retired: "Basic Salary $650"
 # is an example of a salary rather than a fee, and $650 is the Filipino floor.
+# 2026-10-15, the fees document. Salary: decision C (PH S$650 / S$670 on,
+# ID S$550 / S$600 on, MM S$500 / S$550 on; nothing below a basic). The
+# replacement: decision G ("falls under her package", never "guarantee
+# period", and never free - phone test 3 got "no additional agency service
+# fee" from these two rows).
+TEXT_REPLACEMENTS += [
+    {"reason": "fees document 2026-10-15 (decisions C and G)",
+     "old": "(salary: S$650-850/month)",
+     "new": "(salary: from S$650/month for a fresh helper, S$670 onwards with experience)"},
+    {"reason": "fees document 2026-10-15 (decisions C and G)",
+     "old": "(salary: S$550-750/month)",
+     "new": "(salary: from S$550/month basic, S$600 onwards with experience)"},
+    {"reason": "fees document 2026-10-15 (decisions C and G)",
+     "old": "(salary: S$450-700/month)",
+     "new": "(salary: from S$500/month basic, S$550 onwards with experience)"},
+    {"reason": "fees document 2026-10-15 (decisions C and G)",
+     "old": "Indonesian helpers start at S$550-600/month (experienced: S$650-750+); "
+            "Myanmar helpers start at S$450-550/month (experienced: S$580-700+)",
+     "new": "Indonesian helpers have a basic salary of S$550/month and start from "
+            "S$600/month with experience; Myanmar helpers have a basic salary of "
+            "S$500/month and start from S$550/month with experience"},
+    {"reason": "fees document 2026-10-15 (decisions C and G)",
+     "old": "Indonesian helpers start at S$550 to S$600/month (experienced: S$650 to "
+            "S$750+); Myanmar helpers start at S$450 to S$550/month (experienced: "
+            "S$580 to S$700+)",
+     "new": "Indonesian helpers have a basic salary of S$550/month and start from "
+            "S$600/month with experience; Myanmar helpers have a basic salary of "
+            "S$500/month and start from S$550/month with experience"},
+    {"reason": "fees document 2026-10-15 (decisions C and G)",
+     "old": "helper salary (S$450-850 depending on nationality and experience)",
+     "new": "helper salary (from S$500 depending on nationality and experience)"},
+    {"reason": "fees document 2026-10-15 (decisions C and G)",
+     "old": "If your helper is not the right fit or leaves employment within the "
+            "guarantee period, Ming Hwee provides a replacement at no additional "
+            "agency service fee. Government and third-party costs (insurance, work "
+            "permit, SIP for the new helper) may still apply as these are "
+            "non-refundable external charges.",
+     "new": "If the helper we placed is not the right fit or leaves within 6 months, "
+            "the replacement falls under her package (2 replacements within 6 "
+            "months), for the replacement and documentation fee that package sets. "
+            "The insurance and the third-party processing fees are charged again on "
+            "the replacement."},
+    {"reason": "fees document 2026-10-15 (decisions C and G)",
+     "old": "Contact us for the specific terms and guarantee period applicable to "
+            "your placement type.",
+     "new": "Outside 6 months, or for a helper we did not place, our agent will "
+            "confirm the cost."},
+]
+
 RETIRED: list[dict[str, str]] = [
     {
         "needle": "PART B: Service Fee: Total Service Fee | S$ Amount: $1,568",

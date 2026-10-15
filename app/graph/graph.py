@@ -12,6 +12,7 @@ from langgraph.graph import END, START, StateGraph
 from app.config import settings
 from app.graph import guards
 from app.graph import language
+from app.services import lead as lead_service
 from app.graph.guards import answering_our_question, without_tag_before_possessive
 from app.graph.nodes.blocked_topic_responder import (
     PROBE_REPLY,
@@ -493,6 +494,12 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     # Step 5 Batch B2 item 2: a fee the records state exactly is stated plainly.
     if guards.FIXED_FEE_STATED_PLAINLY and result.get("reply"):
         result["reply"] = guards.state_fixed_fee_plainly(result["reply"], records_text(result))
+    # Fees document 2026-10-15 decision E: an overseas direct hire is counted
+    # after MOM approval, and the reply says so.
+    if result.get("reply") and result.get("service_type") == "direct_hiring":
+        result["reply"] = guards.with_after_mom_approval(
+            result["reply"], lead_service.nationality_code(str(
+                (result.get("collected_info") or {}).get("helper_nationality") or "")))
     # Step 5 Batch E item 2: "why this much?" never gets the price back, on any path.
     if (guards.WHY_THE_PRICE_EVERY_PATH and result.get("reply")
             and guards.asks_why_the_price(payload.get("incoming_text") or "")):

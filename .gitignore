@@ -23,3 +23,6 @@ KNOWLEDGE_TRANSFER.md
 MingHwee_Bot_Process_and_Fees_Guide.docx
 MingHwee_Project_Progress_Report.docx
 prompt.docx
+
+# client documents (never commit)
+docs/*.docx

@@ -296,7 +296,129 @@ def fee_owners(*sources: str, matches: Any = ()) -> dict[str, set[str]]:
     return owners
 
 
+# Fees document 2026-10-15 (the agency's approved structure): a Myanmar home
+# leave has no timeline on record, and a helper asking for her own leave was
+# told "approximately 2 weeks" - the Indonesian lead time. Any sentence giving
+# a lead time on a service+nationality listed here is replaced with the
+# deferral; a sentence about the embassy endorsement (about 10 working days
+# for every nationality, per the document) is kept. False = no timeline check.
+NO_UNHELD_TIMELINE = True
+TIMELINE_NOT_HELD: dict[str, frozenset[str]] = {"home_leave": frozenset({"MM"})}
+_LEAD_TIME = re.compile(
+    r"\b(?:\d+\s*(?:(?:to|-|–)\s*\d+\s*)?(?:working\s+)?(?:days?|weeks?|months?)"
+    r"|(?:a|one|two|three|four|five|six|several|a\s+few|few)\s+(?:working\s+)?"
+    r"(?:days?|weeks?|months?)|a\s+fortnight)\b",
+    re.IGNORECASE,
+)
+_ENDORSEMENT = re.compile(r"\bendorse\w*", re.IGNORECASE)
+_TIMELINE_DEFERRED = re.compile(
+    r"\b(?:agent|team)\b[^.]{0,60}\bconfirm\w*\b[^.]{0,40}\b(?:timeline|timing|how\s+long|lead\s+time)",
+    re.IGNORECASE,
+)
+
+
+# Fees document 2026-10-15, decision E: a direct hire from overseas is counted
+# AFTER MOM approval (PH ~5-6, ID ~4, MM ~2-4 weeks) and Claire must say so.
+# The replay gave "approximately 5 to 6 weeks for a Filipino helper" without it
+# 2 of 3 times. A sentence carrying one of those spans and no "MOM approval"
+# gets ", after MOM approval" after the span. Direct hire only.
+# False = the reply as written.
+SAY_AFTER_MOM_APPROVAL = True
+_OVERSEAS_SPAN = re.compile(
+    r"\b(?:5\s*(?:to|-|–)\s*6|2\s*(?:to|-|–)\s*4|4)\s+weeks?\b", re.IGNORECASE
+)
+_COUNTED_FROM = re.compile(r"MOM\s+approv|from\s+(?:the\s+)?(?:interview|signing)", re.IGNORECASE)
+
+
+# The document's overseas span per nationality. The replay gave a Myanmar
+# helper "approximately 2 weeks after MOM approval" (the record says 2 to 4):
+# with her nationality known, a weeks span in an overseas sentence is put back
+# to the document's own.
+DIRECT_HIRE_OVERSEAS_SPAN = {"PH": "5 to 6 weeks", "ID": "4 weeks", "MM": "2 to 4 weeks"}
+_ANY_WEEKS_SPAN = re.compile(r"\b\d+(?:\s*(?:to|-|–)\s*\d+)?\s+weeks?\b", re.IGNORECASE)
+_OVERSEAS_WORDS = re.compile(
+    r"overseas|after\s+MOM\s+approval|Filipino|Philippines|Indonesia\w*|Myanmar", re.IGNORECASE
+)
+
+
+def with_after_mom_approval(reply: str, nationality: str | None = None) -> str:
+    """'...approximately 5 to 6 weeks for a Filipino helper.' -> '...approximately
+    5 to 6 weeks after MOM approval for a Filipino helper.' With her nationality
+    known, the span itself is the document's for that nationality."""
+    if not SAY_AFTER_MOM_APPROVAL or not reply:
+        return reply
+    span = DIRECT_HIRE_OVERSEAS_SPAN.get(nationality or "")
+    out, cursor = [], 0
+    for start, end in _sentence_spans(reply):
+        out.append(reply[cursor:start])
+        sentence = reply[start:end]
+        local = re.search(r"in\s+Singapore|already\s+here", sentence, re.IGNORECASE)
+        if span and not local and _OVERSEAS_WORDS.search(sentence):
+            sentence = _ANY_WEEKS_SPAN.sub(span, sentence, count=1)
+        found = _OVERSEAS_SPAN.search(sentence)
+        if found and not _COUNTED_FROM.search(sentence) and not re.search(
+                r"in\s+Singapore|already\s+here", sentence, re.IGNORECASE):
+            sentence = sentence[:found.end()] + " after MOM approval" + sentence[found.end():]
+        out.append(sentence)
+        cursor = end
+    out.append(reply[cursor:])
+    result = "".join(out)
+    if result != reply:
+        logger.info("Direct hire: 'after MOM approval' added to the overseas timeline")
+    return result
+
+
+def unheld_timeline_deferral(service: str | None, nationality: str | None) -> str:
+    who = _NATIONALITY_WORD.get(nationality or "") or "her"
+    what = _FEE_SERVICE_WORD.get(service or "") or "request"
+    return f"Our agent will confirm the timeline for {who} helper's {what}."
+
+
+def guard_unheld_timeline(
+    reply: str, service: str | None, nationality: str | None
+) -> tuple[str, list[str]]:
+    """No lead time on a service+nationality we hold none for."""
+    if (not NO_UNHELD_TIMELINE or not reply
+            or nationality not in TIMELINE_NOT_HELD.get(service or "", ())):
+        return reply, []
+    offending = [
+        (s, e) for s, e in _sentence_spans(reply)
+        if _LEAD_TIME.search(reply[s:e]) and not _ENDORSEMENT.search(reply[s:e])
+    ]
+    if not offending:
+        return reply, []
+    cut = [reply[s:e].strip() for s, e in offending]
+    rest = reply
+    for start, end in reversed(offending):
+        rest = rest[:start] + rest[end:]
+    deferral = unheld_timeline_deferral(service, nationality)
+    already = bool(_TIMELINE_DEFERRED.search(rest))
+    out = reply
+    for index, (start, end) in reversed(list(enumerate(offending))):
+        marker = re.match(r"\s*\d+\.\s+", out[start:end])
+        keep = marker.group(0) if marker else ""
+        out = out[:start] + (keep + deferral if index == 0 and not already else "") + out[end:]
+    out = re.sub(r"(?m)^\s*\d+\.\s*$\n?", "", out)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"(?m)^[ \t]+(?=\S)", "", out)
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    return (out or deferral), cut
+
+
 def guard_nationality_fee(
+    reply: str,
+    service: str | None,
+    nationality: str | None,
+    *sources: str,
+    matches: Any = (),
+) -> tuple[str, list[str]]:
+    """The fee guard below, then no lead time where we hold none (both cut lists)."""
+    reply, cut = _guard_nationality_fee(reply, service, nationality, *sources, matches=matches)
+    reply, timing = guard_unheld_timeline(reply, service, nationality)
+    return reply, cut + timing
+
+
+def _guard_nationality_fee(
     reply: str,
     service: str | None,
     nationality: str | None,

@@ -562,7 +562,9 @@ because the lead is opened early and the ticket is created much later.
 | A question that was never SENT is not counted as asked | `info_collector._undelivered_question` (`last_question`) | A reply held while the client is still typing is never delivered, but its ask was counted, so a `max_asks=1` field was filed "not provided" unseen. The next turn checks the transcript and records -1 (the counts are summed). |
 | Resolving one ticket does not close a conversation with others open | `portal-ui/.../TicketDetailDrawer.jsx` | A `resolved` conversation is a finished one: the bot starts a fresh thread on the next message and forgets everything collected. |
 | A helper we know the client has is CONFIRMED by name, never asked for and never assumed | `info_collector.HELPER_CONFIRM_SERVICES` + `helper_confirm_note` / `confirmed_helper` + webhook `known_helpers` | Known = live placements, then helpers named on this number's earlier tickets (`placements` is empty live, so the tickets are usually all we have). First ask only: "Is this home leave for Yoyo, or for another helper?". A known name or a lone yes fills her name and what we hold about her; an unknown name or a "no/another" is the other helper. A single placed helper is no longer filled in silently on these services. Not direct_hiring (a NEW helper). |
-| "Welcome back" after a break, to anyone we have dealt with | `info_collector.existing_client` + `after_a_break` (`WELCOME_BACK_AFTER_HOURS` 6, webhook `hours_since_last_message`) | Was: placements only (none live) and on every new collection. Agency's choice, 2026-10-08: only after a real break. A client whose message already says what they want is not asked "follow-up or something new?". Batch G (2026-10-15): only when the gap is MORE than 6 hours (`STRICTLY_AFTER_BREAK`); a helper on our candidates file counts too (`CANDIDATE_WELCOME_BACK`); and the welcome and a known-helper or candidate-name confirmation come before the Step 6c question-style offer, which waits a turn and needs 4+ questions left (`WELCOME_BEFORE_STYLE_OFFER`). |
+| "Welcome back" after a break, to anyone we have dealt with | `info_collector.existing_client` + `after_a_break` (`WELCOME_BACK_AFTER_HOURS` 6, webhook `hours_since_last_message`) | Was: placements only (none live) and on every new collection. Agency's choice, 2026-10-08: only after a real break. A client whose message already says what they want is not asked "follow-up or something new?". Batch G (2026-10-15) made it MORE than 6 hours (`STRICTLY_AFTER_BREAK`); the client's decision F the same day reverted it to 6 hours OR MORE (`STRICTLY_AFTER_BREAK = False`). A helper on our candidates file counts too (`CANDIDATE_WELCOME_BACK`); and the welcome and a known-helper or candidate-name confirmation come before the Step 6c question-style offer, which waits a turn and needs 4+ questions left (`WELCOME_BEFORE_STYLE_OFFER`). |
+| No lead time where we hold none (a Myanmar home leave) | `guards.guard_unheld_timeline` inside `guard_nationality_fee`, all three reply paths (`NO_UNHELD_TIMELINE`, `TIMELINE_NOT_HELD`) | Fees document 2026-10-15: a helper's own Myanmar home leave was told "approximately 2 weeks" (the Indonesian span). A sentence giving a lead time is replaced with "Our agent will confirm the timeline for a Myanmar helper's home leave."; the embassy endorsement's ~10 working days (every nationality) is kept. |
+| The agency's fees document is the source of truth for fees, timelines and wording | `load_service_notes.py` (ROWS + generated UPDATES, `TEXT_REPLACEMENTS`), `kb_rules` floors | 2026-10-15, with the client's decisions A-G: $288 replacement fee everywhere, direct hire 1-2 weeks here and PH 5-6 / ID 4 / MM 2-4 weeks after MOM approval, salary floors PH 650 / ID 550 / MM 500, the +$60 lines in the document's words, "falls under her package" never "guarantee period". The .docx is in `docs/`, kept out of git. A closing briefing now also states a fixed fee plainly from its OWN records (`info_collector._write`). |
 | A reply never reads out an internal case number | `guards.without_case_numbers` in `graph.run_turn` (and the preview) (`NO_CASE_NUMBER_READ_OUT`) | Batch G G4. The case numbers held for the client (`matched_cases`, the case row) and anything in the portal's case format (MH-YYYY-NNNN) are taken out, keeping the sentence ("Your case is at the documents stage"). The CB-YYYY-NNNN ticket reference is never touched. |
 | A dead pooled connection does not crash a turn, and a crash is not mislabelled | `checkpointer.CbAsyncPostgresSaver._retry` (`RETRY_ON_DEAD_CONNECTION`) + `handover.REASON_BOT_ERROR` (`DISTINCT_CRASH_REASON`) | Batch G G1. A checkpoint read or write that fails on the connection is tried once more on a fresh one (the read is a read, both writes are upserts). A real crash is `bot_error`; `bot_confused` now means only a turn that handed over because it could not answer. Both count as a standdown. |
 | One helper's details never become another helper's | `info_collector.nationality_carries` / `nationality_for_turn` + `_history_since` (`collected_since`) | `nationality` is portable for a hiring client (the nationality they want) and NOT across a switch into or out of `passport_renewal`/`home_leave`, where it is one helper's. Read by the collector's reset AND by `rag_retriever`, which runs before the reset. The extractor reads history only from the message that started the current request, on every turn after a switch, not just the switch turn. |
@@ -850,7 +852,10 @@ Easy to get wrong:
   `STYLE_OFFER_AFTER_WELCOME_MIN_MISSING` = 4), `info_collector.STRICTLY_AFTER_BREAK`
   (G3), `guards.NO_CASE_NUMBER_READ_OUT` (G4), `info_collector.CONFIRM_CANDIDATE_NAME`
   (G5), `info_collector.CANDIDATE_COUNTRY_ON_FILE` (G6),
-  `info_collector.CANDIDATE_WELCOME_BACK` (G7).
+  `info_collector.CANDIDATE_WELCOME_BACK` (G7). `STRICTLY_AFTER_BREAK` is now
+  `False` (decision F, 2026-10-15: 6 hours or more).
+  Fees document (2026-10-15), `False` for the earlier behaviour:
+  `guards.NO_UNHELD_TIMELINE` (no lead time on a Myanmar home leave).
   Section 9.44 (2026-10-15), `False` for the Batch G behaviour:
   `info_collector.ONE_QUESTION_MARK` (one question mark per collector message).
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
@@ -1247,7 +1252,10 @@ Ordered by what will hurt first.
     only want the wording corrected; §9.15 is the same shape for stale transfer
     timelines in the same import.
 
-26. **Two items in the 2026-09-22 fee schedule need the agency to confirm
+26. **ANSWERED 2026-10-15 by the fees document** (decision A: the replacement
+    fee is $288 everywhere; the Myanmar new hire now lists the $55 bond waiver).
+    What was recorded:
+    **Two items in the 2026-09-22 fee schedule need the agency to confirm
     them, and both are recorded rather than guessed at.**
     (a) **The Filipino new hire's replacement terms contradict themselves in
     their own document.** The flyer heading says *"2 replacements within 6
@@ -1524,7 +1532,8 @@ at a time.
   `candidate_id`, so for those clients we cannot name the helper and the bot
   asks for her name instead of confirming it. Filling `candidate_id` in the
   portal is all it takes; no code change (Batch G, 2026-10-15).
-- **The Indonesian and Myanmar salary floors.** The Philippines now has one (S$650
+- ~~**The Indonesian and Myanmar salary floors.**~~ **ANSWERED 2026-10-15**
+  (decision C: ID S$550, MM S$500, in `cb_kb_rules` and the budget bands). The Philippines now has one (S$650
   fresh, from S$670 experienced) and it is enforced in the budget question. The KB's
   own figures for the other two are the ones that were already there and nobody has
   confirmed them, so they are not treated as floors. If Indonesia and Myanmar have
@@ -1885,6 +1894,42 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-15** - **The agency's approved fees and process document, applied.**
+  `docs/Minghwee bot fees and process final structure.docx` (kept out of git,
+  `docs/*.docx` ignored) is the source of truth, with the client's decisions
+  A-G on its own conflicts. Comparison and backups:
+  `Minghwee_backups/fees_doc_2026-10-15/` (comparison.md, before/after exports,
+  rollback_fees_doc.py).
+  **KB (production, re-embedded):** 23 rows - 21 corrected, 2 added (ID and MM
+  salary). Replacement & documentation fee $288 everywhere (A; PH new hire was
+  $238, MM $328). Direct hire 1-2 weeks in Singapore (B) and, from overseas,
+  PH ~5-6 / ID ~4 / MM ~2-4 weeks after MOM approval (E). The +$60 lines in
+  the document's words (D; the MM transfer said $80; the MM new hire gains the
+  $55 bond waiver). Salary ID S$550 / S$600 on, MM S$500 / S$550 on (C).
+  "Falls under her package (2 replacements within 6 months)", never
+  "guarantee period" or "no additional agency service fee" (G, phone test 3).
+  The transfer-by-nationality row was reworded so the fee guard reads $1,288
+  as Myanmar's: "...$1,588 for an Indonesian one and $1,288 for a helper from
+  Myanmar" gave it to Indonesia and cut a Myanmar client's own fee (3 of 3).
+  **cb_kb_rules:** salary floors ID 550, MM 500 (`kb_rules_003`; DEFAULTS and
+  the 002 seed match; DRIFT check green). The budget question offers no band
+  below the basic (phone test 4: MM "below $500").
+  **Code:** `guards.guard_unheld_timeline` - no lead time on a Myanmar home
+  leave (phone test 2); `guards.with_after_mom_approval` - an overseas direct
+  hire says "after MOM approval", and with her nationality known the span is
+  the document's (the replay gave MM "2 weeks"); the collector states a fixed
+  fee plainly from a briefing's OWN records (phone test 1: "approximately
+  $400 ... our agent will confirm"); REPLACEMENT_COST_BLOCK and the package
+  note follow G; welcome back at 6 hours OR MORE (F, `STRICTLY_AFTER_BREAK =
+  False`).
+  **Verified:** replay (real model, read-only, 33 cases: every service x
+  PH/ID/MM, helper-for-herself, job seeker, own passport, "Singapore") 31 of
+  33 then the direct-hire spans 15 of 15 after the span fix; the one left is a
+  judgement (a direct "replacement fee for a Filipino new hire?" is answered
+  with the rule and no figure, per G). Loader idempotent (two runs, 0 edits).
+  E2E 7 of 7. smoke 555, flows, recognition 45/46 (0 code), kb_prep (offline
+  and live DRIFT), reset_ui, kb-admin green.
 
 - **2026-10-15** - **One question mark per collector message (section 9.44).**
   The approved cooking + extra-duties pair went out as two questions ("...what

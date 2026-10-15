@@ -3568,6 +3568,55 @@ _REAL_NOTES = (
 )
 
 
+async def _fees_doc_checks() -> list[tuple[str, bool]]:
+    """The fees document of 2026-10-15: no lead time where we hold none, floors."""
+    import importlib
+    g = importlib.import_module("app.graph.guards")
+    ic = importlib.import_module("app.graph.nodes.info_collector")
+    from app.services import kb_rules as _kbr
+    out: list[tuple[str, bool]] = []
+    mm = ("Allow approximately 2 weeks for her home leave. The endorsement is usually "
+          "approved within about 10 working days.")
+    got, cut = g.guard_nationality_fee(mm, "home_leave", "MM")
+    out.append(("fees doc: a Myanmar home leave gets no lead time, the agent confirms it",
+                "2 weeks" not in got and "Our agent will confirm the timeline" in got
+                and "10 working days" in got and len(cut) == 1))
+    got, _ = g.guard_nationality_fee("Allow approximately 2 weeks.", "home_leave", "ID")
+    out.append(("fees doc: an Indonesian home leave keeps its 2 weeks", "2 weeks" in got))
+    with patch.object(g, "NO_UNHELD_TIMELINE", False):
+        got, _ = g.guard_nationality_fee(mm, "home_leave", "MM")
+    out.append(("fees doc: switch off leaves the Myanmar timeline as written", "2 weeks" in got))
+    out.append(("fees doc: salary floors PH 650 / ID 550 / MM 500",
+                dict(_kbr.DEFAULTS.salary_floor) == {"PH": 650, "ID": 550, "MM": 500}))
+    out.append(("fees doc F: welcome back at exactly 6 hours",
+                ic.after_a_break({"hours_since_last_message": 6})
+                and not ic.after_a_break({"hours_since_last_message": 5.9})))
+    plain = g.state_fixed_fee_plainly(
+        "The fee is approximately $400, and our agent will confirm the exact amount.",
+        "Home leave - cost: It is $400 for a Filipino helper and $250 for an Indonesian helper.")
+    out.append(("fees doc: PH home leave $400 is stated plainly", plain == "The fee is $400."))
+    got = g.with_after_mom_approval(
+        "It takes approximately 5 to 6 weeks for a Filipino helper coming from overseas.")
+    out.append(("fees doc E: an overseas direct-hire span says 'after MOM approval'",
+                "5 to 6 weeks after MOM approval" in got))
+    out.append(("fees doc E: the in-Singapore span is left alone",
+                g.with_after_mom_approval("About 1 to 2 weeks if she is already in Singapore.")
+                == "About 1 to 2 weeks if she is already in Singapore."))
+    got = g.with_after_mom_approval(
+        "It takes approximately 2 weeks from overseas for a Myanmar helper.", "MM")
+    out.append(("fees doc E: a Myanmar overseas span is the document's 2 to 4 weeks",
+                "2 to 4 weeks after MOM approval" in got and " 2 weeks" not in got))
+    with patch.object(g, "SAY_AFTER_MOM_APPROVAL", False):
+        out.append(("fees doc E: switch off leaves the span as written",
+                    "MOM" not in g.with_after_mom_approval("About 4 weeks from overseas.")))
+    import scripts.load_service_notes as lsn
+    row = next(u["set"]["answer"] for u in lsn.UPDATES
+               if u["where"].get("question") == "How much does a transfer cost?")
+    out.append(("fees doc: the transfer-by-nationality row gives $1,288 to Myanmar (fee guard)",
+                g.fee_owners(row).get("1288") == {"MM"}))
+    return out
+
+
 async def _one_question_mark_checks() -> list[tuple[str, bool]]:
     import importlib
     """Section 9.44: a collector message carries one question mark."""
@@ -5831,6 +5880,9 @@ async def main() -> int:
         failures += not ok
     for label, ok in await _batch_g_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  batch-g  {label:44}")
+        failures += not ok
+    for label, ok in await _fees_doc_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  fees-doc {label:44}")
         failures += not ok
     for label, ok in await _one_question_mark_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  9.44     {label:44}")
