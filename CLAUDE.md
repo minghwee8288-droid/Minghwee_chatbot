@@ -370,7 +370,7 @@ because the lead is opened early and the ticket is created much later.
 | ...and a job seeker's closing message is not the one written for a buyer | `templates.CANDIDATE_BRIEFING_NOTE` + `rag_retriever.CANDIDATE_BRIEFING_QUERY` | `SERVICE_BRIEFING_NOTE` REQUIRES a cost section, so pointed at a registration it quoted the passport renewal's **$450** as the price of applying for work. `ungrounded_figures` binned it and it was logged as a lost briefing, so she got the bare handover line. The word `cost` is also absent from her query: it matches `_PRICE_QUESTION`, which DROPS the service filter, which is how $450 was in reach at all. |
 | A candidate flow searches the candidate's shelf, whatever the master record says | `rag_retriever._retrieval_audience` | `effective_contact_type` puts an employers row above one message, rightly. For RETRIEVAL that hid all 27 helper-facing rows from a job seeker whose number we hold as an employer, and "what is the process" came back at **0.397** — four thousandths under the floor. As a candidate it is 0.437. Retrieval only; the lead, the ticket and the contact type are untouched. |
 | A row that narrows its audience says so in its heading | `selfcheck_flows.py` | Was "everything except the transfer checklist". The helper's journey rows are the second set to narrow, and a list of exceptions has to be edited every time — which is how a tripwire stops being read. |
-| A candidate's own name is never read off her WhatsApp profile | `ticket.NAME_FROM_RECORD_ONLY` + `selfcheck_flows.py` | The fifth arrival of the same complaint, and the derived rule could not catch it: that one sweeps `EMPLOYER_LEAD_SERVICES`, and a job seeker is not in it. `get_record_name` reads `employers`, so `record_name` is always empty for a helper and the question is always asked — which is right, because this name goes on a Work Permit application. A name she gave on an earlier enquiry still greets her, off `leads_candidate`. |
+| A candidate's own name is never read off her WhatsApp profile | `ticket.NAME_FROM_RECORD_ONLY` + `selfcheck_flows.py` | The fifth arrival of the same complaint, and the derived rule could not catch it: that one sweeps `EMPLOYER_LEAD_SERVICES`, and a job seeker is not in it. `get_record_name` reads `employers`, so `record_name` is always empty for a helper and the question is always asked — which is right, because this name goes on a Work Permit application. A name she gave on an earlier enquiry still greets her, off `leads_candidate`. **Updated 2026-10-15 (Batch G G5, agency's decision):** a helper whose number is on our candidates file is asked "Am I speaking with <name>?" once (`contact.get_candidate_record`, `info_collector.CONFIRM_CANDIDATE_NAME`); a yes files that name and her country on file (`CANDIDATE_COUNTRY_ON_FILE`), a no asks her name. The push name is still never used. |
 | Every question the employer is asked ABOUT a helper has a counterpart she is asked about herself | `selfcheck_flows._MATCHED_PAIRS` + `ticket._matched_options` | Or the consultant matches the two tickets by eye. The employer was asked 25 questions about the helper they want; she was asked 9 about herself, six of them identity and logistics. Nine of the eleven pairings had no candidate half at all. **One pairing was dropped on 2026-09-11** — `additional_notes` → `candidate_notes` — because the agency had her half removed by name; it is written in the table as a decision rather than deleted. |
 | ...and both halves of a pairing offer the SAME words | `ticket._matched_options` | Taken from the employer's `Field`, never retyped, for the reason `_hiring_field` exists (§9.8). `preferred_nationality` is the one pair that cannot share a *list* — the employer picks a nationality (`Filipino`) plus "no preference", the helper names a country (`the Philippines`). **Same three countries since 2026-09-11**; until then she was asked an open question, and the note here argued that constraining her would turn a Sri Lankan applicant away. It now does exactly that, by instruction. |
 | A candidate key never reuses a portable employer key | `selfcheck_flows.py` | `languages` and `budget` are in `_PORTABLE_ACROSS_SERVICES`, so reusing them would carry an employer's "Mandarin spoken at home" into a helper's file as a language SHE speaks. The direct-hire flow avoided the same trap with its `helper_` prefix, from the other side. |
@@ -561,7 +561,9 @@ because the lead is opened early and the ticket is created much later.
 | A question that was never SENT is not counted as asked | `info_collector._undelivered_question` (`last_question`) | A reply held while the client is still typing is never delivered, but its ask was counted, so a `max_asks=1` field was filed "not provided" unseen. The next turn checks the transcript and records -1 (the counts are summed). |
 | Resolving one ticket does not close a conversation with others open | `portal-ui/.../TicketDetailDrawer.jsx` | A `resolved` conversation is a finished one: the bot starts a fresh thread on the next message and forgets everything collected. |
 | A helper we know the client has is CONFIRMED by name, never asked for and never assumed | `info_collector.HELPER_CONFIRM_SERVICES` + `helper_confirm_note` / `confirmed_helper` + webhook `known_helpers` | Known = live placements, then helpers named on this number's earlier tickets (`placements` is empty live, so the tickets are usually all we have). First ask only: "Is this home leave for Yoyo, or for another helper?". A known name or a lone yes fills her name and what we hold about her; an unknown name or a "no/another" is the other helper. A single placed helper is no longer filled in silently on these services. Not direct_hiring (a NEW helper). |
-| "Welcome back" after a break, to anyone we have dealt with | `info_collector.existing_client` + `after_a_break` (`WELCOME_BACK_AFTER_HOURS` 6, webhook `hours_since_last_message`) | Was: placements only (none live) and on every new collection. Agency's choice, 2026-10-08: only after a real break. A client whose message already says what they want is not asked "follow-up or something new?". |
+| "Welcome back" after a break, to anyone we have dealt with | `info_collector.existing_client` + `after_a_break` (`WELCOME_BACK_AFTER_HOURS` 6, webhook `hours_since_last_message`) | Was: placements only (none live) and on every new collection. Agency's choice, 2026-10-08: only after a real break. A client whose message already says what they want is not asked "follow-up or something new?". Batch G (2026-10-15): only when the gap is MORE than 6 hours (`STRICTLY_AFTER_BREAK`); a helper on our candidates file counts too (`CANDIDATE_WELCOME_BACK`); and the welcome and a known-helper or candidate-name confirmation come before the Step 6c question-style offer, which waits a turn and needs 4+ questions left (`WELCOME_BEFORE_STYLE_OFFER`). |
+| A reply never reads out an internal case number | `guards.without_case_numbers` in `graph.run_turn` (and the preview) (`NO_CASE_NUMBER_READ_OUT`) | Batch G G4. The case numbers held for the client (`matched_cases`, the case row) and anything in the portal's case format (MH-YYYY-NNNN) are taken out, keeping the sentence ("Your case is at the documents stage"). The CB-YYYY-NNNN ticket reference is never touched. |
+| A dead pooled connection does not crash a turn, and a crash is not mislabelled | `checkpointer.CbAsyncPostgresSaver._retry` (`RETRY_ON_DEAD_CONNECTION`) + `handover.REASON_BOT_ERROR` (`DISTINCT_CRASH_REASON`) | Batch G G1. A checkpoint read or write that fails on the connection is tried once more on a fresh one (the read is a read, both writes are upserts). A real crash is `bot_error`; `bot_confused` now means only a turn that handed over because it could not answer. Both count as a standdown. |
 | One helper's details never become another helper's | `info_collector.nationality_carries` / `nationality_for_turn` + `_history_since` (`collected_since`) | `nationality` is portable for a hiring client (the nationality they want) and NOT across a switch into or out of `passport_renewal`/`home_leave`, where it is one helper's. Read by the collector's reset AND by `rag_retriever`, which runs before the reset. The extractor reads history only from the message that started the current request, on every turn after a switch, not just the switch turn. |
 | One salesperson per client conversation, and the portal inbox never loses a hand-assigned owner | `assignment.resolve_agent` (`_portal_owner`) + `claim_portal_owner` | A ticket goes to whoever owns the chat in the portal before the round robin is asked; the bot only ever FILLS an empty `wp_chat_conversations.assigned_user_id` (the IS NULL is in the UPDATE itself). `to_human` used to set it unconditionally, and the ordinary ticket path (`log_escalation`) never set it at all. Profile ↔ portal login is `cb_agent_portal_users`, ours, not `wp_chat_users.profile_id`, theirs. |
 | ...searched for the whole service, with the filter kept whatever money words it contains | `rag_retriever.ENQUIRY_OVERVIEW_QUERY` / `_service_filter` | "costs" dropped the service filter, and the wider search returned a no-agency comparison that told the client the permit and bond were theirs to do. 12 rows, never widened - plus `ENQUIRY_OVERVIEW_EXTRA_QUERIES`, a separate search per service for a question the agency named that the shared query cannot reach (direct hire's failed medical ranks 21st under it). |
@@ -841,6 +843,13 @@ Easy to get wrong:
   one-by-one / all-at-once choice; the second covers work permit and passport
   renewal), `info_collector.SPECULATIVE_EXTRACTION` (extraction beside the
   classifier).
+  Batch G (2026-10-15), each `False` for the Step 6 behaviour:
+  `checkpointer.RETRY_ON_DEAD_CONNECTION` and `handover.DISTINCT_CRASH_REASON`
+  (G1), `info_collector.WELCOME_BEFORE_STYLE_OFFER` (G2, with
+  `STYLE_OFFER_AFTER_WELCOME_MIN_MISSING` = 4), `info_collector.STRICTLY_AFTER_BREAK`
+  (G3), `guards.NO_CASE_NUMBER_READ_OUT` (G4), `info_collector.CONFIRM_CANDIDATE_NAME`
+  (G5), `info_collector.CANDIDATE_COUNTRY_ON_FILE` (G6),
+  `info_collector.CANDIDATE_WELCOME_BACK` (G7).
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1430,8 +1439,10 @@ Ordered by what will hurt first.
     `resolve_service` treats an employer sender as a third party for
     `candidate_registration`), and entry 53 is then rewritten to match.
 
-42. **Existing-customer recognition: seven code gaps found by
-    `scripts/selfcheck_recognition.py` (2026-10-15), none fixed yet.**
+42. **FIXED 2026-10-15 (Batch G G2-G7), except the missing-data item below.**
+    `selfcheck_recognition.py` is now 45 of 46, 0 code. What was found:
+    **Existing-customer recognition: seven code gaps found by
+    `scripts/selfcheck_recognition.py` (2026-10-15).**
     (a) A returning employer back after a break whose question style was never
     chosen gets the Step 6c offer ("Thanks, Tan. I can ask you one question at
     a time...") on the opening turn, which pre-empts the welcome back and the
@@ -1445,7 +1456,29 @@ Ordered by what will hurt first.
     `matched_candidate_id`, so she is never welcomed back. (d) is a design
     question as much as a gap (2026-09-10 chose to always ask her name).
     Plus one missing-data item: a placement with no `candidate_id` (most live
-    rows) gives no helper to confirm.
+    rows) gives no helper to confirm. **Left as it is, by instruction**; it is
+    in the waiting-on-Ming-Hwee list below.
+43. **The bot crashes of 28 Sep - 6 Oct (Batch G G1, 2026-10-15).** The audit's
+    12 `bot_confused` rows were 8 crashes and 4 ordinary handovers (a reply went
+    out; 3 of them carry a ticket). Every crash came on the first message after
+    an idle thread, seconds after the agent-pause expiry, and none wrote a
+    checkpoint (the newest one before each is days older), so the turn failed
+    at the checkpoint itself: the dead pooled connection fixed on 2026-10-08
+    (`check_connection`). No crash since. Replayed from each crash's own
+    checkpoint on current code: 9 of 9 turns run. Not confirmed from the server
+    log; the crash times (UTC, handover row) are 2026-09-28 01:03:57,
+    2026-09-30 02:39:25, 2026-10-01 05:53:14, 2026-10-02 05:11:33,
+    2026-10-03 03:02:29, 2026-10-05 07:03:54, 2026-10-05 09:32:04,
+    2026-10-06 07:40:24 - the `Graph execution failed` line just before each
+    names the exception. Hardened anyway: one retry on a dead connection, and
+    crashes are now `bot_error` so the next audit counts them apart.
+44. **Two question marks in one message on new hiring and transfer (e2e "one
+    question per message", seen 2026-10-15).** The approved cooking + extra-duties
+    pair comes out as two questions ("...what type? Also, would she need to
+    handle...?"), and the household question as "...apart from your two
+    children? Who are the other household members?". Pre-existing: on 84e59ff
+    (before Batch G) it failed 4 of 4 runs, on Batch G 3 of 4. The pair is meant
+    to be one natural sentence (`PAIRED_QUESTION_NOTE`); not fixed here.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -1483,6 +1516,10 @@ at a time.
   cooking option, so a consultant is not blind — but if they want the employer's
   dietary requirement back as a question, it is one field beside the religion one
   rather than inside the cooking question it used to share.
+- **Helpers' names on placements.** Most live `placements` rows carry no
+  `candidate_id`, so for those clients we cannot name the helper and the bot
+  asks for her name instead of confirming it. Filling `candidate_id` in the
+  portal is all it takes; no code change (Batch G, 2026-10-15).
 - **The Indonesian and Myanmar salary floors.** The Philippines now has one (S$650
   fresh, from S$670 experienced) and it is enforced in the budget question. The KB's
   own figures for the other two are the ones that were already there and nobody has
@@ -1766,7 +1803,8 @@ behaviour behind one switch. Details of each step are in §11.
 | 6c | One question at a time or all at once, the client's choice | `4d7b251` |
 | 6b | Extraction beside the classifier when the client answers our question | `a9754ba` |
 | 7 | Escalation audit, read-only; report outside the repo (`Minghwee_backups/step7_escalation_audit_2026-10-15.md`) | `0e80fac` |
-| 8 | Recognition harness `scripts/selfcheck_recognition.py`; no seeding (live run waits on a choice) | see git log |
+| 8 | Recognition harness `scripts/selfcheck_recognition.py`; no seeding (live run waits on a choice) | `84e59ff` |
+| 5G' | Batch G G1-G7: crash retry and label, welcome before the style offer, > 6 h, case-number guard, candidate name/country/welcome | see git log |
 
 **Still to do, in order:** Step 5 is done (every item, the last being item 2 in Batch G), Step 6 is done (parts 1-4, 6b, 6c), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
@@ -1843,6 +1881,26 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-15** - **Batch G G1-G7: crashes, and recognising a returning client
+  or helper.** Each behind its own switch (section 7).
+  (G1) The 12 "crashes" were 8 crashes and 4 ordinary handovers; the 8 failed at
+  the checkpoint on an idle thread, before the 2026-10-08 pool fix (section
+  9.43). A checkpoint call that loses its connection is retried once; a crash is
+  now `bot_error`.
+  (G2) The welcome back and a known-helper or candidate-name confirmation come
+  first; the question-style offer waits a turn and needs 4+ questions left.
+  (G3) Welcome back only after MORE than 6 hours.
+  (G4) A reply never reads out an internal case number; the CB reference stays.
+  (G5) A helper on our candidates file is asked "Am I speaking with <name>?"
+  once, which updates the 2026-09-10 decision to always ask her name (agency's
+  instruction); a yes files it, a no asks her name. (G6) After a yes her country
+  on file is filed, not asked. (G7) She is welcomed back like an employer.
+  A placement with no candidate name is left as it is (missing data, section 9).
+  **Verified:** `selfcheck_recognition.py` 45 of 46, 0 code, 1 missing data
+  (was 31 of 39); each switch off turns at least one check red (6 of 6).
+  `smoke_nodes.py` 534 (was 524, 10 Batch G checks); flows, reset_ui, kb_prep
+  and kb-admin unchanged and green. E2E: 5 of 7 OK; new hiring and transfer fail "one question per message", which fails the same on the pre-G commit (section 9.44).
 
 - **2026-10-15** - **Step 8: existing-customer recognition harness, no behaviour
   change.** `scripts/selfcheck_recognition.py` runs four contacts (employer with an

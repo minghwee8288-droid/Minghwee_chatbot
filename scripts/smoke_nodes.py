@@ -3568,6 +3568,84 @@ _REAL_NOTES = (
 )
 
 
+async def _batch_g_checks() -> list[tuple[str, bool]]:
+    """Batch G (2026-10-15): G1 the crash path, G4 the case-number guard.
+    G2/G3/G5/G6/G7 are run end to end by scripts/selfcheck_recognition.py."""
+    import psycopg
+    from app.api import webhook
+    from app.graph import checkpointer as ckpt
+    from app.graph import guards as g
+    from app.services import handover
+
+    out: list[tuple[str, bool]] = []
+    saver = ckpt.CbAsyncPostgresSaver.__new__(ckpt.CbAsyncPostgresSaver)
+    calls = {"n": 0}
+
+    async def flaky():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise psycopg.OperationalError("terminating connection due to administrator command")
+        return "checkpoint"
+
+    out.append(("G1: a dead pooled connection is retried once",
+                await saver._retry("read", flaky) == "checkpoint" and calls["n"] == 2))
+    calls["n"] = 0
+    with patch.object(ckpt, "RETRY_ON_DEAD_CONNECTION", False):
+        try:
+            await saver._retry("read", flaky)
+            raised = False
+        except psycopg.OperationalError:
+            raised = True
+    out.append(("G1: switch off -> the dead connection raises as before", raised))
+
+    async def broken():
+        raise ValueError("not a connection problem")
+
+    try:
+        await saver._retry("read", broken)
+        retried_other = True
+    except ValueError:
+        retried_other = False
+    out.append(("G1: any other error is not retried", not retried_other))
+
+    to_human = AsyncMock()
+    with patch.object(handover, "to_human", new=to_human):
+        await webhook._fail_over_to_human({"id": 1, "intent": "other"})
+    reason = to_human.await_args.kwargs.get("reason") if to_human.await_args else None
+    out.append(("G1: a crash is recorded as bot_error, not bot_confused",
+                reason == handover.REASON_BOT_ERROR))
+    out.append(("G1: bot_error and old bot_confused both count as a standdown",
+                {handover.REASON_BOT_ERROR, handover.REASON_CONFUSED}
+                <= set(handover.STANDDOWN_REASONS)))
+
+    held = ["MH-2026-0042"]
+    out.append(("G4: a held case number is taken out of the reply",
+                g.without_case_numbers("Your case MH-2026-0042 is at the documents stage.", held)
+                == "Your case is at the documents stage."))
+    out.append(("G4: the portal's case format is caught even if not held",
+                "MH-2025-0007" not in g.without_case_numbers("Case MH-2025-0007 is done.")))
+    out.append(("G4: the CB ticket reference stays",
+                g.without_case_numbers("Your reference number is `CB-2026-0100`.", held)
+                == "Your reference number is `CB-2026-0100`."))
+    out.append(("G4: case numbers come from the cases and the case row",
+                g.case_numbers_held({"matched_cases": [{"case_number": "MH-2026-0042"}]},
+                                    {"case_summary": {"case_number": "MH-2026-0043"}})
+                == ["MH-2026-0042", "MH-2026-0043"]))
+
+    from app.graph import graph as graph_module
+
+    class _Graph:
+        async def ainvoke(self, *_a, **_kw):
+            return {"reply": "Your case MH-2026-0042 is with our team.", "rag_matches": []}
+
+    with patch.object(graph_module.kb_rules, "refresh", new=AsyncMock()), \
+            patch.object(graph_module, "get_graph", new=lambda: _Graph()):
+        reply = (await graph_module.run_turn(
+            "t", {"matched_cases": [{"case_number": "MH-2026-0042"}]}))["reply"]
+    out.append(("G4: run_turn applies it to every reply", "MH-2026-0042" not in reply))
+    return out
+
+
 def _chase_checks() -> list[tuple[str, bool]]:
     """Step 2d: an update request is a chase, never a detail to note (3766)."""
     import importlib
@@ -5703,6 +5781,9 @@ async def main() -> int:
         failures += not ok
     for label, ok in _chase_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  chase  {label:44}")
+        failures += not ok
+    for label, ok in await _batch_g_checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  batch-g  {label:44}")
         failures += not ok
     for label, ok in await _harm_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  safety  {label:44}")

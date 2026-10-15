@@ -261,6 +261,10 @@ async def run_preview(body: PreviewRequest) -> dict[str, Any]:
             if (_language.INDONESIAN_NOT_MALAY and reply  # as run_turn does
                     and _language.client_writes_indonesian(text, payload["history_text"])):
                 reply = _language.to_indonesian(reply)
+            if guards.NO_CASE_NUMBER_READ_OUT and reply:  # as run_turn does
+                reply = guards.without_case_numbers(
+                    reply, guards.case_numbers_held(payload, result)
+                )
             from app.graph import reference as _reference
             if _reference.REFERENCE_AS_CODE and reply:  # as run_turn does
                 reply = guards.references_as_code(reply)

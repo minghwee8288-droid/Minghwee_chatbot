@@ -527,6 +527,11 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             and language.client_writes_indonesian(
                 payload.get("incoming_text") or "", payload.get("history_text") or "")):
         result["reply"] = language.to_indonesian(result["reply"])
+    # Batch G G4: never an internal case number (the CB reference stays).
+    if guards.NO_CASE_NUMBER_READ_OUT and result.get("reply"):
+        result["reply"] = guards.without_case_numbers(
+            result["reply"], guards.case_numbers_held(payload, result)
+        )
     # Step 5 Batch F item 6: a reference in backticks is not a phone link.
     from app.graph import reference as _reference
     if _reference.REFERENCE_AS_CODE and result.get("reply"):

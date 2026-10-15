@@ -26,6 +26,16 @@ HUMAN_TO_BOT = "human_to_bot"
 REASON_TICKET = "ticket_raised"
 REASON_DISPUTE = "dispute_escalation"
 REASON_CONFUSED = "bot_confused"
+# The bot itself failing - the graph raised, or Whapi refused the send - as
+# opposed to a turn that ran fine and handed a question over because it could
+# not answer it. Batch G G1 (2026-10-15): both were written as bot_confused, so
+# the 30-day audit counted 12 "crashes" of which 4 were ordinary handovers with
+# a reply sent. A crash is now `bot_error`; old crash rows stay bot_confused,
+# which is why both count as a standdown below. False = crashes are
+# bot_confused again.
+DISTINCT_CRASH_REASON = True
+REASON_BOT_ERROR = "bot_error"
+REASON_CRASH = REASON_BOT_ERROR if DISTINCT_CRASH_REASON else REASON_CONFUSED
 REASON_CLIENT_REQUESTED = "client_requested"
 REASON_AGENT_RESOLVED = "agent_resolved"
 # Not in the brief's list, but needed: an agent simply replying is neither the
@@ -84,7 +94,7 @@ async def _log(
 # row despite never having silenced anything — and the crash's own reason,
 # the only one that matters here, was invisible to a query that did not know
 # to ignore it.
-STANDDOWN_REASONS = (REASON_CONFUSED, REASON_AGENT_TAKEOVER)
+STANDDOWN_REASONS = (REASON_BOT_ERROR, REASON_CONFUSED, REASON_AGENT_TAKEOVER)
 
 
 async def latest_bot_to_human_reason(conversation_id: int) -> str | None:

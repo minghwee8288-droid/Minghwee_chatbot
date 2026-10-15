@@ -3812,24 +3812,104 @@ def helper_confirm_note(helpers: list[dict[str, Any]], service_label: str) -> st
     )
 
 
+# Batch G (2026-10-15), each False for the Step 6 behaviour:
+# G3 - "welcome back" only when the gap is MORE than 6 hours (it was >=).
+STRICTLY_AFTER_BREAK = True
+# G7 - a helper on our candidates file is welcomed back like an employer.
+CANDIDATE_WELCOME_BACK = True
+# G5 - a helper on our file is asked "Am I speaking with <name>?" instead of
+# for her name; a yes files that name, a no asks her name. This updates the
+# 2026-09-10 decision to always ask a candidate her name (CLAUDE.md 9.42).
+CONFIRM_CANDIDATE_NAME = True
+# G6 - once she has confirmed, her country on file is filed, not asked.
+CANDIDATE_COUNTRY_ON_FILE = True
+# G2 - the welcome back and a known-helper (or candidate-name) confirmation
+# come first; the Step 6c question-style offer waits for the following turn,
+# and is made there only if 4+ questions are still outstanding.
+WELCOME_BEFORE_STYLE_OFFER = True
+STYLE_OFFER_AFTER_WELCOME_MIN_MISSING = 4
+
+
 def existing_client(state: ConversationState) -> bool:
     """Someone we have dealt with before: on our file, placed with, an
-    earlier lead, an earlier ticket, or a helper we know they have."""
+    earlier lead, an earlier ticket, or a helper we know they have - or, for a
+    helper, her own row on our candidates file."""
     return bool(
         str(state.get("record_name") or "").strip()
         or _prior_hires(state)
         or isinstance(state.get("matched_lead"), dict)
         or state.get("recent_tickets")
         or state.get("known_helpers")
+        or (CANDIDATE_WELCOME_BACK and (
+            state.get("matched_candidate_id") or candidate_record_name(state)
+        ))
     )
 
 
 def after_a_break(state: ConversationState) -> bool:
     hours = state.get("hours_since_last_message")
     try:
-        return hours is not None and float(hours) >= WELCOME_BACK_AFTER_HOURS
+        if hours is None:
+            return False
+        if STRICTLY_AFTER_BREAK:
+            return float(hours) > WELCOME_BACK_AFTER_HOURS
+        return float(hours) >= WELCOME_BACK_AFTER_HOURS
     except (TypeError, ValueError):
         return False
+
+
+def candidate_record_name(state: ConversationState) -> str:
+    """Her name on our candidates file, or ''."""
+    record = state.get("candidate_record")
+    if not isinstance(record, dict):
+        return ""
+    return str(record.get("full_name") or "").strip()[:300]
+
+
+def candidate_on_file(state: ConversationState, service_type: str | None) -> dict[str, Any]:
+    """The candidates row behind this number, on a candidate flow only."""
+    if not CONFIRM_CANDIDATE_NAME or service_type not in lead_service.CANDIDATE_LEAD_SERVICES:
+        return {}
+    if not candidate_record_name(state):
+        return {}
+    return dict(state.get("candidate_record") or {})
+
+
+# "yes", "ya", "iya", "opo", "betul", "that's me", "speaking" - and nothing
+# that denies it. A name of her own is not a yes: "no, I am Ana" files Ana.
+_AFFIRMS_CANDIDATE = re.compile(
+    r"^\W*(?:yes|yeah|yep|yup|ya|yah|yess+|iya|ia|opo|oo|betul|benar|correct|right|"
+    r"that'?s\s+(?:me|right|correct)|it'?s\s+me|this\s+is\s+(?:me|her)|me|speaking|"
+    r"i\s+am|i'?m\s+her|haan|ha\s+ji|ji|sure)\b[\w\s,.!']*$",
+    re.IGNORECASE,
+)
+
+
+def asked_candidate_name(state: ConversationState, record: dict[str, Any],
+                         asked: dict[str, int]) -> bool:
+    """Our last message asked her to confirm the name on file."""
+    name = str(record.get("full_name") or "").strip().lower()
+    last = (last_bot_line(state.get("history_text", "")) or "").lower()
+    return bool(name and asked.get("full_name") and name in last)
+
+
+def candidate_confirmed(state: ConversationState, record: dict[str, Any],
+                        asked: dict[str, int], previous: dict[str, Any]) -> bool:
+    """She has just said yes to "Am I speaking with <name>?"."""
+    if str(previous.get("full_name") or "").strip() or not asked_candidate_name(state, record, asked):
+        return False
+    text = (state.get("incoming_text") or "").strip()
+    return bool(_AFFIRMS_CANDIDATE.match(text)) and not _DENIES_HELPER.search(text)
+
+
+def candidate_name_note(name: str) -> str:
+    return (
+        f"\n\nDo NOT ask for her name. Our records have a helper on this number named "
+        f"{name}. Confirm it instead, once - ask whether you are speaking with her, "
+        f'for example: "Am I speaking with {name}?". Write the name exactly as given, '
+        "and say nothing else from her file. If she says it is not her, the next "
+        "message asks her name."
+    )
 
 
 def nationality_carries(old_service: str | None, new_service: str | None) -> bool:
@@ -4072,6 +4152,24 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             confirmed["helper_name"],
             service_type,
         )
+    # Batch G G5/G6: she has said yes to "Am I speaking with <name>?" - the
+    # name on file goes in OVER the extractor's value (which may be "yes"),
+    # and her country on file goes in UNDER her own words.
+    on_file = candidate_on_file(state, service_type)
+    if on_file and candidate_confirmed(state, on_file, asked, previous):
+        extracted = {**extracted, "full_name": candidate_record_name(state)}
+        country = str(on_file.get("nationality") or "").strip()
+        if (CANDIDATE_COUNTRY_ON_FILE and country and "nationality" in allowed_keys
+                and not str(previous.get("nationality") or "").strip()):
+            known.setdefault("nationality", _NATIONALITY_NAMES.get(country, country))
+        logger.info("Conversation %s: candidate confirmed the name on file",
+                    state.get("conversation_id"))
+    elif (on_file and asked_candidate_name(state, on_file, asked)
+          and str(extracted.get("full_name") or "").strip().lower()
+          == candidate_record_name(state).lower()):
+        # "no" - the extractor may still echo the name we offered; it is not hers.
+        extracted = {k: v for k, v in extracted.items() if k != "full_name"}
+
     if known:
         logger.info(
             "Conversation %s: filling %s from the conversation instead of asking",
@@ -5130,8 +5228,27 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         bool(str(state.get("record_name") or "").strip())
         and sum(v for v in asked.values() if isinstance(v, int)) == 1
     )
+    # Batch G G2: a welcome back or a confirmation due on this turn goes
+    # first; the offer is made on the following turn (one ask so far), and
+    # only if 4+ questions are still outstanding.
+    confirm_first = bool(missing) and (
+        (missing[0].key == "helper_name" and bool(known_helpers_for(state, service_type))
+         and not asked.get("helper_name"))
+        or (missing[0].key == "full_name" and bool(candidate_on_file(state, service_type))
+            and not asked.get("full_name"))
+    )
+    welcome_first = WELCOME_BEFORE_STYLE_OFFER and (bool(returning_note) or confirm_first)
+    after_welcome = (
+        WELCOME_BEFORE_STYLE_OFFER
+        and sum(v for v in asked.values() if isinstance(v, int)) == 1
+        and existing_client(state)
+    )
+    min_missing = STYLE_OFFER_AFTER_WELCOME_MIN_MISSING if after_welcome else 2
+    if after_welcome:
+        name_turn = True
     if (
         missing
+        and not welcome_first
         and not style
         and plain_turn
         and name_turn
@@ -5139,7 +5256,7 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         and not first_contact
         and client_name
         and client_name != UNANSWERED
-        and len(missing) >= 2
+        and len(missing) >= min_missing
         and not mainly_non_english(state.get("incoming_text") or "")
     ):
         first_name = client_name.split()[0]
@@ -5220,6 +5337,12 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             if next_field.key == "helper_name" and offer and not asked.get("helper_name")
             else ""
         )
+        candidate_note = (
+            candidate_name_note(candidate_record_name(state))
+            if next_field.key == "full_name" and candidate_on_file(state, service_type)
+            and not asked.get("full_name")
+            else ""
+        )
         instruction = (
             COLLECTOR_INSTRUCTION.format(
                 service_label=label,
@@ -5228,6 +5351,7 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
                 previous_message=previous or "(this is your first message)",
             )
             + helper_note
+            + candidate_note
             + dropped_note
             + intro_note
             + recognised_note
@@ -5306,7 +5430,8 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         # on a turn whose note asks something else on purpose (the workload
         # advice, a route question while her nationality or location is
         # unknown).
-        if REPLY_ASKS_ITS_QUESTION and not (workload_note or nationality_note or location_note):
+        if REPLY_ASKS_ITS_QUESTION and not (workload_note or nationality_note or location_note
+                                            or candidate_note):
             reply = with_the_question_asked(reply, next_field)
         if overview and (reply or "").strip() == (next_field.question or "").strip():
             logger.error(

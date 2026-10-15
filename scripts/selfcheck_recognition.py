@@ -107,7 +107,7 @@ CAND_SELF = "c3000000-0000-4000-8000-000000000003"
 PLACE_CASE = "p1000000-0000-4000-8000-000000000001"
 PLACE_PAST = "p2000000-0000-4000-8000-000000000002"
 CASE_ID = "k1000000-0000-4000-8000-000000000001"
-CASE_NUMBER = "MH-CS-0042"
+CASE_NUMBER = "MH-2026-0042"
 
 CONTACTS = {
     "1 employer, active case + named helper": {
@@ -294,15 +294,40 @@ def _state(payload: dict[str, Any], intent: str, service: str | None) -> dict[st
     return state
 
 
-async def run_collector(payload, intent, service, **extra):  # noqa: ANN001
+async def run_collector(payload, intent, service, reply=None, **extra):  # noqa: ANN001
     ic = importlib.import_module("app.graph.nodes.info_collector")
     PROMPT["text"] = ""
     state = {**_state(payload, intent, service), **extra}
-    with patch.object(ic, "complete", new=_stub_complete, create=True), \
+
+    async def _write(system_prompt, *a, **kw):  # noqa: ANN001
+        PROMPT["text"] = system_prompt or ""
+        return reply or "Thanks. May I know a little more?"
+
+    from app.services import rag
+    with patch.object(ic, "complete", new=_write, create=True), \
+            patch.object(rag, "search", new=AsyncMock(return_value=[])), \
+            patch.object(rag, "embed_query", new=AsyncMock(return_value=[0.0] * 8)), \
             patch.object(ic, "complete_json", new=AsyncMock(return_value={}), create=True), \
             patch.object(ic, "_open_lead_early", new=AsyncMock(return_value={})):
         out = await ic.info_collector(state)
     return out, PROMPT["text"]
+
+
+async def next_turn(payload, out, said, text, intent, service, reply=None):  # noqa: ANN001
+    """The client's next message, a minute after our reply `out`."""
+    p2 = {**payload, "incoming_text": text, "hours_since_last_message": 0.02,
+          "history_text": (payload.get("history_text") or "")
+          + f"\nClient: {said}\nYou: {out.get('reply') or ''}"}
+    return await run_collector(
+        p2, intent, service, reply=reply,
+        collected_info=dict(out.get("collected_info") or {}),
+        asked_field_counts=dict(out.get("asked_field_counts") or {}),
+        collected_service=service, question_style=out.get("question_style") or "",
+    )
+
+
+def offered_style(out: dict[str, Any]) -> bool:
+    return out.get("question_style") == "offered"
 
 
 async def run_answer(payload, intent, service=None, reply=None):  # noqa: ANN001
@@ -385,13 +410,23 @@ async def contact_1() -> None:
 
     # Back after a break and the one-by-one choice never made: the opening
     # collector turn is where both the welcome and the question-style offer fall.
-    p = await payload_for(n, "I want to renew my helper's work permit", hours_ago=10)
-    out, prompt = await run_collector(p, "renewal", "renewal")
+    said = "I want to renew my helper's work permit"
+    p = await payload_for(n, said, hours_ago=10)
+    out, prompt = await run_collector(
+        p, "renewal", "renewal",
+        reply="Welcome back, Mei Ling. Is this Work Permit renewal for Siti Rahayu, "
+              "or for another helper?")
     reply = out.get("reply") or ""
     check(n, "back after 10 h, style not yet chosen: welcomed back, helper confirmed",
-          welcomes(prompt) and "Siti Rahayu" in (prompt + reply), "code",
+          welcomes(prompt) and "Siti Rahayu" in prompt and not offered_style(out), "code",
           f"the question-style offer took the turn: {reply[:70]!r}"
-          if out.get("question_style") == "offered" else "")
+          if offered_style(out) else "")
+    out2, _ = await next_turn(p, out, said, "yes", "renewal", "renewal")
+    check(n, "...and the next turn: 'yes' files Siti, no style offer (<4 left)",
+          (out2.get("collected_info") or {}).get("helper_name") == "Siti Rahayu"
+          and not offered_style(out2), "code",
+          f"collected {(out2.get('collected_info') or {}).get('helper_name')!r}, "
+          f"offered={offered_style(out2)}")
 
     p = await payload_for(n, "any update on my case?", hours_ago=1)
     state, prompt = await run_answer(p, "case_enquiry")
@@ -426,12 +461,18 @@ async def contact_2() -> None:
     check(n, "new hire: welcomed back after 10 h, as a past client",
           welcomes(prompt) and "hired a helper through us before" in prompt, "code")
 
-    p = await payload_for(n, "I want to hire a new helper", hours_ago=10)
+    said = "I want to hire a new helper"
+    p = await payload_for(n, said, hours_ago=10)
     out, prompt = await run_collector(p, "new_hiring", "new_hiring")
     reply = out.get("reply") or ""
-    check(n, "back after 10 h, style not yet chosen: welcomed back", welcomes(prompt), "code",
+    check(n, "back after 10 h, style not yet chosen: welcomed back, offer waits",
+          welcomes(prompt) and not offered_style(out), "code",
           f"the question-style offer took the turn: {reply[:70]!r}"
-          if out.get("question_style") == "offered" else "")
+          if offered_style(out) else "")
+    out2, _ = await next_turn(p, out, said, "childcare for my two kids", "new_hiring", "new_hiring")
+    check(n, "...and the next turn makes the offer (4+ questions left)",
+          offered_style(out2), "code",
+          f"missing={len(out2.get('missing_field_keys') or [])}")
 
     p = await payload_for(n, "my helper wants to go home for a month", hours_ago=1)
     out, prompt = await run_collector(p, "home_leave", "home_leave", question_style="one")
@@ -452,21 +493,44 @@ async def contact_3() -> None:
     check(n, "identified as a candidate", p["contact_type"] == "candidate", "missing data")
     _, prompt = await run_answer(p, "greeting")
     check(n, "greeting: the WhatsApp push name is not in the prompt", "Mimi" not in prompt, "code")
-    check(n, "greeting: her name on file (candidates.full_name) is used",
-          "Maria Santos" in prompt, "code",
-          "get_record_name reads employers only" if "Maria Santos" not in prompt else "")
+    check(n, "her name on file is read (candidates.full_name)",
+          (p.get("candidate_record") or {}).get("full_name") == "Maria Santos", "code")
 
-    p = await payload_for(n, "I am looking for a job as a helper", hours_ago=10)
+    said = "I am looking for a job as a helper"
+    confirm = "Welcome back. Am I speaking with Maria Santos?"
+    p = await payload_for(n, said, hours_ago=10)
     out, prompt = await run_collector(p, "candidate_registration", "candidate_new_hiring",
-                                      question_style="one")
+                                      reply=confirm)
     check(n, "registration: the push name is not in the prompt", "Mimi" not in prompt, "code")
-    reasked = {"full_name", "nationality"} & asked(out)
-    check(n, "registration: name and country held on file are not asked", not reasked,
-          "code", f"asked {sorted(asked(out))}")
+    check(n, "registration: her name on file is CONFIRMED, not asked",
+          "Am I speaking with Maria Santos" in prompt and "Do NOT ask for her name" in prompt
+          and "Maria Santos" in (out.get("reply") or ""), "code")
     check(n, "registration: welcomed back after 10 h (she is on our file)",
-          welcomes(prompt), "code",
-          "existing_client() never looks at matched_candidate_id" if not welcomes(prompt) else "")
+          welcomes(prompt), "code")
+    check(n, "registration: no style offer on the welcome turn", not offered_style(out), "code")
     check(n, "not treated as a new number", "New number, not in our system" not in prompt, "code")
+
+    out2, prompt2 = await next_turn(p, out, said, "yes", "candidate_registration",
+                                    "candidate_new_hiring")
+    got = out2.get("collected_info") or {}
+    check(n, "'yes': the name on file is filed", got.get("full_name") == "Maria Santos", "code",
+          f"full_name={got.get('full_name')!r}")
+    check(n, "'yes': her country on file is filed, not asked",
+          bool(got.get("nationality")) and "nationality" not in asked(out2)
+          - asked(out), "code", f"nationality={got.get('nationality')!r}")
+
+    out3, prompt3 = await next_turn(p, out, said, "no, my name is Ana", "candidate_registration",
+                                    "candidate_new_hiring")
+    got = out3.get("collected_info") or {}
+    check(n, "'no': the name on file is not filed, nor her country",
+          got.get("full_name") != "Maria Santos" and not got.get("nationality"), "code",
+          f"full_name={got.get('full_name')!r}")
+    check(n, "'no': the next question asks her name plainly",
+          # asked_field_counts is a per-turn delta (the state sums it).
+          (out3.get("asked_field_counts") or {}).get("full_name") == 1
+          and "your name" in (out3.get("reply") or "").lower()
+          and "Do NOT ask for her name" not in prompt3, "code",
+          f"reply={(out3.get('reply') or '')[:60]!r}")
 
 
 async def contact_4() -> None:

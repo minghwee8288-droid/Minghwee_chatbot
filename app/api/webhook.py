@@ -550,7 +550,7 @@ async def maybe_return_to_bot(conversation: dict[str, Any]) -> dict[str, Any]:
     latest_reason = await handover_service.latest_bot_to_human_reason(conversation_id)
     reason = (
         handover_service.REASON_BOT_FAILURE_TIMEOUT
-        if latest_reason == handover_service.REASON_CONFUSED
+        if latest_reason in (handover_service.REASON_CONFUSED, handover_service.REASON_BOT_ERROR)
         else handover_service.REASON_AGENT_IDLE
     )
     # Fresh thread, not resume_from_pause(): a crash may have left the
@@ -1064,6 +1064,7 @@ async def _process_locked(
         matched_cases,
         blocked_topics,
         completed_topics,
+        candidate_record,
     ) = await asyncio.gather(
         # Only employers get the "previous enquiry" line, so only look it up for them.
         ticket_service.recent_for_conversation(conversation_id, limit=3)
@@ -1106,6 +1107,8 @@ async def _process_locked(
         # unblocks its topic on the very next message, with no extra sync step.
         ticket_service.open_topics_for_conversation(conversation_id),
         ticket_service.completed_topics_for_conversation(conversation_id),
+        # Batch G G5/G6: a helper's own name and country on our file.
+        contact_service.get_candidate_record(conversation.get("matched_candidate_id")),
     )
 
     # Placements first (a harder fact), then tickets newest first; three at
@@ -1142,6 +1145,7 @@ async def _process_locked(
         "completed_topics": completed_topics,
         "hours_since_last_message": hours_since_last_message,
         "record_name": record_name or "",
+        "candidate_record": candidate_record,
         "recent_tickets": recent_tickets,
         # Lead columns do not exist on wp_chat_conversations, so an open lead is
         # read per turn rather than stored on the row.
@@ -1273,7 +1277,7 @@ async def _fail_over_to_human(conversation: dict[str, Any]) -> None:
     try:
         await handover_service.to_human(
             conversation,
-            reason=handover_service.REASON_CONFUSED,
+            reason=handover_service.REASON_CRASH,
             intent=conversation.get("intent"),
         )
     except Exception:  # noqa: BLE001

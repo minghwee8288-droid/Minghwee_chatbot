@@ -2139,3 +2139,53 @@ def references_as_code(reply: str) -> str:
         return reply
     bare = _CODE_REFERENCE.sub(lambda m: m.group(1), reply).replace("`", "")
     return TICKET_REFERENCE.sub(lambda m: f"`{m.group(0)}`", bare)
+
+
+# Batch G G4 (2026-10-15). A reply never reads out an internal case number.
+# The prompt has said so since 2026-09-09 (system._known_cases_block), and the
+# recognition harness showed that a reply which reads one out went straight
+# through: nothing checked. The case numbers we hold for this client are
+# removed wherever they appear, and so is anything in the portal's own case
+# format (MH-YYYY-NNNN, the one live row). The CB-YYYY-NNNN ticket reference is
+# a different prefix and is never touched. The sentence keeps its sense:
+# "Your case MH-2026-0042 is at the documents stage" -> "Your case is at the
+# documents stage". False = the reply as written.
+NO_CASE_NUMBER_READ_OUT = True
+_CASE_NUMBER_FORMAT = r"MH-\d{4}-\d{3,6}"
+
+
+def without_case_numbers(reply: str, case_numbers: Any = ()) -> str:
+    """The reply with every internal case number taken out."""
+    if not reply:
+        return reply
+    held = sorted(
+        {str(n).strip() for n in (case_numbers or ()) if str(n or "").strip()},
+        key=len, reverse=True,
+    )
+    tokens = [re.escape(n) for n in held] + [_CASE_NUMBER_FORMAT]
+    token = r"(?<![\w-])(?:" + "|".join(tokens) + r")(?![\w-])"
+    if not re.search(token, reply, re.IGNORECASE):
+        return reply
+    lead = r"(?:(?:case|reference|ref\.?)\s+)?(?:number|no\.?|#)?\s*:?\s*"
+    out = re.sub(r"\s*\(\s*" + lead + token + r"\s*\)", "", reply, flags=re.IGNORECASE)
+    out = re.sub(r"\b(case)\s+(?:number|no\.?|#)\s*:?\s*" + token, r"\1", out, flags=re.IGNORECASE)
+    out = re.sub(r"[ \t]*,?[ \t]*" + token, "", out, flags=re.IGNORECASE)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"[ \t]+([.,!?;:])", r"\1", out)
+    return out.strip()
+
+
+def case_numbers_held(*states: Any) -> list[str]:
+    """Every case number this turn could have read: the client's cases and the
+    case row of a case enquiry."""
+    numbers: list[str] = []
+    for state in states:
+        if not isinstance(state, dict):
+            continue
+        for case in state.get("matched_cases") or []:
+            if isinstance(case, dict) and case.get("case_number"):
+                numbers.append(str(case["case_number"]))
+        summary = state.get("case_summary")
+        if isinstance(summary, dict) and summary.get("case_number"):
+            numbers.append(str(summary["case_number"]))
+    return numbers

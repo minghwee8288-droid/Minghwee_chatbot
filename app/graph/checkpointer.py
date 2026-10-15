@@ -19,8 +19,11 @@ Everything shares one database with the portal, which is why the prefix exists:
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
+
+import psycopg
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
@@ -75,8 +78,44 @@ def _rewrite_all() -> dict[str, Any]:
     return rewritten
 
 
+logger = logging.getLogger(__name__)
+
+# Batch G G1 (2026-10-15). Every one of the 8 real crashes in the 30-day audit
+# (28 Sep - 6 Oct) came on the first message after a thread had sat idle, a few
+# seconds after the agent-pause expiry, and none of them wrote a checkpoint:
+# the newest checkpoint before each crash is days older. The turn failed at the
+# checkpoint itself, which is the dead pooled connection of 2026-10-08
+# (conversation 3766). The pool now tests a connection before handing it out;
+# a connection can still die between that test and the query, so a call that
+# fails on the connection is tried ONCE more on a fresh one. Safe: the read is
+# a read, and both writes are upserts keyed on the checkpoint id. Replayed from
+# each crash's own checkpoint on current code: 9 of 9 turns run. False = no retry.
+RETRY_ON_DEAD_CONNECTION = True
+_DEAD_CONNECTION = (psycopg.OperationalError, psycopg.InterfaceError)
+
+
 class CbAsyncPostgresSaver(AsyncPostgresSaver):
     """AsyncPostgresSaver reading and writing ``cb_checkpoint*`` tables."""
+
+    async def _retry(self, name: str, call, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return await call(*args, **kwargs)
+        except _DEAD_CONNECTION as exc:
+            if not RETRY_ON_DEAD_CONNECTION:
+                raise
+            logger.warning("Checkpoint %s lost its connection (%s: %s) - retrying once",
+                           name, type(exc).__name__, exc)
+            return await call(*args, **kwargs)
+
+    async def aget_tuple(self, config):  # noqa: ANN001
+        return await self._retry("read", super().aget_tuple, config)
+
+    async def aput(self, config, checkpoint, metadata, new_versions):  # noqa: ANN001
+        return await self._retry("write", super().aput, config, checkpoint, metadata, new_versions)
+
+    async def aput_writes(self, config, writes, task_id, *args, **kwargs):  # noqa: ANN001
+        return await self._retry("writes", super().aput_writes, config, writes, task_id,
+                                 *args, **kwargs)
 
     locals().update(_rewrite_all())
 

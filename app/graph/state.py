@@ -363,6 +363,9 @@ class ConversationState(TypedDict, total=False):
     # Step 6c: "offered", then "one" or "all" - how the client wants the
     # questions. Kept for the whole conversation, absent from _TURN_RESET.
     question_style: str
+    # Batch G G5/G6: the candidates row behind this number (name, country),
+    # read per turn by the webhook. Confirmed with her before it is used.
+    candidate_record: dict[str, Any] | None
     info_complete: bool
 
     # --- Output ---

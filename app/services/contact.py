@@ -513,6 +513,28 @@ async def get_placed_helper(employer_id: str | None) -> dict[str, str] | None:
     return helper or None
 
 
+async def get_candidate_record(candidate_id: str | None) -> dict[str, str] | None:
+    """A helper's own name and country on our candidates file. READ ONLY.
+
+    Batch G G5/G6: confirmed with her ("Am I speaking with ...?") before
+    either is used. Name and nationality only - nothing else of her file.
+    """
+    if not candidate_id:
+        return None
+    try:
+        row = await db.select_one("candidates", "full_name,nationality", id=candidate_id)
+    except Exception:  # noqa: BLE001 - a nicety; a missing name is just asked
+        logger.exception("Candidate record lookup failed for %s", candidate_id)
+        return None
+    if not row:
+        return None
+    record = {
+        "full_name": str(row.get("full_name") or "").strip()[:300],
+        "nationality": str(row.get("nationality") or "").strip()[:100],
+    }
+    return record if record["full_name"] else None
+
+
 async def get_placement_helpers(employer_id: str | None) -> list[dict[str, str]]:
     """Every helper on this employer's live placements that names a candidate.
 

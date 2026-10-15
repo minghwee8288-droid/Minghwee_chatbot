@@ -3216,3 +3216,23 @@ and when details are still missing, the first line is instead:
 ```
 Thank you. A few details are still missing or unclear:
 ```
+
+---
+
+## 70. Batch G: Recognising a Returning Client or Helper (15 October)
+
+### What is this prompt used for?
+
+Added to the question instruction when a helper messages from a number that is on our candidates file and the conversation is about registering her for work. Each part can be switched off on its own.
+
+### What does it make the chatbot do?
+
+- **A helper on our file** is asked to confirm the name we hold ("Am I speaking with ...?") instead of being asked her name. A yes files that name and her country on file, so neither is asked; a no asks her name in the usual way.
+- **Welcome back first**: a returning client (or helper) back after a break of more than 6 hours is welcomed back, and a known helper is confirmed by name, before anything else. The "one question at a time or all at once" choice (entry 69) waits for the next message, and is offered there only if 4 or more questions are left.
+- **Case numbers**: a reply never reads out an internal case number. The ticket reference (CB-...) is unaffected.
+
+### Prompt — Added when a helper on our file is registering
+
+```
+Do NOT ask for her name. Our records have a helper on this number named <her name on file>. Confirm it instead, once - ask whether you are speaking with her, for example: "Am I speaking with <her name on file>?". Write the name exactly as given, and say nothing else from her file. If she says it is not her, the next message asks her name.
+```
