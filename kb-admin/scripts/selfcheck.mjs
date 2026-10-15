@@ -1028,7 +1028,7 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
   {
     const matcher = /matcher: \[('[^']*')\]/.exec(src('middleware.ts'))?.[1] ?? '';
     check('middleware lets only the scheduled route through without a session',
-      matcher === "'/((?!login|api/watcher/run|_next/static|_next/image|favicon.ico).*)'", matcher);
+      matcher === "'/((?!login|api/watcher/run|_next/static|_next/image|favicon.ico|brand/).*)'", matcher);
   }
   check('vercel.json schedules the route daily (it answers 404 until WATCHER_ENABLED is set)',
     (() => { try { const v = JSON.parse(src('vercel.json')); return v.crons?.length === 1 && v.crons[0].path === '/api/watcher/run'; } catch { return false; } })());

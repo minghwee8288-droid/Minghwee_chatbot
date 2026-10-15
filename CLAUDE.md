@@ -1979,6 +1979,16 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-10-15** - **The Ming Hwee logo in the three Vercel apps (UI only).** From
+  `assets/minghwee-logo.png`: favicon.ico (16+32), favicon-32x32, apple-touch-icon (180)
+  and icon-192/512, transparent, in each app's own `public/` (`favicon.ico` at the root,
+  the rest in `public/brand/`) and wired into its head/metadata. The logo sits beside
+  "Ming Hwee" in kb-admin's sidebar (30 px) and on its login page (64 px, in place of the
+  book icon), above reset-ui's header (64 px; that page is also its password screen), and
+  in portal-ui's demo wrapper (30 px; the `ticket-system/` module that ships to the main
+  portal is untouched). kb-admin's middleware lets `/brand/` through without a session,
+  so the login page can show it. No bot, database or env change.
+
 - **2026-10-15** - **KB watcher: "the page has no readable main text" on the MOM levy
   page.** No bot change; the watcher is still off; no database change.
   **Diagnosis (read-only, the watcher's exact headers):** MOM answered HTTP 200,

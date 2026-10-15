@@ -61,6 +61,12 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="mx-auto max-w-7xl space-y-4">
+        {/* The demo's own header. The ticket-system module itself carries no
+            logo: in the main portal the portal's own header does that. */}
+        <div className="flex items-center gap-2.5">
+          <img src="/brand/minghwee-logo.png" alt="Ming Hwee" width={30} height={30} className="h-[30px] w-[30px]" />
+          <span className="text-base font-black tracking-tight text-[#003E60]">Ming Hwee</span>
+        </div>
         <TicketSystemModule supabaseClient={supabase} />
       </div>
     </div>

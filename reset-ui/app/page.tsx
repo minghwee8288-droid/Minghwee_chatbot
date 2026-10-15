@@ -149,6 +149,8 @@ export default function Page() {
     <main className="flex min-h-screen flex-col items-center justify-center px-6 py-12">
       <div className="w-full max-w-2xl space-y-7">
         <header className="text-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand/minghwee-logo.png" alt="Ming Hwee" width={64} height={64} className="mx-auto mb-3 h-16 w-16" />
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand/60">
             Ming Hwee Employment Agency
           </p>

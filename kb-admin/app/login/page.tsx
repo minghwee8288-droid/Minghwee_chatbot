@@ -13,16 +13,8 @@ export default function LoginPage({ searchParams }: { searchParams: { e?: string
     <main className="flex min-h-screen items-center justify-center px-4 py-10">
       <div className="w-full max-w-[400px]">
         <div className="mb-6 flex flex-col items-center text-center">
-          <div
-            className="mb-3 flex h-10 w-10 items-center justify-center rounded-[9px]"
-            style={{ background: 'var(--side-bg)' }}
-            aria-hidden="true"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--side-text)' }} strokeWidth="1.8">
-              <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5z" />
-              <path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z" />
-            </svg>
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand/minghwee-logo.png" alt="Ming Hwee" width={64} height={64} className="mb-3 h-16 w-16" />
           <p className="text-[17px] font-semibold">Ming Hwee</p>
           <p className="mt-0.5 text-[13px] text-muted">Knowledge Base Administration</p>
         </div>

@@ -12,11 +12,15 @@ export function LoadingPage({ title, active, blocks = 3 }: { title: string; acti
     <div className="layout">
       <aside className="sidebar" aria-label="Main">
         <div className="sidebar-inner">
-          <div className="sidebar-brand">
-            <p className="text-[15px] font-semibold">Ming Hwee</p>
-            <p className="mt-0.5 text-[12px]" style={{ color: 'var(--side-muted)' }}>
-              Knowledge Base Admin
-            </p>
+          <div className="sidebar-brand flex items-center gap-2.5">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/minghwee-logo.png" alt="Ming Hwee" width={30} height={30} className="h-[30px] w-[30px] shrink-0" />
+            <div>
+              <p className="text-[15px] font-semibold">Ming Hwee</p>
+              <p className="mt-0.5 text-[12px]" style={{ color: 'var(--side-muted)' }}>
+                Knowledge Base Admin
+              </p>
+            </div>
           </div>
           <nav className="sidebar-nav">
             {NAV.map((item) => (
