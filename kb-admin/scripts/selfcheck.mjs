@@ -1053,6 +1053,142 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
   check('config: an OpenAI embedding key is not used for drafting (needs KB_ADMIN_LLM_API_KEY)',
     cf({ ...good, KB_ADMIN_DB_PASSWORD_EDITOR: 'e'.repeat(24), KB_ADMIN_EMBEDDING_API_KEY: 'sk-dummy', KB_SOURCES_ENABLED: 'true' }).watcher === null);
   check('the sidebar shows the watcher pages only while it is on', /if \(viewer\.watcherOn\)/.test(src('components/Shell.tsx')));
+
+  // --- pages that gave "no readable main text" (2026-10-15) ---------------------
+  const EP = await import(pathToFileURL(join(ROOT, 'lib/watcher/emptyPage.ts')).href);
+  const RC = await import(pathToFileURL(join(ROOT, 'lib/watcher/renderClient.ts')).href);
+  const momIndex = X.extractMainText(fx('mom_levy_aspnet_form.html'));
+  check('extraction: the real MOM levy page (the whole page inside one ASP.NET <form>) is read, not dropped',
+    momIndex.text.length >= 40 && momIndex.text.includes('You must pay a monthly levy for your migrant domestic worker') && momIndex.title === 'Migrant domestic worker levy',
+    `${momIndex.text.length} chars`);
+  check('extraction: on the MOM page, the hidden search keywords and the search form outside the main content are still dropped',
+    !/PH pay, COMPASS|popular-keyword/i.test(momIndex.text));
+  const momRates = X.extractMainText(fx('mom_paying_levy.html'));
+  check('extraction: the real MOM "paying levy" page keeps its rate table ($300, $450, $60)',
+    momRates.paragraphs.includes('Levy rate') && ['$300', '$450', '$60'].every((f) => momRates.paragraphs.includes(f)), `${momRates.paragraphs.length} paragraphs`);
+  check('extraction: a form that does NOT wrap the main content (a search box) is still dropped whole, inputs and all',
+    X.extractMainText('<body><main><p>Rule one applies to every employer in Singapore today.</p><form><label>SEARCH-LABEL</label><input value="INPUT-VALUE"><textarea>TEXTAREA</textarea></form></main></body>').text === 'Rule one applies to every employer in Singapore today.');
+  {
+    const listing = X.extractMainText('<body><article><h2>First news item headline</h2><p>The embassy will be closed on the national day holiday this year.</p></article><article><h2>Second news item headline</h2><p>Passport renewal appointments now open online for all Filipino workers.</p></article><div><p>Consular services and opening hours for the public.</p></div></body>');
+    check('extraction: a listing page with several <article>s is read whole, not cut to the first teaser',
+      listing.paragraphs.includes('Second news item headline') && listing.paragraphs.includes('Consular services and opening hours for the public.'), listing.paragraphs.join(' | '));
+  }
+  check('extraction: a "Loading..." / "Please wait" line is never content', X.extractMainText('<body><main><p>Loading...</p><p>Please wait</p></main></body>').text === '');
+  check('empty page: the real Indonesian embassy page is a JavaScript app shell with no readable text',
+    X.extractMainText(fx('kemlu_spa_shell.html')).text.length < 40 && EP.classifyEmptyPage(fx('kemlu_spa_shell.html'), 'https://kemlu.go.id/singapore') === 'script');
+  const cfPage = '<html><head><title>Just a moment...</title></head><body><div id="cf-challenge-running"></div><script src="https://challenges.cloudflare.com/x.js"></script></body></html>';
+  check('empty page: a bot-protection page (Cloudflare, Incapsula, Akamai) is "blocked"',
+    EP.classifyEmptyPage(cfPage, 'https://a.gov.sg/p') === 'blocked' && EP.classifyEmptyPage('<html><body>Request unsuccessful. Incapsula incident ID: 123</body></html>', null) === 'blocked' &&
+    EP.classifyEmptyPage('<html><head><title>Access Denied</title></head><body>Reference #18.abc12.1712.de3</body></html>', null) === 'blocked');
+  check('empty page: a redirect to a /maintenance/ page, or a maintenance title, is "maintenance"',
+    EP.classifyEmptyPage('<html><body></body></html>', 'https://www.mom.gov.sg/maintenance/index.html') === 'maintenance' &&
+    EP.classifyEmptyPage('<html><head><title>Site under maintenance</title></head><body></body></html>', 'https://a.gov.sg/p') === 'maintenance');
+  check('empty page: a page with nothing and none of those marks is just "empty"', EP.classifyEmptyPage('<html><body><p>Hi</p></body></html>', 'https://a.gov.sg/p') === 'empty');
+  check('empty page: the messages say what to do, and bot protection is never worked around',
+    /Blocked by site/.test(EP.emptyPageMessage('blocked', null, { renderer: true, rendered: false })) && /does not try to get past it/.test(EP.emptyPageMessage('blocked', null, { renderer: true, rendered: false })) &&
+    /PDF or print version/.test(EP.emptyPageMessage('blocked', null, { renderer: false, rendered: false })) &&
+    /under maintenance/.test(EP.emptyPageMessage('maintenance', 'https://x.gov.sg/maintenance/', { renderer: false, rendered: false })) &&
+    /needs the page renderer/.test(EP.emptyPageMessage('script', null, { renderer: false, rendered: false })));
+  {
+    const n = fakeNet({ 'https://a.gov.sg/robots.txt': { status: 404 }, 'https://a.gov.sg/p': [{ status: 403, body: cfPage }] });
+    const r = await new Fe.PoliteFetcher(n.deps).fetchPage('https://a.gov.sg/p');
+    check('fetch: a 403 bot-protection answer is reported as "Blocked by site" and NOT retried',
+      !r.ok && /^Blocked by site/.test(r.error) && n.calls.filter((c) => c.url === 'https://a.gov.sg/p').length === 1, r.error ?? '');
+  }
+  {
+    const recaptcha = { status: 200, headers: { 'content-type': 'text/html' }, body: fx('page_v1.html').replace('</body>', '<div class="g-recaptcha"></div></body>') };
+    const n = fakeNet({ 'https://a.gov.sg/robots.txt': { status: 404 }, 'https://a.gov.sg/p': recaptcha });
+    const r = await new Fe.PoliteFetcher(n.deps).fetchPage('https://a.gov.sg/p');
+    check('fetch: a working page that carries a reCAPTCHA form (the Philippine embassy\'s) is NOT called blocked', r.ok);
+  }
+  {
+    const n = fakeNet({ 'https://kemlu.go.id/robots.txt': { status: 200, body: 'User-agent: *\nDisallow: /private\nCrawl-delay: 20' } });
+    const renders = [];
+    n.deps.render = async (u) => { renders.push({ u, at: n.deps.now() }); return { ok: true, status: 200, html: fx('page_v1.html'), finalUrl: u }; };
+    const f = new Fe.PoliteFetcher(n.deps);
+    const denied = await f.renderPage('https://kemlu.go.id/private/x');
+    const r1 = await f.renderPage('https://kemlu.go.id/singapore');
+    const r2 = await f.renderPage('https://kemlu.go.id/singapore/faq');
+    check('render: robots.txt is read first and obeyed - a disallowed page is never sent to the renderer',
+      !denied.ok && /robots\.txt/.test(denied.error) && n.calls[0].url === 'https://kemlu.go.id/robots.txt' && !renders.some((x) => x.u.includes('/private')));
+    check('render: two renders of one host keep the per-host gap (and the Crawl-delay)', r1.ok && r2.ok && renders[1].at - renders[0].at >= 20_000, `${renders[1]?.at - renders[0]?.at} ms`);
+    check('render: without a renderer it reports, and a refused address is refused before any call',
+      !(await new Fe.PoliteFetcher(fakeNet({}).deps).renderPage('https://kemlu.go.id/x')).ok && !(await f.renderPage('https://127.0.0.1/x')).ok);
+  }
+  {
+    // The pipeline: a JavaScript shell is rendered; a challenge is never sent to the renderer.
+    const run = async (page, renderPage) => {
+      const rec = [];
+      let renders = 0;
+      const r = await Pl.checkSource(src0, {
+        call: async (fn, p) => { if (fn === 'kb_admin_source_record_fetch') { rec.push(p); return { snapshot_id: 's', changed: true, first: true }; } return []; },
+        fetchPage: async () => page, renderPage: renderPage ? async (u) => { renders += 1; return renderPage(u); } : undefined,
+        previousText: async () => null, embed: async (t) => ({ vectors: t.map(() => []), model: 'm' }), recorder: null, searcher: null,
+        llm: async () => '{"drafts":[]}', model: 'm',
+      });
+      return { r, rec, renders };
+    };
+    const shell = { ok: true, status: 200, html: fx('kemlu_spa_shell.html'), finalUrl: 'https://kemlu.go.id/singapore' };
+    const ok = await run(shell, async (u) => ({ ok: true, status: 200, html: fx('page_v1.html'), finalUrl: u }));
+    check('pipeline: a JavaScript-built page is rendered and its text recorded as a good snapshot',
+      ok.r.outcome === 'first' && ok.renders === 1 && ok.rec[0][3] === true && ok.rec[0][6].includes('must get at least one rest day'));
+    const none = await run(shell, null);
+    check('pipeline: with no renderer set up, a JavaScript-built page is recorded as failed, saying it needs the renderer',
+      none.r.outcome === 'failed' && /needs the page renderer/.test(none.r.error) && none.rec[0][3] === false);
+    const blocked = await run({ ok: true, status: 200, html: cfPage, finalUrl: 'https://a.gov.sg/p' }, async () => ({ ok: true, status: 200, html: fx('page_v1.html'), finalUrl: 'x' }));
+    check('pipeline: a bot-protection page is recorded as "Blocked by site" and is NEVER sent to the renderer',
+      blocked.r.outcome === 'failed' && /^Blocked by site/.test(blocked.r.error) && blocked.renders === 0);
+    const maint = await run({ ok: true, status: 200, html: '<html><body></body></html>', finalUrl: 'https://www.mom.gov.sg/maintenance/' }, null);
+    check('pipeline: a redirect to a maintenance page says "under maintenance", with where it landed',
+      maint.r.outcome === 'failed' && /under maintenance/.test(maint.r.error) && maint.r.error.includes('https://www.mom.gov.sg/maintenance/'));
+    const failedRender = await run(shell, async () => ({ ok: false, status: null, error: 'the page renderer: timed out after 30s' }));
+    check('pipeline: a renderer failure is recorded with its reason, never hidden', failedRender.r.outcome === 'failed' && /timed out/.test(failedRender.r.error));
+  }
+  {
+    const sent = [];
+    const renderer = RC.makeRenderer({ url: 'https://bot.example.sg/kb-render/render', secret: 's'.repeat(40) }, async (u, init) => {
+      sent.push({ u, init });
+      return { status: 200, json: async () => ({ ok: true, status: 200, finalUrl: 'https://kemlu.go.id/id/singapore', html: '<p>x</p>' }) };
+    });
+    const r = await renderer('https://kemlu.go.id/singapore');
+    check('render client: POSTs {url} with "Bearer <KB_RENDER_SECRET>" and a timeout, and reads the rendered page',
+      r.ok && r.finalUrl === 'https://kemlu.go.id/id/singapore' && sent[0].init.headers.authorization === `Bearer ${'s'.repeat(40)}` &&
+      JSON.parse(sent[0].init.body).url === 'https://kemlu.go.id/singapore' && Boolean(sent[0].init.signal));
+    const refused = await RC.makeRenderer({ url: 'https://x.sg/r', secret: 's'.repeat(40) }, async () => ({ status: 404, json: async () => ({ error: 'not found' }) }))('https://a.gov.sg/');
+    check('render client: a refused key says so', !refused.ok && /KB_RENDER_SECRET/.test(refused.error));
+  }
+  check('config: the page renderer is off by default; KB_RENDER_URL + KB_RENDER_SECRET turn it on; one alone leaves it off with a reason',
+    cf({ ...on, KB_SOURCES_ENABLED: 'true' }).watcher?.render === null &&
+    cf({ ...on, KB_SOURCES_ENABLED: 'true', KB_RENDER_URL: 'https://bot.example.sg/kb-render/render', KB_RENDER_SECRET: 'r'.repeat(40) }).watcher?.render?.url === 'https://bot.example.sg/kb-render/render' &&
+    cf({ ...on, KB_SOURCES_ENABLED: 'true', KB_RENDER_URL: 'https://bot.example.sg/kb-render/render' }).watcher?.render === null &&
+    /KB_RENDER_SECRET not set/.test(cf({ ...on, KB_SOURCES_ENABLED: 'true', KB_RENDER_URL: 'https://bot.example.sg/kb-render/render' }).watcherOffReason));
+  check('config: a non-https renderer address or a short renderer secret refuses to start',
+    refusesW({ ...on, KB_RENDER_URL: 'http://1.2.3.4:8100/render' }) && refusesW({ ...on, KB_RENDER_SECRET: 'short' }));
+  check('both fetch paths (Fetch now and the schedule) use the shared fetcher with the renderer, never their own',
+    /renderPage: renders \? \(u\) => fetcher\.renderPage\(u\) : undefined/.test(src('app/watch/actions.ts')) &&
+    /renderPage: renders \? \(u\) => fetcher\.renderPage\(u\) : undefined/.test(src('app/api/watcher/run/route.ts')) &&
+    !/new PoliteFetcher/.test(src('app/watch/actions.ts') + src('app/api/watcher/run/route.ts')));
+  {
+    const RS = join(ROOT, '..', 'render-service');
+    const G = await import(pathToFileURL(join(RS, 'guard.mjs')).href);
+    const server = readFileSync(join(RS, 'server.mjs'), 'utf8');
+    const compose = readFileSync(join(RS, 'docker-compose.yml'), 'utf8');
+    const refusesR = (e) => { try { G.readConfig(e); return false; } catch (x) { return /refuses to start/.test(x.message); } };
+    check('render service: refuses to start without a 32+ character secret, or with a per-host gap under 10 s',
+      refusesR({}) && refusesR({ RENDER_SECRET: 'short' }) && refusesR({ RENDER_SECRET: 'x'.repeat(40), RENDER_MIN_GAP_MS: '1000' }) && !refusesR({ RENDER_SECRET: 'x'.repeat(40) }));
+    check('render service: the key is checked in constant time and anything without it is a 404',
+      G.secretMatches(`Bearer ${'k'.repeat(40)}`, 'k'.repeat(40)) && !G.secretMatches(`Bearer ${'k'.repeat(39)}`, 'k'.repeat(40)) && !G.secretMatches('k'.repeat(40), 'k'.repeat(40)) &&
+      /!secretMatches\(req\.headers\.authorization, cfg\.secret\)\) return send\(res, 404/.test(server) && /timingSafeEqual/.test(readFileSync(join(RS, 'guard.mjs'), 'utf8')));
+    check('render service: private, loopback, link-local and metadata addresses are refused (the browser runs beside the bot)',
+      ['127.0.0.1', '10.1.2.3', '172.16.0.1', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', 'fd00::1', 'fe80::1', '::ffff:127.0.0.1'].every(G.isPrivateAddress) &&
+      !['8.8.8.8', '202.10.51.219', '2404:6800:4002:81b::200e'].some(G.isPrivateAddress));
+    check('render service: every request the page makes goes through the public-host check; images, media and fonts are not loaded',
+      /context\.route\('\*\*\/\*'[\s\S]*?hostIsPublic\(u\.hostname\)[\s\S]*?route\.abort/.test(server) && /\['image', 'media', 'font'\]\.includes\(req\.resourceType\(\)\)/.test(server));
+    check('render service: the watcher\'s user-agent, one page at a time, and a per-host gap',
+      G.USER_AGENT === Fe.USER_AGENT && /userAgent: USER_AGENT/.test(server) && /queue = queue\.then\(/.test(server) && /lastHit\.set\(host, Date\.now\(\)\)/.test(server));
+    check('render service: its own container, reachable only from the server (127.0.0.1), never part of the bot\'s compose file',
+      /"127\.0\.0\.1:8100:8100"/.test(compose) && !/render/.test(readFileSync(join(ROOT, '..', 'docker-compose.yml'), 'utf8')) && !/from '\.\.\/app|import .*app\//.test(server));
+  }
 }
 
 console.log(failures ? `RESULT: ${failures} FAIL(S)` : 'RESULT: ALL PASS');

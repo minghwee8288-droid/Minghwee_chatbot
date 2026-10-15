@@ -2,9 +2,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { embedTexts } from '@/lib/embed';
 import { env } from '@/lib/env';
 import { checkCronRequest } from '@/lib/watcher/cron';
-import { PoliteFetcher } from '@/lib/watcher/fetcher';
 import { draftWithModel } from '@/lib/watcher/llm';
 import { checkSource, type WatchCall } from '@/lib/watcher/pipeline';
+import { watchFetcher } from '@/lib/watchFetcher';
 import { lastGoodText, sourcesDue } from '@/lib/watchQueries';
 import { callWrite } from '@/lib/write';
 import { membership } from '@/lib/queries';
@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
   const searcher = { userId: schedule.actorId, email: 'watcher (scheduled)' };
   const started = Date.now();
   const due = await sourcesDue(schedule.intervalDays);
-  const fetcher = new PoliteFetcher({ fetch: (u, init) => fetch(u, { ...init, cache: 'no-store' }), now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) });
+  const { fetcher, renders } = watchFetcher();
   const summary = { due: due.length, checked: 0, unchanged: 0, changed: 0, failed: 0, drafts: 0, left: 0 };
   for (const source of due) {
     if (Date.now() - started > TIME_BUDGET_MS) {
@@ -58,6 +58,7 @@ export async function GET(req: NextRequest) {
       const r = await checkSource(source, {
         call,
         fetchPage: (u) => fetcher.fetchPage(u),
+        renderPage: renders ? (u) => fetcher.renderPage(u) : undefined,
         previousText: lastGoodText,
         embed: embedTexts,
         recorder: null,

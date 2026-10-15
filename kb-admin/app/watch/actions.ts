@@ -6,7 +6,8 @@ import { actorForWrite } from '@/lib/auth';
 import { errorMessage, hasNric } from '@/lib/editing';
 import { EmbedError, embedEntry, embedTexts } from '@/lib/embed';
 import { env } from '@/lib/env';
-import { addressProblem, PoliteFetcher } from '@/lib/watcher/fetcher';
+import { addressProblem } from '@/lib/watcher/fetcher';
+import { watchFetcher } from '@/lib/watchFetcher';
 import { DraftingError, draftWithModel } from '@/lib/watcher/llm';
 import { touchesMoney } from '@/lib/watcher/feeLock';
 import { approveAndPublish, checkSource, type WatchCall } from '@/lib/watcher/pipeline';
@@ -113,12 +114,13 @@ export async function fetchNow(_prev: ActionState, form: FormData): Promise<Acti
   if (!sourceId) return { error: 'No page was named.' };
   const source = await sourceById(sourceId);
   if (!source || !source.active) return { error: 'That page is no longer watched.' };
-  const fetcher = new PoliteFetcher({ fetch: (u, init) => fetch(u, { ...init, cache: 'no-store' }), now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) });
+  const { fetcher, renders } = watchFetcher();
   let result;
   try {
     result = await checkSource(source, {
       call,
       fetchPage: (u) => fetcher.fetchPage(u),
+      renderPage: renders ? (u) => fetcher.renderPage(u) : undefined,
       previousText: lastGoodText,
       embed: embedTexts,
       recorder: { userId: actor.userId, email: actor.email },

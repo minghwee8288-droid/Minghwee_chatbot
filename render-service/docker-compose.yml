@@ -1,0 +1,19 @@
+# The page renderer for kb-admin's KB watcher. Separate from the bot's own
+# docker-compose.yml on purpose: deploying or stopping it never touches the bot.
+#   cd render-service && docker compose up -d --build
+services:
+  render:
+    build: .
+    env_file: .env
+    init: true
+    restart: unless-stopped
+    # Reachable only from the server itself; nginx forwards one path to it.
+    ports:
+      - "127.0.0.1:8100:8100"
+    shm_size: "512mb"
+    mem_limit: "1g"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

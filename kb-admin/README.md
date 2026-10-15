@@ -132,6 +132,20 @@ Migration `scripts/sql/kb_admin_015_watcher.sql` (on production since 2026-10-15
   figure: check it against the source before approving" and only with the approver's tick; the
   database refuses it without the tick (KB008) and records it.
 
+**When a page gives no readable text** (2026-10-15), the page's record says why:
+- **Blocked by site**: a bot-protection or challenge page (Cloudflare, Akamai, Incapsula, a
+  captcha). It is never worked around; use the page's PDF or print version, or another
+  official page with the same facts.
+- **Under maintenance**: a maintenance page, or a redirect to `/maintenance/`. The page is
+  read again on the next check.
+- **Built by JavaScript**: an app shell whose text only appears in a browser. With
+  `KB_RENDER_URL` and `KB_RENDER_SECRET` set, the page goes to the page renderer
+  (`render-service/` on our server; see its README), through the same address, robots.txt
+  and per-host gap checks. Without them it is reported as needing the renderer.
+
+The extractor reads ASP.NET pages that wrap the whole page in one `<form>` (mom.gov.sg), and
+reads a listing page with several `<article>`s whole.
+
 `WATCHER_ENABLED=true` (+ `CRON_SECRET`, `KB_WATCHER_ACTOR_ID`) adds the schedule:
 `vercel.json` calls `/api/watcher/run` daily and each page is re-checked every
 `WATCHER_INTERVAL_DAYS` (default 7). Without them the route answers 404. Nothing the watcher

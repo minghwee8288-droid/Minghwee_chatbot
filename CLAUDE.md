@@ -127,6 +127,12 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
   target_guard.py    every writing script calls require_ref(): prints the ref and
                      exits unless SUPABASE_URL (and the DB URL) name that project
 portal-ui/           React + Vite ticket dashboard (separate deliverable)
+render-service/      headless-Chromium page renderer for kb-admin's KB watcher
+                     (2026-10-15): its OWN container and compose file on the bot's
+                     server, port 127.0.0.1:8100, one nginx path. Imports nothing
+                     from app/, the bot never calls it. Used only for a watched page
+                     built by JavaScript (KB_RENDER_URL/KB_RENDER_SECRET on Vercel).
+                     NOT deployed yet. See render-service/README.md.
 reset-ui/            Next.js "clear a conversation" page (separate deliverable, own
                      Vercel project). Standalone: imports nothing from app/, calls no
                      chatbot endpoint, talks to Supabase directly with the service-role
@@ -589,6 +595,7 @@ because the lead is opened early and the ticket is created much later.
 | Nothing the KB watcher drafts reaches the chatbot without an APPROVER | `kb_admin_watch_approve` (015, `kb_admin__require_actor(..., 'approver')`) + `app/watch/actions.ts` (`canApprove` first) | A watched page's change becomes a PROPOSAL (`cb_kb_drafts`), never a live row. Approve writes the text through the existing `kb_admin_save_draft` / `kb_admin_create_entry` and it goes live only through the existing `kb_admin_publish` (canary-checked embedding). Proved on PGlite (real migrations 001-009 + 015): the live entry is unchanged until publish. |
 | A watcher proposal can never change an agency fee, a pricing rule or a fees-document row | `kb_admin__watch_fee_lock` (SQL) + `lib/watcher/feeLock.ts` (twin) + `scripts/gen_fee_locked.py` | Blocked ("needs agency confirmation", KB007) if the target is one of the 23 fees-document questions / carries one of its 7 corrections, the text names an agency fee (a "MOM processing fee" / "work permit fee" is not one), a money figure sits beside a helper's salary, or a money figure comes from a page that is NOT in the "government rule" category. Re-checked at approval against the entry's CURRENT text and the page's category. The lists are generated from the loader and compared three ways (loader, TS, SQL). `kb_admin_fn_owner` holds no privilege on `cb_kb_rules`. |
 | A government figure goes live only after the approver checked it against the source | `kb_admin__watch_money` + `kb_admin_watch_approve(..., p_confirm_figure)` (KB008) + `app/watch/[id]/page.tsx` / `app/watch/actions.ts` | Decision 2026-10-15: a money figure from a "government rule" page (levy, security bond, MOM fees, minimum income, insurance minimums) is approvable, with the banner "This changes a figure: check it against the source before approving" and a required tick. Refused without the tick in the action and in the database; recorded as `figure_confirmed` on the draft and in the audit. |
+| A page with no readable text says why, and bot protection is never worked around | `lib/watcher/emptyPage.ts` + `fetcher.ts` (`BLOCKED_BY_SITE`, `renderPage`) + `pipeline.ts` | 2026-10-15: the MOM levy page failed "no readable main text" because the extractor dropped every `<form>` and ASP.NET wraps the whole page in one (`unwrapPageForms`, real MOM fixtures). Now: a challenge page (403/429/503 or an empty 200) is "Blocked by site", never retried or rendered; a /maintenance/ redirect is "under maintenance"; a JavaScript app shell is sent to `render-service/` through the same address, robots.txt and per-host-gap checks, or reported as needing it. A working page with a reCAPTCHA form is not "blocked". |
 | A page that only changed its whitespace or date stamps produces no proposal | `lib/watcher/change.ts` (`normalisedForm`, `contentHash`) | Hash of normalised paragraphs: whitespace, case, curly quotes, date-only lines and date stamps ("Last updated ...", "Reviewed on ...") dropped. A date INSIDE a sentence is kept on purpose: a changed effective date is a changed rule. Unchanged = no model call at all. |
 | The watcher fetches politely and never silently drops a failure | `lib/watcher/fetcher.ts` + `kb_admin_source_record_fetch(ok=false)` | Clear user-agent, https + public hosts only, robots.txt (and Crawl-delay) obeyed, 20 s timeout, 3 attempts with backoff on 5xx/429/network, no retry on other 4xx, 10 s minimum gap per host, 3 MB cap. A failure is a snapshot row and is shown on the source. |
 | A proposal cites the page word for word | `lib/watcher/drafting.ts` `parseDrafts` + the passage check in `kb_admin_watch_propose` | The model may only target an entry it was shown; the source passage must be on the fetched page (whitespace aside) or the draft is dropped (and refused by the database too). |
@@ -907,7 +914,9 @@ Easy to get wrong:
   empty = the embedding key if it is an OpenRouter key), `KB_ADMIN_DRAFT_MODEL` (default
   `openai/gpt-5.6-luna`, the bot's), `WATCHER_ENABLED` (the schedule), `WATCHER_INTERVAL_DAYS`
   (7), `CRON_SECRET` (32+, Vercel sends it), `KB_WATCHER_ACTOR_ID` (an active editor whose
-  access the scheduled run uses for the read-only live search). A malformed value refuses
+  access the scheduled run uses for the read-only live search), `KB_RENDER_URL` (https) +
+  `KB_RENDER_SECRET` (32+, the same as render-service's `RENDER_SECRET`; both or neither:
+  the page renderer for JavaScript-built pages). A malformed value refuses
   to start; a missing one leaves that part off with a logged reason.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
@@ -1556,7 +1565,11 @@ Ordered by what will hurt first.
     sentence counts as a change on purpose (an effective date moving is a rule changing),
     so such a page will produce a proposal. (d) The first fetch of a page sends its whole
     main text (capped at 6,000 characters) to the drafting model and may propose several
-    entries; review them like any other.
+    entries; review them like any other. (e) A page built by JavaScript (the Indonesian
+    embassy's `kemlu.go.id/...`) needs `render-service/` deployed on the bot's server and
+    `KB_RENDER_URL`/`KB_RENDER_SECRET` on Vercel; until then it is reported as "needs the
+    page renderer". MOM's `foreign-domestic-worker-levy` URL is an index page - the rates
+    are on `.../foreign-domestic-worker-levy/paying-levy`, which is the page to watch for them.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -1888,6 +1901,7 @@ behaviour behind one switch. Details of each step are in §11.
 | 5G' | Batch G G1-G7: crash retry and label, welcome before the style offer, > 6 h, case-number guard, candidate name/country/welcome | see git log |
 | KBW | KB watcher stages 1-3 (Thomas's item 5): watched pages, scheduled re-check, review queue; all off | see git log |
 | KBW2 | Fee lock eased for government figures (warning + required tick, KB008); migration 015 applied to production | see git log |
+| KBW3 | "No readable main text" diagnosed: extractor reads ASP.NET form-wrapped pages (MOM); blocked / maintenance / JS pages explained; render-service/ for JS pages | see git log |
 
 **Still to do, in order:** Step 5 is done (every item, the last being item 2 in Batch G), Step 6 is done (parts 1-4, 6b, 6c), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
@@ -1964,6 +1978,37 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-15** - **KB watcher: "the page has no readable main text" on the MOM levy
+  page.** No bot change; the watcher is still off; no database change.
+  **Diagnosis (read-only, the watcher's exact headers):** MOM answered HTTP 200,
+  `text/html`, 50,981 bytes, no redirect, real content - cause (d), our extractor.
+  mom.gov.sg is ASP.NET WebForms: the whole page sits inside one `<form id="mainform">`
+  and the extractor dropped every `<form>`. The Philippine embassy (`/consular/passport/`,
+  200, 570 KB) read fine. The Indonesian embassy (`kemlu.go.id/singapore`, 200, 1,916
+  bytes) is cause (a): a Vite app shell (`<div id="app">`) that builds its text in the
+  browser. Neither page is bot-protected or redirected.
+  **Fix:** (1) a form that wraps the page's main content is unwrapped, any other form still
+  dropped; a listing page with several `<article>`s is read whole (the PH homepage gave one
+  teaser); "Loading..." lines are not content. Real MOM fixtures (the levy index and the
+  paying-levy page with its $300/$450/$60 table) and the kemlu shell are in
+  `scripts/fixtures/watcher/`. (2) `emptyPage.ts` says why a page has no text: a
+  bot-protection page is "Blocked by site" (never retried, rendered or worked around, with
+  a suggestion), a maintenance redirect "under maintenance", a JavaScript shell "needs the
+  page renderer". (3) `render-service/`: headless Chromium in its own container on the
+  bot's server, behind a secret, the watcher's user-agent, one page at a time, a 10 s
+  per-host gap, public addresses only for the page and every sub-request; kb-admin calls it
+  only after the plain fetch had no text, through `PoliteFetcher.renderPage` (address,
+  robots.txt, per-host gap). It waits for the page's text to settle, because "network idle"
+  never comes on a page with a live map. Off until deployed and `KB_RENDER_*` are set.
+  **Verified:** end to end through kb-admin's real fetcher + pipeline with the service run
+  locally: MOM 438 chars (plain), PH passport 2,098 (plain), kemlu protection page 561
+  (rendered), kemlu home 1,455 (rendered); without the renderer kemlu is reported as
+  needing it. Service refusals checked live (localhost via DNS, 127.0.0.1, http, a
+  metadata-resolving name, credentials in the URL, a wrong key -> 404). Self-check 330 (32
+  new); 16 new faults injected, 16 red (two were green first, both the tests: articles too
+  short to reach the region, and an input-stripping line that did nothing - removed); the
+  earlier 19, 19 red. `next build` passes.
 
 - **2026-10-15** - **KB watcher: government figures approvable with a tick, and
   migration 015 applied to production.** No bot behaviour changes; the watcher is

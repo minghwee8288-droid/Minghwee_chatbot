@@ -4,11 +4,12 @@
  *
  * Deliberately dependency-free and conservative:
  *   1. drop what is never content: script, style, noscript, template, svg,
- *      iframe, form, and the page furniture nav, header, footer, aside, plus
+ *      iframe, form controls, a form (unless it wraps the page's main content -
+ *      see unwrapPageForms), and the page furniture nav, header, footer, aside, plus
  *      any element whose role, id or class names navigation, a breadcrumb, a
  *      footer, a cookie banner or a "skip to content" link;
- *   2. if the page marks its main content (<main>, <article>, role="main",
- *      id="main-content"/"content"), read only that;
+ *   2. if the page marks its main content (<main>, role="main", a single
+ *      <article>, id="main-content"/"content"), read only that;
  *   3. turn block elements into line breaks, strip the remaining tags, decode
  *      entities, and keep each non-empty line as a paragraph.
  * Lines that are page chrome everywhere ("Back to top", "Share this page",
@@ -17,14 +18,44 @@
 
 export type Extracted = { title: string; paragraphs: string[]; text: string };
 
-const DROP_WHOLE = ['script', 'style', 'noscript', 'template', 'svg', 'iframe', 'form', 'nav', 'header', 'footer', 'aside', 'select', 'button'];
+const DROP_WHOLE = ['script', 'style', 'noscript', 'template', 'svg', 'iframe', 'form', 'nav', 'header', 'footer', 'aside', 'select', 'button', 'textarea'];
+
+// Marks of a page's main content: tells a page-wide form wrapper from a real form.
+const MAIN_MARK = /<main\b|\brole\s*=\s*["']?main\b|\bid\s*=\s*["'](?:main-content|maincontent)["']/i;
+
+/**
+ * ASP.NET WebForms pages (mom.gov.sg among them) put the WHOLE page inside one
+ * <form id="mainform">. Dropping every form dropped the page: the MOM levy
+ * page came out empty ("no readable main text", 2026-10-15). A form that
+ * contains the page's main-content marker is a wrapper, so its tags go and its
+ * contents stay; any other form (a search box, a feedback form) is still
+ * dropped whole afterwards.
+ */
+function unwrapPageForms(html: string): string {
+  let out = html;
+  for (let pass = 0; pass < 6; pass++) {
+    const re = /<form\b[^>]*>/gi;
+    let match: RegExpExecArray | null;
+    let changed = false;
+    while ((match = re.exec(out))) {
+      const end = closingIndex(out, 'form', match.index + match[0].length);
+      const inner = out.slice(match.index + match[0].length, end).replace(/<\/form\s*>$/i, '');
+      if (!MAIN_MARK.test(inner)) continue;
+      out = out.slice(0, match.index) + ' ' + inner + ' ' + out.slice(end);
+      changed = true;
+      break;
+    }
+    if (!changed) break;
+  }
+  return out;
+}
 
 // An opening tag whose attributes mark furniture (navigation, breadcrumbs, cookie banners, footers, skip links).
 const FURNITURE_ATTR = /\b(?:role\s*=\s*["']?(?:navigation|banner|contentinfo|search)\b|(?:id|class)\s*=\s*["'][^"']*\b(?:nav|navbar|menu|breadcrumbs?|footer|cookie|consent|skip-link|skip-to|sidebar|share|social)\b[^"']*["'])/i;
 
 const BLOCK = /<\/?(?:p|div|section|article|main|li|ul|ol|h[1-6]|tr|td|th|table|thead|tbody|br|hr|dd|dt|dl|blockquote|pre|figcaption|caption)\b[^>]*>/gi;
 
-const CHROME_LINE = /^(?:back to top|top of page|share this page|share|print|skip to (?:main )?content|last (?:updated|reviewed|modified)\b.*|page last (?:updated|reviewed)\b.*|was this (?:page|article) (?:helpful|useful)\??.*|yes|no|cookies?\b.*|accept(?: all)?(?: cookies)?|©.*|copyright\b.*|all rights reserved\.?)$/i;
+const CHROME_LINE = /^(?:loading(?:\.\.\.|…)?|please wait\.*|back to top|top of page|share this page|share|print|skip to (?:main )?content|last (?:updated|reviewed|modified)\b.*|page last (?:updated|reviewed)\b.*|was this (?:page|article) (?:helpful|useful)\??.*|yes|no|cookies?\b.*|accept(?: all)?(?: cookies)?|©.*|copyright\b.*|all rights reserved\.?)$/i;
 
 const ENTITIES: Record<string, string> = {
   amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—', hellip: '…',
@@ -91,7 +122,9 @@ function mainRegion(html: string): string | null {
   const markers = [
     /<main\b[^>]*>/i,
     /<[a-z]+\b[^>]*\brole\s*=\s*["']?main\b[^>]*>/i,
-    /<article\b[^>]*>/i,
+    // A listing page (a news index) has many <article>s; reading only the first
+    // would watch one teaser. Only a page with exactly one is marked by it.
+    ...((html.match(/<article\b/gi) ?? []).length === 1 ? [/<article\b[^>]*>/i] : []),
     /<[a-z]+\b[^>]*\bid\s*=\s*["'](?:main-content|maincontent|main|content)["'][^>]*>/i,
   ];
   for (const re of markers) {
@@ -116,6 +149,7 @@ export function extractMainText(html: string): Extracted {
   let body = raw.replace(/<!--[\s\S]*?-->/g, ' ');
   const bodyMatch = /<body\b[^>]*>([\s\S]*)<\/body\s*>/i.exec(body);
   if (bodyMatch) body = bodyMatch[1];
+  body = unwrapPageForms(body);
   body = dropElements(body, DROP_WHOLE);
   body = dropFurniture(body);
   const region = mainRegion(body) ?? body;

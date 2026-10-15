@@ -2,6 +2,7 @@ import { entryText, vectorLiteral } from '../editing.ts';
 import { changedPassages, contentHash, pageChange } from './change.ts';
 import { buildPrompt, parseDrafts, type Candidate } from './drafting.ts';
 import { extractMainText } from './extract.ts';
+import { classifyEmptyPage, emptyPageMessage } from './emptyPage.ts';
 import type { PageResult } from './fetcher.ts';
 
 /**
@@ -36,6 +37,8 @@ export type Actor = { userId: string; email: string };
 export type CheckDeps = {
   call: WatchCall;
   fetchPage: (url: string) => Promise<PageResult>;
+  /** The JavaScript fallback (render-service/), used only when the plain page has no readable text. Absent = not set up. */
+  renderPage?: (url: string) => Promise<PageResult>;
   previousText: (sourceId: string) => Promise<string | null>;
   embed: (texts: string[]) => Promise<{ vectors: number[][]; model: string }>;
   /** Who records the snapshot and the drafts: a person (Fetch now) or null (the schedule). */
@@ -72,15 +75,45 @@ export async function checkSource(source: SourceRef, deps: CheckDeps): Promise<C
     log(`fetch failed source=${source.id.slice(0, 8)} ${page.error}`);
     return { outcome: 'failed', error: page.error, drafts: [], dropped: [] };
   }
-  const extracted = extractMainText(page.html);
+  let extracted = extractMainText(page.html);
+  let status = page.status;
   if (extracted.text.length < 40) {
-    const error = 'the page has no readable main text';
-    await deps.call('kb_admin_source_record_fetch', [who?.userId ?? null, who?.email ?? null, source.id, false, page.status, null, null, null, error]);
-    return { outcome: 'failed', error, drafts: [], dropped: [] };
+    // Say WHY there is no text (2026-10-15): bot protection is reported and
+    // never worked around; maintenance is reported; a JavaScript-built page is
+    // rendered by the page renderer when one is set up.
+    let kind = classifyEmptyPage(page.html, page.finalUrl);
+    let finalUrl: string | null = page.finalUrl !== source.url ? page.finalUrl : null;
+    let rendered = false;
+    let renderError = '';
+    if ((kind === 'script' || kind === 'empty') && deps.renderPage) {
+      const r = await deps.renderPage(page.finalUrl);
+      if (r.ok) {
+        rendered = true;
+        extracted = extractMainText(r.html);
+        status = r.status;
+        if (extracted.text.length < 40) {
+          kind = classifyEmptyPage(r.html, r.finalUrl);
+          finalUrl = r.finalUrl !== source.url ? r.finalUrl : finalUrl;
+        }
+      } else {
+        renderError = r.error;
+      }
+    }
+    if (extracted.text.length < 40) {
+      const error = renderError.startsWith('Blocked by site')
+        ? renderError
+        : renderError
+          ? `${emptyPageMessage(kind, finalUrl, { renderer: true, rendered: false })} (${renderError})`
+          : emptyPageMessage(kind, finalUrl, { renderer: Boolean(deps.renderPage), rendered });
+      await deps.call('kb_admin_source_record_fetch', [who?.userId ?? null, who?.email ?? null, source.id, false, status, null, null, null, error]);
+      log(`no readable text source=${source.id.slice(0, 8)} kind=${kind} rendered=${rendered}`);
+      return { outcome: 'failed', error, drafts: [], dropped: [] };
+    }
+    log(`rendered source=${source.id.slice(0, 8)} (plain fetch had no readable text)`);
   }
   const hash = await contentHash(extracted.text);
   const recorded = await deps.call<{ snapshot_id: string; changed: boolean; first: boolean }>('kb_admin_source_record_fetch', [
-    who?.userId ?? null, who?.email ?? null, source.id, true, page.status, hash, extracted.text, extracted.title, '',
+    who?.userId ?? null, who?.email ?? null, source.id, true, status, hash, extracted.text, extracted.title, '',
   ]);
   if (!recorded.changed) return { outcome: 'unchanged', drafts: [], dropped: [] };
 

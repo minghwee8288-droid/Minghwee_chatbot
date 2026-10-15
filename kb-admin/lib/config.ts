@@ -22,7 +22,10 @@
  *      key when that is already an OpenRouter key);
  *   7. for the schedule only: CRON_SECRET (Vercel sends it on its cron call)
  *      and KB_WATCHER_ACTOR_ID, the editor account whose access the scheduled
- *      run uses for the read-only live search.
+ *      run uses for the read-only live search;
+ *   8. optional, both or neither: KB_RENDER_URL (https) and KB_RENDER_SECRET
+ *      (32+), the page renderer on our server (render-service/) for pages
+ *      built by JavaScript. Unset = no rendering; such a page is reported.
  * KB_SOURCES_ENABLED unset (the default) = no watcher page, no fetch, nothing.
  */
 
@@ -47,6 +50,8 @@ export type WatcherConfig = {
   llm: { baseUrl: string; apiKey: string; model: string };
   /** null = no scheduled checks (WATCHER_ENABLED unset): sources are fetched only on "Fetch now". */
   schedule: { cronSecret: string; actorId: string; intervalDays: number } | null;
+  /** null = no page renderer: a JavaScript-built page is reported, not rendered. */
+  render: { url: string; secret: string } | null;
 };
 
 /** The bot's current model (app/config.py openrouter_model). */
@@ -184,6 +189,18 @@ function watcherConfig(source: ConfigSource, editor: EditorConfig | null): { wat
   const intervalRaw = (source.WATCHER_INTERVAL_DAYS ?? '').trim();
   const intervalDays = intervalRaw ? Number(intervalRaw) : 7;
   if (!Number.isInteger(intervalDays) || intervalDays < 1 || intervalDays > 90) refuse('WATCHER_INTERVAL_DAYS must be a whole number of days from 1 to 90');
+  const renderUrl = (source.KB_RENDER_URL ?? '').trim();
+  const renderSecret = (source.KB_RENDER_SECRET ?? '').trim();
+  if (renderUrl) {
+    let u: URL | null = null;
+    try {
+      u = new URL(renderUrl);
+    } catch {
+      u = null;
+    }
+    if (!u || u.protocol !== 'https:' || u.username || u.password) refuse('KB_RENDER_URL must be an https:// address');
+  }
+  if (renderSecret && renderSecret.length < 32) refuse('KB_RENDER_SECRET is shorter than 32 characters');
   const model = (source.KB_ADMIN_DRAFT_MODEL ?? '').trim() || DEFAULT_DRAFT_MODEL;
   if (!/^[a-z0-9._-]+\/[a-z0-9._:-]+$/i.test(model)) refuse('KB_ADMIN_DRAFT_MODEL is not an OpenRouter model id');
 
@@ -201,7 +218,13 @@ function watcherConfig(source: ConfigSource, editor: EditorConfig | null): { wat
     if (missing.length) reason = `watcher schedule off: ${missing.join(', ')} not set`;
     else schedule = { cronSecret: secret, actorId, intervalDays };
   }
-  return { watcher: { llm: { baseUrl: OPENROUTER_BASE_URL, apiKey, model }, schedule }, watcherOffReason: reason };
+  let render: WatcherConfig['render'] = null;
+  if (renderUrl && renderSecret) render = { url: renderUrl, secret: renderSecret };
+  else if (renderUrl || renderSecret) {
+    const r = `page renderer off: ${renderUrl ? 'KB_RENDER_SECRET' : 'KB_RENDER_URL'} not set`;
+    reason = reason ? `${reason}; ${r}` : r;
+  }
+  return { watcher: { llm: { baseUrl: OPENROUTER_BASE_URL, apiKey, model }, schedule, render }, watcherOffReason: reason };
 }
 
 /**

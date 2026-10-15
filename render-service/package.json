@@ -1,0 +1,13 @@
+{
+  "name": "minghwee-render-service",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Renders JavaScript-built pages for kb-admin's KB watcher. Runs on our server; the bot does not use it.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.48.2"
+  }
+}
