@@ -170,6 +170,10 @@ reads a listing page with several `<article>`s whole.
 - **Quote matching ignores spacing only.** The source passage is found on the page with spacing
   of every kind set aside (tabs, line breaks, non-breaking spaces, "1 st" for "1st"); the words and
   figures must match exactly, and the page's own span is what is stored and shown.
+- **No draft without the existing-entry search.** Each draft is checked against the live knowledge
+  base before it is proposed. If that search cannot be done (an error, an entry whose text cannot be
+  read, a failed embedding), nothing is proposed and the page shows "Couldn't check existing
+  entries"; fix the cause, then use **Re-draft from latest snapshot**.
 - **Changes to existing entries are additive.** The model returns only the new facts to add (each
   with its page passage) and the sentences the page contradicts (with the contradicting passage);
   kb-admin builds the entry from the live text, so nothing else in it can change. The review page

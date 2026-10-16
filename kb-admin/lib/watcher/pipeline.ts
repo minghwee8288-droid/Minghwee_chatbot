@@ -57,8 +57,14 @@ export type DraftDeps = {
   embed: (texts: string[]) => Promise<{ vectors: number[][]; model: string }>;
   /** Who records the snapshot and the drafts: a person (Fetch now, Re-draft) or null (the schedule). */
   recorder: Actor | null;
-  /** Who runs the read-only live search (kb_admin_match_live needs an editor). Null = no search. */
+  /** Who runs the read-only live search (kb_admin_match_live needs an editor). Null = drafting refuses (OverlapCheckError). */
   searcher: Actor | null;
+  /**
+   * The live question and answer of the entries the search returned, read as
+   * kb_admin_reader. kb_admin_match_live returns only a 300-character preview
+   * (014), never question/answer - so without this every match is unusable.
+   */
+  entryTexts: (ids: string[]) => Promise<{ id: string; question: string | null; answer: string | null }[]>;
   llm: (system: string, user: string) => Promise<string>;
   model: string;
   /** Migration 016 is installed: the overlap results and suggested pages can be recorded. */
@@ -91,11 +97,67 @@ const MAX_CANDIDATES = 8;
 const OVERLAP_MATCH_COUNT = 12;
 const OVERLAP_THRESHOLD = 0.5;
 
-type MatchRow = { id: string; chunk_type: string; question: string | null; answer: string | null; similarity: number };
+/** What kb_admin_match_live (014) actually returns: no question, no answer. */
+type MatchRow = { id: string; chunk_type: string; similarity: number; preview?: string | null };
 
-const liveQa = (rows: MatchRow[]): LiveEntry[] =>
-  rows.filter((x) => x.chunk_type === 'qa_pair' && x.question && x.answer)
-    .map((x) => ({ id: x.id, question: x.question!, answer: x.answer!, similarity: x.similarity }));
+/**
+ * The existing-entry search could not be done. Drafting STOPS: nothing is
+ * proposed, and the person sees "Couldn't check existing entries". Production
+ * 2026-10-16: kb_admin_match_live returns no question/answer, the pipeline
+ * silently dropped every match, and all five drafts of the paying-levy page
+ * were proposed as new entries duplicating live ones.
+ */
+export class OverlapCheckError extends Error {
+  constructor(detail: string) {
+    super(`couldn't check existing entries: ${detail}`);
+    this.name = 'OverlapCheckError';
+  }
+}
+
+const why = (e: unknown) => String((e as Error)?.message ?? e).slice(0, 160);
+
+/** The bot's live search, joined to each Q&A entry's live text. Throws OverlapCheckError on any failure. */
+async function liveSearch(deps: DraftDeps, vector: number[], count: number, threshold: number): Promise<LiveEntry[]> {
+  if (!deps.searcher) throw new OverlapCheckError('no editor account to run the live search with');
+  let rows: MatchRow[];
+  try {
+    rows = await deps.call<MatchRow[]>('kb_admin_match_live', [deps.searcher.userId, deps.searcher.email, vectorLiteral(vector), null, null, null, count, threshold]);
+  } catch (e) {
+    throw new OverlapCheckError(`the live search failed (${why(e)})`);
+  }
+  if (!Array.isArray(rows)) throw new OverlapCheckError('the live search returned no result list');
+  const qa = rows.filter((x) => x.chunk_type === 'qa_pair');
+  if (!qa.length) return [];
+  let texts: { id: string; question: string | null; answer: string | null }[];
+  try {
+    texts = await deps.entryTexts(qa.map((x) => x.id));
+  } catch (e) {
+    throw new OverlapCheckError(`the matching entries could not be read (${why(e)})`);
+  }
+  const byId = new Map(texts.map((t) => [t.id, t]));
+  return qa.map((x) => {
+    const t = byId.get(x.id);
+    if (!t?.question?.trim() || !t?.answer?.trim()) throw new OverlapCheckError(`entry ${x.id.slice(0, 8)} came back from the search without its question and answer`);
+    return { id: x.id, question: t.question, answer: t.answer, similarity: x.similarity };
+  });
+}
+
+async function embedForSearch(deps: DraftDeps, texts: string[]): Promise<number[][]> {
+  let vectors: number[][];
+  try {
+    ({ vectors } = await deps.embed(texts));
+  } catch (e) {
+    throw new OverlapCheckError(`the texts could not be embedded for the search (${why(e)})`);
+  }
+  if (vectors.length !== texts.length) throw new OverlapCheckError('the embedding service returned the wrong number of vectors');
+  return vectors;
+}
+
+/** A re-draft supersedes the open proposals first, so prove the search works before it does. */
+export async function preflightOverlap(deps: DraftDeps, probe: string): Promise<void> {
+  const [v] = await embedForSearch(deps, [probe]);
+  await liveSearch(deps, v, 3, 0.3);
+}
 
 export async function checkSource(source: SourceRef, deps: CheckDeps): Promise<CheckResult> {
   const log = deps.log ?? (() => undefined);
@@ -188,6 +250,7 @@ export async function redraftSource(
 ): Promise<RedraftResult> {
   const who = deps.recorder;
   if (!who) throw new Error('a re-draft needs a person');
+  await preflightOverlap(deps, source.label);
   const r = await deps.call<{ snapshot_id: string; previous_snapshot_id: string | null; superseded: number }>('kb_admin_source_redraft', [who.userId, who.email, source.id, reason]);
   const text = await deps.snapshotText(r.snapshot_id);
   if (!text) return { superseded: r.superseded, drafts: [], dropped: ['the latest snapshot could not be read'], index: false };
@@ -211,12 +274,13 @@ export async function draftFromSnapshot(
   const passages = changedPassages(change);
   if (!passages.length) return { drafts: [], dropped: ['nothing new on the page to draft from'] };
 
-  const search = async (vector: number[], count: number, threshold: number): Promise<LiveEntry[]> =>
-    liveQa(await deps.call<MatchRow[]>('kb_admin_match_live', [deps.searcher!.userId, deps.searcher!.email, vectorLiteral(vector), null, null, null, count, threshold]));
+  // Never draft without the existing-entry search: a failure stops here, before anything is proposed.
+  const search = (vector: number[], count: number, threshold: number) => liveSearch(deps, vector, count, threshold);
+  if (!deps.searcher) throw new OverlapCheckError('no editor account to run the live search with');
 
   let candidates: Candidate[] = [];
-  if (deps.searcher) {
-    const { vectors } = await deps.embed(passages);
+  {
+    const vectors = await embedForSearch(deps, passages);
     const seen = new Map<string, Candidate & { sim: number }>();
     const found = await Promise.all(vectors.map((v) => search(v, 10, 0.35)));
     for (const rows of found) {
@@ -238,8 +302,8 @@ export async function draftFromSnapshot(
   // --- the overlap check ------------------------------------------------------
   type Planned = { draft: ProposedDraft; overlap: Overlap };
   let planned: Planned[] = parsed.drafts.map((draft) => ({ draft, overlap: { similar: [], conflict: false, note: null } }));
-  if (deps.searcher && planned.length) {
-    const { vectors } = await deps.embed(planned.map((p) => entryText(p.draft.question, p.draft.answer)));
+  if (planned.length) {
+    const vectors = await embedForSearch(deps, planned.map((p) => entryText(p.draft.question, p.draft.answer)));
     const matches = await Promise.all(vectors.map((v) => search(v, OVERLAP_MATCH_COUNT, OVERLAP_THRESHOLD)));
     const taken = new Set(planned.map((p) => p.draft.target_entry_id).filter(Boolean) as string[]);
     // New drafts that duplicate a live entry -> a change to that entry instead.

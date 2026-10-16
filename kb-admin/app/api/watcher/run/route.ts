@@ -5,7 +5,7 @@ import { checkCronRequest } from '@/lib/watcher/cron';
 import { draftWithModel } from '@/lib/watcher/llm';
 import { checkSource, type WatchCall } from '@/lib/watcher/pipeline';
 import { watchFetcher } from '@/lib/watchFetcher';
-import { lastGoodText, sourcesDue, watcherSchema16 } from '@/lib/watchQueries';
+import { lastGoodText, liveEntryTexts, sourcesDue, watcherSchema16 } from '@/lib/watchQueries';
 import { callWrite } from '@/lib/write';
 import { membership } from '@/lib/queries';
 
@@ -64,6 +64,7 @@ export async function GET(req: NextRequest) {
         embed: embedTexts,
         recorder: null,
         searcher,
+        entryTexts: liveEntryTexts,
         llm: draftWithModel,
         model: cfg.watcher.llm.model,
         has016,
@@ -78,7 +79,7 @@ export async function GET(req: NextRequest) {
       // A failure after the fetch was recorded (drafting, embedding): logged, the run carries on.
       summary.checked += 1;
       summary.failed += 1;
-      console.error(`[watcher] source=${source.id.slice(0, 8)} drafting failed: ${String((error as Error)?.message ?? error).slice(0, 200)}`);
+      console.error(`[watcher] source=${source.id.slice(0, 8)} drafting failed (nothing proposed; Re-draft once fixed): ${String((error as Error)?.message ?? error).slice(0, 200)}`);
     }
   }
   console.info(`[watcher] scheduled run ${JSON.stringify(summary)}`);

@@ -176,3 +176,16 @@ export async function watchDraft(id: string): Promise<WatchDraftRow | null> {
   const [row] = await select<WatchDraftRow>(`select ${DRAFT_COLUMNS}, ${DRAFT_16(has16)} ${DRAFT_FROM} where d.id = $1::uuid`, [id]);
   return row ?? null;
 }
+
+/**
+ * The live question and answer of Q&A entries by id, for the watcher's
+ * existing-entry search: kb_admin_match_live returns only a preview, so the
+ * pipeline joins its matches to their text here (read-only, as kb_admin_reader).
+ */
+export async function liveEntryTexts(ids: string[]): Promise<{ id: string; question: string | null; answer: string | null }[]> {
+  const wanted = ids.filter((x) => /^[0-9a-f-]{36}$/i.test(x));
+  if (!wanted.length) return [];
+  return select<{ id: string; question: string | null; answer: string | null }>(`
+    select id::text as id, question, answer from public.cb_knowledge_base_updated
+     where id = any(string_to_array($1, ',')::uuid[])`, [wanted.join(',')]);
+}

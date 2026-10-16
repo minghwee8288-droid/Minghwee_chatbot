@@ -11,8 +11,8 @@ import { addressProblem } from '@/lib/watcher/fetcher';
 import { watchFetcher } from '@/lib/watchFetcher';
 import { DraftingError, draftWithModel } from '@/lib/watcher/llm';
 import { touchesMoney } from '@/lib/watcher/feeLock';
-import { approveAndPublish, checkSource, redraftSource, type WatchCall } from '@/lib/watcher/pipeline';
-import { lastGoodText, snapshotText, sourceById, watchDraft, watcherSchema16 } from '@/lib/watchQueries';
+import { OverlapCheckError, approveAndPublish, checkSource, redraftSource, type WatchCall } from '@/lib/watcher/pipeline';
+import { lastGoodText, liveEntryTexts, snapshotText, sourceById, watchDraft, watcherSchema16 } from '@/lib/watchQueries';
 import { callWrite } from '@/lib/write';
 
 /**
@@ -43,6 +43,11 @@ function log(action: string, userId: string, target: string, outcome: string) {
 }
 
 function failure(action: string, userId: string, target: string, error: unknown): ActionState {
+  if (error instanceof OverlapCheckError) {
+    // Never a silent "New entry": the existing-entry search must work before anything is proposed.
+    log(action, userId, target, `stopped: ${error.message}`);
+    return { error: `Couldn't check existing entries, so nothing was proposed (${error.message.replace(/^couldn't check existing entries: /, '')}). Once that is fixed, use "Re-draft from latest snapshot".` };
+  }
   if (error instanceof EmbedError || error instanceof DraftingError) {
     log(action, userId, target, `failed: ${error.message}`);
     return { error: `Nothing was changed: ${error.message}.` };
@@ -127,6 +132,7 @@ export async function fetchNow(_prev: ActionState, form: FormData): Promise<Acti
       embed: embedTexts,
       recorder: { userId: actor.userId, email: actor.email },
       searcher: { userId: actor.userId, email: actor.email },
+      entryTexts: liveEntryTexts,
       llm: draftWithModel,
       model: env().watcher!.llm.model,
       has016,
@@ -166,6 +172,7 @@ export async function redraftSourceAction(_prev: ActionState, form: FormData): P
       embed: embedTexts,
       recorder: { userId: actor.userId, email: actor.email },
       searcher: { userId: actor.userId, email: actor.email },
+      entryTexts: liveEntryTexts,
       llm: draftWithModel,
       model: env().watcher!.llm.model,
       has016: true,

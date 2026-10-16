@@ -603,6 +603,7 @@ because the lead is opened early and the ticket is created much later.
 | A watcher proposal states a fact a client can act on, and an index page drafts nothing | `lib/watcher/quality.ts` (`lowValueReason`) in `parseDrafts` + `lib/watcher/indexPage.ts` (`indexVerdict`) in `checkSource` | Production 2026-10-15: MOM's levy INDEX page drafted four "The MOM page provides information on..." entries. A draft that only points elsewhere, or carries no amount, rule, deadline, eligibility condition or step, is dropped; an index page drafts nothing and its sub-pages (below it, same site, named in its main text) become "Suggested pages to watch" (016). |
 | A watcher approval never silently creates a second, conflicting answer | `lib/watcher/overlap.ts` + `draftFromSnapshot` + `kb_admin_watch_approve` (016, KB009) | Each draft is searched with the bot's own live search: a new draft at 0.72+ against a live entry becomes a change to that entry (or nothing, if it already says it); entries at 0.60+ are listed with the figures that differ; two figures of the same kind, period and subject that disagree raise the conflict banner and the approver's tick, which the database requires. Thresholds measured on the live KB (true duplicates 0.68-0.88, same topic 0.55-0.64). |
 | A proposal cites the page word for word | `lib/watcher/drafting.ts` `parseDrafts` / `locatePassage` + the passage check in `kb_admin_watch_propose` | The model may only target an entry it was shown; the source passage must be on the fetched page or the draft is dropped (and refused by the database too). Spacing aside (spaces, tabs, line breaks, non-breaking and zero-width spaces, and a space beside punctuation or between a number and a letter, as in MOM's "1 st helper"), the words and figures must match exactly; the PAGE's own span is stored, so the database's whitespace-only check finds it verbatim. |
+| A watcher draft is never proposed without the existing-entry search | `lib/watcher/pipeline.ts` (`liveSearch`, `OverlapCheckError`, `preflightOverlap`) + `lib/watchQueries.liveEntryTexts` + `app/watch/actions.ts` (`failure`) | `kb_admin_match_live` (014) returns a preview, never question/answer; the pipeline filtered on those, so on production every match was dropped silently and the paying-levy page was proposed as five NEW entries duplicating live ones (2026-10-16; the dry run's stand-in returned them, which hid it). Matches are now joined to their live text by the reader. A search error, an unreadable match, a failed embedding or no search account stops drafting with "Couldn't check existing entries" and proposes nothing; a re-draft proves the search works before it supersedes the open proposals. |
 | A watcher change to a live entry is ADDITIVE: built from the live entry, never rewritten | `lib/watcher/additive.ts` (`parseUpdate`, `entryDiff`) via `parseDrafts`, `lib/watcher/changeRules.ts` (both prompts), `factDiff.replacementJustification`, `app/watch/[id]/page.tsx` | For an existing entry the model returns only `add` (new facts, each with its page passage and the live sentence it follows) and `replace` (a live sentence and its correction, with the page words that contradict it). kb-admin builds the answer: the live text character for character, accepted replacements swapped in place (one sentence each), additions inserted after the sentence named, the question unchanged, additions taken in order up to 1,200 characters. A replacement needs a contradiction: a figure of the same kind, period and subject (a bare number counts: 15th vs 17th), or the page saying the same thing differently (the page supports the new sentence, does not say the old one, the two share half the old sentence's content words, every old figure kept). An addition the entry already says (all figures, 80% of its words) is dropped. Nothing added or replaced = nothing proposed. The review page shows added (green), replaced (old -> new with the page line), unchanged (grey). The "Points removed" block ("This update drops existing information", page + action) stays as a safety net and uses the same justification, so it cannot fire on a built change. Dry runs: 11 changes over 6 runs, 0 blocked (was every change). |
 | ...searched for the whole service, with the filter kept whatever money words it contains | `rag_retriever.ENQUIRY_OVERVIEW_QUERY` / `_service_filter` | "costs" dropped the service filter, and the wider search returned a no-agency comparison that told the client the permit and bond were theirs to do. 12 rows, never widened - plus `ENQUIRY_OVERVIEW_EXTRA_QUERIES`, a separate search per service for a question the agency named that the shared query cannot reach (direct hire's failed medical ranks 21st under it). |
 
@@ -1924,6 +1925,7 @@ behaviour behind one switch. Details of each step are in §11.
 | KBW4 | Drafting: overlap check (change instead of a duplicate, similar-entries panel, conflict tick KB009), low-value and index pages dropped (suggested sub-pages), approver re-draft; migration 016 written, not applied | see git log |
 | KBW5 | Migration 016 applied to production; quote matching ignores spacing; a change that drops live facts is blocked ("Points removed"); rewording-only changes not proposed | see git log |
 | KBW6 | Changes to live entries are additive: the model returns additions and contradicted replacements, kb-admin builds the entry; review shows added / replaced / unchanged | see git log |
+| KBW7 | The live existing-entry search reads the entries' text (kb_admin_match_live returns none); a failed search stops with "Couldn't check existing entries" | see git log |
 
 **Still to do, in order:** Step 5 is done (every item, the last being item 2 in Batch G), Step 6 is done (parts 1-4, 6b, 6c), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
@@ -2000,6 +2002,28 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-16** - **KB watcher: the live existing-entry search was returning nothing usable.**
+  No bot change, no database change. Production, 3:34 pm SGT: "MOM - FDW levy - Paying levy"
+  produced five proposals, all "New entry", four of them duplicating live entries, every one
+  with `similar_entries = []`. Cause: `kb_admin_match_live` (014) returns `id, chunk_type, ...,
+  similarity, preview` and never `question`/`answer`; `pipeline.liveQa` kept only rows with
+  both, so every match was dropped without a word. The model was shown "(none)" as the
+  existing entries and the overlap check had nothing to compare. Every dry run and self-check
+  stand-in returned question/answer, which is why none caught it. Fix: the matches are joined to
+  their live text through the reader (`watchQueries.liveEntryTexts`), and drafting never runs
+  without the search. A search error, a match whose text cannot be read, a failed embedding or no
+  search account throws `OverlapCheckError`; nothing is proposed and the person sees "Couldn't
+  check existing entries ... use Re-draft from latest snapshot". A re-draft runs a probe search
+  before `kb_admin_source_redraft`, so a broken search never supersedes the open proposals. The
+  self-check fakes now return the function's real shape, plus 12 new checks (the SQL's return
+  columns read from 014, each failure mode stopping with no proposal). 428 checks pass; of 9
+  faults injected, 8 go red. The ninth (dropping the early no-searcher guard) stays green
+  because `liveSearch` refuses it too. Dry run through the REAL `kb_admin_match_live` (production,
+  read-only, as the approver's account), paying-levy, 3 runs: 3, 3, 2 proposals; "What is the FDW
+  levy?" changed in 3, the monthly-levy entry in 2; the only new entry is the late-payment rule
+  (best live match 0.61-0.64), with its similar entries listed. The five open proposals were not
+  touched.
 
 - **2026-10-16** - **KB watcher: changes to live entries are additive.** No bot change, no database
   change; the schedule stays off. In the dry runs the model rewrote whole entries and every change

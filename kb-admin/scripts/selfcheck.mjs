@@ -928,7 +928,8 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
         snaps.push({ ok: true, hash, text });
         return { ok: true, snapshot_id: `snap-${snaps.length}`, changed: !prev || prev.hash !== hash, first: !prev };
       }
-      if (fn === 'kb_admin_match_live') return [{ id: cand[0].id, chunk_type: 'qa_pair', question: cand[0].question, answer: cand[0].answer, similarity: 0.7 }];
+      // The REAL shape of kb_admin_match_live (014): a preview, never question/answer.
+      if (fn === 'kb_admin_match_live') return [{ id: cand[0].id, chunk_type: 'qa_pair', similarity: 0.7, preview: cand[0].question }];
       if (fn === 'kb_admin_watch_propose') {
         const [, , , target, q, a, , , , , passage] = params;
         const t = target ? cand.find((c) => c.id === target) : null;
@@ -949,6 +950,7 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
     call: db1.call, fetchPage, previousText: async () => db1.lastText(),
     embed: async (texts) => ({ vectors: texts.map(() => Array(1536).fill(0.01)), model: 'm' }),
     recorder: null, searcher: { userId: 'u', email: 'watcher' }, llm: llm(answer), model: 'test-model',
+    entryTexts: async (ids) => cand.filter((c) => ids.includes(c.id)).map((c) => ({ id: c.id, question: c.question, answer: c.answer })),
   });
   // This fake is a 015-only database: a 016 call without has016 is a named FAIL, not a crash.
   const first = await Pl.checkSource(src0, deps(pageFrom('page_v1.html'), JSON.stringify({ drafts: [] }))).catch((e) => ({ outcome: `crashed: ${e.message}` }));
@@ -1132,7 +1134,7 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
       const r = await Pl.checkSource(src0, {
         call: async (fn, p) => { if (fn === 'kb_admin_source_record_fetch') { rec.push(p); return { snapshot_id: 's', changed: true, first: true }; } return []; },
         fetchPage: async () => page, renderPage: renderPage ? async (u) => { renders += 1; return renderPage(u); } : undefined,
-        previousText: async () => null, embed: async (t) => ({ vectors: t.map(() => []), model: 'm' }), recorder: null, searcher: null,
+        previousText: async () => null, embed: async (t) => ({ vectors: t.map(() => []), model: 'm' }), recorder: null, searcher: { userId: 'u', email: 'w' }, entryTexts: async () => [],
         llm: async () => '{"drafts":[]}', model: 'm',
       });
       return { r, rec, renders };
@@ -1309,7 +1311,10 @@ console.log('KB watcher drafting: overlap check, low-value proposals, index page
       if (opts.no016 && ['kb_admin_source_set_suggestions', 'kb_admin_watch_propose_checked', 'kb_admin_source_redraft'].includes(fn)) throw new Error(`function ${fn} does not exist`);
       if (fn === 'kb_admin_source_record_fetch') return { snapshot_id: 'snap-1', changed: true, first: true };
       if (fn === 'kb_admin_source_set_suggestions') return (params[3] ?? []).length;
-      if (fn === 'kb_admin_match_live') return opts.match ? [{ id: ENTRY.id, chunk_type: 'qa_pair', question: ENTRY.question, answer: ENTRY.answer, similarity: opts.match }] : [];
+      if (fn === 'kb_admin_match_live') {
+        if (opts.searchFails) throw new Error('permission denied for function kb_admin_match_live');
+        return opts.match ? [{ id: ENTRY.id, chunk_type: 'qa_pair', similarity: opts.match, preview: ENTRY.question }] : [];
+      }
       if (fn === 'kb_admin_watch_propose' || fn === 'kb_admin_watch_propose_checked') return { draft_id: `d-${calls.length}`, status: 'pending', blocked_reason: null };
       if (fn === 'kb_admin_source_redraft') return { snapshot_id: 'snap-9', previous_snapshot_id: opts.prev ? 'snap-8' : null, superseded: 2 };
       throw new Error(`unexpected ${fn}`);
@@ -1320,6 +1325,7 @@ console.log('KB watcher drafting: overlap check, low-value proposals, index page
   const baseDeps = (db, m, has016 = true) => ({
     call: db.call, previousText: async () => null, embed: async (texts) => ({ vectors: texts.map(() => Array(1536).fill(0.01)), model: 'm' }),
     recorder: { userId: 'u', email: 'e@x' }, searcher: { userId: 'u', email: 'e@x' }, llm: m.llm, model: 'test-model', has016,
+    entryTexts: async (ids) => (ids.includes(ENTRY.id) ? [{ id: ENTRY.id, question: ENTRY.question, answer: ENTRY.answer }] : []),
   });
   const src16 = { id: 'aaaaaaaa-0000-0000-0000-000000000016', url: LEVY, label: 'MOM levy' };
   {
@@ -1373,8 +1379,10 @@ console.log('KB watcher drafting: overlap check, low-value proposals, index page
     const db = fake(); const m = llmSeq([JSON.stringify({ drafts: [newDraft] })]);
     // One timeline for database calls and snapshot reads, so the ORDER is checked.
     const r = await Pl.redraftSource({ ...src16, suggested: [] }, 'rules improved', { ...baseDeps(db, m), snapshotText: async (id) => { db.calls.push({ fn: 'snapshotText', params: [id] }); return id === 'snap-9' ? payingX.text : null; } });
-    check('re-draft: kb_admin_source_redraft runs FIRST (the database checks the approver and audits the reason), then the latest snapshot is drafted from',
-      db.calls[0].fn === 'kb_admin_source_redraft' && db.calls[0].params[3] === 'rules improved' && db.calls[1].fn === 'snapshotText' && db.calls[1].params[0] === 'snap-9' && m.asked.length === 1 &&
+    // Only the read-only preflight search (prove the existing-entry check works) may come before it.
+    const rd = db.calls.findIndex((c) => c.fn === 'kb_admin_source_redraft');
+    check('re-draft: kb_admin_source_redraft runs FIRST (after only the read-only search preflight; the database checks the approver and audits the reason), then the latest snapshot is drafted from',
+      rd >= 0 && db.calls.slice(0, rd).every((c) => c.fn === 'kb_admin_match_live') && db.calls[rd].params[3] === 'rules improved' && db.calls[rd + 1].fn === 'snapshotText' && db.calls[rd + 1].params[0] === 'snap-9' && m.asked.length === 1 &&
       db.calls.find((c) => c.fn === 'kb_admin_watch_propose_checked')?.params[2] === 'snap-9' && r.superseded === 2, JSON.stringify(r));
     const dbI = fake(); const mI = llmSeq([JSON.stringify({ drafts: [newDraft] })]);
     const rI = await Pl.redraftSource({ ...src16, suggested: [{ url: `${LEVY}/paying-levy`, label: 'Paying levy' }] }, 'x', { ...baseDeps(dbI, mI), snapshotText: async () => payingX.text });
@@ -1496,6 +1504,63 @@ console.log('KB watcher drafting: overlap check, low-value proposals, index page
     check('reword: both drafting prompts forbid rewording and restating',
       [Dr.buildPrompt({ label: 'l', url: 'u', added: [], removed: [], candidates: [] }).system, OV.buildMergePrompt({ label: 'l', url: 'u', pairs: [] }).system]
         .every((x) => /Never replace a sentence to reword, shorten or tidy it, and never add a fact the entry already states/.test(x)));
+  }
+  // --- the existing-entry search must work, or nothing is proposed (production 2026-10-16) ---
+  // kb_admin_match_live returns no question/answer; the pipeline silently dropped every
+  // match and the paying-levy page was proposed as five NEW entries duplicating live ones.
+  {
+    const sqlMatch = readFileSync(join(ROOT, '..', 'scripts/sql/kb_admin_014_live_match_baseline.sql'), 'utf8');
+    const ret = (sqlMatch.match(/function public\.kb_admin_match_live\([\s\S]*?returns table \(([\s\S]*?)\)\s*language/) ?? [])[1] ?? '';
+    check('overlap-fail: kb_admin_match_live really returns no question/answer (so the pipeline must read them itself)',
+      ret.length > 0 && !/\bquestion\b/.test(ret) && !/\banswer\b/.test(ret) && /\bpreview\b/.test(ret), ret.replace(/\s+/g, ' ').slice(0, 200));
+    const newDraftX = { target_entry_id: null, question: 'When must I pay the monthly levy?', answer: 'You must pay the levy for each month by the 17th of the following month.', source_passage: passage, why: 'deadline' };
+    const pay = { ...src16, url: `${LEVY}/paying-levy` };
+    // 1. the joined text reaches the model and the overlap check: a 0.8 duplicate becomes a CHANGE, never a new entry
+    {
+      const db = fake({ match: 0.8 }); const m = llmSeq([JSON.stringify({ drafts: [newDraftX] }), JSON.stringify({ drafts: [] })]);
+      const read = [];
+      const r = await Pl.checkSource(pay, { ...baseDeps(db, m), entryTexts: async (ids) => { read.push(...ids); return [{ id: ENTRY.id, question: ENTRY.question, answer: ENTRY.answer }]; }, fetchPage: payingPage });
+      check('overlap-fail: the live search\'s matches are joined to their text - the model is shown the live entry, and a duplicate is not proposed as new',
+        read.includes(ENTRY.id) && m.asked[0]?.user.includes(ENTRY.question) && m.asked[0]?.user.includes(`id ${ENTRY.id}`) && !r.drafts.some((d) => d.kind === 'new'), JSON.stringify({ read, drafts: r.drafts }));
+    }
+    const stops = async (label, dbOpts, extra) => {
+      const db = fake(dbOpts); const m = llmSeq([JSON.stringify({ drafts: [newDraftX] })]);
+      const err = await Pl.checkSource(pay, { ...baseDeps(db, m), ...extra, fetchPage: payingPage }).then(() => null, (e) => e);
+      check(`overlap-fail: ${label} -> stops with "couldn't check existing entries" and proposes NOTHING`,
+        err instanceof Pl.OverlapCheckError && /couldn't check existing entries/.test(err.message) && !db.fns().some((f) => /propose/.test(f)),
+        err ? err.message : `no error; calls ${db.fns().join(',')}`);
+    };
+    await stops('the live search errors', { searchFails: true, match: 0.8 }, {});
+    await stops('a match comes back but its text cannot be read', { match: 0.8 }, { entryTexts: async () => [] });
+    await stops('reading the entries\' text errors', { match: 0.8 }, { entryTexts: async () => { throw new Error('timeout'); } });
+    await stops('the embedding for the search fails', { match: 0.8 }, { embed: async () => { throw new Error('401'); } });
+    await stops('there is no account to search with', { match: 0.8 }, { searcher: null });
+    // the OVERLAP search (after the model) failing also stops: first search fine, second fails
+    {
+      const db = fake({ match: 0.8 }); const m = llmSeq([JSON.stringify({ drafts: [newDraftX] })]);
+      const err = await Pl.checkSource(pay, { ...baseDeps(db, m), entryTexts: async (ids) => { if (m.asked.length > 0) throw new Error('connection reset'); return [{ id: ENTRY.id, question: ENTRY.question, answer: ENTRY.answer }]; }, fetchPage: payingPage }).then(() => null, (e) => e);
+      check('overlap-fail: the overlap check after drafting fails -> stops before proposing, no "New entry"',
+        err instanceof Pl.OverlapCheckError && m.asked.length >= 1 && !db.fns().some((f) => /propose/.test(f)), err ? err.message : 'no error');
+    }
+    // a re-draft proves the search works BEFORE superseding the open proposals
+    {
+      const db = fake({ searchFails: true }); const m = llmSeq([]);
+      const err = await Pl.redraftSource({ ...src16, suggested: [] }, 'x', { ...baseDeps(db, m), snapshotText: async () => payingX.text }).then(() => null, (e) => e);
+      check('overlap-fail: a re-draft whose search fails stops BEFORE kb_admin_source_redraft (the open proposals are left alone)',
+        err instanceof Pl.OverlapCheckError && !db.fns().includes('kb_admin_source_redraft'), err ? err.message : db.fns().join(','));
+    }
+    // the person sees it; every live caller passes the reader
+    const actsSrc = readFileSync(join(ROOT, 'app/watch/actions.ts'), 'utf8');
+    const routeSrc = readFileSync(join(ROOT, 'app/api/watcher/run/route.ts'), 'utf8');
+    check('overlap-fail: the actions show "Couldn\'t check existing entries" and every live caller passes the entry reader',
+      /function failure\([^)]*\): ActionState \{\s*if \(error instanceof OverlapCheckError\) \{/.test(actsSrc) && /Couldn't check existing entries/.test(actsSrc) &&
+      (actsSrc.match(/entryTexts: liveEntryTexts/g) ?? []).length === 2 && /entryTexts: liveEntryTexts/.test(routeSrc));
+    const wq = readFileSync(join(ROOT, 'lib/watchQueries.ts'), 'utf8');
+    check('overlap-fail: the entry reader reads question and answer of the live table, read-only (select)',
+      /export async function liveEntryTexts/.test(wq) && /select id::text as id, question, answer from public\.cb_knowledge_base_updated/.test(wq));
+    const plSrc = readFileSync(join(ROOT, 'lib/watcher/pipeline.ts'), 'utf8');
+    check('overlap-fail: the pipeline never filters matches on question/answer the search does not return',
+      !/x\.question && x\.answer/.test(plSrc) && !/if \(deps\.searcher\) \{/.test(plSrc) && !/deps\.searcher && planned/.test(plSrc));
   }
   // --- additive changes (2026-10-16): the entry is BUILT from additions and contradicted replacements
   {
