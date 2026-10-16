@@ -1617,6 +1617,11 @@ LEAVE_REASON_ASKED = True
 # on a question turn still gets its closing summary, with the answer first.
 # False = the old behaviour on both.
 SIDE_QUESTION_KEEPS_PENDING = True
+
+# Phone test 2026-10-16: the second half of a combined question that got a
+# partial answer is asked once more on its own instead of being filed
+# unanswered (last_question["partner"]). False: both halves count as asked.
+REASK_PAIR_PARTNER = True
 _NAMES_A_LEAVE_REASON = re.compile(
     r"\b(?:regular|annual|yearly|routine|usual|normal|holiday|vacation|break|contract"
     r"|festival|eid|raya|lebaran|christmas|new\s+year|thingyan|wedding|marr\w*|visit\w*"
@@ -2165,7 +2170,9 @@ _STYLE_ALL = re.compile(
     # "once", and asking for all of the questions in other words.
     r"|\bat\s+(?:ones|onece|onse|oncee|onc)\b|\ball\s+at\s+on\w*"
     r"|\b(?:ask|send|give|tell)\s+(?:me\s+)?(?:all|every(?:thing)?)\b"
-    r"|\ball\s+(?:the\s+)?q\w*s\b|\bevery\s+question"
+    # Phone test 2026-10-16, 4:05 PM: "all question" (singular) got one by one.
+    r"|\ball\s+(?:the\s+|your\s+)?(?:quest\w*|ques\w*|qs?)\b|\bevery\s+question"
+    r"|\b(?:ask|send|give)\s+(?:me\s+)?(?:them\s+)?all\b"
     r"|^\s*(?:all|second|2|the\s+second(?:\s+one)?)\s*[.!]*\s*$",
     re.IGNORECASE,
 )
@@ -4517,6 +4524,15 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         and bool(_ASKS_SOMETHING.search(state.get("incoming_text") or ""))
         and not str(extracted.get(pending_key) or "").strip()
     )
+    # Phone test 2026-10-16 (conversation 3766): "how would you like your rest
+    # days to work ... and what monthly salary are you hoping for?" got the rest
+    # days only, and the registration closed with the salary filed unanswered -
+    # the pair had counted the salary as asked. Half of a combined question
+    # left unanswered is asked once more on its own. See REASK_PAIR_PARTNER.
+    pair_partner = (
+        (state.get("last_question") or {}).get("partner")
+        if REASK_PAIR_PARTNER and isinstance(state.get("last_question"), dict) else None
+    )
     exhausted = {
         field.key: UNANSWERED
         for field in ticket_service.missing_fields(service_type, collected)
@@ -4526,6 +4542,10 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         and not (
             side_question
             and field.key == pending_key
+            and asked.get(field.key, 0) <= min(field.max_asks, MAX_ASKS_PER_FIELD)
+        )
+        and not (
+            field.key == pair_partner
             and asked.get(field.key, 0) <= min(field.max_asks, MAX_ASKS_PER_FIELD)
         )
     }
@@ -5700,7 +5720,8 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             "reply": reply,
             # What was just asked, so the next turn can tell whether it was
             # ever SENT - see _uncount_undelivered_question.
-            "last_question": {"key": next_field.key, "text": reply},
+            "last_question": {"key": next_field.key, "text": reply,
+                              "partner": partner.key if partner else None},
             "needs_handover": bool(state.get("needs_handover")),
             # Said once - _merge_unique accumulates, _TURN_RESET leaves it
             # alone. Recorded ONLY when the reply is not the bare fallback,

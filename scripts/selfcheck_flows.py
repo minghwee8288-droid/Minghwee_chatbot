@@ -973,7 +973,11 @@ rows = [
   [ico.chosen_style(m) for m in ("all at ones", "all at onece", "all questions", "ask all",
                                   "send me all", "one by one", "one at a time")],
   ["all", "all", "all", "all", "all", "one", "one"]),
- ("11. 'a helper in the Philippines' answers the direct-hire Singapore question; nationality alone or Singapore does not",
+ ("2026-10-16 4:05 PM: 'all question' (singular) and its kin mean all at once; one at a time still does not",
+  [ico.chosen_style(m) for m in ("all question", "All Question.", "all the question", "send all",
+                                  "send them all", "give me all", "one question at a time")],
+  ["all", "all", "all", "all", "all", "all", "one"]),
+ ("11.'a helper in the Philippines' answers the direct-hire Singapore question; nationality alone or Singapore does not",
   [ico.transfer_case_from_words({"history_text": "", "collected_since": None, "incoming_text": m_},
                                 "direct_hiring", {}, {}) for m_ in
    ("I found a Filipino helper in the Philippines and want a direct hire",

@@ -593,6 +593,7 @@ because the lead is opened early and the ticket is created much later.
 | A name typed with a typo of "myself" is still a name | `info_collector._NAME_LEAD_IN` + `name_in_reply` (`NAME_FROM_REPLY`) | "my vd growwstacks" got "Sorry, I didn't catch your name" and was then filed with the "my". The lead-in takes my / my self / mysef / my nam is; what is left must pass `_looks_like_a_person`. |
 | "On go" / "one go" mean all at once | `info_collector._STYLE_ALL` | A typo of "one go" got the questions one by one. "all at ones" / "all at onece" / "all questions" / "ask all" too (direct hire, 2026-10-16). |
 | Where the client says the helper is answers the direct-hire route question | `info_collector.transfer_case_from_words` (`HELPER_PLACE_FROM_WORDS`) | "I found a Filipino helper in the Philippines" was asked "Is she currently in Singapore...?". "in / still in / back in" PH, ID or MM, overseas, abroad or back home in the client's own lines for this request, with no Singapore or transfer word, files "no - she is in ..., not in Singapore". "from the Philippines" is her nationality and is not read as where she is. |
+| Half of a combined question left unanswered is asked once more on its own | `info_collector` (`last_question["partner"]`, the `exhausted` exception) (`REASK_PAIR_PARTNER`) | Phone test 2026-10-16 (3766): the rest-days + salary pair got the rest days only and the registration closed with the salary "not provided" - both halves had been counted as asked. Any flow; once only, then the ordinary limit. |
 | No "Perfect —" in front of a collector question | `info_collector.without_perfect_lead_in` (`NO_PERFECT_LEAD_IN`) + the acknowledgement examples in `COLLECTOR_INSTRUCTION` | "Perfect — what email address should we use for updates?" (2026-10-16). The model's own lead-in, not the field's text (fixed the same day). |
 | No lead time where we hold none (a Myanmar home leave) | `guards.guard_unheld_timeline` inside `guard_nationality_fee`, all three reply paths (`NO_UNHELD_TIMELINE`, `TIMELINE_NOT_HELD`) | Fees document 2026-10-15: a helper's own Myanmar home leave was told "approximately 2 weeks" (the Indonesian span). A sentence giving a lead time is replaced with "Our agent will confirm the timeline for a Myanmar helper's home leave."; the embassy endorsement's ~10 working days (every nationality) is kept. |
 | The agency's fees document is the source of truth for fees, timelines and wording | `load_service_notes.py` (ROWS + generated UPDATES, `TEXT_REPLACEMENTS`), `kb_rules` floors | 2026-10-15, with the client's decisions A-G: $288 replacement fee everywhere, direct hire 1-2 weeks here and PH 5-6 / ID 4 / MM 2-4 weeks after MOM approval, salary floors PH 650 / ID 550 / MM 500, the +$60 lines in the document's words, "falls under her package" never "guarantee period". The .docx is in `docs/`, kept out of git. A closing briefing now also states a fixed fee plainly from its OWN records (`info_collector._write`). |
@@ -929,7 +930,9 @@ Easy to get wrong:
   from a reply to the list), `info_collector.NAME_FROM_REPLY` (the typed name
   taken when the extractor misses it), `info_collector.HELPER_PLACE_FROM_WORDS`
   (where the client says the helper is answers the direct-hire route question),
-  `info_collector.NO_PERFECT_LEAD_IN` (no "Perfect —" lead-in).
+  `info_collector.NO_PERFECT_LEAD_IN` (no "Perfect —" lead-in),
+  `info_collector.REASK_PAIR_PARTNER` (the unanswered half of a combined
+  question is asked once more).
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2015,6 +2018,17 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-16** - **Job-seeker phone test (3766, 4:04-4:12 PM IST).** (1) "all
+  question" (singular) was read as one by one: `_STYLE_ALL` wanted a plural.
+  Any form of "all question(s)", "ask/send/give (me/them) all" now means all at
+  once. (2) "how would you like your rest days ... and what monthly salary are
+  you hoping for?" got the rest days only, and the registration closed with
+  the salary "not provided": both halves of a pair are counted as asked and
+  both are `max_asks=1`. `last_question` now records the pair's partner, and
+  the `exhausted` rule spares it once, so it is asked on its own
+  (`REASK_PAIR_PARTNER`, every flow). Replayed read-only: 3 of 3 ask the
+  salary; switch off, 1 of 1 closes as live. One assertion each, both faults red.
 
 - **2026-10-16** - **Phone-test fast fixes (items 1-9).** Today's test
   conversations had been cleared by a reset, so each was rebuilt from the
