@@ -230,10 +230,10 @@ export async function draftFromSnapshot(
 
   const prompt = buildPrompt({ label: source.label, url: source.url, added: passages, removed: change.removed.slice(0, 40), candidates });
   const raw = await deps.llm(prompt.system, prompt.user);
-  const parsed = parseDrafts(raw, { newText: snap.text, candidateIds: candidates.map((c) => c.id) });
-  const dropped = [...parsed.dropped];
   // The live text of every entry a draft may change (candidates, and entries a new draft is turned into a change to).
   const liveById = new Map<string, { question: string; answer: string }>(candidates.map((c) => [c.id, c]));
+  const parsed = parseDrafts(raw, { newText: snap.text, candidateIds: candidates.map((c) => c.id), live: liveById });
+  const dropped = [...parsed.dropped];
 
   // --- the overlap check ------------------------------------------------------
   type Planned = { draft: ProposedDraft; overlap: Overlap };
@@ -256,7 +256,7 @@ export async function draftFromSnapshot(
     if (retarget.length) {
       for (const r of retarget) liveById.set(r.entry.id, r.entry);
       const merge = buildMergePrompt({ label: source.label, url: source.url, pairs: retarget.map((r) => ({ entry: r.entry, draft: planned[r.i].draft })) });
-      const merged = parseDrafts(await deps.llm(merge.system, merge.user), { newText: snap.text, candidateIds: retarget.map((r) => r.entry.id) });
+      const merged = parseDrafts(await deps.llm(merge.system, merge.user), { newText: snap.text, candidateIds: retarget.map((r) => r.entry.id), live: liveById });
       dropped.push(...merged.dropped.map((d) => `(change instead of a new entry) ${d}`));
       for (const r of retarget) {
         const m = merged.drafts.find((d) => d.target_entry_id === r.entry.id);
@@ -270,7 +270,7 @@ export async function draftFromSnapshot(
       return [{ draft, overlap: assessOverlap({ question: draft.question, answer: draft.answer, targetId: draft.target_entry_id }, matches[i]) }];
     });
   }
-  // No rewording-only updates: a change must add a figure or an actionable sentence the live entry does not carry.
+  // No rewording-only changes: a change must add a figure or an actionable sentence the live entry does not carry.
   planned = planned.filter(({ draft }) => {
     const live = draft.target_entry_id ? liveById.get(draft.target_entry_id) : undefined;
     const why = live ? rewordingOnlyReason(live, draft) : null;

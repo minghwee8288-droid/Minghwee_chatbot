@@ -891,14 +891,18 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
   // --- drafting: only verifiable proposals survive ----------------------------
   const page = v2.text;
   const cand = [{ id: '11111111-1111-1111-1111-111111111111', question: 'How many rest days?', answer: 'One a week.' }];
-  const goodDraft = { target_entry_id: cand[0].id, question: 'How many rest days?', answer: 'One a week; from 2027 it goes in the contract.', source_passage: 'From 1 January 2027, the rest-day arrangement must be recorded in the employment contract.', why: 'x' };
+  const restPassage = 'From 1 January 2027, the rest-day arrangement must be recorded in the employment contract.';
+  // A change to an existing entry is additive (2026-10-16): what to add, and what the page contradicts.
+  const goodDraft = { target_entry_id: cand[0].id, add: [{ sentence: 'From 1 January 2027 the rest-day arrangement must be recorded in the employment contract.', after: '', source_passage: restPassage }], replace: [], why: 'x' };
+  const newBase = { target_entry_id: null, question: 'How many rest days?', answer: 'One a week; from 2027 it goes in the contract.', source_passage: restPassage, why: 'x' };
+  const liveCand = new Map(cand.map((c) => [c.id, c]));
   const parsed = Dr.parseDrafts(JSON.stringify({ drafts: [
     goodDraft,
     { ...goodDraft, target_entry_id: '99999999-9999-9999-9999-999999999999' },
-    { ...goodDraft, target_entry_id: null, source_passage: 'A sentence the page never said.' },
-    { ...goodDraft, target_entry_id: null, answer: 'x'.repeat(1300) },
-    { ...goodDraft, target_entry_id: null, answer: 'Her FIN is G1234567X.' },
-  ] }), { newText: page, candidateIds: cand.map((c) => c.id) });
+    { ...newBase, source_passage: 'A sentence the page never said.' },
+    { ...newBase, answer: 'x'.repeat(1300) },
+    { ...newBase, answer: 'Her FIN is G1234567X.' },
+  ] }), { newText: page, candidateIds: cand.map((c) => c.id), live: liveCand });
   check('drafting: a draft citing the page word for word, for an offered entry, survives', parsed.drafts.length === 1 && parsed.drafts[0].target_entry_id === cand[0].id);
   check('drafting: an unoffered entry, a passage not on the page, over 1,200 characters and an NRIC are each dropped',
     parsed.dropped.length === 4 && parsed.dropped.some((d) => /not offered/.test(d)) && parsed.dropped.some((d) => /not on the page/.test(d)) &&
@@ -957,7 +961,7 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
   check('pipeline: a real change -> the closest entries are found, the model is asked, one proposal is made with its passage',
     changed.outcome === 'changed' && llmCalls === 2 && db1.proposals.length === 1 && db1.proposals[0].passage.startsWith('From 1 January 2027') &&
     db1.log.includes('kb_admin_match_live'), JSON.stringify(changed));
-  const feeAnswer = JSON.stringify({ drafts: [{ ...goodDraft, answer: 'One a week, or S$40 in lieu.' }] });
+  const feeAnswer = JSON.stringify({ drafts: [{ ...goodDraft, add: [{ sentence: 'From 2027 she may be paid S$40 in lieu.', after: '', source_passage: restPassage }] }] });
   const db2 = fakeDb();
   const feeRun = await Pl.checkSource(src0, { ...deps(pageFrom('page_v2_changed.html'), feeAnswer), call: db2.call, previousText: async () => v1.text });
   check('pipeline: a proposal touching money is still recorded - as BLOCKED, needing agency confirmation', feeRun.drafts.length === 1 && feeRun.drafts[0].status === 'blocked');
@@ -1345,12 +1349,13 @@ console.log('KB watcher drafting: overlap check, low-value proposals, index page
       db0.calls.find((c) => c.fn === 'kb_admin_watch_propose')?.params.length === 13 && !db0.fns().includes('kb_admin_watch_propose_checked'));
   }
   {
-    const merged = { target_entry_id: ENTRY.id, question: ENTRY.question, answer: 'At the normal rate it is $300 a month; pay it by the 17th of the following month.', source_passage: passage, why: '' };
+    const merged = { target_entry_id: ENTRY.id, add: [{ sentence: 'Pay it by the 17th of the following month.', after: '', source_passage: passage }], replace: [], why: '' };
     const db = fake({ match: 0.81 }); const m = llmSeq([JSON.stringify({ drafts: [newDraft] }), JSON.stringify({ drafts: [merged] })]);
     const r = await Pl.checkSource({ ...src16, url: `${LEVY}/paying-levy` }, { ...baseDeps(db, m), fetchPage: payingPage });
     const p = db.calls.find((c) => c.fn === 'kb_admin_watch_propose_checked');
-    check('pipeline: a NEW draft that duplicates a live entry (0.81) becomes a CHANGE to that entry (a second model call writes its full text)',
-      m.asked.length === 2 && /EXISTING entry id cccccccc/.test(m.asked[1].user) && p?.params[3] === ENTRY.id && r.drafts[0]?.kind === 'edit', JSON.stringify(r));
+    check('pipeline: a NEW draft that duplicates a live entry (0.81) becomes a CHANGE to that entry (a second model call says what to add; the entry is built from it)',
+      m.asked.length === 2 && /EXISTING entry id cccccccc/.test(m.asked[1].user) && p?.params[3] === ENTRY.id && r.drafts[0]?.kind === 'edit' &&
+      p?.params[5] === `${ENTRY.answer} Pay it by the 17th of the following month.` && p?.params[4] === ENTRY.question, JSON.stringify(r));
     check('pipeline: ...and the entry it changes is not listed as "similar" to itself', p?.params[13] === null);
     const db2 = fake({ match: 0.81 }); const m2 = llmSeq([JSON.stringify({ drafts: [newDraft] }), '{"drafts":[]}']);
     const r2 = await Pl.checkSource({ ...src16, url: `${LEVY}/paying-levy` }, { ...baseDeps(db2, m2), fetchPage: payingPage });
@@ -1458,14 +1463,18 @@ console.log('KB watcher drafting: overlap check, low-value proposals, index page
     /<h2 className="text-\[15px\] font-semibold">Points removed<\/h2>/.test(review2) && /color: 'var\(--bad\)'/.test(review2) &&
     /title="This update drops existing information"/.test(review2) && /const drops = open && removed\.some\(\(r\) => !r\.contradictedBy\);/.test(review2) &&
     /viewer\.canApprove && !lock && !stale && !drops \?/.test(review2) && /<EditProposalForm draftId=/.test(review2) &&
-    /\{open \? <PointsRemoved points=\{removed\} \/> : null\}/.test(review2));
+    /\{drops \? <PointsRemoved points=\{removed\.filter\(\(r\) => !r\.contradictedBy\)\} \/> : null\}/.test(review2));
   const actions2 = src('app/watch/actions.ts');
   check('facts: the approve action refuses it too (the page is not the only lock)',
     /unjustifiedRemovals\(draft\.current_answer, draft\.proposed_answer, draft\.source_passage, draft\.proposed_question\)\.length\) \{\n    return \{ error: 'This update drops existing information\./.test(actions2) &&
     actions2.indexOf('unjustifiedRemovals(draft.current_answer') < actions2.indexOf('result = await approveAndPublish('));
-  check('facts: both drafting prompts tell the model to keep every fact of the entry it changes',
-    /keep EVERY fact it states/.test(Dr.buildPrompt({ label: 'l', url: 'u', added: [], removed: [], candidates: [] }).system) &&
-    /Keep EVERY fact the existing entry states/.test(OV.buildMergePrompt({ label: 'l', url: 'u', pairs: [] }).system));
+  {
+    const p1 = Dr.buildPrompt({ label: 'l', url: 'u', added: [], removed: [], candidates: [] }).system;
+    const p2 = OV.buildMergePrompt({ label: 'l', url: 'u', pairs: [] }).system;
+    check('additive: both drafting prompts ask for additions and contradicted replacements only, never a rewritten entry',
+      [p1, p2].every((x) => /DO NOT rewrite it/.test(x) && /"replace": only where the page DIRECTLY CONTRADICTS/.test(x) && /"add":/.test(x) &&
+        x.includes('"add":[{"sentence":string,"after":string,"source_passage":string}]')) && !p2.includes('"answer":string'));
+  }
 
   // 3. No rewording-only changes.
   {
@@ -1476,17 +1485,116 @@ console.log('KB watcher drafting: overlap check, low-value proposals, index page
       FD.rewordingOnlyReason(live, { ...live, answer: `${live.answer} Pay it by the 17th of the following month.` }) === null &&
       FD.rewordingOnlyReason(live, { ...live, answer: `${live.answer} The daily rate is $9.87.` }) === null &&
       FD.rewordingOnlyReason(live, { ...live, answer: `${live.answer} The concessionary rate applies to families with a young child, an elderly member or a person with a disability.` }) === null);
-    const reworded = { target_entry_id: ENTRY.id, question: 'What is the monthly levy?', answer: 'For your first helper the normal rate is $300 a month.', source_passage: 'Normal (1st helper) $300', why: '' };
+    const reworded = { target_entry_id: ENTRY.id, add: [{ sentence: 'For your first helper the normal rate is $300 a month.', after: '', source_passage: 'Normal (1st helper) $300' }], replace: [], why: '' };
     const db = fake({ match: 0.5 }); const m = llmSeq([JSON.stringify({ drafts: [reworded] })]);
     const r = await Pl.checkSource({ ...src16, url: `${LEVY}/paying-levy` }, { ...baseDeps(db, m), fetchPage: payingPage });
-    check('reword: the pipeline does not propose a change that only rewords the live entry', r.drafts.length === 0 && r.dropped.some((d) => /only rewords/.test(d)) && !db.fns().some((f) => /propose/.test(f)), JSON.stringify(r));
-    const adds = { ...reworded, answer: 'For your first helper the normal rate is $300 a month. Pay it by the 17th of the following month.', source_passage: passage };
+    check('reword: the pipeline does not propose a change that only rewords the live entry', r.drafts.length === 0 && r.dropped.some((d) => /already says/.test(d)) && r.dropped.some((d) => /adds nothing and replaces nothing/.test(d)) && !db.fns().some((f) => /propose/.test(f)), JSON.stringify(r));
+    const adds = { ...reworded, add: [...reworded.add, { sentence: 'Pay it by the 17th of the following month.', after: '', source_passage: passage }] };
     const db2 = fake({ match: 0.5 }); const m2 = llmSeq([JSON.stringify({ drafts: [adds] })]);
     const r2 = await Pl.checkSource({ ...src16, url: `${LEVY}/paying-levy` }, { ...baseDeps(db2, m2), fetchPage: payingPage });
     check('reword: ...and does propose one that adds a deadline', r2.drafts.length === 1 && r2.drafts[0].kind === 'edit', JSON.stringify(r2));
-    check('reword: both drafting prompts forbid rewording-only changes',
-      /only rewords an existing entry/.test(Dr.buildPrompt({ label: 'l', url: 'u', added: [], removed: [], candidates: [] }).system) &&
-      /never return a change that only rewords it/.test(OV.buildMergePrompt({ label: 'l', url: 'u', pairs: [] }).system));
+    check('reword: both drafting prompts forbid rewording and restating',
+      [Dr.buildPrompt({ label: 'l', url: 'u', added: [], removed: [], candidates: [] }).system, OV.buildMergePrompt({ label: 'l', url: 'u', pairs: [] }).system]
+        .every((x) => /Never replace a sentence to reword, shorten or tidy it, and never add a fact the entry already states/.test(x)));
+  }
+  // --- additive changes (2026-10-16): the entry is BUILT from additions and contradicted replacements
+  {
+    const AD = await import(pathToFileURL(join(ROOT, 'lib/watcher/additive.ts')).href);
+    const live = { question: FDW.question, answer: FDW.answer };
+    const liveSentences = FD.sentencesOf(FDW.answer);
+    const a1 = AD.parseUpdate({ add: [{ sentence: 'Pay it by the 17th of the following month', after: 'You will usually pay it through GIRO', source_passage: passage }] }, live, payText);
+    const out1 = a1.built?.answer ?? '';
+    const pos = liveSentences.map((x) => out1.indexOf(x));
+    check('additive: an addition keeps every live sentence verbatim and in order, and goes right after the sentence it names',
+      a1.built !== null && pos.every((x, i) => x >= 0 && (i === 0 || x > pos[i - 1])) &&
+      out1.includes('payment. Pay it by the 17th of the following month. You must never') && out1.length === FDW.answer.length + ' Pay it by the 17th of the following month.'.length, out1);
+    check('additive: an addition with no anchor goes at the end; the question never changes',
+      AD.parseUpdate({ add: [{ sentence: 'Pay it by the 17th of the following month.', after: '', source_passage: passage }] }, live, payText).built?.answer === `${FDW.answer} Pay it by the 17th of the following month.`);
+    check('additive: the source passage stored is the page\'s own span (on the page, the database finds it verbatim)',
+      a1.built !== null && payText.includes(a1.built.sourcePassage) && a1.built.sourcePassage.includes('17'));
+    check('additive: nothing removed from a built change, so the safety net never fires on it',
+      FD.unjustifiedRemovals(FDW.answer, out1, a1.built?.sourcePassage ?? '', FDW.question).length === 0 && FD.removedPoints(FDW.answer, out1, '', FDW.question).length === 0);
+    const page2 = 'Levy rates. The monthly levy for the 1 st helper is $350. You must pay the levy by the 17th of the following month.';
+    const live2 = { question: 'How much is the levy?', answer: 'The monthly levy is $300 for the first helper. Pay the levy by the 15th of the following month. It is never deducted from her salary.' };
+    const r2 = AD.parseUpdate({ replace: [
+      { old: 'The monthly levy is $300 for the first helper.', new: 'The monthly levy is $350 for the first helper.', source_passage: 'The monthly levy for the 1st helper is $350.' },
+      { old: 'Pay the levy by the 15th of the following month.', new: 'Pay the levy by the 17th of the following month.', source_passage: 'You must pay the levy by the 17th of the following month.' },
+    ] }, live2, page2);
+    check('additive: a sentence the page contradicts is replaced in place (a figure, and a bare date number), with the contradiction recorded',
+      r2.built?.answer === 'The monthly levy is $350 for the first helper. Pay the levy by the 17th of the following month. It is never deducted from her salary.' &&
+      r2.built.replaced.length === 2 && r2.built.replaced.every((x) => x.contradiction), JSON.stringify(r2));
+    check('additive: ...the safety net does not fire on contradicted replacements (the same test decides both)',
+      FD.unjustifiedRemovals(live2.answer, r2.built?.answer ?? '', r2.built?.sourcePassage ?? '', live2.question).length === 0);
+    const r3 = AD.parseUpdate({ replace: [{ old: 'It is never deducted from her salary.', new: 'It must never be taken from her pay.', source_passage: 'You must pay the levy by the 17th of the following month.' }] }, live2, page2);
+    check('additive: a replacement the source does not contradict (rewording) is refused, and the live sentence kept',
+      r3.built === null && r3.dropped.some((d) => /does not contradict/.test(d)) && r3.dropped.some((d) => /adds nothing and replaces nothing/.test(d)), JSON.stringify(r3));
+    const r4 = AD.parseUpdate({ replace: [
+      { old: 'The monthly levy is $250 for the first helper.', new: 'The monthly levy is $350 for the first helper.', source_passage: 'The monthly levy for the 1st helper is $350.' },
+      { old: 'the levy', new: 'The levy', source_passage: 'The monthly levy for the 1st helper is $350.' },
+      { old: 'The monthly levy is $300', new: 'The monthly levy is $350 a month', source_passage: 'The monthly levy for the 1st helper is $350.' },
+    ], add: [{ sentence: 'It is never deducted from her salary at all.', after: '', source_passage: 'You must pay the levy by the 17th of the following month.' }, { sentence: 'Pay online.', after: '', source_passage: 'Pay online through the portal.' }] }, live2, page2);
+    check('additive: refused - an "old" sentence not in the entry, a fragment, a clause of a sentence, an addition the entry already says, a passage not on the page',
+      r4.built === null && r4.dropped.some((d) => /not in the live entry/.test(d)) && r4.dropped.some((d) => /fragment/.test(d)) &&
+      r4.dropped.filter((d) => /not in the live entry/.test(d)).length === 2 && r4.dropped.some((d) => /already says/.test(d)) && r4.dropped.some((d) => /not on the page/.test(d)), JSON.stringify(r4.dropped));
+    // The live entry as it is on production, plus the two additions run 1 of the dry run made before these sentences.
+    const fdwFull = "The levy is a monthly fee the Government charges employers of Migrant Domestic Workers. It is a pricing mechanism to manage the number of foreign workers in Singapore - it is not a tax on your helper and it is never deducted from her salary. As the employer, you pay it on top of everything else. The levy starts when your helper's Work Permit is issued and stops when it is cancelled. You will usually pay it through GIRO, which is the simplest way to avoid missing a payment. Important: the levy is your responsibility as the employer. You must never recover it from your helper's wages. Missing levy payments can affect your ability to renew or hire in future, so a GIRO arrangement is strongly recommended. For a first-time helper, the levy begins on the fifth day of her arrival, including the arrival date; otherwise, it begins the day after she arrives. You must pay the levy for each month by the 17th of the following month, or the next working day if the date falls on a Saturday, Sunday or public holiday.";
+    check('additive: "already says" is strict - a genuinely new fact near an existing one is added (dry run: revocation after two missed payments), a restatement is not',
+      !FD.alreadySays(`${FDW.question}\n${fdwFull}`, 'Your helper\'s Work Permit will be revoked the following month if you miss levy payments for two consecutive months.') &&
+      !FD.alreadySays(`${FDW.question}\n${fdwFull}`, 'If you do not pay the full levy on time, you will be charged a late payment penalty.') &&
+      FD.alreadySays(`${FDW.question}\n${fdwFull}`, 'You must never recover the levy from your helper\'s wages.'));
+    // A rule the page states differently (no figure to compare) - the dry runs' levy start/end sentence.
+    const page3 = 'For first-time helpers , the levy will begin on the 5th day of their arrival. The levy ends when the Work Permit is cancelled or expires. Apply for GIRO to pay the levy.';
+    const live3 = { question: 'What is the FDW levy?', answer: 'The levy is a monthly fee. The levy starts when your helper\'s Work Permit is issued and stops when it is cancelled. You will usually pay it through GIRO, which is the simplest way to avoid missing a payment.' };
+    const r5 = AD.parseUpdate({ replace: [{ old: 'The levy starts when your helper\'s Work Permit is issued and stops when it is cancelled.', new: 'The levy ends when the Work Permit is cancelled or expires.', source_passage: 'The levy ends when the Work Permit is cancelled or expires.' }] }, live3, page3);
+    check('additive: a rule the page states differently (no figure) is replaced, with the page line shown, and the safety net accepts it',
+      r5.built?.answer === 'The levy is a monthly fee. The levy ends when the Work Permit is cancelled or expires. You will usually pay it through GIRO, which is the simplest way to avoid missing a payment.' &&
+      /states it differently/.test(r5.built.replaced[0].contradiction) &&
+      AD.contradictingLine(r5.built.sourcePassage, r5.built.replaced[0].old, r5.built.replaced[0].new) === 'The levy ends when the Work Permit is cancelled or expires.' &&
+      FD.unjustifiedRemovals(live3.answer, r5.built.answer, r5.built.sourcePassage, live3.question).length === 0, JSON.stringify(r5));
+    const r6 = AD.parseUpdate({ replace: [
+      { old: 'You will usually pay it through GIRO, which is the simplest way to avoid missing a payment.', new: 'Apply for GIRO to pay the levy.', source_passage: 'Apply for GIRO to pay the levy.' },
+      { old: 'The levy is a monthly fee.', new: 'The levy ends when the Work Permit is cancelled or expires.', source_passage: 'The levy ends when the Work Permit is cancelled or expires.' },
+      { old: 'The levy is a monthly fee. The levy starts when your helper\'s Work Permit is issued and stops when it is cancelled.', new: 'The levy ends when the Work Permit is cancelled or expires.', source_passage: 'The levy ends when the Work Permit is cancelled or expires.' },
+    ] }, live3, page3);
+    const live4 = { question: 'How much is the levy?', answer: 'The monthly levy is $300 for the first helper.' };
+    const r7 = AD.parseUpdate({ replace: [{ old: 'The monthly levy is $300 for the first helper.', new: 'The levy for the first helper is charged every month.', source_passage: 'The levy for the first helper is charged every month.' }] }, live4, 'The levy for the first helper is charged every month.');
+    const live5 = { question: 'Can I take the levy from her pay?', answer: 'You must never recover the levy from your helper\'s wages.' };
+    const page5 = 'Employers must not recover the levy from the helper\'s salary or wages.';
+    const r8 = AD.parseUpdate({ replace: [{ old: live5.answer, new: page5, source_passage: page5 }] }, live5, page5);
+    check('additive: refused as replacements - a page line on the same topic that drops a point, one on another subject, two sentences at once, one that drops a figure, and rewording a sentence the page agrees with',
+      r6.built === null && r6.dropped.filter((d) => /does not contradict/.test(d)).length === 2 && r6.dropped.some((d) => /not in the live entry/.test(d)) &&
+      r7.built === null && r8.built === null, JSON.stringify([r6.dropped, r7.dropped, r8.dropped]));
+    const fit = AD.parseUpdate({ add: [
+      { sentence: 'Pay it by the 17th of the following month.', after: '', source_passage: passage },
+      { sentence: 'x '.repeat(400) + 'end.', after: '', source_passage: passage },
+    ] }, live, payText, live.question.length + live.answer.length + 60);
+    check('additive: over the 1,200-character limit, additions are taken in order while they fit and the rest dropped by name (not the whole change)',
+      fit.built?.answer === `${FDW.answer} Pay it by the 17th of the following month.` && fit.dropped.some((d) => /over \d+ characters/.test(d)), JSON.stringify(fit.dropped));
+    const segs = AD.entryDiff(live2.answer, r2.built?.answer ?? '');
+    check('additive: the review diff shows replaced (old -> new) and unchanged sentences',
+      segs.filter((x) => x.kind === 'replaced').length === 2 && segs.filter((x) => x.kind === 'same').length === 1 && segs[0].kind === 'replaced' && segs[0].old.includes('$300') && segs[0].new.includes('$350'));
+    const segs1 = AD.entryDiff(FDW.answer, out1);
+    check('additive: ...and an added sentence where it was placed, everything else unchanged',
+      segs1.map((x) => x.kind).join(',') === `${liveSentences.slice(0, 3).map(() => 'same').join(',')},added,same` && segs1[3].text === 'Pay it by the 17th of the following month.', JSON.stringify(segs1));
+    check('additive: a removal by a person\'s Edit is shown as removed', AD.entryDiff('A one. B two.', 'A one.').some((x) => x.kind === 'removed' && x.text === 'B two.'));
+    check('additive: the contradicting line of the source is shown for a replacement',
+      /\$350/.test(AD.contradictingLine(r2.built?.sourcePassage ?? '', 'The monthly levy is $300 for the first helper.') ?? ''));
+    const whole = Dr.parseDrafts(JSON.stringify({ drafts: [{ target_entry_id: ENTRY.id, question: ENTRY.question, answer: 'A whole new answer of $300 a month.', source_passage: passage }] }),
+      { newText: payText, candidateIds: [ENTRY.id], live: new Map([[ENTRY.id, ENTRY]]) });
+    check('additive: a change written as a whole new answer is refused (never rewritten)', whole.drafts.length === 0 && /whole new answer/.test(whole.dropped.join(' ')));
+    const built = Dr.parseDrafts(JSON.stringify({ drafts: [{ target_entry_id: ENTRY.id, question: 'A question the model made up?', answer: 'Ignored.', add: [{ sentence: 'Pay it by the 17th of the following month.', after: '', source_passage: passage }], why: 'w' }] }),
+      { newText: payText, candidateIds: [ENTRY.id], live: new Map([[ENTRY.id, ENTRY]]) });
+    check('additive: parseDrafts builds the change - the live question (never one the model wrote), live answer plus the addition, what was added recorded',
+      built.drafts.length === 1 && built.drafts[0].question === ENTRY.question && built.drafts[0].answer === `${ENTRY.answer} Pay it by the 17th of the following month.` &&
+      built.drafts[0].change?.added.length === 1 && built.drafts[0].change.replaced.length === 0, JSON.stringify(built));
+    const review3 = src('app/watch/[id]/page.tsx');
+    check('additive: the review page shows a change as added (green), replaced (old -> new with the source) and unchanged (grey)',
+      /const segments = draft\.kind === 'edit' && draft\.current_answer \? entryDiff\(draft\.current_answer, draft\.proposed_answer\) : null;/.test(review3) &&
+      /<EntryChanges question=\{draft\.proposed_question\} segments=\{segments\} sourcePassage=\{draft\.source_passage\} \/>/.test(review3) &&
+      /data-seg="added"/.test(review3) && /var\(--good-bg\)/.test(review3) && /data-seg="replaced"/.test(review3) && /contradictingLine\(sourcePassage, x\.old, x\.new\)/.test(review3) &&
+      /data-seg="same"/.test(review3) && /className="border-l-2 pl-3 text-muted"/.test(review3));
+    check('additive: additive.ts, passage.ts and changeRules.ts import no database, network or environment code',
+      ['lib/watcher/additive.ts', 'lib/watcher/passage.ts', 'lib/watcher/changeRules.ts'].every((f) => !/from '(postgres|\.\.?\/(db|write|env|embed)|@\/lib\/(db|write|env|embed))'|process\.env|(?<![.\w])fetch\(/.test(src(f))));
   }
   check('factDiff imports no database, network or environment code',
     !/from '(postgres|\.\.?\/(db|write|env|embed)|@\/lib\/(db|write|env|embed))'|process\.env|(?<![.\w])fetch\(/.test(src('lib/watcher/factDiff.ts')));

@@ -1,4 +1,5 @@
 import { extractFacts } from '../facts.ts';
+import { UPDATE_RULES, UPDATE_SHAPE } from './changeRules.ts';
 
 /**
  * The overlap check. PURE: the search itself (kb_admin_match_live, the bot's
@@ -8,7 +9,8 @@ import { extractFacts } from '../facts.ts';
  * knowledge base:
  *   - a live Q&A entry at or above EDIT_INSTEAD_SIMILARITY already answers
  *     the same question, so the proposal becomes a change to THAT entry (one
- *     more model call, which writes the full new text of the entry); if the
+ *     more model call, which returns only what to add and which contradicted
+ *     sentences to replace - lib/watcher/additive.ts builds the entry); if the
  *     entry already says everything, nothing is proposed;
  *   - every live entry at or above SIMILAR_SIMILARITY is listed on the
  *     proposal ("Similar existing entries": link, similarity, and every
@@ -44,6 +46,9 @@ export type SimilarNote = {
 };
 
 const FIGURE_KINDS = new Set(['money', 'percent', 'span']);
+// For a contradiction inside one entry (lib/watcher/factDiff.ts): a bare number
+// counts too, so a deadline "the 15th" against "the 17th" is a contradiction.
+const WITH_NUMBERS = new Set([...FIGURE_KINDS, 'number']);
 
 // Words that say nothing about WHAT a figure is (every levy, salary and fee
 // sentence has them), so they cannot tie two figures to the same subject.
@@ -72,10 +77,10 @@ const contentWords = (s: string) =>
  * Read per sentence, the salary would share "levy" with the levy (dry run
  * 2026-10-16: a $450 levy "against" a $500 salary).
  */
-function figureList(text: string): Figure[] {
+function figureList(text: string, kinds: Set<string> = FIGURE_KINDS): Figure[] {
   const out: Figure[] = [];
   for (const sentence of text.split(/(?<=[.!?])\s+|\n+/)) {
-    const facts = extractFacts(sentence).filter((f) => FIGURE_KINDS.has(f.kind));
+    const facts = extractFacts(sentence).filter((f) => kinds.has(f.kind));
     if (!facts.length) continue;
     const sentencePeriod = period(sentence);
     for (const f of facts) {
@@ -97,9 +102,10 @@ function figureList(text: string): Figure[] {
  * "conflicted" with salary entries ($300 levy against $650 salary) and a daily
  * rate ($1.98) with a yearly saving ($2,880).
  */
-export function compareFigures(proposal: string, entry: string): Pick<SimilarNote, 'differs' | 'conflicts'> {
-  const a = figureList(proposal);
-  const b = figureList(entry);
+export function compareFigures(proposal: string, entry: string, opts: { numbers?: boolean } = {}): Pick<SimilarNote, 'differs' | 'conflicts'> {
+  const kinds = opts.numbers ? WITH_NUMBERS : FIGURE_KINDS;
+  const a = figureList(proposal, kinds);
+  const b = figureList(entry, kinds);
   const factsA = new Set(a.map((f) => `${f.kind}|${f.fact}`));
   const factsB = new Set(b.map((f) => `${f.kind}|${f.fact}`));
   const kindsA = new Set(a.map((f) => f.kind));
@@ -162,16 +168,15 @@ export function buildMergePrompt(p: {
 }): { system: string; user: string } {
   const system = [
     'You maintain the knowledge base of a WhatsApp assistant for Ming Hwee, a licensed Singapore domestic-helper employment agency.',
-    'Each EXISTING entry below already answers the question of a NEW draft made from a watched public page. Instead of a second entry, give the full new question and answer for the EXISTING entry.',
+    'Each EXISTING entry below already answers the question of a NEW draft made from a watched public page. Instead of a second entry, say what the EXISTING entry needs from the page.',
     'Rules:',
-    '- Keep the existing wording, and its question, wherever the page does not require a change. Change only what the page passage says differently, or add what it adds.',
-    '- Use ONLY what the page passage says. Never add facts, figures, dates or advice that are not in it or in the existing entry.',
-    '- Keep EVERY fact the existing entry states (each figure, rule, condition, step) unless the page passage contradicts it; add the new fact from the page to it. Never drop a point just to shorten or tidy it.',
-    '- If the existing entry already says everything the passage says, return no draft for it: never return a change that only rewords it.',
+    UPDATE_RULES,
+    '- Use ONLY what the page passage says. Never add facts, figures, dates or advice that are not in it.',
+    '- If the existing entry already says everything the passage says, return no draft for it.',
     '- Never propose anything about agency fees or prices; leave money to the agency.',
-    '- Plain sentences for a client on WhatsApp: no headings, bullets or markdown; question plus answer at most 1,000 characters.',
-    '- source_passage must be copied word for word from the page passage given for that entry, character for character (keep odd spacing; never tidy or reorder it).',
-    'Answer with JSON only: {"drafts":[{"target_entry_id":string,"question":string,"answer":string,"source_passage":string,"why":string}]}',
+    '- Plain sentences for a client on WhatsApp: no headings, bullets or markdown.',
+    '- Every source_passage must be copied word for word from the page passage given for that entry, character for character (keep odd spacing; never tidy or reorder it).',
+    `Answer with JSON only: {"drafts":[${UPDATE_SHAPE}]}`,
   ].join('\n');
   const user = [
     `Page: ${p.label} (${p.url})`,

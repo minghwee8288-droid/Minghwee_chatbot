@@ -15,7 +15,7 @@ import { actionableKinds, isPointerSentence } from './quality.ts';
  *     banner (Edit stays available), and the approve action refuses it.
  *     One dry run proposed a new "What is the FDW levy?" that left out "it is
  *     not a tax on your helper" and the GIRO point.
- *   - No rewording-only updates. A change that adds no new figure and no new
+ *   - No rewording-only changes. A change that adds no new figure and no new
  *     sentence carrying a fact a client can act on (an amount, a rule, a
  *     deadline, an eligibility condition or a step) is not proposed. The
  *     dry runs proposed "How much is the monthly levy..." with exactly the
@@ -60,15 +60,74 @@ export function contentWords(text: string): string[] {
 const figureKeys = (text: string) => new Set(extractFacts(text).map((f) => `${f.kind}|${f.fact}`));
 
 /** Is this sentence's content carried by `other`? */
-export function sentenceCarried(sentence: string, other: string): boolean {
+export function sentenceCarried(sentence: string, other: string, need?: number): boolean {
   const figs = figureKeys(sentence);
   const otherFigs = figureKeys(other);
   for (const f of figs) if (!otherFigs.has(f)) return false;
   const words = [...new Set(contentWords(sentence))];
   if (!words.length) return true;
   const have = new Set(contentWords(other));
-  const need = figs.size ? KEPT_COVERAGE_WITH_FIGURES : KEPT_COVERAGE;
-  return words.filter((w) => hasWord(have, w)).length / words.length >= need;
+  const share = need ?? (figs.size ? KEPT_COVERAGE_WITH_FIGURES : KEPT_COVERAGE);
+  return words.filter((w) => hasWord(have, w)).length / words.length >= share;
+}
+
+/**
+ * An ADDITION is only refused as "already said" when the entry states all its
+ * figures and this share of its content words - stricter than "kept", because
+ * dropping a real new fact is the worse mistake here (dry run 2026-10-16: at
+ * 60% "the Work Permit will be revoked if you miss two consecutive payments"
+ * read as said by "missing levy payments can affect your ability to renew").
+ */
+export const ALREADY_SAID_COVERAGE = 0.8;
+export function alreadySays(text: string, sentence: string): boolean {
+  return sentenceCarried(sentence, text, ALREADY_SAID_COVERAGE);
+}
+
+/**
+ * How the source contradicts a sentence of the live entry: a figure of the same
+ * kind, period and subject that disagrees ("$350 against $300 (levy, per
+ * month)"), a bare number counting too ("17 against 15 (following)"), or null.
+ * The one test for both halves: a change may only REPLACE a sentence the
+ * source contradicts (lib/watcher/additive.ts), and a removed point is only
+ * justified by it (removedPoints, the safety net) - so a change built from
+ * accepted replacements can never trip the safety net.
+ */
+export function contradicts(sourcePassage: string, sentence: string): string | null {
+  return compareFigures(sourcePassage, sentence, { numbers: true }).conflicts[0] ?? null;
+}
+
+/**
+ * Why the source justifies replacing `oldSentence` with `newSentence`, or null.
+ * Either a figure contradiction (contradicts()), or the page states the same
+ * thing differently - a rule or a date, which has no figure to compare
+ * (dry run 2026-10-16: the live "The levy starts when your helper's Work
+ * Permit is issued and stops when it is cancelled" against the page's "The
+ * levy ends when the Work Permit is cancelled or expires"). For the second,
+ * all must hold: the page supports the new sentence, the page does NOT say
+ * the old one, the two share at least two content words (the same subject),
+ * and every figure of the old sentence is still in the new one. A reworded
+ * sentence the page does not say is never a replacement.
+ */
+/**
+ * For a rule stated differently, the new sentence must share at least this
+ * share of the old sentence's content words: "starts when ... issued and stops
+ * when it is cancelled" against "ends when ... cancelled or expires" shares 4
+ * of 8; "pay it through GIRO, the simplest way to avoid missing a payment"
+ * against "Apply for GIRO to pay the levy" only 2 of 8 - it would lose a point.
+ */
+export const SAME_SUBJECT_SHARE = 0.5;
+
+export function replacementJustification(sourcePassage: string, oldSentence: string, newSentence: string): string | null {
+  const figure = contradicts(sourcePassage, oldSentence);
+  if (figure) return figure;
+  if (!newSentence || !sentenceCarried(newSentence, sourcePassage, KEPT_COVERAGE)) return null;
+  if (sentenceCarried(oldSentence, sourcePassage, KEPT_COVERAGE)) return null;
+  const newFigs = figureKeys(newSentence);
+  for (const f of figureKeys(oldSentence)) if (!newFigs.has(f)) return null;
+  const oldWords = new Set(contentWords(oldSentence));
+  const shared = [...new Set(contentWords(newSentence))].filter((w) => oldWords.has(w));
+  if (shared.length < 2 || shared.length / oldWords.size < SAME_SUBJECT_SHARE) return null;
+  return `the page states it differently (${shared.slice(0, 3).join(', ')})`;
 }
 
 export type RemovedPoint = { sentence: string; contradictedBy: string | null };
@@ -76,9 +135,17 @@ export type RemovedPoint = { sentence: string; contradictedBy: string | null };
 /** Sentences of the live answer the proposal no longer carries, each with the source contradiction that justifies dropping it (or null). */
 export function removedPoints(liveAnswer: string, proposedAnswer: string, sourcePassage: string, proposedQuestion = ''): RemovedPoint[] {
   const proposal = `${proposedQuestion}\n${proposedAnswer}`;
+  // A sentence replaced in place is justified by the same test that let the replacement in (lib/watcher/additive.ts).
+  const replacedBy = new Map<string, string>();
+  for (const seg of entryDiff(liveAnswer, proposedAnswer)) if (seg.kind === 'replaced') replacedBy.set(seg.old, seg.new);
   return sentencesOf(liveAnswer)
     .filter((s) => !isPointerSentence(s) && !sentenceCarried(s, proposal))
-    .map((sentence) => ({ sentence, contradictedBy: compareFigures(sourcePassage, sentence).conflicts[0] ?? null }));
+    .map((sentence) => ({
+      sentence,
+      contradictedBy: replacedBy.has(sentence)
+        ? replacementJustification(sourcePassage, sentence, replacedBy.get(sentence)!)
+        : contradicts(sourcePassage, sentence),
+    }));
 }
 
 /** The removed points no source passage justifies - each one blocks Approve. */
@@ -112,4 +179,52 @@ export function rewordingOnlyReason(live: { question: string; answer: string }, 
   const n = newFacts(live, proposed);
   if (n.figures.length || n.sentences.length) return null;
   return `a change that only rewords the live entry ("${live.question.slice(0, 80)}") - no new fact, figure, rule, deadline or step`;
+}
+
+export type DiffSegment =
+  | { kind: 'same'; text: string }
+  | { kind: 'added'; text: string }
+  | { kind: 'replaced'; old: string; new: string }
+  | { kind: 'removed'; text: string };
+
+const norm = (s: string) => s.toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, ' ').trim();
+
+/**
+ * The review page's view of a change: the live answer against the proposed
+ * one, sentence by sentence - unchanged (grey), added (green), replaced
+ * (old -> new) and, if a person's Edit removed one, removed. A replacement is
+ * built at its old sentence's place, so a removed sentence followed in the
+ * same gap by a new one is shown as that sentence replaced.
+ */
+export function entryDiff(liveAnswer: string, proposedAnswer: string): DiffSegment[] {
+  const a = sentencesOf(liveAnswer);
+  const b = sentencesOf(proposedAnswer);
+  const na = a.map(norm);
+  const nb = b.map(norm);
+  const L: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i -= 1) {
+    for (let j = b.length - 1; j >= 0; j -= 1) {
+      L[i][j] = na[i] === nb[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    }
+  }
+  const out: DiffSegment[] = [];
+  let gapOld: string[] = [];
+  let gapNew: string[] = [];
+  const flush = () => {
+    const n = Math.min(gapOld.length, gapNew.length);
+    for (let k = 0; k < n; k += 1) out.push({ kind: 'replaced', old: gapOld[k], new: gapNew[k] });
+    for (const t of gapOld.slice(n)) out.push({ kind: 'removed', text: t });
+    for (const t of gapNew.slice(n)) out.push({ kind: 'added', text: t });
+    gapOld = [];
+    gapNew = [];
+  };
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && na[i] === nb[j]) { flush(); out.push({ kind: 'same', text: b[j] }); i += 1; j += 1; }
+    else if (j < b.length && (i >= a.length || L[i][j + 1] >= L[i + 1][j])) { gapNew.push(b[j]); j += 1; }
+    else { gapOld.push(a[i]); i += 1; }
+  }
+  flush();
+  return out;
 }

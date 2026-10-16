@@ -603,7 +603,7 @@ because the lead is opened early and the ticket is created much later.
 | A watcher proposal states a fact a client can act on, and an index page drafts nothing | `lib/watcher/quality.ts` (`lowValueReason`) in `parseDrafts` + `lib/watcher/indexPage.ts` (`indexVerdict`) in `checkSource` | Production 2026-10-15: MOM's levy INDEX page drafted four "The MOM page provides information on..." entries. A draft that only points elsewhere, or carries no amount, rule, deadline, eligibility condition or step, is dropped; an index page drafts nothing and its sub-pages (below it, same site, named in its main text) become "Suggested pages to watch" (016). |
 | A watcher approval never silently creates a second, conflicting answer | `lib/watcher/overlap.ts` + `draftFromSnapshot` + `kb_admin_watch_approve` (016, KB009) | Each draft is searched with the bot's own live search: a new draft at 0.72+ against a live entry becomes a change to that entry (or nothing, if it already says it); entries at 0.60+ are listed with the figures that differ; two figures of the same kind, period and subject that disagree raise the conflict banner and the approver's tick, which the database requires. Thresholds measured on the live KB (true duplicates 0.68-0.88, same topic 0.55-0.64). |
 | A proposal cites the page word for word | `lib/watcher/drafting.ts` `parseDrafts` / `locatePassage` + the passage check in `kb_admin_watch_propose` | The model may only target an entry it was shown; the source passage must be on the fetched page or the draft is dropped (and refused by the database too). Spacing aside (spaces, tabs, line breaks, non-breaking and zero-width spaces, and a space beside punctuation or between a number and a letter, as in MOM's "1 st helper"), the words and figures must match exactly; the PAGE's own span is stored, so the database's whitespace-only check finds it verbatim. |
-| A watcher change to a live entry never silently loses a fact, and never only rewords it | `lib/watcher/factDiff.ts` (`removedPoints`, `rewordingOnlyReason`) in `draftFromSnapshot`, `app/watch/[id]/page.tsx`, `approveWatchDraft` | Every live sentence the proposal no longer carries (a figure gone, or under 60% of its content words; 40% when all its figures are kept) is listed in red under "Points removed"; one the source passage does not contradict (same kind, period and subject, `compareFigures`) blocks Approve with "This update drops existing information" (page and action; Edit stays). A change adding no new figure and no new sentence with an actionable fact or 3+ new content words is not proposed. Dry runs: the "What is the FDW levy?" change dropped 7 live points every run. |
+| A watcher change to a live entry is ADDITIVE: built from the live entry, never rewritten | `lib/watcher/additive.ts` (`parseUpdate`, `entryDiff`) via `parseDrafts`, `lib/watcher/changeRules.ts` (both prompts), `factDiff.replacementJustification`, `app/watch/[id]/page.tsx` | For an existing entry the model returns only `add` (new facts, each with its page passage and the live sentence it follows) and `replace` (a live sentence and its correction, with the page words that contradict it). kb-admin builds the answer: the live text character for character, accepted replacements swapped in place (one sentence each), additions inserted after the sentence named, the question unchanged, additions taken in order up to 1,200 characters. A replacement needs a contradiction: a figure of the same kind, period and subject (a bare number counts: 15th vs 17th), or the page saying the same thing differently (the page supports the new sentence, does not say the old one, the two share half the old sentence's content words, every old figure kept). An addition the entry already says (all figures, 80% of its words) is dropped. Nothing added or replaced = nothing proposed. The review page shows added (green), replaced (old -> new with the page line), unchanged (grey). The "Points removed" block ("This update drops existing information", page + action) stays as a safety net and uses the same justification, so it cannot fire on a built change. Dry runs: 11 changes over 6 runs, 0 blocked (was every change). |
 | ...searched for the whole service, with the filter kept whatever money words it contains | `rag_retriever.ENQUIRY_OVERVIEW_QUERY` / `_service_filter` | "costs" dropped the service filter, and the wider search returned a no-agency comparison that told the client the permit and bond were theirs to do. 12 rows, never widened - plus `ENQUIRY_OVERVIEW_EXTRA_QUERIES`, a separate search per service for a question the agency named that the shared query cannot reach (direct hire's failed medical ranks 21st under it). |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -1583,10 +1583,12 @@ Ordered by what will hurt first.
     `Minghwee_backups/kb_admin_016_2026-10-16/`)** and on no other database. The similar-entries
     panel, the conflict tick (KB009), suggested sub-pages and Re-draft are live in kb-admin; kb-admin
     detected it without a redeploy. Re-draft on the MOM levy index page proposes nothing.
-    (g) A proposed change that drops live facts is still proposed, and blocked at Approve: in the
-    paying-levy dry runs both changes the model writes ("What is the FDW levy?", the monthly-levy
-    entry) drop points every time, so the approver will usually Edit them back in. The blocking
-    rule is in kb-admin (page + action), not in the database.
+    (g) Changes to live entries are additive (2026-10-16): the model says what to add and which
+    contradicted sentences to replace, and kb-admin builds the entry, so live facts are not lost and
+    the "drops existing information" block (page + action, not the database) is only a safety net -
+    0 blocked in the paying-levy dry runs, against every change before. What is still possible: an
+    addition that sits beside a live sentence the page contradicts by a rule the mechanical test
+    cannot see; the reviewer sees both, and Edit fixes it.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -1921,6 +1923,7 @@ behaviour behind one switch. Details of each step are in §11.
 | KBW3 | "No readable main text" diagnosed: extractor reads ASP.NET form-wrapped pages (MOM); blocked / maintenance / JS pages explained; render-service/ for JS pages | see git log |
 | KBW4 | Drafting: overlap check (change instead of a duplicate, similar-entries panel, conflict tick KB009), low-value and index pages dropped (suggested sub-pages), approver re-draft; migration 016 written, not applied | see git log |
 | KBW5 | Migration 016 applied to production; quote matching ignores spacing; a change that drops live facts is blocked ("Points removed"); rewording-only changes not proposed | see git log |
+| KBW6 | Changes to live entries are additive: the model returns additions and contradicted replacements, kb-admin builds the entry; review shows added / replaced / unchanged | see git log |
 
 **Still to do, in order:** Step 5 is done (every item, the last being item 2 in Batch G), Step 6 is done (parts 1-4, 6b, 6c), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
@@ -1997,6 +2000,30 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-16** - **KB watcher: changes to live entries are additive.** No bot change, no database
+  change; the schedule stays off. In the dry runs the model rewrote whole entries and every change
+  dropped live facts, so every one was blocked at Approve. Now, for an existing entry, both prompts
+  (`lib/watcher/changeRules.ts`) ask only for `add` (each new fact, its page passage, the live
+  sentence it follows) and `replace` (a live sentence, its correction, the page words that
+  contradict it); a whole new answer is refused. `lib/watcher/additive.ts` builds the proposal:
+  the live answer character for character, accepted replacements swapped in place, additions
+  inserted where they belong, the live question unchanged, additions taken in order up to 1,200
+  characters; the stored source passage is the page span covering every passage used (the
+  database's verbatim check still holds). A replacement needs a contradiction
+  (`factDiff.replacementJustification`: a figure, a bare number such as 15th/17th, or a rule the page
+  states differently - page supports the new sentence, does not say the old one, same subject, old
+  figures kept); "already says" for an addition is strict (80%), after the first runs dropped the
+  Work Permit revocation rule as said. The review page shows added (green), replaced (old -> new
+  with the page line) and unchanged (grey); the "Points removed" safety net uses the same test.
+  The passage matcher moved to `lib/watcher/passage.ts`.
+  **Dry runs** (paying-levy, 6 runs, real model and live search read-only, writes faked): 3, 3, 3,
+  3, 1, 1 proposals; 11 changes, **0 blocked**; "What is the FDW levy?" changed in all 6 (the
+  start/stop sentence replaced by the page's "ends when the Work Permit is cancelled or expires", the
+  5th-day start rule and the 17th-of-the-month deadline added, every other sentence unchanged), the
+  monthly-levy entry in 3 (the deadline added). Self-check 416 (20 more); 27 faults injected, 27 red
+  (2 green first, both tests too weak: a model-written question and a sentence the page also says
+  - tightened); build passes.
 
 - **2026-10-16** - **KB watcher: migration 016 on production; quote matching, no lost facts, no
   rewording-only changes.** No bot change; the schedule stays off.

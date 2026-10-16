@@ -8,6 +8,7 @@ import { requireViewerWith } from '@/lib/auth';
 import { wordDiff, type DiffPart } from '@/lib/editing';
 import { removedPoints, type RemovedPoint } from '@/lib/watcher/factDiff';
 import { reviewState } from '@/lib/watcher/feeLock';
+import { contradictingLine, entryDiff, type DiffSegment } from '@/lib/watcher/additive';
 import { watchDraft, type SimilarEntry } from '@/lib/watchQueries';
 import { DRAFT_STATUS } from '../status';
 import { EditProposalForm } from './EditProposalForm';
@@ -105,6 +106,49 @@ function PointsRemoved({ points }: { points: RemovedPoint[] }) {
 }
 
 /**
+ * A change to a live entry, sentence by sentence (2026-10-16, additive
+ * changes): the live entry is kept as it is; new facts are added (green) and
+ * a sentence is replaced only where the source page contradicts it (old ->
+ * new, with the page words that contradict it). Everything else is unchanged
+ * (grey). A sentence a person's Edit removed is shown struck out in red.
+ */
+function EntryChanges({ question, segments, sourcePassage }: { question: string; segments: DiffSegment[]; sourcePassage: string }) {
+  const added = segments.filter((x) => x.kind === 'added').length;
+  const replaced = segments.filter((x) => x.kind === 'replaced').length;
+  return (
+    <section className="card card-pad space-y-2 text-[13px]" data-entry-changes>
+      <h2 className="text-[15px] font-semibold">The knowledge-base change</h2>
+      <p className="text-muted">
+        {question} - {added} added, {replaced} replaced; everything else in the live entry stays exactly as it is.
+      </p>
+      <ul className="space-y-1.5">
+        {segments.map((x, i) => {
+          if (x.kind === 'same') return <li key={i} className="border-l-2 pl-3 text-muted" style={{ borderColor: 'var(--divider)' }} data-seg="same">{x.text}</li>;
+          if (x.kind === 'added') {
+            return (
+              <li key={i} className="border-l-2 pl-3" style={{ borderColor: 'var(--good)', color: 'var(--good)', background: 'var(--good-bg)' }} data-seg="added">
+                <span className="field-label">Added: </span>{x.text}
+              </li>
+            );
+          }
+          if (x.kind === 'removed') {
+            return <li key={i} className="border-l-2 pl-3 line-through" style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }} data-seg="removed">{x.text}</li>;
+          }
+          const why = contradictingLine(sourcePassage, x.old, x.new);
+          return (
+            <li key={i} className="border-l-2 pl-3" style={{ borderColor: 'var(--good)' }} data-seg="replaced">
+              <p><span className="field-label">Replaced: </span><span className="line-through" style={{ color: 'var(--bad)' }}>{x.old}</span></p>
+              <p style={{ color: 'var(--good)' }}>&rarr; {x.new}</p>
+              <p className="text-[12px] text-muted">{why ? `The source page contradicts it: ${why}` : 'The source page does not contradict it.'}</p>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/**
  * Stage 3: one proposal. The page that changed, what changed on it, and the
  * knowledge-base change it implies, side by side; then Approve / Edit / Reject.
  * A proposal under the fee lock shows "Needs agency confirmation" and no
@@ -133,6 +177,7 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
     ? removedPoints(draft.current_answer, draft.proposed_answer, draft.source_passage, draft.proposed_question)
     : [];
   const drops = open && removed.some((r) => !r.contradictedBy);
+  const segments = draft.kind === 'edit' && draft.current_answer ? entryDiff(draft.current_answer, draft.proposed_answer) : null;
   const status = DRAFT_STATUS[draft.status] ?? { text: draft.status, tone: 'off' as const };
   const oldEntry = draft.kind === 'edit' ? `${draft.current_question ?? ''}\n\n${draft.current_answer ?? ''}` : '';
   const newEntry = `${draft.proposed_question}\n\n${draft.proposed_answer}`;
@@ -196,14 +241,17 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
         before={draft.old_source_text ?? ''}
         after={draft.new_source_text ?? draft.source_passage}
       />
-      <Compare
-        title="The knowledge-base change"
-        leftLabel={draft.kind === 'edit' ? 'The entry now' : 'No entry yet'}
-        rightLabel="Proposed"
-        before={oldEntry}
-        after={newEntry}
-      />
-      {open ? <PointsRemoved points={removed} /> : null}
+      {segments ? (
+        <>
+          {draft.proposed_question !== draft.current_question ? (
+            <Compare title="The question" leftLabel="The entry now" rightLabel="Proposed" before={draft.current_question ?? ''} after={draft.proposed_question} />
+          ) : null}
+          <EntryChanges question={draft.proposed_question} segments={segments} sourcePassage={draft.source_passage} />
+        </>
+      ) : (
+        <Compare title="The knowledge-base change" leftLabel="No entry yet" rightLabel="Proposed" before={oldEntry} after={newEntry} />
+      )}
+      {drops ? <PointsRemoved points={removed.filter((r) => !r.contradictedBy)} /> : null}
       <SimilarEntries entries={draft.similar_entries ?? []} />
 
       {draft.status === 'approved' && draft.version_id ? (

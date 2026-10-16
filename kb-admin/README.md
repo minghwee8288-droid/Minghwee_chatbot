@@ -170,9 +170,14 @@ reads a listing page with several `<article>`s whole.
 - **Quote matching ignores spacing only.** The source passage is found on the page with spacing
   of every kind set aside (tabs, line breaks, non-breaking spaces, "1 st" for "1st"); the words and
   figures must match exactly, and the page's own span is what is stored and shown.
-- **A change never silently loses a fact.** Every sentence of the live entry the proposal no longer
-  carries is shown in red under **Points removed**. Unless the source page contradicts it, Approve
-  is blocked with "This update drops existing information"; Edit is still allowed.
+- **Changes to existing entries are additive.** The model returns only the new facts to add (each
+  with its page passage) and the sentences the page contradicts (with the contradicting passage);
+  kb-admin builds the entry from the live text, so nothing else in it can change. The review page
+  shows each sentence as added (green), replaced (old -> new, with the page line) or unchanged
+  (grey). If there is nothing to add or replace, nothing is proposed.
+- **Safety net: a change never silently loses a fact.** A live sentence the proposal no longer
+  carries (after an Edit, say) is shown in red under **Points removed**; unless the source page
+  contradicts it, Approve is blocked with "This update drops existing information".
 - **No rewording-only changes.** A change that adds no new fact, figure, rule, deadline or step is
   not proposed.
 On a database without 016 kb-admin reads and calls exactly what it did with 015 (no suggestions,
