@@ -2041,6 +2041,8 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-10-16** - **KB watcher: the salary/fee lock fires only on a CHANGED sentence** (an added, replaced or removed sentence carrying a money figure and salary/fee wording); an unchanged "Her salary is S$650." no longer locks a new rest-day line. Fees-document rows, agency-fee wording and non-government money are unchanged. kb-admin `feeLock.SENTENCE_SCOPED_SALARY_LOCK` + migration `kb_admin_018_fee_lock_sentences.sql` (wraps 015's function, renamed `_015`; PGlite over 001-017: 13 cases agree with kb-admin, rollback clean; WRITTEN, NOT APPLIED - until it is, the database still blocks such drafts).
+
 - **2026-10-16** - **Migration 017 applied to production** (go-word). The first run failed
   with "permission denied for schema public" and rolled back whole (every table identical to
   the export): the file changed four functions' owner without the temporary

@@ -26,6 +26,20 @@ const FEE_WORDS = /\b(?:agency|service|placement|replacement|documentation|proce
 // A government fee named as such ("MOM processing fee", "work permit fee") is not an agency fee.
 const GOVERNMENT_FEE = /\b(?:mom|ministry of manpower|government|work permit|application|issuance|levy)\s+(?:processing\s+)?fees?\b/gi;
 const SALARY = /\bsalar(?:y|ies)\b/i;
+const FEE = /\bfees?\b/i;
+
+/** false = the 015 rule: a money figure and "salary" anywhere in the old or new text lock the change. */
+export const SENTENCE_SCOPED_SALARY_LOCK = true;
+
+const sentencesOf = (...parts: (string | null)[]) =>
+  parts.filter(Boolean).join('\n').split(/(?<=[.!?])\s+|\n+/).map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean);
+
+/** The sentences a change adds, replaces or removes (on one side and not the other); a new entry is all of them. */
+export function changedSentences(d: Omit<LockInput, 'category'>): string[] {
+  const before = sentencesOf(d.targetQuestion, d.targetAnswer);
+  const after = sentencesOf(d.proposedQuestion, d.proposedAnswer);
+  return [...after.filter((x) => !before.includes(x)), ...before.filter((x) => !after.includes(x))];
+}
 
 export type LockInput = {
   targetQuestion: string | null;
@@ -56,7 +70,14 @@ export function feeLockReason(d: LockInput): string | null {
   const all = allText(d);
   if (FEE_WORDS.test(all.replace(GOVERNMENT_FEE, ' '))) return 'the change concerns an agency fee';
   const money = touchesMoney(d);
-  if (money && SALARY.test(all)) return 'the change touches a helper salary figure (an agency pricing rule)';
+  if (money && SALARY.test(all)) {
+    // 2026-10-16: a salary or fee figure locks only where it is CHANGED - a sentence added, replaced or
+    // removed that itself carries a money figure and salary/fee wording. An unchanged sentence never does
+    // ("Her salary is S$650." kept as it was no longer locks a new rest-day line). Twin: migration 018.
+    const changed = SENTENCE_SCOPED_SALARY_LOCK ? changedSentences(d) : [all];
+    const hit = changed.find((s) => MONEY.some((re) => re.test(s)) && (SALARY.test(s) || FEE.test(s.replace(GOVERNMENT_FEE, ' '))));
+    if (hit) return SALARY.test(hit) ? 'the change touches a helper salary figure (an agency pricing rule)' : 'the change states a fee figure (an agency pricing rule)';
+  }
   if (money && d.category !== 'government_rule') return 'the change touches a money figure and the page is not a government rule page';
   return null;
 }

@@ -853,6 +853,17 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
     /agency fee/.test(lock(null, null, 'Q?', 'A replacement fee applies.') ?? '') && /agency fee/.test(gov(null, null, 'Q?', 'The agency fee is S$1,428.').lock ?? '') &&
     /agency fee/.test(gov(null, null, 'Q?', 'Our processing fee is $120.').lock ?? ''));
   check('fee lock: a helper salary figure is locked even from a government rule page (cb_kb_rules)', /salary/.test(gov(null, null, 'Salary?', 'The minimum salary is S$700.').lock ?? ''));
+  {
+    // 2026-10-16 (migration 018): the salary/fee lock fires on a CHANGED sentence only.
+    const sql018 = existsSync(join(ROOT, '..', 'scripts/sql/kb_admin_018_fee_lock_sentences.sql')) ? readFileSync(join(ROOT, '..', 'scripts/sql/kb_admin_018_fee_lock_sentences.sql'), 'utf8') : '';
+    check('fee lock: an UNCHANGED salary sentence no longer locks; a changed salary or fee sentence (added, replaced or removed) still does; the database twin is 018',
+      gov('Rest days?', 'Her salary is S$650. One rest day a week.', 'Rest days?', 'Her salary is S$650. One rest day a week. From 2027 it goes in the contract.').lock === null &&
+      /salary/.test(gov('Pay?', 'Her salary is S$650.', 'Pay?', 'Her salary is S$700.').lock ?? '') &&
+      /salary/.test(gov('Pay?', 'Her salary is S$650. Rest days apply.', 'Pay?', 'Rest days apply.').lock ?? '') &&
+      /fee figure/.test(gov('Cost?', 'Salary is set by contract.', 'Cost?', 'Salary is set by contract. The medical fee is $90.').lock ?? '') &&
+      /agency fee/.test(gov('Pay?', 'Her salary is S$650. The agency fee is S$1,428.', 'Pay?', 'Her salary is S$650. The agency fee is S$1,428. Rest one day.').lock ?? '') &&
+      /kb_admin__watch_changed_sentences/.test(sql018) && /rename to kb_admin__watch_fee_lock_015/.test(sql018));
+  }
   check('fee lock: every row from the fees document is locked, by question, whatever the category',
     LK.LOCKED_QUESTIONS.length === 23 && LK.LOCKED_QUESTIONS.every((q) => /fees document/.test(lock(q, 'Our agent will confirm.', q, 'Changed wording.', 'government_rule') ?? '')));
   check('fee lock: a row carrying a fees-document correction is locked, by its text, whatever the category',
