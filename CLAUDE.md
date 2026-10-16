@@ -588,6 +588,10 @@ because the lead is opened early and the ticket is created much later.
 | No yes/no form where a choice or a figure is wanted | `ticket.WHICH_DUTIES_WORDING`, `SALARY_AS_A_FIGURE`, `NATIONALITY_AS_A_CHOICE`; `info_collector._OFFERS_NONE` | Thomas's decisions, 2026-10-15. Extra duties (both sides) is "Which of these ... or none?" and the items are stored; a bare "no" there is "none" (like a no to "any...?"), a bare "yes" is asked again. Salary is "What monthly salary are you budgeting for her?" / "...hoping for?", examples from the bands (`_effective_options`, from the nationality floor). Nationality is "Which nationality would you prefer: Filipino, Indonesian, Myanmar, or no preference?". The helper's pets question is unchanged. |
 | A helper is never asked whether this is the best number to reach her | `ticket.CONTACT_NUMBER_FROM_WHATSAPP` + `info_collector._known_fields` | Thomas, 2026-10-15. `contact_number` (her own transfer) is filled as "the WhatsApp number she is writing from" - no digits, because collected values reach the prompt; the number is on the conversation. |
 | An answer to the all-at-once list is an answer to our question | `guards.QUESTION_LIST_HEADS` in `answering_our_question` (`LIST_ANSWER_IS_AN_ANSWER`) | Found 2026-10-15: only a message's first line is marked "You:", and the list's first line has no "?", so a transfer client answering it was moved to new_hiring and quoted $1,428 and 4-6 weeks (replayed before and after the question removals alike; introduced with Step 6c). The two list heads are defined once in guards and written by `info_collector`. Replayed 2 of 2: stays a transfer, $1,688, 1-2 weeks. |
+| Somebody else's helper wanting work is a third party, whoever sends it | `intent_classifier.relays_another_helper` (`THIRD_PARTY_RELAY_ANY_SENDER`) -> contact `partner` + `candidate_registration` | Phone test 2026-10-16: an unknown number's "my friend's maid is looking for a new employer" ran the candidate intake and thanked the sender as the helper. A relation's helper (or "I have / know a helper") plus a wish for work is handed over with a ticket, as F3 already did for an employer on file. A helper speaking for herself, or an employer releasing their own, is not a relay. |
+| A one-word line answering a name question in the all-at-once list is that name | `info_collector.names_from_list_reply` + `last_question.lines` (`LIST_LINE_NAMES`) | "pingpong / she is from filipino / ..." had the helper's name on line 1 and was listed as missing. Only name fields the extractor left empty, only when the reply has one line per numbered question. |
+| A name typed with a typo of "myself" is still a name | `info_collector._NAME_LEAD_IN` + `name_in_reply` (`NAME_FROM_REPLY`) | "my vd growwstacks" got "Sorry, I didn't catch your name" and was then filed with the "my". The lead-in takes my / my self / mysef / my nam is; what is left must pass `_looks_like_a_person`. |
+| "On go" / "one go" mean all at once | `info_collector._STYLE_ALL` | A typo of "one go" got the questions one by one. |
 | No lead time where we hold none (a Myanmar home leave) | `guards.guard_unheld_timeline` inside `guard_nationality_fee`, all three reply paths (`NO_UNHELD_TIMELINE`, `TIMELINE_NOT_HELD`) | Fees document 2026-10-15: a helper's own Myanmar home leave was told "approximately 2 weeks" (the Indonesian span). A sentence giving a lead time is replaced with "Our agent will confirm the timeline for a Myanmar helper's home leave."; the embassy endorsement's ~10 working days (every nationality) is kept. |
 | The agency's fees document is the source of truth for fees, timelines and wording | `load_service_notes.py` (ROWS + generated UPDATES, `TEXT_REPLACEMENTS`), `kb_rules` floors | 2026-10-15, with the client's decisions A-G: $288 replacement fee everywhere, direct hire 1-2 weeks here and PH 5-6 / ID 4 / MM 2-4 weeks after MOM approval, salary floors PH 650 / ID 550 / MM 500, the +$60 lines in the document's words, "falls under her package" never "guarantee period". The .docx is in `docs/`, kept out of git. A closing briefing now also states a fixed fee plainly from its OWN records (`info_collector._write`). |
 | A reply never reads out an internal case number | `guards.without_case_numbers` in `graph.run_turn` (and the preview) (`NO_CASE_NUMBER_READ_OUT`) | Batch G G4. The case numbers held for the client (`matched_cases`, the case row) and anything in the portal's case format (MH-YYYY-NNNN) are taken out, keeping the sentence ("Your case is at the documents stage"). The CB-YYYY-NNNN ticket reference is never touched. |
@@ -917,6 +921,11 @@ Easy to get wrong:
   `ticket.NATIONALITY_AS_A_CHOICE`.
   `guards.LIST_ANSWER_IS_AN_ANSWER` (2026-10-15), `False` for the Step 6c
   behaviour (answers to the all-at-once list not read as answers).
+  Phone-test fixes (2026-10-16), each `False` for the earlier behaviour:
+  `intent_classifier.THIRD_PARTY_RELAY_ANY_SENDER` (a relay from any sender is
+  handed over), `info_collector.LIST_LINE_NAMES` (name fields read line by line
+  from a reply to the list), `info_collector.NAME_FROM_REPLY` (the typed name
+  taken when the extractor misses it).
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2002,6 +2011,29 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-16** - **Phone-test fast fixes (items 1-9).** Today's test
+  conversations had been cleared by a reset, so each was rebuilt from the
+  report and replayed through the real nodes and model. (1) An unknown
+  number's "my friend's maid is looking for a new employer" ran the candidate
+  intake ("May I know her name?", then "Thanks, Siti" to the sender):
+  `relays_another_helper` reads any relay of someone else's helper wanting work
+  as a partner and hands it over with a ticket (`THIRD_PARTY_RELAY_ANY_SENDER`).
+  (2) A one-word first line in a reply to the home-leave list ("pingpong") is
+  read as the helper's name when the extractor leaves it empty
+  (`LIST_LINE_NAMES`; 3 of 3 replays already extracted it, so this is the
+  fallback). (3) "my vd growwstacks" got "didn't catch your name", then "Thanks,
+  my.": the lead-in takes the typo forms of myself / my self / my name is, and
+  the typed name is taken when the extractor misses it (`NAME_FROM_REPLY`).
+  (4) "on go" / "one go" now mean all at once. (9) The email question no longer
+  opens "Perfect —" (it is the field's own text, so it reached the numbered
+  list); now "What email should I send the updates to?". Replayed on current
+  code and already right: (5) no removed questions, (6) "all at once" gives the
+  list on transfer (4 phrasings), (7) a Myanmar transfer closes on the transfer
+  summary ($1,288, 1 to 2 weeks) with numbered and plain answers, (8) no "how
+  soon" or first-timer question on a transfer, (9) the missing list asks only
+  what is missing. Five faults injected, five red (the first run's "green" was
+  the copy crashing on a missing portal-ui file).
 
 - **2026-10-16** - **KB watcher: a point an approver's Edit removes is a tick, not a block.** "Can I hire a second helper?": the approver edited out the wrong live "standard levy rate (S$300/month)" (the $450 is on the paying-levy page) and Approve vanished. `factDiff.removalsByOrigin` compares against the watcher's own draft (the first `watch_edited` audit row): a point the model kept and the Edit removed shows under "Points removed" with a notice, and Approve needs "I confirm these points are wrong or outdated" plus the reason (page and action); a model drop still hard-blocks. `EDIT_REMOVAL_CONFIRM = false` restores the block. Self-check 434; fault injected, red.
 - **2026-10-16** - **KB watcher: a replacement carries only facts on its sentence's subject; facts placed once per run.** Off-subject sentences in a replacement are split out and placed as additions, dropped when another offered live entry already says them (the levy rates rode along in the start/stop replacement and tripped the fee lock); changes that replace go before add-only ones and own their facts, so the "ends" line no longer also lands on the work-permit-expiry entry (`additive.parseUpdate` `elsewhere`/`spill`, `drafting.parseDrafts`). Dry run: the FDW replacement has no figures. Self-check 433.

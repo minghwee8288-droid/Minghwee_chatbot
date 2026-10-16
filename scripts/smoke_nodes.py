@@ -1525,7 +1525,7 @@ CASES = [
                          "helper_transfer_case": "no, she is in Myanmar",
                          "helper_availability": "1 month", "update_channel": "both"},
       "asked_field_counts": {"update_channel": 1},
-      "_expect_prompt": "what email should I send them to"}),
+      "_expect_prompt": "what email should I send the updates to"}),
     # ...and the half that must not move. Picking WhatsApp alone is an answer,
     # and asking for an address anyway is the 2026-09-04 defect this gate was
     # built for - we chose the channel, then asked for what that channel needs.
@@ -1537,7 +1537,7 @@ CASES = [
                          "helper_transfer_case": "no, she is in Myanmar",
                          "helper_availability": "1 month", "update_channel": "whatsapp"},
       "asked_field_counts": {"update_channel": 1},
-      "_forbid_prompt": "what email should I send them to"}),
+      "_forbid_prompt": "what email should I send the updates to"}),
 
 
     # --- 2026-09-17: where the helper came from is read, not asked ---------

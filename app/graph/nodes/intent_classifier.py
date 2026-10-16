@@ -574,8 +574,44 @@ _HELPER_SPEAKING = re.compile(
 )
 
 
+# Phone test 2026-10-16, an unknown number: "my friend's maid is looking for a
+# new employer" ran the candidate intake ("May I know her name?", then "Thanks,
+# Siti" to the sender). Batch G F3 handed this over only for an EMPLOYER on
+# file; the agency's rule is anyone who is not the helper herself. A message
+# about SOMEONE ELSE's helper wanting work is a third party, whoever sends it:
+# read as a partner, so the bare registration is kept and handed over.
+# False = the Batch G behaviour (an unknown sender is left to the classifier).
+THIRD_PARTY_RELAY_ANY_SENDER = True
+_RELATION = (
+    r"(?:friend|sister|brother|cousin|neighbou?r|relative|colleague|aunt(?:ie|y)?|"
+    r"uncle|mother|mom|mum|father|dad|daughter|son|boss|in-law|family)s?"
+)
+_HELPER_NOUN = r"(?:maid|helper|domestic\s+(?:helper|worker)|mdw|worker|girl|lady)s?"
+_RELAYS_SOMEONE = re.compile(
+    r"\b(?:my|our)\s+(?:\w+\s+)?" + _RELATION + r"\s*(?:'|’)?s?\s+" + _HELPER_NOUN + r"\b"
+    r"|\b" + _HELPER_NOUN + r"\s+of\s+(?:my|our)\s+(?:\w+\s+)?" + _RELATION + r"\b"
+    r"|\bi\s+(?:have|know)\s+(?:a|an|one|two|some|few)\s+(?:\w+\s+)?" + _HELPER_NOUN + r"\b"
+    r"|\bsomeone\s+i\s+know\b",
+    re.IGNORECASE,
+)
+_WANTS_WORK = re.compile(
+    r"\b(?:looking|searching|wants?|needs?|finding)\s+(?:for\s+)?(?:a\s+|an\s+)?(?:new\s+)?"
+    r"(?:job|work|employer|employment|placement|transfer)\b"
+    r"|\b(?:new\s+employer|change\s+employer|available\s+for\s+work)\b",
+    re.IGNORECASE,
+)
+
+
+def relays_another_helper(message: str) -> bool:
+    """Whether the message is about somebody ELSE's helper looking for work."""
+    text = message or ""
+    return bool(_RELAYS_SOMEONE.search(text) and _WANTS_WORK.search(text))
+
+
 def _detected_contact_type(intent: str, raw: Any, message: str = "") -> str | None:
     """Who the classifier thinks this is, or None while it cannot tell."""
+    if THIRD_PARTY_RELAY_ANY_SENDER and relays_another_helper(message):
+        return "partner"
     by_intent = _CONTACT_BY_INTENT.get(intent)
     if by_intent:
         return by_intent
@@ -757,6 +793,14 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
         and not _LEAVE_COMPLAINT.search(message)
     ):
         intent = service_type = ticket_service.COMPLAINT
+
+    # Somebody else's helper wanting work: a third party, handed over (F3).
+    elif (THIRD_PARTY_RELAY_ANY_SENDER and relays_another_helper(message)
+          and intent != "dispute_assault"):
+        if intent != CANDIDATE_INTENT:
+            logger.info("Conversation %s: third-party relay overrides intent %r -> %s",
+                        state.get("conversation_id"), intent, CANDIDATE_INTENT)
+        intent, service_type = CANDIDATE_INTENT, CANDIDATE_INTENT
 
     # --- Deterministic overrides. The model gets these two wrong repeatedly and
     # each has a visible consequence the client complains about. Neither fires

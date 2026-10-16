@@ -943,6 +943,32 @@ rows = [
  ("...and the salary bands still start at the nationality floor",
   ico._effective_options(next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "budget"),
                          {"preferred_nationality": "Filipino"})[0].startswith("SGD 650"), True),
+ # --- Phone-test fast fixes, 2026-10-16 -----------------------------------
+ ("1. somebody else's helper wanting work is a third party, whoever sends it",
+  [m for m in ("my friend's maid is looking for a new employer",
+               "my sister's helper wants a new job", "I have a helper looking for work")
+   if ic._detected_contact_type("candidate_registration", "candidate", m) != "partner"], []),
+ ("...but a helper speaking for herself, or an employer releasing their own, is not",
+  [m for m in ("i am a helper looking for work", "my helper is looking for a new employer",
+               "my friend recommended you, i want to hire a maid")
+   if ic.relays_another_helper(m)], []),
+ ("2. a one-word line answering a name question in the list is that name",
+  ico.names_from_list_reply(
+      {"incoming_text": "pingpong\nshe is from filipino\n20 dec for 2 weeks\nregular leave",
+       "last_question": {"key": "helper_name",
+                         "lines": [["helper_name"], ["nationality"], ["leave_dates"], ["leave_reason"]]}},
+      {}, {}), {"helper_name": "pingpong"}),
+ ("3. a typo of 'myself' before a name is not part of the name",
+  [ico.name_in_reply({"history_text": "You: May I know your name?",
+                      "incoming_text": t_}) for t_ in
+   ("my vd growwstacks", "mysef kareena", "my self kareena", "my nam is Ana")],
+  ["vd growwstacks", "kareena", "kareena", "Ana"]),
+ ("4. 'on go' / 'one go' / 'in one go' mean all at once",
+  [ico.chosen_style(m) for m in ("on go", "one go", "in one go", "one by one")],
+  ["all", "all", "all", "one"]),
+ ("9. no question carries a conversational lead-in like 'Perfect —'",
+  [f"{s}.{f.key}" for s, fs in t.SERVICE_FIELDS.items() for f in fs
+   if re.match(r"\s*(?:perfect|great|got it|thanks|okay|sure)\b", f.question or "", re.I)], []),
  ("passport_renewal asks case id", any(f.key == "case_id" for f in t.SERVICE_FIELDS["passport_renewal"]), False),
  ("renewal asks case id", any(f.key == "case_id" for f in t.SERVICE_FIELDS["renewal"]), False),
  ("NO flow asks for a case id",

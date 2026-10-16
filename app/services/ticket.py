@@ -383,7 +383,7 @@ _UPDATE_CHANNEL = Field(
 _EMAIL = Field(
     "email",
     "email address",
-    "Perfect — what email should I send them to?",
+    "What email should I send the updates to?",
     max_asks=1,
     optional=True,
     group="staying in touch",

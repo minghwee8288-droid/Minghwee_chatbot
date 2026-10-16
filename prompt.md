@@ -2588,7 +2588,10 @@ existing client relaying someone else's maid ("my friend's maid is looking for
 a new employer"). The helper herself never reaches this prompt: she is
 registered through the candidate questions instead (switch
 `ticket.THIRD_PARTY_EMPLOYER_RELAY`, 14 October; before it, an employer on
-file relaying a helper was run through the candidate questions too).
+file relaying a helper was run through the candidate questions too). Since 16
+October the same holds for a sender we have no record of: a message about
+someone else's helper wanting work is read as a third party whoever sends it
+(switch `intent_classifier.THIRD_PARTY_RELAY_ANY_SENDER`).
 
 ### Why is this prompt needed?
 Registering a helper offered by another party needs documents and

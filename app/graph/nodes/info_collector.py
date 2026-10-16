@@ -164,11 +164,33 @@ _ASKED_THEIR_NAME = re.compile(
     r"|can\s+i\s+(?:have|get|know))\s+your\s+(?:full\s+)?name\b",
     re.IGNORECASE,
 )
+# Phone test 2026-10-16: "my vd growwstacks" (a typo of "myself") got "Sorry,
+# I didn't catch your name" and was then filed as "my vd growwstacks". The
+# lead-in now takes the typo forms of "myself" / "my self" / "my name is", and a
+# bare "my" before a name; what is left must still pass _looks_like_a_person.
 _NAME_LEAD_IN = re.compile(
-    r"^\s*(?:(?:hi|hello|hey)[,!.]?\s+)?(?:(?:my\s+name\s+is|my\s+name's|i\s+am|i'm|im|it\s+is"
-    r"|it's|this\s+is|myself|name\s*:)\s+)?",
+    r"^\s*(?:(?:hi|hello|hey)[,!.]?\s+)?(?:(?:my\s*n[ae]?m[ae]?\s*(?:is|iz|s|:)?|my\s+name's"
+    r"|i\s+am|i'm|im|i\s+m|it\s+is|it's|its|this\s+is|name\s*(?:is|:)?"
+    r"|my\s*s[ea]?l?[fv]e?|mysef|myslef|my)\s+)?",
     re.IGNORECASE,
 )
+# False = the name is left to the extractor alone on the turn it is given.
+NAME_FROM_REPLY = True
+
+
+def name_in_reply(state: dict) -> str | None:
+    """This turn's message as the client's name, when our last line asked for
+    their name and what is left after the lead-in reads as a person's name."""
+    if not NAME_FROM_REPLY:
+        return None
+    previous = last_bot_line(state.get("history_text") or "")
+    if not _ASKED_THEIR_NAME.search(previous or ""):
+        return None
+    text = (state.get("incoming_text") or "").strip().splitlines()
+    if len(text) != 1:
+        return None
+    name = _NAME_LEAD_IN.sub("", text[0].strip()).strip(" .!")
+    return name if _looks_like_a_person(name) else None
 
 
 def name_given_earlier(history_text: str) -> str | None:
@@ -2137,6 +2159,8 @@ _STYLE_LIST_END = "If something does not apply, just say so."
 _STYLE_ALL = re.compile(
     r"\bat\s+once\b|\ball\s+(?:together|in\s+one|of\s+them|the\s+questions|questions)\b"
     r"|\bsend\s+(?:me\s+)?(?:them\s+)?all\b|\bin\s+one\s+(?:go|message|reply)\b"
+    # Phone test 2026-10-16: "on go" (a typo of "one go") got one by one.
+    r"|\b(?:in\s+)?(?:one|on|1)\s+(?:go|shot)\b"
     r"|^\s*(?:all|second|2|the\s+second(?:\s+one)?)\s*[.!]*\s*$",
     re.IGNORECASE,
 )
@@ -2169,24 +2193,64 @@ def _question_with_options(field: ticket_service.Field) -> str:
     return question
 
 
+def list_line_keys(missing: list[ticket_service.Field],
+                   collected: dict[str, Any]) -> list[list[str]]:
+    """The field keys on each numbered line of the 'all at once' list."""
+    groups, i = [], 0
+    while i < len(missing):
+        partner = ticket_service.paired_field(missing[i], missing[i:], collected)
+        groups.append([missing[i].key] + ([partner.key] if partner else []))
+        i += 1 + (1 if partner else 0)
+    return groups
+
+
 def all_questions_message(missing: list[ticket_service.Field], collected: dict[str, Any],
                           first: bool) -> tuple[str, list[str]]:
     """The numbered message for 'all at once': every remaining question, a
     pair on one line. Returns (message, keys asked)."""
-    lines, keys, i = [], [], 0
-    while i < len(missing):
-        field = missing[i]
-        partner = ticket_service.paired_field(field, missing[i:], collected)
-        text = _question_with_options(field)
-        keys.append(field.key)
-        i += 1
-        if partner:
-            text = f"{text} {_question_with_options(partner)}"
-            keys.append(partner.key)
-            i += 1
+    by_key = {field.key: field for field in missing}
+    lines, keys = [], []
+    for group in list_line_keys(missing, collected):
+        keys.extend(group)
+        text = " ".join(_question_with_options(by_key[key]) for key in group)
         lines.append(f"{len(lines) + 1}. {text}")
     head = _STYLE_LIST_FIRST if first else _STYLE_LIST_AGAIN
     return "\n".join([head, *lines, _STYLE_LIST_END]), keys
+
+
+# Phone test 2026-10-16, home leave all at once: the reply "pingpong / she is
+# from filipino / ..." had the helper's name on line 1, and Claire listed it as
+# still missing - the extractor dropped the bare one-word line. A reply with one
+# line per question is read line by line for the NAME questions the extractor
+# left empty: a line that reads as a person's name is that name.
+# False = the extractor alone.
+LIST_LINE_NAMES = True
+_LIST_NAME_KEYS = frozenset({"helper_name", "full_name"})
+_LINE_NUMBER = re.compile(r"^\s*\d+\s*[.):-]?\s*")
+
+
+def names_from_list_reply(state: dict, extracted: dict, previous: dict) -> dict[str, str]:
+    """Name fields filled from their own line of a reply to the numbered list."""
+    asked = state.get("last_question")
+    groups = asked.get("lines") if LIST_LINE_NAMES and isinstance(asked, dict) else None
+    if not groups:
+        return {}
+    lines = [line for line in (state.get("incoming_text") or "").splitlines() if line.strip()]
+    if len(lines) != len(groups):
+        return {}
+    found = {}
+    for group, line in zip(groups, lines):
+        if len(group) != 1 or group[0] not in _LIST_NAME_KEYS:
+            continue
+        key = group[0]
+        if str(extracted.get(key) or "").strip() or str(previous.get(key) or "").strip():
+            continue
+        name = _NAME_LEAD_IN.sub("", _LINE_NUMBER.sub("", line.strip())).strip(" .!")
+        name = re.sub(r"^(?:her|his)\s+name\s+is\s+|^(?:she|he)\s+is\s+", "", name,
+                      flags=re.IGNORECASE)
+        if _looks_like_a_person(name) and len(name.split()) <= 3:
+            found[key] = name[:300]
+    return found
 
 # Phase 3 Step 5 Batch F item 1 (2026-10-14). The extractor filed
 # "immediately" as "as soon as possible - within 2 weeks", and replies echoed
@@ -4259,6 +4323,17 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         # "no" - the extractor may still echo the name we offered; it is not hers.
         extracted = {k: v for k, v in extracted.items() if k != "full_name"}
 
+    # The name they just typed, when the extractor missed it or kept the
+    # lead-in ("my vd growwstacks", 2026-10-16).
+    typed_name = name_in_reply(state) if "full_name" in allowed_keys else None
+    if typed_name and not str(previous.get("full_name") or "").strip():
+        raw = str(extracted.get("full_name") or "").strip()
+        if not raw or _NAME_LEAD_IN.sub("", raw).strip(" .!").lower() == typed_name.lower():
+            extracted = {**extracted, "full_name": typed_name[:300]}
+    from_lines = names_from_list_reply(state, extracted, previous)
+    if from_lines:
+        extracted = {**extracted, **{k: v for k, v in from_lines.items() if k in allowed_keys}}
+
     if known:
         logger.info(
             "Conversation %s: filling %s from the conversation instead of asking",
@@ -5378,7 +5453,8 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             "missing_field_keys": [field.key for field in missing],
             "info_complete": False,
             "reply": reply,
-            "last_question": {"key": keys[0], "text": reply},
+            "last_question": {"key": keys[0], "text": reply,
+                              "lines": list_line_keys(missing, collected)},
             "needs_handover": bool(state.get("needs_handover")),
             **style_update,
         }
