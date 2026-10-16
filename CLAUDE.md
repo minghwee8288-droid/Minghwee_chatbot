@@ -120,8 +120,8 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
                      kb_admin_016_watcher_overlap (overlap on proposals, suggested
                      sub-pages, approver re-draft, KB009; on PRODUCTION since 2026-10-16),
                      kb_admin_017_watcher_sources (per-source render, approver-only
-                     unverified connection, failed drafts retried; WRITTEN, NOT APPLIED;
-                     012 then expects 31)
+                     unverified connection, failed drafts retried; on PRODUCTION since
+                     2026-10-16; 012 expects 31)
                      — applied ONLY via apply_sql.py --expect-ref <project ref>
   gen_fee_locked.py  the watcher's fee lock: the 23 questions + 7 corrections the
                      fees document set, read from the loader, written into
@@ -744,7 +744,7 @@ new column; `cb_kb_audit`'s action CHECK gains nine watcher actions. Migration 0
 since 2026-10-16) adds `cb_kb_sources.suggested_pages`/`suggested_at`, `cb_kb_drafts.similar_entries`/
 `conflict_check`/`conflict_note`/`conflict_confirmed`, and the audit actions `source_redrafted`,
 `source_suggested`.
-Migration 017 (written 2026-10-16, NOT applied) adds `cb_kb_sources.render`,
+Migration 017 (on production since 2026-10-16) adds `cb_kb_sources.render`,
 `allow_unverified`, `unverified_reason`, `unverified_set_by_email`, `unverified_set_at`,
 `cb_kb_source_snapshots.draft_failed`/`draft_error`, `last_status` 'draft_failed', an address
 CHECK that allows http:// only on an unverified row, four functions (31 editor functions) and
@@ -1623,7 +1623,7 @@ Ordered by what will hurt first.
     contradicted sentences to replace, and kb-admin builds the entry, so live facts are not lost and
     the "drops existing information" block (page + action, not the database) is only a safety net -
     0 blocked in the paying-levy dry runs, against every change before. (h) **The five client sites
-    (2026-10-16)** need migration 017 applied and render-service deployed; the 20 pages to add, and
+    (2026-10-16)** need render-service deployed (017 is on production); the 20 pages to add, and
     the switch-on steps for the schedule, are in the 2026-10-16 change log. What is still possible: an
     addition that sits beside a live sentence the page contradicts by a rule the mechanical test
     cannot see; the reviewer sees both, and Edit fixes it.
@@ -1963,7 +1963,7 @@ behaviour behind one switch. Details of each step are in §11.
 | KBW5 | Migration 016 applied to production; quote matching ignores spacing; a change that drops live facts is blocked ("Points removed"); rewording-only changes not proposed | see git log |
 | KBW6 | Changes to live entries are additive: the model returns additions and contradicted replacements, kb-admin builds the entry; review shows added / replaced / unchanged | see git log |
 | KBW7 | The live existing-entry search reads the entries' text (kb_admin_match_live returns none); a failed search stops with "Couldn't check existing entries" | see git log |
-| KBW8 | All five client sites: per-source render (render-service with system Chrome + allowlist), non-English pages, approver-only unverified connection, failed drafts retried; migration 017 written, not applied | see git log |
+| KBW8 | All five client sites: per-source render (render-service with system Chrome + allowlist), non-English pages, approver-only unverified connection, failed drafts retried; migration 017 on production (2026-10-16) | see git log |
 
 **Still to do, in order:** Step 5 is done (every item, the last being item 2 in Batch G), Step 6 is done (parts 1-4, 6b, 6c), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
@@ -2040,6 +2040,15 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-16** - **Migration 017 applied to production** (go-word). The first run failed
+  with "permission denied for schema public" and rolled back whole (every table identical to
+  the export): the file changed four functions' owner without the temporary
+  `grant create on schema public to kb_admin_fn_owner` that 015 and 016 carry; PGlite runs as
+  superuser, so its test could not see it. Added (granted for those four lines, revoked after),
+  re-applied: its check printed PASS. After: 31 editor functions, the seven columns at their
+  defaults, every column of every row of the nine tables identical to the export
+  (`Minghwee_backups/kb_admin_017_2026-10-16/`).
 
 - **2026-10-16** - **KB watcher: all five client sites.** No bot change; migration 017 is
   WRITTEN, NOT APPLIED; render-service NOT deployed; the schedule stays off.

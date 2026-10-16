@@ -316,10 +316,13 @@ $$;
 -- =============================================================================
 -- 4. Ownership and access
 -- =============================================================================
+-- Changing an owner needs the new owner to hold CREATE on the schema (as in 015/016); granted for these four lines only.
+grant create on schema public to kb_admin_fn_owner;
 alter function public.kb_admin_source_set_render(uuid, text, uuid, boolean) owner to kb_admin_fn_owner;
 alter function public.kb_admin_source_set_unverified(uuid, text, uuid, boolean, text) owner to kb_admin_fn_owner;
 alter function public.kb_admin_source_add_unverified(uuid, text, text, text, text, text) owner to kb_admin_fn_owner;
 alter function public.kb_admin_source_record_draft(uuid, text, uuid, boolean, text) owner to kb_admin_fn_owner;
+revoke create on schema public from kb_admin_fn_owner;
 
 revoke all on function
     public.kb_admin_source_set_render(uuid, text, uuid, boolean),
