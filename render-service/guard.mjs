@@ -19,7 +19,39 @@ export function readConfig(env) {
   const timeoutMs = Number(env.RENDER_TIMEOUT_MS ?? 30_000);
   if (!(minGapMs >= 10_000)) throw new ConfigError('render-service refuses to start: RENDER_MIN_GAP_MS may not be under 10000 (the watcher\'s own per-host gap)');
   if (!(timeoutMs >= 5_000 && timeoutMs <= 55_000)) throw new ConfigError('render-service refuses to start: RENDER_TIMEOUT_MS must be 5000-55000');
-  return { secret, port, host: String(env.HOST ?? '0.0.0.0'), minGapMs, timeoutMs, channel: String(env.RENDER_CHROME_CHANNEL ?? '').trim() || null };
+  return {
+    secret, port, host: String(env.HOST ?? '0.0.0.0'), minGapMs, timeoutMs,
+    channel: String(env.RENDER_CHROME_CHANNEL ?? '').trim() || null,
+    allowedHosts: readAllowedHosts(env.RENDER_ALLOWED_HOSTS),
+  };
+}
+
+/**
+ * Which sites may be rendered (2026-10-16). Default: the Indonesian embassy
+ * only (kemlu.go.id), the one watched site built by JavaScript. A comma list
+ * of hosts; each also allows its subdomains. "*" switches the allowlist off
+ * (any public https host, the 2026-10-15 behaviour). Applies to the page
+ * address and to where it ends up after redirects - not to the scripts and
+ * data the page itself loads, which the private-address check still covers.
+ */
+export const DEFAULT_ALLOWED_HOSTS = ['kemlu.go.id'];
+
+export function readAllowedHosts(raw) {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (value === '*') return null;
+  const hosts = (value ? value.split(',') : DEFAULT_ALLOWED_HOSTS).map((h) => h.trim().replace(/^\.+|\.+$/g, '')).filter(Boolean);
+  for (const h of hosts) {
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(h)) throw new ConfigError(`render-service refuses to start: RENDER_ALLOWED_HOSTS has an invalid host (${h})`);
+  }
+  if (!hosts.length) throw new ConfigError('render-service refuses to start: RENDER_ALLOWED_HOSTS names no host (use * to allow any public host)');
+  return hosts;
+}
+
+/** May this host be rendered? `allowed` null = any (the allowlist is off). */
+export function hostAllowed(host, allowed) {
+  if (allowed === null) return true;
+  const h = String(host ?? '').toLowerCase().replace(/\.$/, '');
+  return allowed.some((a) => h === a || h.endsWith(`.${a}`));
 }
 
 /** "Authorization: Bearer <secret>", compared in constant time. */

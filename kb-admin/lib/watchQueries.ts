@@ -26,6 +26,24 @@ export async function watcherSchema16(): Promise<boolean> {
   return schema16.ok;
 }
 
+/**
+ * Is migration 017 installed (per-source render and unverified, failed drafts
+ * retried)? Same rule as 016: a yes is remembered, a no asked again after a
+ * minute, so applying 017 needs no redeploy; until then nothing reads or calls
+ * what 017 adds.
+ */
+let schema17: { ok: boolean; at: number } | null = null;
+export async function watcherSchema17(): Promise<boolean> {
+  if (schema17 && (schema17.ok || Date.now() - schema17.at < 60_000)) return schema17.ok;
+  const [row] = await select<{ n: number }>(`
+    select count(*)::int as n from information_schema.columns
+     where table_schema = 'public'
+       and ((table_name = 'cb_kb_sources' and column_name in ('render', 'allow_unverified'))
+         or (table_name = 'cb_kb_source_snapshots' and column_name = 'draft_failed'))`);
+  schema17 = { ok: (row?.n ?? 0) === 3, at: Date.now() };
+  return schema17.ok;
+}
+
 export type SuggestedPage = { url: string; label: string };
 
 export type SourceRow = {
@@ -42,17 +60,25 @@ export type SourceRow = {
   open_drafts: number;
   /** 016: an index page's sub-pages, offered as "Suggested pages to watch". */
   suggested_pages: SuggestedPage[];
+  /** 017: read through the page renderer. */
+  render: boolean;
+  /** 017: read without a certificate check (or over http), set by an approver with a reason. */
+  allow_unverified: boolean;
+  unverified_reason: string | null;
+  unverified_set_by_email: string | null;
 };
 
-const SOURCE_COLUMNS = (has16: boolean) => `
+const SOURCE_COLUMNS = (has16: boolean, has17: boolean) => `
     s.id::text, s.url, s.label, s.category, s.active, s.added_by_email, s.added_at::text,
     s.last_checked_at::text, s.last_status, s.last_error,
-    ${has16 ? 's.suggested_pages' : `'[]'::jsonb as suggested_pages`}`;
+    ${has16 ? 's.suggested_pages' : `'[]'::jsonb as suggested_pages`},
+    ${has17 ? 's.render, s.allow_unverified, s.unverified_reason, s.unverified_set_by_email'
+    : 'false as render, false as allow_unverified, null::text as unverified_reason, null::text as unverified_set_by_email'}`;
 
 export async function watchedSources(): Promise<SourceRow[]> {
-  const has16 = await watcherSchema16();
+  const [has16, has17] = await Promise.all([watcherSchema16(), watcherSchema17()]);
   return select<SourceRow>(`
-    select ${SOURCE_COLUMNS(has16)},
+    select ${SOURCE_COLUMNS(has16, has17)},
            (select count(*)::int from public.cb_kb_drafts d where d.source_id = s.id and d.status in ('pending', 'blocked')) as open_drafts
       from public.cb_kb_sources s
      where s.active
@@ -60,20 +86,21 @@ export async function watchedSources(): Promise<SourceRow[]> {
 }
 
 export async function sourceById(id: string): Promise<SourceRow | null> {
-  const has16 = await watcherSchema16();
+  const [has16, has17] = await Promise.all([watcherSchema16(), watcherSchema17()]);
   const [row] = await select<SourceRow>(`
-    select ${SOURCE_COLUMNS(has16)}, 0 as open_drafts
+    select ${SOURCE_COLUMNS(has16, has17)}, 0 as open_drafts
       from public.cb_kb_sources s where s.id = $1::uuid`, [id]);
   return row ?? null;
 }
 
-/** Active sources not checked for `days` days (or never). */
+/** Active sources not checked for `days` days (or never) - and, with 017, any whose drafting failed (retried on the next run). */
 export async function sourcesDue(days: number): Promise<SourceRow[]> {
-  const has16 = await watcherSchema16();
+  const [has16, has17] = await Promise.all([watcherSchema16(), watcherSchema17()]);
   return select<SourceRow>(`
-    select ${SOURCE_COLUMNS(has16)}, 0 as open_drafts
+    select ${SOURCE_COLUMNS(has16, has17)}, 0 as open_drafts
       from public.cb_kb_sources s
-     where s.active and (s.last_checked_at is null or s.last_checked_at < now() - make_interval(days => $1::int))
+     where s.active and (s.last_checked_at is null or s.last_checked_at < now() - make_interval(days => $1::int)
+                         ${has17 ? `or s.last_status = 'draft_failed'` : ''})
      order by s.last_checked_at nulls first, s.label`, [days]);
 }
 
@@ -84,13 +111,27 @@ export async function snapshotText(snapshotId: string): Promise<string | null> {
   return row?.extracted_text ?? null;
 }
 
-/** The text of the last SUCCESSFUL snapshot, or null if the page was never read. */
+/**
+ * The text of the last SUCCESSFUL snapshot, or null if the page was never
+ * read. With 017, a snapshot whose drafting failed does not count: the next
+ * change is diffed against the last snapshot that was actually drafted, so
+ * what the failed run saw is proposed too.
+ */
 export async function lastGoodText(sourceId: string): Promise<string | null> {
+  const has17 = await watcherSchema17();
   const [row] = await select<{ extracted_text: string }>(`
     select extracted_text from public.cb_kb_source_snapshots
-     where source_id = $1::uuid and fetch_ok
+     where source_id = $1::uuid and fetch_ok ${has17 ? 'and not draft_failed' : ''}
      order by fetched_at desc, id limit 1`, [sourceId]);
   return row?.extracted_text ?? null;
+}
+
+/** 017: was drafting from this snapshot recorded as failed? */
+export async function draftFailed(snapshotId: string): Promise<boolean> {
+  if (!(await watcherSchema17())) return false;
+  const [row] = await select<{ failed: boolean }>(`
+    select draft_failed as failed from public.cb_kb_source_snapshots where id = $1::uuid`, [snapshotId]);
+  return Boolean(row?.failed);
 }
 
 export type WatchDraftRow = {
@@ -124,6 +165,8 @@ export type WatchDraftRow = {
   conflict_check: boolean;
   conflict_note: string | null;
   conflict_confirmed: boolean;
+  /** 017: the proposal comes from a page read without a certificate check (or over http). */
+  source_unverified: boolean;
   created_at: string;
   created_by_email: string | null;
   edited_by_email: string | null;
@@ -147,6 +190,7 @@ export type SimilarEntry = {
 const DRAFT_16 = (has16: boolean) => has16
   ? 'd.similar_entries, d.conflict_check, d.conflict_note, d.conflict_confirmed'
   : `'[]'::jsonb as similar_entries, false as conflict_check, null::text as conflict_note, false as conflict_confirmed`;
+const DRAFT_17 = (has17: boolean) => has17 ? 's.allow_unverified as source_unverified' : 'false as source_unverified';
 
 const DRAFT_COLUMNS = `
     d.id::text, d.source_id::text, s.label as source_label, s.category as source_category, d.source_url, d.source_fetched_at::text, d.kind,
@@ -163,17 +207,17 @@ const DRAFT_FROM = `
 
 /** The review queue: open drafts first (oldest first), then the last 30 decided ones. */
 export async function watchQueue(): Promise<{ open: WatchDraftRow[]; recent: WatchDraftRow[] }> {
-  const has16 = await watcherSchema16();
+  const [has16, has17] = await Promise.all([watcherSchema16(), watcherSchema17()]);
   const [open, recent] = await Promise.all([
-    select<WatchDraftRow>(`select ${DRAFT_COLUMNS}, ${DRAFT_16(has16)} ${DRAFT_FROM} where d.status in ('pending', 'blocked', 'approved') order by d.created_at`),
-    select<WatchDraftRow>(`select ${DRAFT_COLUMNS}, ${DRAFT_16(has16)} ${DRAFT_FROM} where d.status in ('published', 'rejected', 'superseded') order by coalesce(d.reviewed_at, d.created_at) desc limit 30`),
+    select<WatchDraftRow>(`select ${DRAFT_COLUMNS}, ${DRAFT_16(has16)}, ${DRAFT_17(has17)} ${DRAFT_FROM} where d.status in ('pending', 'blocked', 'approved') order by d.created_at`),
+    select<WatchDraftRow>(`select ${DRAFT_COLUMNS}, ${DRAFT_16(has16)}, ${DRAFT_17(has17)} ${DRAFT_FROM} where d.status in ('published', 'rejected', 'superseded') order by coalesce(d.reviewed_at, d.created_at) desc limit 30`),
   ]);
   return { open, recent };
 }
 
 export async function watchDraft(id: string): Promise<WatchDraftRow | null> {
-  const has16 = await watcherSchema16();
-  const [row] = await select<WatchDraftRow>(`select ${DRAFT_COLUMNS}, ${DRAFT_16(has16)} ${DRAFT_FROM} where d.id = $1::uuid`, [id]);
+  const [has16, has17] = await Promise.all([watcherSchema16(), watcherSchema17()]);
+  const [row] = await select<WatchDraftRow>(`select ${DRAFT_COLUMNS}, ${DRAFT_16(has16)}, ${DRAFT_17(has17)} ${DRAFT_FROM} where d.id = $1::uuid`, [id]);
   return row ?? null;
 }
 

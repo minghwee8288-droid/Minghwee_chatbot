@@ -138,8 +138,9 @@ $$;
 --    (6 Q&A + 9 document from 011 + kb_admin_match_live from 014) - or 24
 --    once kb_admin_015_watcher is applied (+ its 8 watcher functions; applied
 --    to production 2026-10-15) - or 27 once kb_admin_016_watcher_overlap is
---    applied (+ its 3). The count follows what is installed, so this file stays
---    re-runnable before and after 015 and 016.
+--    applied (+ its 3) - or 31 once kb_admin_017_watcher_sources is applied
+--    (+ its 4). The count follows what is installed, so this file stays
+--    re-runnable before and after 015, 016 and 017.
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -173,6 +174,11 @@ declare
         'kb_admin_watch_propose_checked(uuid,text,uuid,uuid,text,text,text,text,text,text,text,text,text,jsonb,boolean,text)',
         'kb_admin_source_set_suggestions(uuid,text,uuid,jsonb)',
         'kb_admin_source_redraft(uuid,text,uuid,text)'];
+    watcher17 text[] := array[
+        'kb_admin_source_set_render(uuid,text,uuid,boolean)',
+        'kb_admin_source_set_unverified(uuid,text,uuid,boolean,text)',
+        'kb_admin_source_add_unverified(uuid,text,text,text,text,text)',
+        'kb_admin_source_record_draft(uuid,text,uuid,boolean,text)'];
     got text[];
     t record;
 begin
@@ -183,6 +189,11 @@ begin
     if exists (select 1 from information_schema.columns where table_schema = 'public'
                 and table_name = 'cb_kb_drafts' and column_name = 'conflict_check') then
         expected := expected || watcher16;
+    end if;
+    -- kb_admin_017_watcher_sources: four more (31 in all).
+    if exists (select 1 from information_schema.columns where table_schema = 'public'
+                and table_name = 'cb_kb_sources' and column_name = 'allow_unverified') then
+        expected := expected || watcher17;
     end if;
     select array_agg(p.oid::regprocedure::text order by 1) into got
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -199,7 +210,7 @@ begin
         end if;
     end loop;
     raise notice 'PASS: kb_admin_editor executes exactly % functions (6 Q&A + 9 document + live match%) and holds no table privilege',
-        cardinality(expected), case when cardinality(expected) = 27 then ' + 11 watcher' when cardinality(expected) = 24 then ' + 8 watcher' else '' end;
+        cardinality(expected), case when cardinality(expected) = 31 then ' + 15 watcher' when cardinality(expected) = 27 then ' + 11 watcher' when cardinality(expected) = 24 then ' + 8 watcher' else '' end;
 end
 $$;
 

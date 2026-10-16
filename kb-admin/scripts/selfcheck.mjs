@@ -113,11 +113,12 @@ const SIXTEEN = [
   'kb_admin_doc_stage', 'kb_admin_doc_upload', 'kb_admin_match_live', 'kb_admin_match_with_batch',
   'kb_admin_publish', 'kb_admin_restore', 'kb_admin_save_draft',
   // Migration 015 (the KB watcher), sorted in with the rest.
-  'kb_admin_source_add', 'kb_admin_source_record_fetch', 'kb_admin_source_redraft', 'kb_admin_source_remove', 'kb_admin_source_set_suggestions',
+  'kb_admin_source_add', 'kb_admin_source_add_unverified', 'kb_admin_source_record_draft', 'kb_admin_source_record_fetch', 'kb_admin_source_redraft', 'kb_admin_source_remove',
+  'kb_admin_source_set_render', 'kb_admin_source_set_suggestions', 'kb_admin_source_set_unverified',
   'kb_admin_toggle',
   'kb_admin_watch_approve', 'kb_admin_watch_edit', 'kb_admin_watch_mark_published', 'kb_admin_watch_propose', 'kb_admin_watch_propose_checked', 'kb_admin_watch_reject',
 ];
-const SIX = SIXTEEN; // the name the checks below grew up with (now twenty-seven: + 016's three)
+const SIX = SIXTEEN; // the name the checks below grew up with (now thirty-one: + 016's three, + 017's four)
 const ACTION_FILES = ['app/docs/actions.ts', 'app/editor/actions.ts', 'app/watch/actions.ts'];
 // The one module outside the action files that may write: the watcher's scheduled route.
 const SCHEDULED_WRITER = 'app/api/watcher/run/route.ts';
@@ -146,7 +147,7 @@ for (const file of ACTION_FILES) {
   check(`${file} is a 'use server' module`, /^'use server';/.test(text));
   const fns = [...text.matchAll(/export async function (\w+)\([^)]*\)[^{]*\{\s*\n\s*(.*)/g)];
   const unguarded = fns.filter((m) => m[2].trim() !== 'const auth = await actorForWrite();').map((m) => m[1]);
-  const expected = { 'app/editor/actions.ts': 6, 'app/docs/actions.ts': 9, 'app/watch/actions.ts': 8 }[file];
+  const expected = { 'app/editor/actions.ts': 6, 'app/docs/actions.ts': 9, 'app/watch/actions.ts': 10 }[file]; // watch: + 017's render and unverified
   check(`every server action in ${file} checks the session and role first (actorForWrite)`, fns.length === expected && unguarded.length === 0,
     `${fns.length} action(s)${unguarded.length ? `; unguarded: ${unguarded.join(', ')}` : ''}`);
 }
@@ -346,8 +347,8 @@ check('token expiry read', secondsLeft(jwt({ exp: now + 300 }), now) === 300);
 check('garbage token reads as expired', secondsLeft('garbage', now) < 0);
 
 console.log('behaviour - writes:');
-check('exactly the twenty-seven functions are allowed', Object.keys(WRITE_FUNCTIONS).sort().join(',') === SIX.join(','), Object.keys(WRITE_FUNCTIONS).sort().join(','));
-check('each of the twenty-seven statements is allowed', SIX.every((fn) => isAllowedWrite(writeStatement(fn))));
+check('exactly the thirty-one functions are allowed', Object.keys(WRITE_FUNCTIONS).sort().join(',') === SIX.join(','), Object.keys(WRITE_FUNCTIONS).sort().join(','));
+check('each of the thirty-one statements is allowed', SIX.every((fn) => isAllowedWrite(writeStatement(fn))));
 const bound = (fn) => WRITE_FUNCTIONS[fn].map((t, i) => `$${i + 1}::${t}`).join(', ');
 check('every statement binds every value ($n) and splices nothing',
   SIX.every((fn) => writeStatement(fn) === (ROW_FUNCTIONS.includes(fn)
@@ -375,7 +376,7 @@ check('anything else is refused (internal helpers, a second statement, raw write
 // kb_admin_editor: five in 005, one in 008, nine in 011, one in 014 (014 also
 // grants kb_admin_doc_publish again, which it replaces).
 const sqlDir = resolve(ROOT, '..', 'scripts', 'sql');
-const grantFiles = ['kb_admin_005_editor_login.sql', 'kb_admin_008_create_entry.sql', 'kb_admin_011_doc_functions.sql', 'kb_admin_014_live_match_baseline.sql', 'kb_admin_015_watcher.sql', 'kb_admin_016_watcher_overlap.sql'];
+const grantFiles = ['kb_admin_005_editor_login.sql', 'kb_admin_008_create_entry.sql', 'kb_admin_011_doc_functions.sql', 'kb_admin_014_live_match_baseline.sql', 'kb_admin_015_watcher.sql', 'kb_admin_016_watcher_overlap.sql', 'kb_admin_017_watcher_sources.sql'];
 if (grantFiles.every((f) => existsSync(join(sqlDir, f)))) {
   const norm = (t) => t.replace(/\s+/g, '').replace(/float8\[\]/g, 'doubleprecision[]').replace(/doubleprecision/g, 'double precision');
   const sig = (m) => `${m[1]}(${norm(m[2])})`;
@@ -388,7 +389,7 @@ if (grantFiles.every((f) => existsSync(join(sqlDir, f)))) {
   }
   const ours = SIX.map((fn) => `${fn}(${norm(WRITE_FUNCTIONS[fn].join(','))})`).sort().join(' ');
   const theirs = [...granted].sort().join(' ');
-  check('the twenty-seven signatures match the kb_admin_editor grants (005, 008, 011, 014, 015, 016)', theirs === ours, theirs);
+  check('the thirty-one signatures match the kb_admin_editor grants (005, 008, 011, 014, 015, 016, 017)', theirs === ours, theirs);
 } else {
   console.log('  (grant SQL files not found - grant comparison skipped)');
 }
@@ -1025,7 +1026,7 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
       /confirm=\{figure \|\| conflict \? \{\s*name: 'confirm_figure'/.test(page) && /category: draft\.source_category/.test(page));
     check('the tick box is required in the form', /type="checkbox" name=\{confirm\.name\} value="yes" required/.test(src('components/ReasonAction.tsx')));
   }
-  check('every watcher action refuses while the watcher is off', (watchActions.match(/const off = watcherOff\(\);/g) ?? []).length === 8);
+  check('every watcher action refuses while the watcher is off', (watchActions.match(/const off = watcherOff\(\);/g) ?? []).length === 10);
   const watcherPages = ['app/sources/page.tsx', 'app/watch/page.tsx', 'app/watch/[id]/page.tsx'];
   check('the watcher pages are 404 unless the watcher is on', watcherPages.every((p) => /if \(!viewer\.watcherOn[^)]*\) notFound\(\);/.test(src(p))));
   const route = src('app/api/watcher/run/route.ts');
@@ -1763,6 +1764,284 @@ console.log('KB watcher drafting: overlap check, low-value proposals, index page
       /kb_admin_watch_propose_checked\(uuid,text,uuid,uuid/.test(s12) && /column_name = 'conflict_check'/.test(s12));
   } else {
     console.log('  (migration SQL not found - 016 checks skipped)');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 2026-10-16: all five client sites (migration 017). A render (Indonesian
+// embassy), B non-English pages, C unverified source (Myanmar embassy),
+// E a failed draft is retried. Fakes only: no network, no database.
+// ---------------------------------------------------------------------------
+console.log('watcher - five client sites (017):');
+{
+  const Fe = await import(pathToFileURL(join(ROOT, 'lib/watcher/fetcher.ts')).href);
+  const Pl = await import(pathToFileURL(join(ROOT, 'lib/watcher/pipeline.ts')).href);
+  const Lg = await import(pathToFileURL(join(ROOT, 'lib/watcher/language.ts')).href);
+  const Dr = await import(pathToFileURL(join(ROOT, 'lib/watcher/drafting.ts')).href);
+  const fx = (n) => readFileSync(join(ROOT, 'scripts/fixtures/watcher', n), 'utf8');
+  const page = (body) => `<!doctype html><html><head><title>t</title></head><body><main>${body}</main></body></html>`;
+  // Indonesian, as on the embassy's passport page (no phone numbers in fixtures).
+  const ID_PARA = 'Bahwa masa berlaku paspor yang diterbitkan pada perwakilan Republik Indonesia di luar negeri, baik untuk paspor biasa elektronik maupun paspor biasa non elektronik, berlaku paling lama 5 (lima) tahun sejak tanggal diterbitkan.';
+  const ID_HTML = page(`<h1>Layanan Paspor</h1><p>${ID_PARA}</p><p>Permohonan paspor dapat diajukan dengan membawa paspor lama dan dokumen pendukung yang sah.</p>`);
+  const EN_HTML = page('<h1>Consular services</h1><p>Myanmar Embassy in Singapore is pleased to announce the following services rendered to Myanmar Citizens. Renewal of passport requires the old passport and two photographs taken within six months.</p>');
+  const net = (routes) => {
+    const calls = [];
+    const make = (tag) => async (url, init) => {
+      calls.push({ url, tag });
+      const r = routes[url];
+      if (!r) return { status: 404, headers: { get: () => null }, text: async () => '' };
+      return { status: r.status ?? 200, headers: { get: (h) => (r.headers ?? { 'content-type': 'text/html' })[h.toLowerCase()] ?? null }, text: async () => r.body ?? '' };
+    };
+    return { calls, deps: { fetch: make('verified'), insecureFetch: make('insecure'), now: () => 0, sleep: async () => undefined } };
+  };
+  const db = (opts = {}) => {
+    const log = [];
+    const snaps = [];
+    const call = async (fn, params) => {
+      log.push({ fn, params });
+      if (fn === 'kb_admin_source_record_fetch') {
+        if (!params[3]) return { ok: false, changed: false, first: false };
+        const prev = [...snaps].reverse().find((s) => s.ok);
+        snaps.push({ ok: true, hash: params[5], id: `snap-${snaps.length + 1}` });
+        return { ok: true, snapshot_id: `snap-${snaps.length}`, changed: !prev || prev.hash !== params[5], first: !prev, previous_snapshot_id: prev?.id ?? null };
+      }
+      if (fn === 'kb_admin_match_live') return [];
+      if (fn === 'kb_admin_source_set_suggestions' || fn === 'kb_admin_source_record_draft') return {};
+      if (fn === 'kb_admin_watch_propose_checked') return { draft_id: 'd1', status: 'pending', blocked_reason: null };
+      throw new Error(`unexpected call ${fn}`);
+    };
+    return { call, log, fns: () => log.map((x) => x.fn), opts };
+  };
+  const deps = (d, extra = {}) => ({
+    call: d.call, previousText: async () => null, draftFailed: async () => false,
+    embed: async (t) => ({ vectors: t.map(() => Array(4).fill(0.1)), model: 'm' }),
+    recorder: null, searcher: { userId: 'u', email: 'w' }, entryTexts: async () => [],
+    llm: async () => '{"drafts":[]}', model: 'm', has016: true, has017: true, ...extra,
+  });
+  const KEMLU = 'https://kemlu.go.id/id/singapore/pelayanan-perwakilan/layanan-imigrasi/layanan-paspor';
+
+  // --- A. render per source ---------------------------------------------------
+  {
+    const d = db();
+    let plain = 0;
+    let rendered = 0;
+    const r = await Pl.checkSource({ id: 's1', url: KEMLU, label: 'k', render: true }, deps(d, {
+      fetchPage: async () => { plain += 1; return { ok: true, status: 200, html: fx('kemlu_spa_shell.html'), finalUrl: KEMLU }; },
+      renderPage: async () => { rendered += 1; return { ok: true, status: 200, html: ID_HTML, finalUrl: KEMLU }; },
+    }));
+    check('017 A: a page marked "render" is read through the page renderer only (no plain fetch) and recorded',
+      r.outcome === 'first' && rendered === 1 && plain === 0 && d.fns().includes('kb_admin_source_record_fetch'), `${r.outcome} plain=${plain} rendered=${rendered}`);
+  }
+  {
+    const d = db();
+    const r = await Pl.checkSource({ id: 's1', url: KEMLU, label: 'k', render: true }, deps(d, {
+      fetchPage: async () => ({ ok: true, status: 200, html: ID_HTML, finalUrl: KEMLU }),
+      renderPage: async () => ({ ok: false, status: null, error: 'the page renderer could not be reached' }),
+    }));
+    const rec = d.log.find((x) => x.fn === 'kb_admin_source_record_fetch');
+    check('017 A: the renderer down -> a visible fetch failure recorded on the page, never "no change"',
+      r.outcome === 'failed' && rec && rec.params[3] === false && /page renderer/.test(rec.params[8]), `${r.outcome} ${r.error}`);
+    const d2 = db();
+    const r2 = await Pl.checkSource({ id: 's1', url: KEMLU, label: 'k', render: true }, deps(d2, { fetchPage: async () => ({ ok: true, status: 200, html: ID_HTML, finalUrl: KEMLU }) }));
+    check('017 A: a "render" page with no renderer set up -> a visible failure naming KB_RENDER_URL', r2.outcome === 'failed' && /KB_RENDER_URL/.test(r2.error ?? ''), r2.error);
+  }
+  {
+    const d = db();
+    let rendered = 0;
+    const r = await Pl.checkSource({ id: 's1', url: KEMLU, label: 'k' }, deps(d, {
+      fetchPage: async () => ({ ok: true, status: 200, html: fx('kemlu_spa_shell.html'), finalUrl: KEMLU }),
+      renderPage: async () => { rendered += 1; return { ok: true, status: 200, html: ID_HTML, finalUrl: KEMLU }; },
+    }));
+    check('017 A: a plain page with ~0 text is NOT rendered silently; the failure suggests "Render with browser"',
+      r.outcome === 'failed' && rendered === 0 && (r.error ?? '').startsWith(Pl.RENDER_SUGGESTION), r.error);
+  }
+  {
+    const RS = join(ROOT, '..', 'render-service');
+    const G = await import(pathToFileURL(join(RS, 'guard.mjs')).href);
+    const server = readFileSync(join(RS, 'server.mjs'), 'utf8');
+    check('017 A: render service allowlist - kemlu.go.id by default, its subdomains too, nothing else; "*" switches it off',
+      G.readAllowedHosts(undefined).join() === 'kemlu.go.id' && G.hostAllowed('kemlu.go.id', ['kemlu.go.id']) && G.hostAllowed('www.kemlu.go.id', ['kemlu.go.id']) &&
+      !G.hostAllowed('www.ica.gov.sg', ['kemlu.go.id']) && !G.hostAllowed('evilkemlu.go.id', ['kemlu.go.id']) && G.readAllowedHosts('*') === null && G.hostAllowed('a.b.sg', null));
+    check('017 A: the service checks the allowlist for the page AND where it ends up, before opening the browser',
+      /if \(!hostAllowed\(host, cfg\.allowedHosts\)\)/.test(server) && /hostAllowed\(new URL\(finalUrl\)\.hostname, cfg\.allowedHosts\)/.test(server) &&
+      server.indexOf('hostAllowed(host, cfg.allowedHosts)') < server.indexOf('newContext('));
+    const docker = readFileSync(join(RS, 'Dockerfile'), 'utf8');
+    check('017 A: the image installs system Chrome and launches it (channel "chrome")', /playwright install --with-deps chrome/.test(docker) && /RENDER_CHROME_CHANNEL=chrome/.test(docker));
+  }
+
+  // --- B. non-English pages ---------------------------------------------------
+  {
+    check('017 B: the page language is detected (Indonesian, English, Burmese, Tagalog)',
+      Lg.detectLanguage(ID_PARA).code === 'id' && Lg.detectLanguage(EN_HTML).code === 'en' &&
+      Lg.detectLanguage('မြန်မာသံရုံးတွင်ပြုလုပ်နိုင်သည့်၀န်ဆာင်မှုများ').code === 'my' && Lg.detectLanguage('Hindi po ako sigurado kung saan ang opisina ng ahensya').code === 'tl');
+    let system = '';
+    const d = db();
+    await Pl.checkSource({ id: 's1', url: KEMLU, label: 'k', render: true }, deps(d, {
+      fetchPage: async () => ({ ok: true, status: 200, html: ID_HTML, finalUrl: KEMLU }),
+      renderPage: async () => ({ ok: true, status: 200, html: ID_HTML, finalUrl: KEMLU }),
+      llm: async (s) => { system ||= s; return '{"drafts":[]}'; },
+    }));
+    check('017 B: an Indonesian page -> the prompt keeps the quote in Indonesian and asks for the proposal in English',
+      /Copy every source_passage EXACTLY in Indonesian/.test(system) && /plain English/.test(system), system.slice(-300));
+    let systemEn = '';
+    await Pl.checkSource({ id: 's2', url: 'https://www.mom.gov.sg/x', label: 'm' }, deps(db(), {
+      fetchPage: async () => ({ ok: true, status: 200, html: fx('page_v1.html'), finalUrl: 'https://www.mom.gov.sg/x' }),
+      llm: async (s) => { systemEn ||= s; return '{"drafts":[]}'; },
+    }));
+    check('017 B: an English page gets no translation instruction', systemEn && !/source_passage EXACTLY in/.test(systemEn));
+    const parsed = Dr.parseDrafts(JSON.stringify({ drafts: [{ target_entry_id: null, question: 'How long is a passport issued by the Indonesian embassy valid for?',
+      answer: 'An ordinary passport issued by an Indonesian embassy is valid for at most 5 years from its date of issue.', source_passage: ID_PARA, why: 'x' }] }),
+    { newText: ID_PARA, candidateIds: [], live: new Map() });
+    check('017 B: an English proposal quoting the Indonesian page word for word is kept (quote matching runs on the original)',
+      parsed.drafts.length === 1 && parsed.drafts[0].source_passage === ID_PARA, JSON.stringify(parsed.dropped));
+    const translated = Dr.parseDrafts(JSON.stringify({ drafts: [{ target_entry_id: null, question: 'How long is the passport valid?',
+      answer: 'An ordinary passport issued by an Indonesian embassy is valid for at most 5 years from its date of issue.', source_passage: 'An ordinary passport is valid for at most 5 years from its date of issue.', why: 'x' }] }),
+    { newText: ID_PARA, candidateIds: [], live: new Map() });
+    check('017 B: a "quote" the model translated into English is refused (it is not on the page)', translated.drafts.length === 0);
+    const review = readFileSync(join(ROOT, 'app/watch/[id]/page.tsx'), 'utf8');
+    check('017 B: the review page says "Translated from <language>" off the passage, and the fee lock is untouched',
+      /Translated from \{passageLanguage\.name\}/.test(review) && /detectLanguage\(draft\.source_passage\)/.test(review) && /reviewState\(/.test(review));
+  }
+
+  // --- C. unverified source ---------------------------------------------------
+  const MM = 'http://www.myanmarembassy.sg/consular.html';
+  {
+    const n = net({ 'http://www.myanmarembassy.sg/robots.txt': { status: 404 }, [MM]: { body: EN_HTML } });
+    const r = await new Fe.PoliteFetcher(n.deps).fetchPage(MM, { unverified: true });
+    check('017 C: an unverified source is read over http, robots.txt included (from the same http origin)',
+      r.ok && n.calls[0].url === 'http://www.myanmarembassy.sg/robots.txt' && n.calls[1].url === MM, JSON.stringify(n.calls));
+    const n2 = net({ [MM]: { body: EN_HTML } });
+    const r2 = await new Fe.PoliteFetcher(n2.deps).fetchPage(MM);
+    check('017 C: the same http address without the flag is refused, nothing requested', !r2.ok && /only https/.test(r2.error) && n2.calls.length === 0);
+  }
+  {
+    const U = 'https://www.myanmarembassy.sg/consular.html';
+    const n = net({ 'https://www.myanmarembassy.sg/robots.txt': { status: 404 }, [U]: { body: EN_HTML } });
+    const r = await new Fe.PoliteFetcher(n.deps).fetchPage(U, { unverified: true });
+    const n2 = net({ 'https://www.mom.gov.sg/robots.txt': { status: 404 }, 'https://www.mom.gov.sg/x': { body: EN_HTML } });
+    await new Fe.PoliteFetcher(n2.deps).fetchPage('https://www.mom.gov.sg/x');
+    check('017 C: https on an unverified source uses the no-certificate-check fetch; every other page the verified one',
+      r.ok && n.calls.every((c) => c.tag === 'insecure') && n2.calls.every((c) => c.tag === 'verified'), JSON.stringify([...n.calls, ...n2.calls]));
+  }
+  {
+    const n = net({
+      'http://www.myanmarembassy.sg/robots.txt': { status: 404 },
+      [MM]: { status: 302, headers: { location: 'http://evil.example.com/x' } },
+      'http://evil.example.com/x': { body: EN_HTML },
+    });
+    const r = await new Fe.PoliteFetcher(n.deps).fetchPage(MM, { unverified: true });
+    const n2 = net({
+      'http://www.myanmarembassy.sg/robots.txt': { status: 404 },
+      [MM]: { status: 302, headers: { location: 'https://other.gov.sg/x' } },
+      'https://other.gov.sg/robots.txt': { status: 404 },
+      'https://other.gov.sg/x': { body: EN_HTML },
+    });
+    const r2 = await new Fe.PoliteFetcher(n2.deps).fetchPage(MM, { unverified: true });
+    check('017 C: never global - a redirect off the unverified host must be https and is read with the certificate check',
+      !r.ok && /redirected to a refused address/.test(r.error) && !n.calls.some((c) => c.url.startsWith('http://evil')) &&
+      r2.ok && n2.calls.filter((c) => c.url.startsWith('https://other')).every((c) => c.tag === 'verified'), `${r.error} | ${JSON.stringify(n2.calls)}`);
+  }
+  {
+    const d = db();
+    const seen = [];
+    await Pl.checkSource({ id: 's3', url: MM, label: 'mm', allow_unverified: true }, deps(d, {
+      fetchPage: async (u, o) => { seen.push(o?.unverified); return { ok: true, status: 200, html: EN_HTML, finalUrl: MM }; },
+    }));
+    await Pl.checkSource({ id: 's4', url: 'https://www.mom.gov.sg/y', label: 'm' }, deps(db(), {
+      fetchPage: async (u, o) => { seen.push(o?.unverified); return { ok: true, status: 200, html: EN_HTML, finalUrl: 'https://www.mom.gov.sg/y' }; },
+    }));
+    check('017 C: the pipeline passes "unverified" for that source only', seen[0] === true && seen[1] === false, JSON.stringify(seen));
+    const actions = readFileSync(join(ROOT, 'app/watch/actions.ts'), 'utf8');
+    const sources = readFileSync(join(ROOT, 'app/sources/page.tsx'), 'utf8');
+    const queue = readFileSync(join(ROOT, 'app/watch/page.tsx'), 'utf8');
+    const review = readFileSync(join(ROOT, 'app/watch/[id]/page.tsx'), 'utf8');
+    check('017 C: approver only, with a reason (actions), and a red "Unverified source" badge on the page, the queue and the proposal',
+      /if \(!actor\.canApprove\) return \{ error: 'Only an approver can allow an unverified connection\.' \}/.test(actions) &&
+      /if \(!actor\.canApprove\) return \{ error: 'Only an approver can change whether a page may be read unverified\.' \}/.test(actions) &&
+      /UnverifiedBadge/.test(sources) && /UnverifiedBadge/.test(queue) && /UnverifiedBadge/.test(review));
+    const insecure = readFileSync(join(ROOT, 'lib/insecureFetch.ts'), 'utf8');
+    check('017 C: the no-certificate-check fetch is used by the watcher fetcher only, for https only',
+      code.filter((f) => /from '@\/lib\/insecureFetch'/.test(readFileSync(f, 'utf8'))).map(rel).join() === 'lib/watchFetcher.ts' && /rejectUnauthorized: false/.test(insecure) && /reads https:\/\/ only/.test(insecure));
+  }
+
+  // --- E. a failed draft is retried -------------------------------------------
+  {
+    const d = db();
+    const html1 = fx('page_v1.html');
+    const html2 = fx('page_v2_changed.html');
+    let failNext = false;
+    const run = (html) => Pl.checkSource({ id: 's5', url: 'https://www.mom.gov.sg/fdw', label: 'm' }, deps(d, {
+      fetchPage: async () => ({ ok: true, status: 200, html, finalUrl: 'https://www.mom.gov.sg/fdw' }),
+      draftFailed: async (id) => d.log.some((x) => x.fn === 'kb_admin_source_record_draft' && x.params[2] === id && x.params[3] === false) &&
+        !d.log.some((x) => x.fn === 'kb_admin_source_record_draft' && x.params[2] === id && x.params[3] === true),
+      llm: async () => { if (failNext) { failNext = false; throw new Error('model timed out'); } return '{"drafts":[]}'; },
+    }));
+    await run(html1);
+    failNext = true;
+    let threw = null;
+    try {
+      await run(html2);
+    } catch (e) {
+      threw = e;
+    }
+    const marked = d.log.find((x) => x.fn === 'kb_admin_source_record_draft' && x.params[3] === false);
+    check('017 E: drafting fails after a changed snapshot -> the snapshot is marked failed (with the reason) and the error is reported',
+      threw && marked && /next run/.test(marked.params[4]), String(threw?.message));
+  }
+  {
+    const d = db();
+    let llmCalls = 0;
+    let fail = true;
+    const failed = new Set();
+    const call = async (fn, params) => {
+      if (fn === 'kb_admin_source_record_draft') { if (params[3]) failed.delete(params[2]); else failed.add(params[2]); }
+      return d.call(fn, params);
+    };
+    const run = (html) => Pl.checkSource({ id: 's6', url: 'https://www.mom.gov.sg/fdw', label: 'm' }, deps(d, {
+      call,
+      fetchPage: async () => ({ ok: true, status: 200, html, finalUrl: 'https://www.mom.gov.sg/fdw' }),
+      draftFailed: async (id) => failed.has(id),
+      llm: async () => { llmCalls += 1; if (fail) { fail = false; throw new Error('model timed out'); } return '{"drafts":[]}'; },
+    })).catch((e) => ({ outcome: 'threw', error: e.message }));
+    const r1 = await run(fx('page_v1.html'));
+    const r2 = await run(fx('page_v1.html'));
+    const r3 = await run(fx('page_v1.html'));
+    const cleared = d.log.filter((x) => x.fn === 'kb_admin_source_record_draft' && x.params[3] === true).map((x) => x.params[2]);
+    check('017 E: the next run with the SAME page drafts it again (not "unchanged") and records the success; the run after is unchanged',
+      r1.outcome === 'threw' && r2.outcome !== 'unchanged' && r2.outcome !== 'threw' && llmCalls === 2 && cleared.join() === 'snap-2' && r3.outcome === 'unchanged',
+      `${r1.outcome} ${r2.outcome} ${r3.outcome} llm=${llmCalls}`);
+  }
+  {
+    const d = db();
+    let fail = true;
+    let llmCalls = 0;
+    const run = (html) => Pl.checkSource({ id: 's7', url: 'https://www.mom.gov.sg/fdw', label: 'm' }, deps(d, {
+      has017: false,
+      fetchPage: async () => ({ ok: true, status: 200, html, finalUrl: 'https://www.mom.gov.sg/fdw' }),
+      llm: async () => { llmCalls += 1; if (fail) { fail = false; throw new Error('x'); } return '{"drafts":[]}'; },
+    })).catch(() => ({ outcome: 'threw' }));
+    await run(fx('page_v1.html'));
+    const r2 = await run(fx('page_v1.html'));
+    check('017 E: before 017 is installed nothing new is called (the old behaviour)', r2.outcome === 'unchanged' && !d.fns().includes('kb_admin_source_record_draft'));
+    const q = readFileSync(join(ROOT, 'lib/watchQueries.ts'), 'utf8');
+    check('017 E: a page whose drafting failed is due on the very next scheduled run, and its failed snapshot is not the diff baseline',
+      /or s\.last_status = 'draft_failed'/.test(q) && /and not draft_failed/.test(q));
+    const pageSrc = readFileSync(join(ROOT, 'app/sources/page.tsx'), 'utf8');
+    check('017 E: Watched pages shows "Drafting failed" with the reason', /draft_failed: \{ text: 'Drafting failed', tone: 'bad' \}/.test(pageSrc) && /s\.last_status === 'draft_failed'\) && s\.last_error/.test(pageSrc));
+  }
+
+  // --- the migration ----------------------------------------------------------
+  {
+    const sqlPath17 = resolve(ROOT, '..', 'scripts', 'sql', 'kb_admin_017_watcher_sources.sql');
+    const s17 = existsSync(sqlPath17) ? readFileSync(sqlPath17, 'utf8') : '';
+    const fnBody = (name) => new RegExp(`create or replace function public\\.${name}\\([\\s\\S]*?\\n\\$\\$;\\n`).exec(s17)?.[0] ?? '';
+    check('017 SQL: unverified is approver-only with a reason; render is editor; record_draft takes the schedule (null actor)',
+      /kb_admin__require_actor\(p_actor_id, 'approver'\)/.test(fnBody('kb_admin_source_set_unverified')) && /a reason of 1-500 characters is required/.test(fnBody('kb_admin_source_set_unverified')) &&
+      /kb_admin__require_actor\(p_actor_id, 'approver'\)/.test(fnBody('kb_admin_source_add_unverified')) && /a reason of 1-500 characters is required/.test(fnBody('kb_admin_source_add_unverified')) &&
+      /kb_admin__require_actor\(p_actor_id, 'editor'\)/.test(fnBody('kb_admin_source_set_render')) && /kb_admin__watch_actor\(p_actor_id\)/.test(fnBody('kb_admin_source_record_draft')));
+    check('017 SQL: http:// is allowed only on a row marked unverified; additive; 31 editor functions; a rollback that refuses once used',
+      /and \(url ~ '\^https:\/\/' or allow_unverified\)\)/.test(s17) && !/alter table public\.cb_knowledge_base_updated/i.test(s17) && !/\bdelete from\b/i.test(s17) && /if n <> 31 then/.test(s17) &&
+      /ROLLBACK 017 REFUSED: cb_kb_audit holds 017 actions/.test(readFileSync(resolve(ROOT, '..', 'scripts', 'sql', 'rollback', 'rollback_kb_admin_017_watcher_sources.sql'), 'utf8')));
   }
 }
 

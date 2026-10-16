@@ -140,10 +140,31 @@ Migration `scripts/sql/kb_admin_015_watcher.sql` (on production since 2026-10-15
   official page with the same facts.
 - **Under maintenance**: a maintenance page, or a redirect to `/maintenance/`. The page is
   read again on the next check.
-- **Built by JavaScript**: an app shell whose text only appears in a browser. With
-  `KB_RENDER_URL` and `KB_RENDER_SECRET` set, the page goes to the page renderer
-  (`render-service/` on our server; see its README), through the same address, robots.txt
-  and per-host gap checks. Without them it is reported as needing the renderer.
+- **Built by JavaScript**: an app shell whose text only appears in a browser. With migration
+  017 the failure says *switch on "Render with browser"*, and the button is offered on the
+  page. A page marked that way is read through the page renderer (`render-service/` on our
+  server, `KB_RENDER_URL` + `KB_RENDER_SECRET`; see its README), through the same address,
+  robots.txt and per-host gap checks; if the renderer is down or not set up, the page shows a
+  fetch failure saying so. Before 017 the renderer was tried automatically.
+
+**The five client sites (2026-10-16, migration 017, written, not applied):**
+- **Render with browser** (editor, per page): the Indonesian embassy (kemlu.go.id).
+- **Pages not in English**: the page's language is detected (`lib/watcher/language.ts`); the
+  quote stays in that language (matched against the page as it is), the proposal is written
+  in English, and the review page shows "Translated from Indonesian". The fee lock and the
+  figure checks apply to the English text as always. A replacement on such a page is only
+  justified by a figure the page contradicts (word overlap cannot be measured across
+  languages); additions are unaffected.
+- **Allow unverified connection** (APPROVER only, with a reason, per page): the page's own
+  site may be read over http://, or https:// without a certificate check - never any other
+  site, never a redirect off it (`lib/insecureFetch.ts`, used by the watcher fetcher only).
+  The Myanmar embassy's certificate is self-signed for another site and its pages are only
+  on http. A red "Unverified source" badge is on the page and every proposal from it.
+- **A failed draft is retried**: if drafting fails after a changed snapshot was recorded, the
+  snapshot is marked, the page shows "Drafting failed" with the reason, and the next run
+  (the next day's) drafts it again, diffed against the last snapshot that was drafted.
+
+Until 017 is applied none of this is called or read, and the watcher behaves as before.
 
 The extractor reads ASP.NET pages that wrap the whole page in one `<form>` (mom.gov.sg), and
 reads a listing page with several `<article>`s whole.

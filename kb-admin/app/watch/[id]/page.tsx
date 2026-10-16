@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import { UnverifiedBadge } from '@/app/sources/UnverifiedBadge';
+import { detectLanguage } from '@/lib/watcher/language';
 import { notFound } from 'next/navigation';
 import { approveWatchDraft, rejectWatchDraft } from '@/app/watch/actions';
 import { ReasonAction } from '@/components/ReasonAction';
@@ -184,6 +186,8 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
   const drops = open && byOrigin.model.length > 0;
   const editDrops = open && !drops && byOrigin.edit.length > 0;
   const segments = draft.kind === 'edit' && draft.current_answer ? entryDiff(draft.current_answer, draft.proposed_answer) : null;
+  // A page not in English (2026-10-16): the passage is quoted as it is; the proposal is the translation.
+  const passageLanguage = detectLanguage(draft.source_passage);
   const status = DRAFT_STATUS[draft.status] ?? { text: draft.status, tone: 'off' as const };
   const oldEntry = draft.kind === 'edit' ? `${draft.current_question ?? ''}\n\n${draft.current_answer ?? ''}` : '';
   const newEntry = `${draft.proposed_question}\n\n${draft.proposed_answer}`;
@@ -239,9 +243,19 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
           <span className="field-label">Source page: </span>
           {draft.source_label} -{' '}
           <a href={draft.source_url} className="link break-all" target="_blank" rel="noreferrer noopener">{draft.source_url}</a>
+          {draft.source_unverified ? <span className="ml-2 inline-block align-middle"><UnverifiedBadge /></span> : null}
         </p>
+        {draft.source_unverified ? (
+          <p style={{ color: 'var(--bad)' }}>This page was read without a verified connection (an approver allowed it for this site only). Check the facts against the page itself before approving.</p>
+        ) : null}
         <p><span className="field-label">Fetched: </span>{formatDate(draft.source_fetched_at)}</p>
-        <p className="pt-2"><span className="field-label">The exact passage this came from:</span></p>
+        {!passageLanguage.english ? (
+          <p data-translated>
+            <Pill tone="warn">Translated from {passageLanguage.name}</Pill>{' '}
+            The page is in {passageLanguage.name}: the passage below is quoted exactly as it appears; the proposal is the watcher&apos;s English translation of it. Check the translation before approving.
+          </p>
+        ) : null}
+        <p className="pt-2"><span className="field-label">The exact passage this came from{passageLanguage.english ? '' : ` (in ${passageLanguage.name})`}:</span></p>
         <blockquote className="whitespace-pre-wrap border-l-2 pl-3" style={{ borderColor: 'var(--divider)' }}>{draft.source_passage}</blockquote>
       </section>
 

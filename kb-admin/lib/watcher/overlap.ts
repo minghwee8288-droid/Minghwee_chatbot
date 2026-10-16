@@ -165,6 +165,8 @@ export function buildMergePrompt(p: {
   label: string;
   url: string;
   pairs: { entry: { id: string; question: string; answer: string }; draft: { question: string; answer: string; source_passage: string } }[];
+  /** A page not in English: keep its quotes in that language, write English (lib/watcher/language.ts). */
+  languageNote?: string;
 }): { system: string; user: string } {
   const system = [
     'You maintain the knowledge base of a WhatsApp assistant for Ming Hwee, a licensed Singapore domestic-helper employment agency.',
@@ -176,6 +178,7 @@ export function buildMergePrompt(p: {
     '- Never propose anything about agency fees or prices; leave money to the agency.',
     '- Plain sentences for a client on WhatsApp: no headings, bullets or markdown.',
     '- Every source_passage must be copied word for word from the page passage given for that entry, character for character (keep odd spacing; never tidy or reorder it).',
+    ...(p.languageNote ? [p.languageNote] : []),
     `Answer with JSON only: {"drafts":[${UPDATE_SHAPE}]}`,
   ].join('\n');
   const user = [

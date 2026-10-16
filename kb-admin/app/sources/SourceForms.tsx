@@ -2,7 +2,7 @@
 
 import { useFormState, useFormStatus } from 'react-dom';
 import type { ActionState } from '@/app/editor/actions';
-import { addSource, fetchNow, watchSuggestedPage } from '@/app/watch/actions';
+import { addSource, fetchNow, setRenderAction, watchSuggestedPage } from '@/app/watch/actions';
 import { CATEGORY_LABELS } from './categories';
 
 function Submit({ label, busy, tone = 'primary' }: { label: string; busy: string; tone?: 'primary' | 'secondary' }) {
@@ -14,8 +14,12 @@ function Submit({ label, busy, tone = 'primary' }: { label: string; busy: string
   );
 }
 
-/** Register a page to watch. The address must be https:// and public; the database checks it again. */
-export function AddSourceForm() {
+/**
+ * Register a page to watch. The address must be https:// and public; the
+ * database checks it again. An approver (with 017) may instead allow an
+ * unverified connection - http://, or a broken certificate - with a reason.
+ */
+export function AddSourceForm({ canAllowUnverified = false }: { canAllowUnverified?: boolean }) {
   const [raw, formAction] = useFormState(addSource, { error: '' });
   const state: ActionState = raw ?? { error: '' };
   return (
@@ -39,8 +43,36 @@ export function AddSourceForm() {
           </select>
         </div>
       </div>
+      {canAllowUnverified ? (
+        <div className="space-y-2 rounded border p-3" style={{ borderColor: 'var(--bad)' }} data-unverified-option>
+          <label className="flex items-center gap-2 text-[13px]">
+            <input type="checkbox" name="unverified" />
+            <span>Allow unverified connection (approver only)</span>
+          </label>
+          <p className="text-[12px] text-muted">
+            For a page whose certificate is broken, or that is only on http://. Only this page&apos;s own site is read without a certificate check; the page and every proposal from it show a red &quot;Unverified source&quot; badge.
+          </p>
+          <label className="field-label mb-1.5 block" htmlFor="src-unverified-reason">Reason (required if ticked)</label>
+          <input id="src-unverified-reason" name="unverified_reason" maxLength={500} className="input" placeholder="The embassy's certificate is issued for another site; the page is only on http." />
+        </div>
+      ) : null}
       {state.error ? <div className="notice notice-red" role="alert">{state.error}</div> : null}
       <Submit label="Start watching" busy="Saving…" />
+    </form>
+  );
+}
+
+/** Read this page through the page renderer, or with a plain fetch (017). */
+export function RenderToggle({ sourceId, render, suggested }: { sourceId: string; render: boolean; suggested: boolean }) {
+  const [raw, formAction] = useFormState(setRenderAction, { error: '' });
+  const state: ActionState = raw ?? { error: '' };
+  return (
+    <form action={formAction} className="inline-flex flex-col items-start gap-1" data-render-toggle={sourceId}>
+      <input type="hidden" name="source_id" value={sourceId} />
+      {render ? null : <input type="hidden" name="render" value="on" />}
+      <Submit label={render ? 'Stop rendering with browser' : 'Render with browser'} busy="Saving…" tone={suggested && !render ? 'primary' : 'secondary'} />
+      {suggested && !render ? <span className="text-[12px]" style={{ color: 'var(--warn)' }}>Suggested: the plain fetch read almost no text.</span> : null}
+      {state.error ? <span className="text-[12px]" style={{ color: 'var(--bad)' }} role="alert">{state.error}</span> : null}
     </form>
   );
 }

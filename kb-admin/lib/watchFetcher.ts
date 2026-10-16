@@ -1,5 +1,6 @@
 import 'server-only';
 import { env } from '@/lib/env';
+import { insecureFetch } from '@/lib/insecureFetch';
 import { PoliteFetcher } from '@/lib/watcher/fetcher';
 import { makeRenderer } from '@/lib/watcher/renderClient';
 
@@ -16,6 +17,8 @@ export function watchFetcher(): { fetcher: PoliteFetcher; renders: boolean } {
     now: () => Date.now(),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     render: render ? makeRenderer(render, (u, init) => fetch(u, { ...init, cache: 'no-store' })) : undefined,
+    // Only ever used for an unverified source's own host (PoliteFetcher.fetchPage, 017).
+    insecureFetch,
   });
   return { fetcher, renders: Boolean(render) };
 }

@@ -6,6 +6,7 @@ import { extractMainText } from './extract.ts';
 import { classifyEmptyPage, emptyPageMessage } from './emptyPage.ts';
 import type { PageResult } from './fetcher.ts';
 import { findSubPages, indexVerdict, looksLikeIndexText, type SubPage } from './indexPage.ts';
+import { detectLanguage, languageInstruction } from './language.ts';
 import { EDIT_INSTEAD_SIMILARITY, assessOverlap, buildMergePrompt, type LiveEntry, type Overlap } from './overlap.ts';
 
 /**
@@ -69,17 +70,43 @@ export type DraftDeps = {
   model: string;
   /** Migration 016 is installed: the overlap results and suggested pages can be recorded. */
   has016?: boolean;
+  /** Migration 017 is installed: per-source render / unverified, and a failed draft is recorded and retried. */
+  has017?: boolean;
   log?: (line: string) => void;
 };
 
 export type CheckDeps = DraftDeps & {
-  fetchPage: (url: string) => Promise<PageResult>;
-  /** The JavaScript fallback (render-service/), used only when the plain page has no readable text. Absent = not set up. */
+  /** A plain fetch; `unverified` = this source's own host may be read over http or without a certificate check (017). */
+  fetchPage: (url: string, opts?: { unverified?: boolean }) => Promise<PageResult>;
+  /** The page renderer (render-service/). Absent = not set up. */
   renderPage?: (url: string) => Promise<PageResult>;
+  /** The last snapshot's text that was not a failed draft (017), or the last good snapshot's before 017. */
   previousText: (sourceId: string) => Promise<string | null>;
+  /** 017: was drafting from this snapshot recorded as failed? Then the next run retries it. */
+  draftFailed?: (snapshotId: string) => Promise<boolean>;
 };
 
-export type SourceRef = { id: string; url: string; label: string };
+export type SourceRef = { id: string; url: string; label: string; render?: boolean; allow_unverified?: boolean };
+
+/**
+ * Switch (2026-10-16, needs 017): a page is read through the page renderer
+ * only when an editor marked it "render"; a page whose plain fetch has no text
+ * is reported with a suggestion to switch rendering on (never rendered
+ * silently, never an empty "no change"). False = the 015 behaviour: render
+ * automatically whenever the plain fetch had no text and a renderer is set up.
+ */
+export const RENDER_PER_SOURCE = true;
+
+/**
+ * Switch (2026-10-16, needs 017): drafting that fails after a changed
+ * snapshot was recorded marks that snapshot, and the next run drafts it again
+ * (diffing against the last snapshot that was not a failed draft). False = the
+ * failure is only logged, and the change is never proposed (the old gap).
+ */
+export const RETRY_FAILED_DRAFTS = true;
+
+/** The start of the failure that suggests switching rendering on; the Watched pages screen offers the switch when it sees it. */
+export const RENDER_SUGGESTION = 'This page is built by JavaScript: switch on "Render with browser" for it';
 
 export type DraftOutcome = { id: string; status: string; blocked_reason: string | null; kind: 'new' | 'edit'; conflict: boolean; similar: number };
 
@@ -163,17 +190,42 @@ export async function checkSource(source: SourceRef, deps: CheckDeps): Promise<C
   const log = deps.log ?? (() => undefined);
   const who = deps.recorder;
   const prev = await deps.previousText(source.id);
-  const page = await deps.fetchPage(source.url);
-
-  if (!page.ok) {
-    await deps.call('kb_admin_source_record_fetch', [who?.userId ?? null, who?.email ?? null, source.id, false, page.status, null, null, null, page.error]);
-    log(`fetch failed source=${source.id.slice(0, 8)} ${page.error}`);
-    return { outcome: 'failed', error: page.error, drafts: [], dropped: [] };
+  const fail = async (status: number | null, error: string): Promise<CheckResult> => {
+    await deps.call('kb_admin_source_record_fetch', [who?.userId ?? null, who?.email ?? null, source.id, false, status, null, null, null, error]);
+    log(`fetch failed source=${source.id.slice(0, 8)} ${error}`);
+    return { outcome: 'failed', error, drafts: [], dropped: [] };
+  };
+  const perSource = RENDER_PER_SOURCE && Boolean(deps.has017);
+  // A page marked "render" (017) is read through the page renderer. If the
+  // renderer is not set up or not reachable, that is a visible failure on the
+  // page - never an empty "no change".
+  const viaRenderer = perSource && Boolean(source.render);
+  let page: PageResult;
+  if (viaRenderer) {
+    if (!deps.renderPage) return fail(null, 'This page is read through the page renderer, which is not set up (KB_RENDER_URL / KB_RENDER_SECRET). Nothing was read.');
+    page = await deps.renderPage(source.url);
+    if (!page.ok) return fail(page.status, page.error.startsWith('Blocked by site') ? page.error : `Could not read the page through the page renderer: ${page.error}. Nothing was read; try again once the renderer is running.`);
+  } else {
+    page = await deps.fetchPage(source.url, { unverified: Boolean(deps.has017 && source.allow_unverified) });
+    if (!page.ok) return fail(page.status, page.error);
   }
   let extracted = extractMainText(page.html);
   let html = page.html;
   let pageUrl = page.finalUrl;
   let status = page.status;
+  if (extracted.text.length < 40 && (viaRenderer || perSource)) {
+    // 017: the renderer is never tried silently. A plain page with no text says
+    // why (bot protection, maintenance) or suggests switching rendering on.
+    const kind = classifyEmptyPage(page.html, page.finalUrl);
+    const finalUrl = page.finalUrl !== source.url ? page.finalUrl : null;
+    const why = !viaRenderer && (kind === 'script' || kind === 'empty')
+      ? `${RENDER_SUGGESTION} (the plain fetch read almost no text). ${deps.renderPage ? '' : 'The page renderer is not set up yet (KB_RENDER_URL / KB_RENDER_SECRET).'}`.trim()
+      : viaRenderer && (kind === 'script' || kind === 'empty')
+        ? 'The page renderer read the page but it still has no readable text. Nothing was read.'
+        : emptyPageMessage(kind, finalUrl, { renderer: Boolean(deps.renderPage), rendered: viaRenderer });
+    log(`no readable text source=${source.id.slice(0, 8)} kind=${kind} rendered=${viaRenderer}`);
+    return fail(status, why);
+  }
   if (extracted.text.length < 40) {
     // Say WHY there is no text (2026-10-15): bot protection is reported and
     // never worked around; maintenance is reported; a JavaScript-built page is
@@ -215,25 +267,58 @@ export async function checkSource(source: SourceRef, deps: CheckDeps): Promise<C
   // on every fetch (changed or not), so a page read before 016 gets them too.
   const subPages = findSubPages(html, pageUrl, extracted.paragraphs);
   const verdict = indexVerdict(extracted.paragraphs, subPages);
+  // 016 records https sub-pages only; an unverified http:// page offers none.
+  const suggestable = subPages.filter((p) => p.url.startsWith('https://'));
   if (deps.has016) {
     // A jsonb parameter goes as the JS value (lib/write.ts); an empty list as
     // null, which the database reads as [] (an empty JS array may not serialise as JSON).
-    await deps.call('kb_admin_source_set_suggestions', [who?.userId ?? null, who?.email ?? null, source.id, verdict.index && subPages.length ? subPages : null]);
+    await deps.call('kb_admin_source_set_suggestions', [who?.userId ?? null, who?.email ?? null, source.id, verdict.index && suggestable.length ? suggestable : null]);
   }
-  const index = verdict.index ? { reason: verdict.reason, suggestions: subPages } : undefined;
+  const index = verdict.index ? { reason: verdict.reason, suggestions: suggestable } : undefined;
 
   const hash = await contentHash(extracted.text);
-  const recorded = await deps.call<{ snapshot_id: string; changed: boolean; first: boolean }>('kb_admin_source_record_fetch', [
+  const recorded = await deps.call<{ snapshot_id: string; changed: boolean; first: boolean; previous_snapshot_id?: string | null }>('kb_admin_source_record_fetch', [
     who?.userId ?? null, who?.email ?? null, source.id, true, status, hash, extracted.text, extracted.title, '',
   ]);
-  if (!recorded.changed) return { outcome: 'unchanged', drafts: [], dropped: [], index };
+  const retrying = RETRY_FAILED_DRAFTS && Boolean(deps.has017) && Boolean(deps.draftFailed) && !recorded.changed &&
+    Boolean(recorded.previous_snapshot_id) && await deps.draftFailed!(recorded.previous_snapshot_id!);
+  if (!recorded.changed && !retrying) return { outcome: 'unchanged', drafts: [], dropped: [], index };
   const outcome = recorded.first ? 'first' : 'changed';
+  if (retrying) log(`retrying source=${source.id.slice(0, 8)}: drafting from the last snapshot failed, so the page is drafted again`);
   if (index) {
-    log(`index page source=${source.id.slice(0, 8)}: nothing drafted, ${subPages.length} sub-pages suggested`);
+    log(`index page source=${source.id.slice(0, 8)}: nothing drafted, ${suggestable.length} sub-pages suggested`);
     return { outcome, drafts: [], dropped: [`the page is mainly an index (${index.reason}): nothing drafted; its sub-pages are suggested to watch`], index };
   }
-  const drafted = await draftFromSnapshot(source, { snapshotId: recorded.snapshot_id, text: extracted.text, previousText: recorded.first ? null : prev }, deps);
+  const drafted = await draftRecorded(source, { snapshotId: recorded.snapshot_id, text: extracted.text, previousText: recorded.first ? null : prev }, deps, retrying);
   return { outcome, ...drafted };
+}
+
+/**
+ * Draft from a recorded snapshot, and (017) record whether it worked: a
+ * failure marks the snapshot so the next run drafts it again, and is rethrown
+ * so the caller reports it; a success after a failure clears the mark.
+ */
+async function draftRecorded(
+  source: SourceRef,
+  snap: { snapshotId: string; text: string; previousText: string | null },
+  deps: DraftDeps,
+  clearFailure: boolean,
+): Promise<{ drafts: DraftOutcome[]; dropped: string[] }> {
+  const track = RETRY_FAILED_DRAFTS && Boolean(deps.has017);
+  const who = deps.recorder;
+  try {
+    const drafted = await draftFromSnapshot(source, snap, deps);
+    if (track && clearFailure) await deps.call('kb_admin_source_record_draft', [who?.userId ?? null, who?.email ?? null, snap.snapshotId, true, null]);
+    return drafted;
+  } catch (error) {
+    if (track) {
+      const reason = `Drafting failed (${why(error)}); the page will be drafted again on the next run.`;
+      await deps.call('kb_admin_source_record_draft', [who?.userId ?? null, who?.email ?? null, snap.snapshotId, false, reason])
+        .catch(() => undefined);
+      (deps.log ?? (() => undefined))(`draft failed source=${source.id.slice(0, 8)} snapshot=${snap.snapshotId.slice(0, 8)}: recorded for a retry`);
+    }
+    throw error;
+  }
 }
 
 export type RedraftResult = { superseded: number; drafts: DraftOutcome[]; dropped: string[]; index: boolean };
@@ -258,7 +343,7 @@ export async function redraftSource(
     return { superseded: r.superseded, drafts: [], dropped: ['the page is mainly an index: nothing drafted; its sub-pages are suggested to watch'], index: true };
   }
   const previousText = r.previous_snapshot_id ? await deps.snapshotText(r.previous_snapshot_id) : null;
-  const drafted = await draftFromSnapshot(source, { snapshotId: r.snapshot_id, text, previousText }, deps);
+  const drafted = await draftRecorded(source, { snapshotId: r.snapshot_id, text, previousText }, deps, true);
   return { superseded: r.superseded, ...drafted, index: false };
 }
 
@@ -292,7 +377,12 @@ export async function draftFromSnapshot(
     candidates = [...seen.values()].sort((a, b) => b.sim - a.sim).slice(0, MAX_CANDIDATES).map(({ id, question, answer }) => ({ id, question, answer }));
   }
 
-  const prompt = buildPrompt({ label: source.label, url: source.url, added: passages, removed: change.removed.slice(0, 40), candidates });
+  // A page not in English (2026-10-16): the quotes stay in its language (they
+  // are matched against the page as it is), the proposal is written in English.
+  const language = detectLanguage(snap.text);
+  const languageNote = languageInstruction(language);
+  if (!language.english) log(`page source=${source.id.slice(0, 8)} is in ${language.name}: quotes kept, proposals in English`);
+  const prompt = buildPrompt({ label: source.label, url: source.url, added: passages, removed: change.removed.slice(0, 40), candidates, languageNote });
   const raw = await deps.llm(prompt.system, prompt.user);
   // The live text of every entry a draft may change (candidates, and entries a new draft is turned into a change to).
   const liveById = new Map<string, { question: string; answer: string }>(candidates.map((c) => [c.id, c]));
@@ -319,7 +409,7 @@ export async function draftFromSnapshot(
     const replaced = new Map<number, ProposedDraft | null>();
     if (retarget.length) {
       for (const r of retarget) liveById.set(r.entry.id, r.entry);
-      const merge = buildMergePrompt({ label: source.label, url: source.url, pairs: retarget.map((r) => ({ entry: r.entry, draft: planned[r.i].draft })) });
+      const merge = buildMergePrompt({ label: source.label, url: source.url, pairs: retarget.map((r) => ({ entry: r.entry, draft: planned[r.i].draft })), languageNote });
       const merged = parseDrafts(await deps.llm(merge.system, merge.user), { newText: snap.text, candidateIds: retarget.map((r) => r.entry.id), live: liveById });
       dropped.push(...merged.dropped.map((d) => `(change instead of a new entry) ${d}`));
       for (const r of retarget) {

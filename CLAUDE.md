@@ -118,7 +118,10 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
                      (the KB watcher; on PRODUCTION since 2026-10-15, not on TEST;
                      012's editor check now expects 16, or 24 once 015 is there, 27 with 016),
                      kb_admin_016_watcher_overlap (overlap on proposals, suggested
-                     sub-pages, approver re-draft, KB009; on PRODUCTION since 2026-10-16)
+                     sub-pages, approver re-draft, KB009; on PRODUCTION since 2026-10-16),
+                     kb_admin_017_watcher_sources (per-source render, approver-only
+                     unverified connection, failed drafts retried; WRITTEN, NOT APPLIED;
+                     012 then expects 31)
                      — applied ONLY via apply_sql.py --expect-ref <project ref>
   gen_fee_locked.py  the watcher's fee lock: the 23 questions + 7 corrections the
                      fees document set, read from the loader, written into
@@ -133,7 +136,9 @@ render-service/      headless-Chromium page renderer for kb-admin's KB watcher
                      (2026-10-15): its OWN container and compose file on the bot's
                      server, port 127.0.0.1:8100, one nginx path. Imports nothing
                      from app/, the bot never calls it. Used only for a watched page
-                     built by JavaScript (KB_RENDER_URL/KB_RENDER_SECRET on Vercel).
+                     marked "Render with browser" (017; KB_RENDER_URL/KB_RENDER_SECRET
+                     on Vercel). System Chrome (RENDER_CHROME_CHANNEL=chrome), site
+                     allowlist RENDER_ALLOWED_HOSTS (default kemlu.go.id).
                      NOT deployed yet. See render-service/README.md.
 reset-ui/            Next.js "clear a conversation" page (separate deliverable, own
                      Vercel project). Standalone: imports nothing from app/, calls no
@@ -612,6 +617,10 @@ because the lead is opened early and the ticket is created much later.
 | A proposal cites the page word for word | `lib/watcher/drafting.ts` `parseDrafts` / `locatePassage` + the passage check in `kb_admin_watch_propose` | The model may only target an entry it was shown; the source passage must be on the fetched page or the draft is dropped (and refused by the database too). Spacing aside (spaces, tabs, line breaks, non-breaking and zero-width spaces, and a space beside punctuation or between a number and a letter, as in MOM's "1 st helper"), the words and figures must match exactly; the PAGE's own span is stored, so the database's whitespace-only check finds it verbatim. |
 | A watcher draft is never proposed without the existing-entry search | `lib/watcher/pipeline.ts` (`liveSearch`, `OverlapCheckError`, `preflightOverlap`) + `lib/watchQueries.liveEntryTexts` + `app/watch/actions.ts` (`failure`) | `kb_admin_match_live` (014) returns a preview, never question/answer; the pipeline filtered on those, so on production every match was dropped silently and the paying-levy page was proposed as five NEW entries duplicating live ones (2026-10-16; the dry run's stand-in returned them, which hid it). Matches are now joined to their live text by the reader. A search error, an unreadable match, a failed embedding or no search account stops drafting with "Couldn't check existing entries" and proposes nothing; a re-draft proves the search works before it supersedes the open proposals. |
 | A watcher change to a live entry is ADDITIVE: built from the live entry, never rewritten | `lib/watcher/additive.ts` (`parseUpdate`, `entryDiff`) via `parseDrafts`, `lib/watcher/changeRules.ts` (both prompts), `factDiff.replacementJustification`, `app/watch/[id]/page.tsx` | For an existing entry the model returns only `add` (new facts, each with its page passage and the live sentence it follows) and `replace` (a live sentence and its correction, with the page words that contradict it). kb-admin builds the answer: the live text character for character, accepted replacements swapped in place (one sentence each), additions inserted after the sentence named, the question unchanged, additions taken in order up to 1,200 characters. A replacement needs a contradiction: a figure of the same kind, period and subject (a bare number counts: 15th vs 17th), or the page saying the same thing differently (the page supports the new sentence, does not say the old one, the two share half the old sentence's content words, every old figure kept). An addition the entry already says (all figures, 80% of its words) is dropped. Nothing added or replaced = nothing proposed. The review page shows added (green), replaced (old -> new with the page line), unchanged (grey). The "Points removed" block ("This update drops existing information", page + action) stays as a safety net and uses the same justification, so it cannot fire on a built change. Dry runs: 11 changes over 6 runs, 0 blocked (was every change). |
+| A watched page is rendered only when an editor marked it, and a renderer that is down is a visible failure | `pipeline.RENDER_PER_SOURCE` + `cb_kb_sources.render` (017) + `render-service` `RENDER_ALLOWED_HOSTS` | 2026-10-16. A plain page with ~0 text fails with `RENDER_SUGGESTION` ("switch on Render with browser"), never an empty "no change". The service renders only allowlisted sites (default kemlu.go.id), checked for the page and where it ends up. |
+| An unverified connection is per page, approver-only, with a reason, and never leaves that page's host | `fetcher.UNVERIFIED_SOURCES` (`fetchPage(url, {unverified})`) + `lib/insecureFetch.ts` + `kb_admin_source_add_unverified` / `_set_unverified` (017) | The Myanmar embassy: self-signed certificate for another site, pages only on http. http:// or https without a certificate check for that host only (robots.txt too); any redirect off it must be https and verified. The address CHECK allows http:// only on such a row. Red "Unverified source" badge on the page and every proposal. |
+| A page not in English keeps its quote in that language and gets an English proposal | `lib/watcher/language.ts` (`NON_ENGLISH_PAGES`) in both drafting prompts + the review page | Quote matching runs on the original text, so a translated "quote" is refused. The review page says "Translated from <language>", read off the passage (nothing stored). Fee lock and figure checks apply to the English text. |
+| A draft that fails in a run is retried on the next run, never lost | `pipeline.RETRY_FAILED_DRAFTS` + `kb_admin_source_record_draft` (017) + `watchQueries.lastGoodText` / `sourcesDue` | Before: the changed snapshot became the baseline, the next run saw "unchanged", the change was never proposed. Now the snapshot is marked `draft_failed`, the page shows "Drafting failed", the page is due on the next scheduled run, and the diff is against the last snapshot that was drafted. A success clears the mark. |
 | ...searched for the whole service, with the filter kept whatever money words it contains | `rag_retriever.ENQUIRY_OVERVIEW_QUERY` / `_service_filter` | "costs" dropped the service filter, and the wider search returned a no-agency comparison that told the client the permit and bond were theirs to do. 12 rows, never widened - plus `ENQUIRY_OVERVIEW_EXTRA_QUERIES`, a separate search per service for a question the agency named that the shared query cannot reach (direct hire's failed medical ranks 21st under it). |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -735,6 +744,12 @@ new column; `cb_kb_audit`'s action CHECK gains nine watcher actions. Migration 0
 since 2026-10-16) adds `cb_kb_sources.suggested_pages`/`suggested_at`, `cb_kb_drafts.similar_entries`/
 `conflict_check`/`conflict_note`/`conflict_confirmed`, and the audit actions `source_redrafted`,
 `source_suggested`.
+Migration 017 (written 2026-10-16, NOT applied) adds `cb_kb_sources.render`,
+`allow_unverified`, `unverified_reason`, `unverified_set_by_email`, `unverified_set_at`,
+`cb_kb_source_snapshots.draft_failed`/`draft_error`, `last_status` 'draft_failed', an address
+CHECK that allows http:// only on an unverified row, four functions (31 editor functions) and
+the audit actions `source_options`, `source_unverified`, `source_draft_failed`. kb-admin detects
+it (`watcherSchema17`) and until then behaves exactly as with 016.
 
 ---
 
@@ -943,6 +958,10 @@ Easy to get wrong:
   `KB_RENDER_SECRET` (32+, the same as render-service's `RENDER_SECRET`; both or neither:
   the page renderer for JavaScript-built pages). A malformed value refuses
   to start; a missing one leaves that part off with a logged reason.
+  Code switches (2026-10-16, each `false` for the earlier behaviour, all needing 017):
+  `pipeline.RENDER_PER_SOURCE`, `pipeline.RETRY_FAILED_DRAFTS`,
+  `fetcher.UNVERIFIED_SOURCES`, `language.NON_ENGLISH_PAGES`. render-service:
+  `RENDER_ALLOWED_HOSTS` (default `kemlu.go.id`; `*` = any public host).
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1603,7 +1622,9 @@ Ordered by what will hurt first.
     (g) Changes to live entries are additive (2026-10-16): the model says what to add and which
     contradicted sentences to replace, and kb-admin builds the entry, so live facts are not lost and
     the "drops existing information" block (page + action, not the database) is only a safety net -
-    0 blocked in the paying-levy dry runs, against every change before. What is still possible: an
+    0 blocked in the paying-levy dry runs, against every change before. (h) **The five client sites
+    (2026-10-16)** need migration 017 applied and render-service deployed; the 20 pages to add, and
+    the switch-on steps for the schedule, are in the 2026-10-16 change log. What is still possible: an
     addition that sits beside a live sentence the page contradicts by a rule the mechanical test
     cannot see; the reviewer sees both, and Edit fixes it.
 
@@ -1942,6 +1963,7 @@ behaviour behind one switch. Details of each step are in §11.
 | KBW5 | Migration 016 applied to production; quote matching ignores spacing; a change that drops live facts is blocked ("Points removed"); rewording-only changes not proposed | see git log |
 | KBW6 | Changes to live entries are additive: the model returns additions and contradicted replacements, kb-admin builds the entry; review shows added / replaced / unchanged | see git log |
 | KBW7 | The live existing-entry search reads the entries' text (kb_admin_match_live returns none); a failed search stops with "Couldn't check existing entries" | see git log |
+| KBW8 | All five client sites: per-source render (render-service with system Chrome + allowlist), non-English pages, approver-only unverified connection, failed drafts retried; migration 017 written, not applied | see git log |
 
 **Still to do, in order:** Step 5 is done (every item, the last being item 2 in Batch G), Step 6 is done (parts 1-4, 6b, 6c), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
@@ -2018,6 +2040,49 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-16** - **KB watcher: all five client sites.** No bot change; migration 017 is
+  WRITTEN, NOT APPLIED; render-service NOT deployed; the schedule stays off.
+  Probed first with the watcher's own fetcher (read-only): MOM, the Philippine embassy and ICA
+  read by plain fetch; the Indonesian embassy (kemlu.go.id) is a JavaScript app (0 characters
+  plain, 2,262 rendered, in Indonesian); the Myanmar embassy's https certificate is
+  self-signed for another site and its https address serves a different site, so its pages are
+  only on http; the OEC / Balik-Manggagawa / contract pages are on MWO Singapore's knowledge
+  portal (`services.mwosingapore.online`, static) - the embassy's MWO page is an empty stub.
+  (A) **Render per source** (`RENDER_PER_SOURCE`): an editor marks a page "Render with
+  browser"; a plain page with ~0 text fails with a suggestion and the button is offered; a
+  renderer that is down or not set up is a visible failure. render-service now uses system
+  Chrome (Playwright's Chromium failed locally) and renders only `RENDER_ALLOWED_HOSTS`
+  (default kemlu.go.id), checked for the page and where it ends up; healthcheck in its compose.
+  (B) **Non-English pages** (`NON_ENGLISH_PAGES`, `lib/watcher/language.ts`, the bot's own
+  word lists): quotes kept in the page's language, proposals in English, "Translated from
+  Indonesian" on the review page. Live check on kemlu's passport page: 2 proposals, both
+  quotes Indonesian and verbatim (passed the page check), both answers English.
+  (C) **Unverified connection** (`UNVERIFIED_SOURCES`): approver only, with a reason, per page;
+  http:// or https without a certificate check on that host only (robots.txt too), never a
+  redirect off it; red "Unverified source" badge on the page, the queue and the proposal.
+  (E) **Failed drafts retried** (`RETRY_FAILED_DRAFTS`): the snapshot is marked `draft_failed`,
+  the page shows "Drafting failed", the page is due on the next run, diffed against the last
+  drafted snapshot; a success clears it.
+  **Verified:** dry run of `checkSource` over the 20 pages (real fetcher, local render-service,
+  fake database and model): 20 of 20 read. kb-admin selfcheck 461 (27 new); 6 faults injected,
+  6 red. Migration 017 on PGlite over the real 001-016: 22 checks, 012 passes with 31; 1 SQL
+  fault red; rollback refused once used, clean on an unused copy. `npm run build` passes.
+  **Pages to add** (after 017 and render-service): MOM `.../work-permit-for-foreign-domestic-worker/`
+  apply-for-work-permit, transfer-to-a-new-employer, transfer-to-new-employer-through-ea,
+  renew-a-work-permit, cancel-a-work-permit, eligibility-and-requirements/{security-bond,
+  insurance-requirements, employers-orientation-programme-eop, medical-examination,
+  six-monthly-medical-examination}, employers-guide/rest-days-and-well-being; the Philippine
+  embassy `/consular/passport/`; MWO Singapore articles 158000406332 (OEC), 158000317536
+  (contract verification), 158000239914 (returning OFWs / Balik-Manggagawa), 158000413037 (OEC
+  appointment); kemlu `.../layanan-imigrasi/layanan-paspor` (render); Myanmar
+  `http://www.myanmarembassy.sg/consular.html` (unverified); ICA `entering-singapore` and
+  `entering-singapore/visa_requirements`.
+  **Schedule** (not switched on): Vercel kb-admin Production `WATCHER_ENABLED=true`,
+  `CRON_SECRET` (32+, `openssl rand -hex 32`), `KB_WATCHER_ACTOR_ID` (an active editor's
+  user id; a dedicated watcher account needs a reviewed `kb_admin_users_*.sql`),
+  `WATCHER_INTERVAL_DAYS=7`; the cron entry is already in `kb-admin/vercel.json` (daily
+  01:00 UTC), redeploy.
 
 - **2026-10-16** - **Job-seeker phone test (3766, 4:04-4:12 PM IST).** (1) "all
   question" (singular) was read as one by one: `_STYLE_ALL` wanted a plural.

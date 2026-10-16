@@ -1,6 +1,8 @@
 # The page renderer for kb-admin's KB watcher. Separate from the bot's own
 # docker-compose.yml on purpose: deploying or stopping it never touches the bot.
 #   cd render-service && docker compose up -d --build
+# System Chrome (the image sets RENDER_CHROME_CHANNEL=chrome); sites allowed by
+# RENDER_ALLOWED_HOSTS in .env (default kemlu.go.id). See README.md.
 services:
   render:
     build: .
@@ -10,6 +12,11 @@ services:
     # Reachable only from the server itself; nginx forwards one path to it.
     ports:
       - "127.0.0.1:8100:8100"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8100/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
     shm_size: "512mb"
     mem_limit: "1g"
     logging:

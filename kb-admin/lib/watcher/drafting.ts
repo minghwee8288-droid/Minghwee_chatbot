@@ -57,6 +57,8 @@ export function buildPrompt(p: {
   added: string[];
   removed: string[];
   candidates: Candidate[];
+  /** A page not in English: keep its quotes in that language, write English (lib/watcher/language.ts). */
+  languageNote?: string;
 }): { system: string; user: string } {
   const system = [
     'You maintain the knowledge base of a WhatsApp assistant for Ming Hwee, a licensed Singapore domestic-helper employment agency.',
@@ -71,6 +73,7 @@ export function buildPrompt(p: {
     '- Answers are plain sentences for a client on WhatsApp: no headings, bullets or markdown; question plus answer at most 1,000 characters.',
     '- source_passage must be copied word for word from the NEW page passages, and must support the answer: consecutive lines exactly as they appear, character for character, keeping odd spacing (such as "1 st helper") and line order; never tidy, join or reorder table cells.',
     `- At most ${MAX_DRAFTS_PER_CHANGE} drafts. If nothing in the change matters to the assistant, return no drafts.`,
+    ...(p.languageNote ? [p.languageNote] : []),
     `Answer with JSON only: {"drafts":[ ${NEW_SHAPE} or ${UPDATE_SHAPE} ]}`,
   ].join('\n');
   const user = [

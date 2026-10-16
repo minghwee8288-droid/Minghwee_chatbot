@@ -46,7 +46,25 @@ export type FetchLike = (url: string, init: { method: 'GET'; headers: Record<str
 /** The page renderer (render-service/): the rendered HTML of a page, or a refusal. */
 export type RenderLike = (url: string) => Promise<{ ok: true; status: number; html: string; finalUrl: string } | { ok: false; status: number | null; error: string }>;
 
-export type FetchDeps = { fetch: FetchLike; now: () => number; sleep: (ms: number) => Promise<void>; render?: RenderLike };
+export type FetchDeps = {
+  fetch: FetchLike;
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+  render?: RenderLike;
+  /**
+   * An https GET that does NOT check the certificate (lib/insecureFetch.ts).
+   * Used ONLY for the host of a source an approver marked "allow unverified
+   * connection" (017), never for any other host, never for a redirect off it.
+   */
+  insecureFetch?: FetchLike;
+};
+
+/**
+ * Switch (2026-10-16, needs 017): a source an approver marked unverified may
+ * be read over http://, or https:// without a certificate check - on its own
+ * host only. False = every page must be https with a valid certificate.
+ */
+export const UNVERIFIED_SOURCES = true;
 
 export const BLOCKED_BY_SITE = "Blocked by site: the page answered with a bot-protection check. The watcher does not try to get past it. Try the page's PDF or print version, or another official page with the same information.";
 
@@ -54,15 +72,16 @@ export type PageResult =
   | { ok: true; status: number; html: string; finalUrl: string }
   | { ok: false; status: number | null; error: string };
 
-/** The reason this address may not be fetched, or null. */
-export function addressProblem(raw: string): string | null {
+/** The reason this address may not be fetched, or null. `allowHttp`: an unverified source's own address (017). */
+export function addressProblem(raw: string, opts: { allowHttp?: boolean } = {}): string | null {
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
     return 'not a web address';
   }
-  if (url.protocol !== 'https:') return 'only https:// pages are watched';
+  const httpOk = UNVERIFIED_SOURCES && opts.allowHttp && url.protocol === 'http:';
+  if (url.protocol !== 'https:' && !httpOk) return 'only https:// pages are watched';
   const host = url.hostname.toLowerCase();
   if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(host)) return 'the address must name a public host';
   if (/^[0-9.]+$/.test(host) || host === 'localhost' || /\.(local|internal|localhost)$/.test(host)) return 'the address must be a public web page';
@@ -88,15 +107,17 @@ export class PoliteFetcher {
     this.lastHit.set(host, this.deps.now());
   }
 
-  /** One GET with timeout, retries and backoff. Redirects are returned, not followed. */
-  private async attempt(url: string, host: string, delayMs: number): Promise<{ status: number; location: string | null; type: string; body: string; challenge?: boolean } | { error: string; status: number | null }> {
+  /** One GET with timeout, retries and backoff. Redirects are returned, not followed. `insecure`: no certificate check (an unverified source's own host). */
+  private async attempt(url: string, host: string, delayMs: number, insecure = false): Promise<{ status: number; location: string | null; type: string; body: string; challenge?: boolean } | { error: string; status: number | null }> {
     let lastError = 'no attempt made';
     let lastStatus: number | null = null;
+    const get = insecure && url.startsWith('https://') ? this.deps.insecureFetch : this.deps.fetch;
+    if (!get) return { error: 'reading a page without a certificate check is not set up', status: null };
     for (let i = 0; i < MAX_ATTEMPTS; i++) {
       if (i > 0) await this.deps.sleep(BACKOFF_BASE_MS * 2 ** (i - 1));
       await this.wait(host, delayMs);
       try {
-        const res = await this.deps.fetch(url, {
+        const res = await get(url, {
           method: 'GET',
           headers: { 'user-agent': USER_AGENT, accept: 'text/html,text/plain;q=0.9,*/*;q=0.1', 'accept-language': 'en' },
           redirect: 'manual',
@@ -123,31 +144,51 @@ export class PoliteFetcher {
     return { error: `${lastError} (after ${MAX_ATTEMPTS} attempts)`, status: lastStatus };
   }
 
-  private async robotsFor(origin: string, host: string): Promise<RobotsRules | 'unavailable'> {
-    const cached = this.robots.get(host);
+  private async robotsFor(origin: string, host: string, insecure = false): Promise<RobotsRules | 'unavailable'> {
+    // Per origin: an unverified source's http:// robots.txt is not its https:// one.
+    const cached = this.robots.get(origin);
     if (cached) return cached;
-    const r = await this.attempt(`${origin}/robots.txt`, host, 0);
+    const r = await this.attempt(`${origin}/robots.txt`, host, 0, insecure);
     let rules: RobotsRules | 'unavailable';
     if ('error' in r) rules = 'unavailable';
     else if (r.status >= 200 && r.status < 300) rules = parseRobots(r.body.slice(0, 500_000), AGENT_TOKEN);
     else if (r.status >= 400 && r.status < 500) rules = { rules: [], crawlDelaySeconds: null };
     else rules = 'unavailable'; // a redirect or anything odd: be cautious
-    this.robots.set(host, rules);
+    this.robots.set(origin, rules);
     return rules;
   }
 
-  async fetchPage(rawUrl: string): Promise<PageResult> {
+  /**
+   * `unverified` (017): the source's OWN host may be read over http:// or
+   * https:// without a certificate check, robots.txt included. A redirect to
+   * any other host is held to the normal rules (https, a valid certificate).
+   */
+  async fetchPage(rawUrl: string, opts: { unverified?: boolean } = {}): Promise<PageResult> {
     let current = rawUrl;
+    let trustedHost: string | null = null;
+    if (UNVERIFIED_SOURCES && opts.unverified) {
+      try {
+        trustedHost = new URL(rawUrl).hostname.toLowerCase();
+      } catch {
+        trustedHost = null;
+      }
+    }
     for (let hop = 0; hop <= 5; hop++) {
-      const problem = addressProblem(current);
+      let onTrustedHost = false;
+      try {
+        onTrustedHost = trustedHost !== null && new URL(current).hostname.toLowerCase() === trustedHost;
+      } catch {
+        onTrustedHost = false;
+      }
+      const problem = addressProblem(current, { allowHttp: onTrustedHost });
       if (problem) return { ok: false, status: null, error: hop ? `redirected to a refused address: ${problem}` : problem };
       const url = new URL(current);
       const host = url.hostname.toLowerCase();
-      const robots = await this.robotsFor(url.origin, host);
+      const robots = await this.robotsFor(url.origin, host, onTrustedHost);
       if (robots === 'unavailable') return { ok: false, status: null, error: `robots.txt for ${host} could not be read; not fetched this time` };
       if (!robotsAllows(robots, url.pathname + url.search)) return { ok: false, status: null, error: `robots.txt for ${host} does not allow this page` };
       const delayMs = (robots.crawlDelaySeconds ?? 0) * 1000;
-      const r = await this.attempt(url.toString(), host, delayMs);
+      const r = await this.attempt(url.toString(), host, delayMs, onTrustedHost);
       if ('error' in r) return { ok: false, status: r.status, error: r.error };
       // A 403/429/503 challenge. (A 200 page is only judged once it proves to have no text -
       // a working page can carry a reCAPTCHA contact form: lib/watcher/pipeline.ts.)

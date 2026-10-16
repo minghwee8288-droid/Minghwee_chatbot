@@ -5,7 +5,7 @@ import { checkCronRequest } from '@/lib/watcher/cron';
 import { draftWithModel } from '@/lib/watcher/llm';
 import { checkSource, type WatchCall } from '@/lib/watcher/pipeline';
 import { watchFetcher } from '@/lib/watchFetcher';
-import { lastGoodText, liveEntryTexts, sourcesDue, watcherSchema16 } from '@/lib/watchQueries';
+import { draftFailed, lastGoodText, liveEntryTexts, sourcesDue, watcherSchema16, watcherSchema17 } from '@/lib/watchQueries';
 import { callWrite } from '@/lib/write';
 import { membership } from '@/lib/queries';
 
@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
   const started = Date.now();
   const due = await sourcesDue(schedule.intervalDays);
   const { fetcher, renders } = watchFetcher();
-  const has016 = await watcherSchema16();
+  const [has016, has017] = await Promise.all([watcherSchema16(), watcherSchema17()]);
   const summary = { due: due.length, checked: 0, unchanged: 0, changed: 0, failed: 0, drafts: 0, left: 0 };
   for (const source of due) {
     if (Date.now() - started > TIME_BUDGET_MS) {
@@ -58,9 +58,12 @@ export async function GET(req: NextRequest) {
     try {
       const r = await checkSource(source, {
         call,
-        fetchPage: (u) => fetcher.fetchPage(u),
+        fetchPage: (u, o) => fetcher.fetchPage(u, o),
         renderPage: renders ? (u) => fetcher.renderPage(u) : undefined,
         previousText: lastGoodText,
+        // 017: a failed draft marks its snapshot, and the next run drafts it again.
+        draftFailed,
+        has017,
         embed: embedTexts,
         recorder: null,
         searcher,
@@ -76,10 +79,12 @@ export async function GET(req: NextRequest) {
       else if (r.outcome === 'unchanged') summary.unchanged += 1;
       else summary.changed += 1;
     } catch (error) {
-      // A failure after the fetch was recorded (drafting, embedding): logged, the run carries on.
+      // A failure after the fetch was recorded (drafting, embedding): logged, the
+      // run carries on. With 017 the snapshot is marked and the next run drafts
+      // it again; the page shows "Drafting failed" with the reason.
       summary.checked += 1;
       summary.failed += 1;
-      console.error(`[watcher] source=${source.id.slice(0, 8)} drafting failed (nothing proposed; Re-draft once fixed): ${String((error as Error)?.message ?? error).slice(0, 200)}`);
+      console.error(`[watcher] source=${source.id.slice(0, 8)} drafting failed (nothing proposed; ${has017 ? 'retried on the next run' : 'Re-draft once fixed'}): ${String((error as Error)?.message ?? error).slice(0, 200)}`);
     }
   }
   console.info(`[watcher] scheduled run ${JSON.stringify(summary)}`);

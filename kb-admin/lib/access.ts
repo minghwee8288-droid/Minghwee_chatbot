@@ -52,10 +52,10 @@ export function isSingleRead(query: string): boolean {
 
 /**
  * The ONLY database calls kb-admin makes as kb_admin_editor: one call to one of
- * these twenty-seven functions. Each is SECURITY DEFINER in the database and checks
+ * these thirty-one functions. Each is SECURITY DEFINER in the database and checks
  * the caller's role itself; the editor login can call these and nothing else.
- * This list is the code-side twin of that grant: the same twenty-seven signatures
- * that migrations 005, 008, 011, 014, 015 and 016 grant to kb_admin_editor. The
+ * This list is the code-side twin of that grant: the same thirty-one signatures
+ * that migrations 005, 008, 011, 014, 015, 016 and 017 grant to kb_admin_editor. The
  * eight of 015 exist only once that migration is applied; until then nothing
  * calls them, because the watcher pages are off unless KB_SOURCES_ENABLED=true.
  */
@@ -98,6 +98,13 @@ export const WRITE_FUNCTIONS = {
   kb_admin_watch_propose_checked: ['uuid', 'text', 'uuid', 'uuid', 'text', 'text', 'text', 'text', 'text', 'text', 'text', 'text', 'text', 'jsonb', 'boolean', 'text'],
   kb_admin_source_set_suggestions: ['uuid', 'text', 'uuid', 'jsonb'],
   kb_admin_source_redraft: ['uuid', 'text', 'uuid', 'text'],
+  // Migration 017: a page read through the page renderer; a page read without a
+  // certificate check (approver only, with a reason); a failed draft retried.
+  // Called only once 017 is installed (lib/watchQueries.ts watcherSchema17).
+  kb_admin_source_set_render: ['uuid', 'text', 'uuid', 'boolean'],
+  kb_admin_source_set_unverified: ['uuid', 'text', 'uuid', 'boolean', 'text'],
+  kb_admin_source_add_unverified: ['uuid', 'text', 'text', 'text', 'text', 'text'],
+  kb_admin_source_record_draft: ['uuid', 'text', 'uuid', 'boolean', 'text'],
 } as const;
 export type WriteFunction = keyof typeof WRITE_FUNCTIONS;
 

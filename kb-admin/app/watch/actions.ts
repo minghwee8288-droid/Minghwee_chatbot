@@ -12,7 +12,7 @@ import { watchFetcher } from '@/lib/watchFetcher';
 import { DraftingError, draftWithModel } from '@/lib/watcher/llm';
 import { touchesMoney } from '@/lib/watcher/feeLock';
 import { OverlapCheckError, approveAndPublish, checkSource, redraftSource, type WatchCall } from '@/lib/watcher/pipeline';
-import { lastGoodText, liveEntryTexts, modelDraftAnswer, snapshotText, sourceById, watchDraft, watcherSchema16 } from '@/lib/watchQueries';
+import { draftFailed, lastGoodText, liveEntryTexts, modelDraftAnswer, snapshotText, sourceById, watchDraft, watcherSchema16, watcherSchema17 } from '@/lib/watchQueries';
 import { callWrite } from '@/lib/write';
 
 /**
@@ -73,7 +73,16 @@ export async function addSource(_prev: ActionState, form: FormData): Promise<Act
   const off = watcherOff();
   if (off) return off;
   const raw = text(form, 'url', 2000).trim();
-  const problem = addressProblem(raw);
+  // 017: a page whose certificate is broken (or that is only on http) may be
+  // watched unverified - approver only, with a reason; the database checks both again.
+  const unverified = form.get('unverified') === 'on';
+  const unverifiedReason = text(form, 'unverified_reason', 500).trim();
+  if (unverified) {
+    if (!actor.canApprove) return { error: 'Only an approver can allow an unverified connection.' };
+    if (!(await watcherSchema17())) return { error: 'Unverified connections need the watcher migration 017, which is not applied yet.' };
+    if (!unverifiedReason) return { error: 'Say why this page may be read without a verified connection.' };
+  }
+  const problem = addressProblem(raw, { allowHttp: unverified });
   if (problem) return { error: `That address cannot be watched: ${problem}.` };
   const url = new URL(raw);
   url.hash = '';
@@ -83,7 +92,9 @@ export async function addSource(_prev: ActionState, form: FormData): Promise<Act
   if (!CATEGORIES.includes(category)) return { error: 'Choose a category.' };
   let sourceId: string;
   try {
-    sourceId = await callWrite<string>('kb_admin_source_add', [actor.userId, actor.email, url.toString(), label, category]);
+    sourceId = unverified
+      ? await callWrite<string>('kb_admin_source_add_unverified', [actor.userId, actor.email, url.toString(), label, category, unverifiedReason])
+      : await callWrite<string>('kb_admin_source_add', [actor.userId, actor.email, url.toString(), label, category]);
   } catch (error) {
     return failure('source_add', actor.userId, 'new', error);
   }
@@ -121,14 +132,16 @@ export async function fetchNow(_prev: ActionState, form: FormData): Promise<Acti
   const source = await sourceById(sourceId);
   if (!source || !source.active) return { error: 'That page is no longer watched.' };
   const { fetcher, renders } = watchFetcher();
-  const has016 = await watcherSchema16();
+  const [has016, has017] = await Promise.all([watcherSchema16(), watcherSchema17()]);
   let result;
   try {
     result = await checkSource(source, {
       call,
-      fetchPage: (u) => fetcher.fetchPage(u),
+      fetchPage: (u, o) => fetcher.fetchPage(u, o),
       renderPage: renders ? (u) => fetcher.renderPage(u) : undefined,
       previousText: lastGoodText,
+      draftFailed,
+      has017,
       embed: embedTexts,
       recorder: { userId: actor.userId, email: actor.email },
       searcher: { userId: actor.userId, email: actor.email },
@@ -176,6 +189,7 @@ export async function redraftSourceAction(_prev: ActionState, form: FormData): P
       llm: draftWithModel,
       model: env().watcher!.llm.model,
       has016: true,
+      has017: await watcherSchema17(),
       snapshotText,
       log: (line) => console.info(`[watcher] ${line}`),
     });
@@ -307,4 +321,55 @@ export async function approveWatchDraft(_prev: ActionState, form: FormData): Pro
   }
   log('watch_approve', actor.userId, draftId, `ok entry=${result.entryId.slice(0, 8)} published`);
   redirect(`/watch/${draftId}?published=1`);
+}
+
+/**
+ * Read this page through the page renderer, or with a plain fetch (017,
+ * editor). Offered on every page, and suggested when a plain fetch read
+ * almost no text (lib/watcher/pipeline.ts RENDER_SUGGESTION).
+ */
+export async function setRenderAction(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const auth = await actorForWrite();
+  if (!auth.ok) return { error: auth.message };
+  const { actor } = auth;
+  const off = watcherOff();
+  if (off) return off;
+  if (!(await watcherSchema17())) return { error: 'Rendering a page needs the watcher migration 017, which is not applied yet.' };
+  const sourceId = id(form, 'source_id');
+  if (!sourceId) return { error: 'No page was named.' };
+  const render = form.get('render') === 'on';
+  try {
+    await callWrite('kb_admin_source_set_render', [actor.userId, actor.email, sourceId, render]);
+  } catch (error) {
+    return failure('source_render', actor.userId, sourceId, error);
+  }
+  log('source_render', actor.userId, sourceId, `render=${render}`);
+  redirect(`/sources?render=${render ? 1 : 0}&source=${sourceId}`);
+}
+
+/**
+ * Allow or stop allowing an unverified connection to this page's own host
+ * (017): APPROVER only, with a reason. The page and every proposal from it
+ * then carry a red "Unverified source" badge.
+ */
+export async function setUnverifiedAction(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const auth = await actorForWrite();
+  if (!auth.ok) return { error: auth.message };
+  const { actor } = auth;
+  if (!actor.canApprove) return { error: 'Only an approver can change whether a page may be read unverified.' };
+  const off = watcherOff();
+  if (off) return off;
+  if (!(await watcherSchema17())) return { error: 'Unverified connections need the watcher migration 017, which is not applied yet.' };
+  const sourceId = id(form, 'source_id');
+  if (!sourceId) return { error: 'No page was named.' };
+  const allow = form.get('allow') === 'on';
+  const reason = text(form, 'reason', 500).trim();
+  if (!reason) return { error: 'Please give the reason.' };
+  try {
+    await callWrite('kb_admin_source_set_unverified', [actor.userId, actor.email, sourceId, allow, reason]);
+  } catch (error) {
+    return failure('source_unverified', actor.userId, sourceId, error);
+  }
+  log('source_unverified', actor.userId, sourceId, `allow=${allow}`);
+  redirect(`/sources?unverified=${allow ? 1 : 0}&source=${sourceId}`);
 }

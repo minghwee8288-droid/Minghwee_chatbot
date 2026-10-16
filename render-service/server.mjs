@@ -16,7 +16,7 @@ import http from 'node:http';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { chromium } from 'playwright';
-import { addressProblem, ConfigError, isPrivateAddress, MAX_HTML, readConfig, secretMatches, USER_AGENT } from './guard.mjs';
+import { addressProblem, ConfigError, hostAllowed, isPrivateAddress, MAX_HTML, readConfig, secretMatches, USER_AGENT } from './guard.mjs';
 
 let cfg;
 try {
@@ -60,6 +60,7 @@ async function render(url) {
   const problem = addressProblem(url);
   if (problem) return { ok: false, error: problem };
   const host = new URL(url).hostname.toLowerCase();
+  if (!hostAllowed(host, cfg.allowedHosts)) return { ok: false, error: `this site is not on the render allowlist (RENDER_ALLOWED_HOSTS): ${host}` };
   if (!(await hostIsPublic(host))) return { ok: false, error: 'the address does not resolve to a public host' };
   const wait = cfg.minGapMs - (Date.now() - (lastHit.get(host) ?? -Infinity));
   if (wait > 0) await sleep(wait);
@@ -102,6 +103,7 @@ async function render(url) {
     const finalUrl = page.url();
     const finalProblem = addressProblem(finalUrl);
     if (finalProblem) return { ok: false, error: `the page ended on a refused address: ${finalProblem}` };
+    if (!hostAllowed(new URL(finalUrl).hostname, cfg.allowedHosts)) return { ok: false, error: 'the page ended on a site that is not on the render allowlist' };
     const html = await page.content();
     if (html.length > MAX_HTML) return { ok: false, error: 'the rendered page is larger than 3 MB' };
     return { ok: true, status: res?.status() ?? 200, finalUrl, html };
@@ -151,5 +153,5 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(cfg.port, cfg.host, () => console.log(`render-service listening on ${cfg.host}:${cfg.port}`));
+server.listen(cfg.port, cfg.host, () => console.log(`render-service listening on ${cfg.host}:${cfg.port} (browser: ${cfg.channel ?? 'bundled chromium'}; sites: ${cfg.allowedHosts ? cfg.allowedHosts.join(', ') : 'any public https host'})`));
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, async () => { server.close(); await browser?.close().catch(() => undefined); process.exit(0); });

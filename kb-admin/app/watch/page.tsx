@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import { UnverifiedBadge } from '@/app/sources/UnverifiedBadge';
+import { detectLanguage } from '@/lib/watcher/language';
 import { notFound } from 'next/navigation';
 import { Shell } from '@/components/Shell';
 import { AmberNotice, PageHeader, Pill, formatDate, previewText } from '@/components/ui';
@@ -29,7 +31,11 @@ function Rows({ drafts }: { drafts: WatchDraftRow[] }) {
                   {d.conflict_check && (d.status === 'pending' || d.status === 'blocked') ? <span style={{ color: 'var(--bad)' }}> - disagrees with an existing entry</span> : null}
                 </p>
               </td>
-              <td className="max-w-[220px] text-[13px]">{d.source_label}</td>
+              <td className="max-w-[220px] text-[13px]">
+                {d.source_label}
+                {d.source_unverified ? <div className="mt-1"><UnverifiedBadge /></div> : null}
+                {!detectLanguage(d.source_passage).english ? <p className="text-[12px] text-muted">Translated from {detectLanguage(d.source_passage).name}</p> : null}
+              </td>
               <td><Pill tone={DRAFT_STATUS[d.status]?.tone ?? 'off'}>{DRAFT_STATUS[d.status]?.text ?? d.status}</Pill></td>
               <td className="mono whitespace-nowrap text-[12px]">{formatDate(d.created_at)}</td>
             </tr>
