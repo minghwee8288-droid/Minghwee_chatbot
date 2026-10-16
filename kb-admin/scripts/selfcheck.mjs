@@ -1627,7 +1627,9 @@ console.log('KB watcher drafting: overlap check, low-value proposals, index page
     const page5 = 'Employers must not recover the levy from the helper\'s salary or wages.';
     const r8 = AD.parseUpdate({ replace: [{ old: live5.answer, new: page5, source_passage: page5 }] }, live5, page5);
     check('additive: refused as replacements - a page line on the same topic that drops a point, one on another subject, two sentences at once, one that drops a figure, and rewording a sentence the page agrees with',
-      r6.built === null && r6.dropped.filter((d) => /does not contradict/.test(d)).length === 2 && r6.dropped.some((d) => /not in the live entry/.test(d)) &&
+      // (rule 1, 2026-10-16: the "ends" line aimed at the wrong sentence still lands on the start/stop sentence it contradicts - never on the others)
+      r6.dropped.filter((d) => /does not contradict/.test(d)).length === 2 && r6.dropped.some((d) => /not in the live entry/.test(d)) &&
+      r6.built?.replaced.length === 1 && r6.built.replaced[0].old.startsWith('The levy starts') && r6.built.answer.startsWith('The levy is a monthly fee.') && r6.built.answer.includes('simplest way to avoid missing a payment.') &&
       r7.built === null && r8.built === null, JSON.stringify([r6.dropped, r7.dropped, r8.dropped]));
     const fit = AD.parseUpdate({ add: [
       { sentence: 'Pay it by the 17th of the following month.', after: '', source_passage: passage },
@@ -1652,6 +1654,37 @@ console.log('KB watcher drafting: overlap check, low-value proposals, index page
     check('additive: parseDrafts builds the change - the live question (never one the model wrote), live answer plus the addition, what was added recorded',
       built.drafts.length === 1 && built.drafts[0].question === ENTRY.question && built.drafts[0].answer === `${ENTRY.answer} Pay it by the 17th of the following month.` &&
       built.drafts[0].change?.added.length === 1 && built.drafts[0].change.replaced.length === 0, JSON.stringify(built));
+    // Rule 1 (paying-levy re-draft 2026-10-16): additions that contradict a live sentence REPLACE it.
+    {
+      const liveL = { question: 'What is the FDW levy?', answer: "The levy is a monthly fee the Government charges employers of Migrant Domestic Workers. It is not a tax on your helper and it is never deducted from her salary. The levy starts when your helper's Work Permit is issued and stops when it is cancelled. You will usually pay it through GIRO, which is the simplest way to avoid missing a payment. You must never recover it from your helper's wages." };
+      const begin = 'For a first-time helper, the levy begins on the 5th day of her arrival, including the arrival date; otherwise, it begins the day after she arrives.';
+      const ends = 'The levy ends when the Work Permit is cancelled or expires.';
+      const rc = AD.parseUpdate({ add: [
+        { sentence: begin, after: 'issued and stops', source_passage: 'For first-time helpers , the levy will begin on the 5th day of their arrival (including the arrival date). Otherwise, the levy will begin the next day after the helper arrives.' },
+        { sentence: ends, after: 'issued and stops', source_passage: ends },
+      ] }, liveL, payText);
+      check('conflict->replace: begin/end additions on the subject of a live start/stop sentence become ONE replacement of it, no separate additions',
+        rc.built?.replaced.length === 1 && rc.built.added.length === 0 && rc.built.replaced[0].new === `${begin} ${ends}` &&
+        !rc.built.answer.includes('starts when your helper') && rc.built.answer.includes(`${begin} ${ends} You will usually`) &&
+        AD.entryDiff(liveL.answer, rc.built.answer).filter((x) => x.kind === 'added').length === 0 &&
+        FD.unjustifiedRemovals(liveL.answer, rc.built.answer, rc.built.sourcePassage, liveL.question).length === 0, JSON.stringify(rc));
+      // ...and when the model already replaced it with the "ends" line (the live dry run), the "begins" line is folded in.
+      const rf = AD.parseUpdate({ replace: [{ old: "The levy starts when your helper's Work Permit is issued and stops when it is cancelled.", new: ends, source_passage: ends }],
+        add: [{ sentence: begin, after: '', source_passage: 'For first-time helpers , the levy will begin on the 5th day of their arrival (including the arrival date). Otherwise, the levy will begin the next day after the helper arrives.' }] }, liveL, payText);
+      check('conflict->replace: an addition on the subject of a sentence the model already replaced is folded into that replacement (page order)',
+        rf.built?.replaced.length === 1 && rf.built.added.length === 0 && rf.built.replaced[0].new === `${begin} ${ends}` &&
+        FD.unjustifiedRemovals(liveL.answer, rf.built.answer, rf.built.sourcePassage, liveL.question).length === 0, JSON.stringify(rf));
+    }
+    // Rule 2: one fact, one proposal - a new entry in the same run owns the 17th-of-the-month rule.
+    {
+      const p17 = 'You must pay the levy for each month by the 17th of the following month (or the next working day if it falls on a Saturday, Sunday or public holiday).';
+      const both = Dr.parseDrafts(JSON.stringify({ drafts: [
+        { target_entry_id: ENTRY.id, add: [{ sentence: 'Pay it by the 17th of the following month.', after: '', source_passage: p17 }], why: 'w' },
+        { target_entry_id: null, question: 'When is the domestic helper levy due each month?', answer: 'You must pay the levy for each month by the 17th of the following month, or the next working day if that falls on a weekend or public holiday.', source_passage: p17, why: 'w' },
+      ] }), { newText: payText, candidateIds: [ENTRY.id], live: new Map([[ENTRY.id, ENTRY]]) });
+      check('one-fact: the 17th rule goes into the dedicated new entry only, never also appended to the general entry',
+        both.drafts.length === 1 && both.drafts[0].target_entry_id === null && /one fact, one proposal/.test(both.dropped.join(' ')), JSON.stringify(both));
+    }
     const review3 = src('app/watch/[id]/page.tsx');
     check('additive: the review page shows a change as added (green), replaced (old -> new with the source) and unchanged (grey)',
       /const segments = draft\.kind === 'edit' && draft\.current_answer \? entryDiff\(draft\.current_answer, draft\.proposed_answer\) : null;/.test(review3) &&

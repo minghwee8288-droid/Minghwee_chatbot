@@ -121,7 +121,7 @@ export function replacementJustification(sourcePassage: string, oldSentence: str
   const figure = contradicts(sourcePassage, oldSentence);
   if (figure) return figure;
   if (!newSentence || !sentenceCarried(newSentence, sourcePassage, KEPT_COVERAGE)) return null;
-  if (sentenceCarried(oldSentence, sourcePassage, KEPT_COVERAGE)) return null;
+  if (sentenceCarried(oldSentence, sourcePassage, ALREADY_SAID_COVERAGE)) return null;
   const newFigs = figureKeys(newSentence);
   for (const f of figureKeys(oldSentence)) if (!newFigs.has(f)) return null;
   const oldWords = new Set(contentWords(oldSentence));
@@ -212,6 +212,8 @@ export function entryDiff(liveAnswer: string, proposedAnswer: string): DiffSegme
   let gapNew: string[] = [];
   const flush = () => {
     const n = Math.min(gapOld.length, gapNew.length);
+    // One live sentence replaced by several (rule 1, 2026-10-16: the begin and end lines replace the start/stop sentence): one replacement, not a replacement plus additions.
+    if (n > 0 && gapNew.length > gapOld.length) gapNew = [...gapNew.slice(0, n - 1), gapNew.slice(n - 1).join(' ')];
     for (let k = 0; k < n; k += 1) out.push({ kind: 'replaced', old: gapOld[k], new: gapNew[k] });
     for (const t of gapOld.slice(n)) out.push({ kind: 'removed', text: t });
     for (const t of gapNew.slice(n)) out.push({ kind: 'added', text: t });

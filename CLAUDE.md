@@ -2003,6 +2003,8 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-10-16** - **KB watcher: a contradicting addition replaces the live sentence; one fact, one proposal.** Additions on the subject of a live sentence (its distinctive words; begin/start, end/stop alike) that the page justifies become one replacement of it, folded into the model's own replacement if there is one; undecided -> "Possible conflict with live sentence: ..." and the conflict tick (`additive.mergeConflictingAdditions`, conflict note in `pipeline`). New entries are parsed first and an addition a new entry in the same run states is dropped (`drafting.parseDrafts`). Paying-levy dry run (read-only): the start/stop sentence replaced by the begin + end lines, no separate addition. Self-check 431.
+
 - **2026-10-16** - **KB watcher: the live existing-entry search was returning nothing usable.**
   No bot change, no database change. Production, 3:34 pm SGT: "MOM - FDW levy - Paying levy"
   produced five proposals, all "New entry", four of them duplicating live entries, every one

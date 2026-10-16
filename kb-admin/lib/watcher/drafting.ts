@@ -30,6 +30,7 @@
 import { locatePassage } from './passage.ts';
 import { lowValueReason } from './quality.ts';
 import { parseUpdate, type Addition, type Replacement } from './additive.ts';
+import { sentenceCarried } from './factDiff.ts';
 import { NEW_SHAPE, UPDATE_RULES, UPDATE_SHAPE } from './changeRules.ts';
 
 export { locatePassage };
@@ -43,7 +44,7 @@ export type ProposedDraft = {
   source_passage: string;
   why: string;
   /** A change to an existing entry: what was added and replaced (the answer is built from these, lib/watcher/additive.ts). */
-  change?: { added: Addition[]; replaced: Replacement[] };
+  change?: { added: Addition[]; replaced: Replacement[]; conflicts?: string[] };
 };
 
 export const MAX_DRAFTS_PER_CHANGE = 6;
@@ -109,8 +110,13 @@ export function parseDrafts(
   const list = (data as { drafts?: unknown })?.drafts;
   if (!Array.isArray(list)) return { drafts: [], dropped: ['the model answer has no "drafts" list'] };
   const drafts: ProposedDraft[] = [];
-  for (const item of list.slice(0, MAX_DRAFTS_PER_CHANGE * 2)) {
-    const d = (item ?? {}) as Record<string, unknown>;
+  // ONE FACT, ONE PROPOSAL (2026-10-16): new entries are read first, and an
+  // addition to an existing entry that a new entry in this run already states is
+  // dropped - a dedicated entry beats appending to a general one (the 17th-of-the-
+  // month rule went into both "What is the FDW levy?" and its own new entry).
+  const items = list.slice(0, MAX_DRAFTS_PER_CHANGE * 2).map((x) => (x ?? {}) as Record<string, unknown>);
+  const isNew = (d: Record<string, unknown>) => d.target_entry_id == null || d.target_entry_id === '';
+  for (const d of [...items.filter(isNew), ...items.filter((x) => !isNew(x))]) {
     const target = d.target_entry_id == null || d.target_entry_id === '' ? null : String(d.target_entry_id);
     if (target !== null) {
       // A change to an existing entry: additions and contradicted sentences only; the answer is built here.
@@ -122,7 +128,15 @@ export function parseDrafts(
         dropped.push(`a change to "${live.question.slice(0, 80)}" written as a whole new answer instead of additions and replacements`);
         continue;
       }
-      const u = parseUpdate(d, live, ctx.newText, MAX_ENTRY_CHARS);
+      const owned = drafts.filter((x) => x.target_entry_id === null).map((x) => x.answer);
+      const adds = Array.isArray(d.add) ? (d.add as Record<string, unknown>[]) : [];
+      const own = adds.filter((a) => {
+        const s = typeof a?.sentence === 'string' ? a.sentence : '';
+        const other = s ? owned.find((ans) => sentenceCarried(s, ans)) : undefined;
+        if (other) dropped.push(`an addition to "${live.question.slice(0, 60)}" that a new entry in this run already states ("${squash(s).slice(0, 80)}") - one fact, one proposal`);
+        return !other;
+      });
+      const u = parseUpdate(adds.length === own.length ? d : { ...d, add: own }, live, ctx.newText, MAX_ENTRY_CHARS);
       dropped.push(...u.dropped);
       if (!u.built) continue;
       if ((live.question + '\n' + u.built.answer).length > MAX_ENTRY_CHARS) {
@@ -137,7 +151,7 @@ export function parseDrafts(
         answer: u.built.answer,
         source_passage: u.built.sourcePassage,
         why: typeof d.why === 'string' ? d.why.slice(0, 500) : '',
-        change: { added: u.built.added, replaced: u.built.replaced },
+        change: { added: u.built.added, replaced: u.built.replaced, conflicts: u.built.conflicts },
       });
       if (drafts.length >= MAX_DRAFTS_PER_CHANGE) break;
       continue;

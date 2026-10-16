@@ -331,7 +331,14 @@ export async function draftFromSnapshot(
     planned = planned.flatMap((p, i) => {
       const draft = replaced.has(i) ? replaced.get(i)! : p.draft;
       if (!draft) return [];
-      return [{ draft, overlap: assessOverlap({ question: draft.question, answer: draft.answer, targetId: draft.target_entry_id }, matches[i]) }];
+      const overlap = assessOverlap({ question: draft.question, answer: draft.answer, targetId: draft.target_entry_id }, matches[i]);
+      // A possible conflict with a live sentence of the entry being changed needs the approver's tick too.
+      const possible = draft.change?.conflicts ?? [];
+      if (possible.length) {
+        overlap.conflict = true;
+        overlap.note = [...possible, overlap.note].filter(Boolean).join(' ');
+      }
+      return [{ draft, overlap }];
     });
   }
   // No rewording-only changes: a change must add a figure or an actionable sentence the live entry does not carry.

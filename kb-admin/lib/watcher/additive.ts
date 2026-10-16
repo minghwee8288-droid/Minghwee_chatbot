@@ -1,4 +1,4 @@
-import { alreadySays, contradicts, replacementJustification, sentenceCarried, KEPT_COVERAGE } from './factDiff.ts';
+import { alreadySays, contentWords, contradicts, replacementJustification, sentenceCarried, KEPT_COVERAGE } from './factDiff.ts';
 
 export { entryDiff, type DiffSegment } from './factDiff.ts';
 import { locatePassage, locateSpan } from './passage.ts';
@@ -37,6 +37,8 @@ export type BuiltUpdate = {
   replaced: Replacement[];
   /** The page span covering every passage used: what is stored as the proposal's source passage. */
   sourcePassage: string;
+  /** "Possible conflict with live sentence: ..." - an addition on the same subject as a live sentence the test could not decide; Approve needs the tick. */
+  conflicts: string[];
 };
 
 export type UpdateParse = { built: BuiltUpdate | null; dropped: string[] };
@@ -106,6 +108,7 @@ export function parseUpdate(
 
   // Replacements first, so an addition that only restates a replacement can be recognised.
   const replaced: (Replacement & { start: number; end: number })[] = [];
+  const refused: (Addition & { pos: number; order: number })[] = [];
   const replaceList = Array.isArray(item.replace) ? item.replace.slice(0, MAX_OPS) : [];
   for (const raw of replaceList) {
     const r = (raw ?? {}) as Record<string, unknown>;
@@ -123,6 +126,8 @@ export function parseUpdate(
     const contradiction = replacementJustification(passage, whole, asSentence(next));
     if (!contradiction) {
       passageAt.pop();
+      // Kept aside: it may still be the half of a conflict merge (rule 1 below).
+      refused.push({ sentence: asSentence(next), passage, pos: 0, order: -1 });
       dropped.push(`a replacement the source passage does not contradict ("${short(whole)}") - the live sentence is kept`);
       continue;
     }
@@ -155,6 +160,15 @@ export function parseUpdate(
     added.push({ sentence: asSentence(sentence), passage, pos: host ? host.end : live.answer.trimEnd().length, order: added.length });
   }
 
+  // CONFLICT -> REPLACE (2026-10-16, paying-levy re-draft): an addition about the
+  // same subject as a live sentence that says something different must replace
+  // that sentence, not sit beside it. "The levy starts when ... issued and stops
+  // when it is cancelled" stayed live next to the page's begin/end lines.
+  const refusedAll = [...refused];
+  const conflicts = mergeConflictingAdditions(live, spans, replaced, added, pageText, refused);
+  // A refused replacement merged into one: its passage is part of the stored span again.
+  for (const a of refusedAll) if (!refused.includes(a)) { const at = locateSpan(pageText, a.passage); if (at) passageAt.push(at); }
+
   if (!replaced.length && !added.length) {
     dropped.push(`a change to "${short(live.question)}" that adds nothing and replaces nothing - not proposed`);
     return { built: null, dropped };
@@ -177,9 +191,90 @@ export function parseUpdate(
       added: added.map(({ sentence, passage }) => ({ sentence, passage })),
       replaced: replaced.map(({ old, new: n, passage, contradiction }) => ({ old, new: n, passage, contradiction })),
       sourcePassage: pageText.slice(from, to),
+      conflicts,
     },
     dropped,
   };
+}
+
+// begin/start, end/stop: the same event in other words.
+const SYNONYM: Record<string, string> = { begin: 'start', commence: 'start', commenc: 'start', end: 'stop', cease: 'stop', ceas: 'stop' };
+const words = (s: string) => contentWords(s).map((w) => SYNONYM[w] ?? w);
+const EVENT = new Set(['start', 'stop']);
+
+/**
+ * For each live sentence not already replaced: the additions that share its
+ * DISTINCTIVE words (in no other live sentence, not in the question) are the
+ * candidates. Greedily, the ones that cover distinctive words not yet covered
+ * form a group; if the group covers half of them and the page justifies it
+ * (replacementJustification), the group becomes ONE replacement of that
+ * sentence and its additions go. If it cannot decide and an addition shares
+ * two or more distinctive words, a "Possible conflict" is returned instead.
+ */
+function mergeConflictingAdditions(
+  live: { question: string; answer: string },
+  spans: { start: number; end: number }[],
+  replaced: (Replacement & { start: number; end: number })[],
+  added: (Addition & { pos: number; order: number })[],
+  pageText: string,
+  /** The model's replacements refused for want of a contradiction: candidates too; left here when not merged. */
+  refused: (Addition & { pos: number; order: number })[] = [],
+): string[] {
+  const pool = [...refused];
+  const take = (g: Addition & { pos: number; order: number }) => {
+    const i = added.indexOf(g);
+    if (i >= 0) added.splice(i, 1); else pool.splice(pool.indexOf(g), 1);
+  };
+  const conflicts: string[] = [];
+  const qWords = new Set(words(live.question));
+  const sents = spans.map((s) => ({ ...s, text: live.answer.slice(s.start, s.end) }));
+  for (const ls of sents) {
+    if (!added.length && !pool.length) break;
+    // Already replaced (the model's own replacement): additions on the same subject are folded into it.
+    const prior = replaced.find((r) => r.start < ls.end && ls.start < r.end);
+    if (prior && (prior.start !== ls.start || prior.end !== ls.end)) continue;
+    const others = new Set(sents.filter((o) => o !== ls).flatMap((o) => words(o.text)));
+    const distinct = new Set(words(ls.text).filter((w) => !qWords.has(w) && !others.has(w)));
+    if (!distinct.size) continue;
+    const hits = (a: Addition) => [...new Set(words(a.sentence).filter((w) => distinct.has(w)))];
+    const cands = [...added, ...pool].filter((a) => hits(a).length).sort((x, y) => hits(y).length - hits(x).length);
+    if (!cands.length) continue;
+    const covered = new Set<string>(prior ? hits({ sentence: prior.new, passage: '' }) : []);
+    if (prior) {
+      const fold = cands.filter((c) => { const f = hits(c).filter((w) => !covered.has(w)); f.forEach((w) => covered.add(w)); return f.length > 0 || hits(c).some((w) => EVENT.has(w)); });
+      if (!fold.length) continue;
+      const parts = [{ sentence: prior.new, passage: prior.passage }, ...fold];
+      const pos = (p: { passage: string }) => { const i = pageText.indexOf(p.passage); return i < 0 ? Number.MAX_SAFE_INTEGER : i; };
+      parts.sort((x, y) => pos(x) - pos(y));
+      const joined = parts.map((p) => p.sentence).join(' ');
+      const passage = [...new Set(parts.map((p) => p.passage))].join('\n');
+      const why = replacementJustification(passage, ls.text, joined);
+      if (!why) continue;
+      fold.forEach(take);
+      Object.assign(prior, { new: joined, passage, contradiction: why });
+      continue;
+    }
+    const group: typeof added = [];
+    for (const c of cands) {
+      const fresh = hits(c).filter((w) => !covered.has(w));
+      if (!fresh.length && !hits(c).some((w) => EVENT.has(w))) continue;
+      group.push(c);
+      fresh.forEach((w) => covered.add(w));
+    }
+    const at = (a: Addition) => { const i = pageText.indexOf(a.passage); return i < 0 ? Number.MAX_SAFE_INTEGER : i; };
+    group.sort((x, y) => at(x) - at(y));
+    const joined = group.map((g) => g.sentence).join(' ');
+    const passage = [...new Set(group.map((g) => g.passage))].join('\n');
+    const why = covered.size / distinct.size >= 0.5 ? replacementJustification(passage, ls.text, joined) : null;
+    if (why) {
+      group.forEach(take);
+      replaced.push({ old: ls.text, new: joined, passage, contradiction: why, start: ls.start, end: ls.end });
+    } else if (cands.some((c) => hits(c).length >= 2) && !sentenceCarried(ls.text, pageText, KEPT_COVERAGE)) {
+      conflicts.push(`Possible conflict with live sentence: "${ls.text}" (the page: "${short(cands[0].sentence)}")`);
+    }
+  }
+  refused.splice(0, refused.length, ...pool);
+  return conflicts;
 }
 
 /** The line of the stored source passage that contradicts a replaced sentence, for the review page. */
