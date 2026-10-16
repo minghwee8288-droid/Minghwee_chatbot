@@ -118,7 +118,7 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
                      (the KB watcher; on PRODUCTION since 2026-10-15, not on TEST;
                      012's editor check now expects 16, or 24 once 015 is there, 27 with 016),
                      kb_admin_016_watcher_overlap (overlap on proposals, suggested
-                     sub-pages, approver re-draft, KB009; NOT applied anywhere yet)
+                     sub-pages, approver re-draft, KB009; on PRODUCTION since 2026-10-16)
                      — applied ONLY via apply_sql.py --expect-ref <project ref>
   gen_fee_locked.py  the watcher's fee lock: the 23 questions + 7 corrections the
                      fees document set, read from the loader, written into
@@ -602,7 +602,8 @@ because the lead is opened early and the ticket is created much later.
 | The watcher fetches politely and never silently drops a failure | `lib/watcher/fetcher.ts` + `kb_admin_source_record_fetch(ok=false)` | Clear user-agent, https + public hosts only, robots.txt (and Crawl-delay) obeyed, 20 s timeout, 3 attempts with backoff on 5xx/429/network, no retry on other 4xx, 10 s minimum gap per host, 3 MB cap. A failure is a snapshot row and is shown on the source. |
 | A watcher proposal states a fact a client can act on, and an index page drafts nothing | `lib/watcher/quality.ts` (`lowValueReason`) in `parseDrafts` + `lib/watcher/indexPage.ts` (`indexVerdict`) in `checkSource` | Production 2026-10-15: MOM's levy INDEX page drafted four "The MOM page provides information on..." entries. A draft that only points elsewhere, or carries no amount, rule, deadline, eligibility condition or step, is dropped; an index page drafts nothing and its sub-pages (below it, same site, named in its main text) become "Suggested pages to watch" (016). |
 | A watcher approval never silently creates a second, conflicting answer | `lib/watcher/overlap.ts` + `draftFromSnapshot` + `kb_admin_watch_approve` (016, KB009) | Each draft is searched with the bot's own live search: a new draft at 0.72+ against a live entry becomes a change to that entry (or nothing, if it already says it); entries at 0.60+ are listed with the figures that differ; two figures of the same kind, period and subject that disagree raise the conflict banner and the approver's tick, which the database requires. Thresholds measured on the live KB (true duplicates 0.68-0.88, same topic 0.55-0.64). |
-| A proposal cites the page word for word | `lib/watcher/drafting.ts` `parseDrafts` + the passage check in `kb_admin_watch_propose` | The model may only target an entry it was shown; the source passage must be on the fetched page (whitespace aside) or the draft is dropped (and refused by the database too). |
+| A proposal cites the page word for word | `lib/watcher/drafting.ts` `parseDrafts` / `locatePassage` + the passage check in `kb_admin_watch_propose` | The model may only target an entry it was shown; the source passage must be on the fetched page or the draft is dropped (and refused by the database too). Spacing aside (spaces, tabs, line breaks, non-breaking and zero-width spaces, and a space beside punctuation or between a number and a letter, as in MOM's "1 st helper"), the words and figures must match exactly; the PAGE's own span is stored, so the database's whitespace-only check finds it verbatim. |
+| A watcher change to a live entry never silently loses a fact, and never only rewords it | `lib/watcher/factDiff.ts` (`removedPoints`, `rewordingOnlyReason`) in `draftFromSnapshot`, `app/watch/[id]/page.tsx`, `approveWatchDraft` | Every live sentence the proposal no longer carries (a figure gone, or under 60% of its content words; 40% when all its figures are kept) is listed in red under "Points removed"; one the source passage does not contradict (same kind, period and subject, `compareFigures`) blocks Approve with "This update drops existing information" (page and action; Edit stays). A change adding no new figure and no new sentence with an actionable fact or 3+ new content words is not proposed. Dry runs: the "What is the FDW levy?" change dropped 7 live points every run. |
 | ...searched for the whole service, with the filter kept whatever money words it contains | `rag_retriever.ENQUIRY_OVERVIEW_QUERY` / `_service_filter` | "costs" dropped the service filter, and the wider search returned a no-agency comparison that told the client the permit and bond were theirs to do. 12 rows, never widened - plus `ENQUIRY_OVERVIEW_EXTRA_QUERIES`, a separate search per service for a question the agency named that the shared query cannot reach (direct hire's failed medical ranks 21st under it). |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -722,8 +723,8 @@ approved | published | rejected | superseded, and the provenance of an approved 
 `source_url`, `source_fetched_at`, `approved_by(_email)`, `approved_at`, `entry_id_after`,
 `version_id`; `figure_check` / `figure_confirmed` for a government figure). RLS on, nothing for anon/authenticated/service_role; `kb_admin_reader`
 SELECTs, `kb_admin_fn_owner` writes through the functions only. The live KB table gets no
-new column; `cb_kb_audit`'s action CHECK gains nine watcher actions. Migration 016 (written,
-NOT applied) adds `cb_kb_sources.suggested_pages`/`suggested_at`, `cb_kb_drafts.similar_entries`/
+new column; `cb_kb_audit`'s action CHECK gains nine watcher actions. Migration 016 (on production
+since 2026-10-16) adds `cb_kb_sources.suggested_pages`/`suggested_at`, `cb_kb_drafts.similar_entries`/
 `conflict_check`/`conflict_note`/`conflict_confirmed`, and the audit actions `source_redrafted`,
 `source_suggested`.
 
@@ -1577,13 +1578,15 @@ Ordered by what will hurt first.
     `KB_RENDER_URL`/`KB_RENDER_SECRET` on Vercel; until then it is reported as "needs the
     page renderer". MOM's `foreign-domestic-worker-levy` URL is an index page - the rates
     are on `.../foreign-domestic-worker-levy/paying-levy`, which is the page to watch for them.
-    (f) **Migration `kb_admin_016_watcher_overlap.sql` is written and applied NOWHERE**
-    (2026-10-16). Until it is, kb-admin drafts with the new rules (no pointer proposals, an
-    index page drafts nothing, a duplicate new entry becomes a change) but cannot record the
-    similar-entries panel, the conflict tick, suggested sub-pages or offer Re-draft. Apply with
-    `apply_sql.py --expect-ref` on a go-word; no env var and no redeploy needed. The four
-    rejected MOM-index proposals are gone either way: Re-draft (after 016) or the next fetch now
-    proposes nothing from that page.
+    (f) **Migration `kb_admin_016_watcher_overlap.sql` is applied on PRODUCTION (2026-10-16,
+    its checks PASS, every existing row unchanged; export in
+    `Minghwee_backups/kb_admin_016_2026-10-16/`)** and on no other database. The similar-entries
+    panel, the conflict tick (KB009), suggested sub-pages and Re-draft are live in kb-admin; kb-admin
+    detected it without a redeploy. Re-draft on the MOM levy index page proposes nothing.
+    (g) A proposed change that drops live facts is still proposed, and blocked at Approve: in the
+    paying-levy dry runs both changes the model writes ("What is the FDW levy?", the monthly-levy
+    entry) drop points every time, so the approver will usually Edit them back in. The blocking
+    rule is in kb-admin (page + action), not in the database.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -1917,6 +1920,7 @@ behaviour behind one switch. Details of each step are in §11.
 | KBW2 | Fee lock eased for government figures (warning + required tick, KB008); migration 015 applied to production | see git log |
 | KBW3 | "No readable main text" diagnosed: extractor reads ASP.NET form-wrapped pages (MOM); blocked / maintenance / JS pages explained; render-service/ for JS pages | see git log |
 | KBW4 | Drafting: overlap check (change instead of a duplicate, similar-entries panel, conflict tick KB009), low-value and index pages dropped (suggested sub-pages), approver re-draft; migration 016 written, not applied | see git log |
+| KBW5 | Migration 016 applied to production; quote matching ignores spacing; a change that drops live facts is blocked ("Points removed"); rewording-only changes not proposed | see git log |
 
 **Still to do, in order:** Step 5 is done (every item, the last being item 2 in Batch G), Step 6 is done (parts 1-4, 6b, 6c), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
@@ -1993,6 +1997,33 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-16** - **KB watcher: migration 016 on production; quote matching, no lost facts, no
+  rewording-only changes.** No bot change; the schedule stays off.
+  (0) **016 applied to PRODUCTION** on the user's go-word: read-only pre-check (24 editor
+  functions, no 016 objects), full-column export of the nine tables it touches or reads, then
+  `apply_sql.py --expect-ref qizcnyuzgylzoyfvymfo`: its check printed PASS. After: 27 editor
+  functions, the six columns at their defaults, and every column of every row of all nine tables
+  identical to the export (`Minghwee_backups/kb_admin_016_2026-10-16/`).
+  (1) **Quote matching** (`drafting.locatePassage`): MOM writes "Normal (1 st helper)", "the 17 th
+  of" and "apply for GIRO ." (inline links); the model copies "1st", "17th", "GIRO.", and the
+  old whitespace-only rule dropped a correct passage in 2 of 6 dry runs. Spacing of every kind is
+  now ignored where it separates no two words or numbers; words and figures must still match
+  exactly, and the page's own span is stored (the database's check finds it verbatim).
+  (2) **No lost facts** (`lib/watcher/factDiff.ts`): each live sentence a change no longer carries
+  is listed in red under "Points removed"; one the source passage does not contradict blocks
+  Approve with "This update drops existing information" (review page and `approveWatchDraft`;
+  Edit still works). Both prompts now say to keep every fact.
+  (3) **No rewording-only changes**: a change that adds no new figure and no new sentence with an
+  actionable fact (or 3+ new content words) is dropped before it is proposed.
+  **Dry runs** (paying-levy, 6 runs, real model and live search read-only, writes faked): 4-6
+  proposals each, **0 passages dropped** (the old whitespace-only rule would have dropped 2 of them, both
+  found now); every run proposes changes to "What is the FDW levy?" (drops 7 live points ->
+  blocked) and the monthly-levy entry (drops "The Ministry of Manpower charges employers a monthly
+  levy." -> blocked); run 5 also the concession entry (drops one sentence -> blocked); no change
+  was rewording-only. Self-check 396 (19 new); 15 new faults red (2 were green first: the checks
+  did not see whether the panel was rendered or the refusal returned - tightened); the earlier 18
+  red; build passes.
 
 - **2026-10-16** - **KB watcher drafting: overlap check, no low-value proposals, index pages
   suggest their sub-pages, approver re-draft.** No bot change; the schedule stays off; nothing

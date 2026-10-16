@@ -1,6 +1,7 @@
 import { entryText, vectorLiteral } from '../editing.ts';
 import { changedPassages, contentHash, pageChange } from './change.ts';
 import { buildPrompt, parseDrafts, type Candidate, type ProposedDraft } from './drafting.ts';
+import { rewordingOnlyReason } from './factDiff.ts';
 import { extractMainText } from './extract.ts';
 import { classifyEmptyPage, emptyPageMessage } from './emptyPage.ts';
 import type { PageResult } from './fetcher.ts';
@@ -231,6 +232,8 @@ export async function draftFromSnapshot(
   const raw = await deps.llm(prompt.system, prompt.user);
   const parsed = parseDrafts(raw, { newText: snap.text, candidateIds: candidates.map((c) => c.id) });
   const dropped = [...parsed.dropped];
+  // The live text of every entry a draft may change (candidates, and entries a new draft is turned into a change to).
+  const liveById = new Map<string, { question: string; answer: string }>(candidates.map((c) => [c.id, c]));
 
   // --- the overlap check ------------------------------------------------------
   type Planned = { draft: ProposedDraft; overlap: Overlap };
@@ -251,6 +254,7 @@ export async function draftFromSnapshot(
     });
     const replaced = new Map<number, ProposedDraft | null>();
     if (retarget.length) {
+      for (const r of retarget) liveById.set(r.entry.id, r.entry);
       const merge = buildMergePrompt({ label: source.label, url: source.url, pairs: retarget.map((r) => ({ entry: r.entry, draft: planned[r.i].draft })) });
       const merged = parseDrafts(await deps.llm(merge.system, merge.user), { newText: snap.text, candidateIds: retarget.map((r) => r.entry.id) });
       dropped.push(...merged.dropped.map((d) => `(change instead of a new entry) ${d}`));
@@ -266,6 +270,13 @@ export async function draftFromSnapshot(
       return [{ draft, overlap: assessOverlap({ question: draft.question, answer: draft.answer, targetId: draft.target_entry_id }, matches[i]) }];
     });
   }
+  // No rewording-only updates: a change must add a figure or an actionable sentence the live entry does not carry.
+  planned = planned.filter(({ draft }) => {
+    const live = draft.target_entry_id ? liveById.get(draft.target_entry_id) : undefined;
+    const why = live ? rewordingOnlyReason(live, draft) : null;
+    if (why) dropped.push(why);
+    return !why;
+  });
   for (const d of dropped) log(`draft dropped source=${source.id.slice(0, 8)}: ${d}`);
 
   const oldSource = change.removed.join('\n').slice(0, 20000) || null;

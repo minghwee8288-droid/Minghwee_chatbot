@@ -148,7 +148,7 @@ Migration `scripts/sql/kb_admin_015_watcher.sql` (on production since 2026-10-15
 The extractor reads ASP.NET pages that wrap the whole page in one `<form>` (mom.gov.sg), and
 reads a listing page with several `<article>`s whole.
 
-**Better drafting (2026-10-16; the last two need migration 016):**
+**Better drafting (2026-10-16; migration 016 is on production):**
 - **Low-value proposals are dropped.** A draft that only points elsewhere ("Where can I find
   information about...", "The MOM page provides information on...", "visit this page") or that
   states no fact a client could act on (an amount, a rule, a deadline, an eligibility condition,
@@ -167,8 +167,16 @@ reads a listing page with several `<article>`s whole.
 - **Re-draft from latest snapshot** (approvers only, audit-logged with a reason): supersedes the
   page's open proposals and drafts again from its last snapshot, without waiting for the page to
   change.
-Before 016 is applied kb-admin reads and calls exactly what it did with 015 (no suggestions, no
-panel, no re-draft); it checks once a minute, so applying 016 needs no redeploy.
+- **Quote matching ignores spacing only.** The source passage is found on the page with spacing
+  of every kind set aside (tabs, line breaks, non-breaking spaces, "1 st" for "1st"); the words and
+  figures must match exactly, and the page's own span is what is stored and shown.
+- **A change never silently loses a fact.** Every sentence of the live entry the proposal no longer
+  carries is shown in red under **Points removed**. Unless the source page contradicts it, Approve
+  is blocked with "This update drops existing information"; Edit is still allowed.
+- **No rewording-only changes.** A change that adds no new fact, figure, rule, deadline or step is
+  not proposed.
+On a database without 016 kb-admin reads and calls exactly what it did with 015 (no suggestions,
+no panel, no re-draft); it checks once a minute.
 
 `WATCHER_ENABLED=true` (+ `CRON_SECRET`, `KB_WATCHER_ACTOR_ID`) adds the schedule:
 `vercel.json` calls `/api/watcher/run` daily and each page is re-checked every

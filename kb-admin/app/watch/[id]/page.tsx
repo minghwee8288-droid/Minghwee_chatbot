@@ -6,6 +6,7 @@ import { Shell } from '@/components/Shell';
 import { AmberNotice, PageHeader, Pill, formatDate } from '@/components/ui';
 import { requireViewerWith } from '@/lib/auth';
 import { wordDiff, type DiffPart } from '@/lib/editing';
+import { removedPoints, type RemovedPoint } from '@/lib/watcher/factDiff';
 import { reviewState } from '@/lib/watcher/feeLock';
 import { watchDraft, type SimilarEntry } from '@/lib/watchQueries';
 import { DRAFT_STATUS } from '../status';
@@ -81,6 +82,29 @@ function SimilarEntries({ entries }: { entries: SimilarEntry[] }) {
 }
 
 /**
+ * Sentences of the live entry the proposed change no longer carries. Each
+ * one the source does not contradict blocks Approve (the "drops
+ * existing information" banner); Edit is still allowed.
+ */
+function PointsRemoved({ points }: { points: RemovedPoint[] }) {
+  if (!points.length) return null;
+  return (
+    <section className="card card-pad space-y-2 text-[13px]">
+      <h2 className="text-[15px] font-semibold">Points removed</h2>
+      <p className="text-muted">Said by the live entry now, and no longer by the proposal.</p>
+      <ul className="space-y-1.5">
+        {points.map((p, i) => (
+          <li key={i} className="border-l-2 pl-3" style={{ borderColor: 'var(--bad)' }}>
+            <p style={{ color: 'var(--bad)' }}>{p.sentence}</p>
+            <p className="text-[12px] text-muted">{p.contradictedBy ? `The source page contradicts it: ${p.contradictedBy}.` : 'The source page does not contradict it.'}</p>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
  * Stage 3: one proposal. The page that changed, what changed on it, and the
  * knowledge-base change it implies, side by side; then Approve / Edit / Reject.
  * A proposal under the fee lock shows "Needs agency confirmation" and no
@@ -105,6 +129,10 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
   const figure = open && !lock && (review.figure || draft.figure_check);
   const conflict = open && !lock && draft.conflict_check;
   const stale = draft.kind === 'edit' && open && (draft.current_question !== draft.old_question || draft.current_answer !== draft.old_answer);
+  const removed = draft.kind === 'edit' && draft.current_answer
+    ? removedPoints(draft.current_answer, draft.proposed_answer, draft.source_passage, draft.proposed_question)
+    : [];
+  const drops = open && removed.some((r) => !r.contradictedBy);
   const status = DRAFT_STATUS[draft.status] ?? { text: draft.status, tone: 'off' as const };
   const oldEntry = draft.kind === 'edit' ? `${draft.current_question ?? ''}\n\n${draft.current_answer ?? ''}` : '';
   const newEntry = `${draft.proposed_question}\n\n${draft.proposed_answer}`;
@@ -141,6 +169,11 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
           Approving this could leave the assistant with two different answers: {draft.conflict_note ?? 'a similar live entry states a different figure'}. Compare it with the entries under &quot;Similar existing entries&quot; and the source page; approving asks you to tick that you did. If the live entry is the one that is wrong, change that entry instead.
         </AmberNotice>
       ) : null}
+      {drops ? (
+        <AmberNotice title="This update drops existing information">
+          This update drops existing information: the points in red under &quot;Points removed&quot; are in the live entry now, and the source page does not contradict them. Approving is not possible until they are put back: use Edit to add them to the proposal, or reject it.
+        </AmberNotice>
+      ) : null}
       {stale ? (
         <AmberNotice title="The entry has changed since this was drafted">Someone has edited the entry since. Approving will be refused; reject this proposal and fetch the page again.</AmberNotice>
       ) : null}
@@ -170,6 +203,7 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
         before={oldEntry}
         after={newEntry}
       />
+      {open ? <PointsRemoved points={removed} /> : null}
       <SimilarEntries entries={draft.similar_entries ?? []} />
 
       {draft.status === 'approved' && draft.version_id ? (
@@ -193,7 +227,7 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
 
       {open && viewer.canEdit ? (
         <div className="flex flex-wrap items-start gap-3">
-          {viewer.canApprove && !lock && !stale ? (
+          {viewer.canApprove && !lock && !stale && !drops ? (
             <ReasonAction
               action={approveWatchDraft}
               hidden={{ draft_id: draft.id }}

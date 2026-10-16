@@ -12,8 +12,9 @@
  * Every draft is then checked here, and dropped (with the reason logged)
  * unless:
  *   - target_entry_id is null (a new entry) or one of the candidate ids;
- *   - source_passage occurs in the new page text (whitespace aside) - the
- *     reviewer is shown that exact passage, so a paraphrase is refused;
+ *   - source_passage occurs in the new page text, spacing aside (locatePassage:
+ *     the words and figures must match exactly) - the page's own span is kept
+ *     and shown to the reviewer, so a paraphrase is refused;
  *   - question and answer are present and together at most 1,200 characters
  *     (the editor's limit, which the database enforces again);
  *   - nothing looks like an NRIC/FIN;
@@ -53,6 +54,8 @@ export function buildPrompt(p: {
     'Rules:',
     '- Use ONLY what the page passages say. Never add facts, figures, dates or advice that are not in them.',
     '- To change an existing entry, set target_entry_id to its id and give the full new question and answer. Keep its wording where the page does not require a change.',
+    '- When changing an existing entry, keep EVERY fact it states (each figure, rule, condition, step) unless the page passage contradicts it; add the new fact from the page to it. Never drop a point just to shorten or tidy it.',
+    '- Never propose a change that only rewords an existing entry: a change must add a fact, figure, rule, deadline or step the entry does not already state.',
     '- For a fact no listed entry covers, set target_entry_id to null. If a listed entry already answers the same question, change THAT entry instead: never propose a second entry for a question the knowledge base already answers.',
     '- Every entry must state a fact a client can act on: an amount, a rule, a deadline, an eligibility condition or a step. Never draft an entry that only points elsewhere ("Where can I find information about...", "The MOM page provides information on...", "visit this page...").',
     '- If the page is mainly a list of links to other pages, return no drafts.',
@@ -81,6 +84,55 @@ export function buildPrompt(p: {
 
 const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
 
+// Whitespace of every kind: spaces, tabs, line breaks, non-breaking and
+// zero-width spaces.
+const SPACE = /[\s\u00a0\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u3000\ufeff]/u;
+const LETTER = /\p{L}/u;
+const DIGIT = /\p{N}/u;
+
+/**
+ * The page text with its spacing normalised, and for every kept character its
+ * index in the original. A run of whitespace becomes nothing, or one space
+ * where it separates two words or two numbers ("per month", "1 2"); anywhere
+ * else - between a number and a letter, or beside punctuation - spacing
+ * carries no word or figure, so it is dropped. The MOM paying-levy page writes
+ * "Normal (1 st helper)", "the 17 th of" and "apply for GIRO ." (inline links),
+ * and the model copies them as "1st", "17th", "GIRO." - the same words and
+ * figures (dry runs 2026-10-16: 2 of 6 dropped a correct table passage).
+ */
+function spacingKey(text: string): { key: string; at: number[] } {
+  let key = '';
+  const at: number[] = [];
+  let pendingSpace = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (SPACE.test(ch)) { pendingSpace = key.length > 0; continue; }
+    if (pendingSpace) {
+      const prev = key[key.length - 1];
+      if ((LETTER.test(prev) && LETTER.test(ch)) || (DIGIT.test(prev) && DIGIT.test(ch))) { key += ' '; at.push(i - 1); }
+      pendingSpace = false;
+    }
+    key += ch;
+    at.push(i);
+  }
+  return { key, at };
+}
+
+/**
+ * Where the model's passage is on the page, spacing aside: the page's own
+ * span (so the reviewer sees the page's exact words, and the database's check,
+ * which only collapses whitespace, finds it verbatim), or null when the words
+ * or figures differ.
+ */
+export function locatePassage(pageText: string, passage: string): string | null {
+  const want = spacingKey(passage).key;
+  if (!want) return null;
+  const page = spacingKey(pageText);
+  const start = page.key.indexOf(want);
+  if (start < 0) return null;
+  return pageText.slice(page.at[start], page.at[start + want.length - 1] + 1);
+}
+
 export type ParseResult = { drafts: ProposedDraft[]; dropped: string[] };
 
 export function parseDrafts(raw: string, ctx: { newText: string; candidateIds: string[] }): ParseResult {
@@ -95,18 +147,18 @@ export function parseDrafts(raw: string, ctx: { newText: string; candidateIds: s
   }
   const list = (data as { drafts?: unknown })?.drafts;
   if (!Array.isArray(list)) return { drafts: [], dropped: ['the model answer has no "drafts" list'] };
-  const page = squash(ctx.newText);
   const drafts: ProposedDraft[] = [];
   for (const item of list.slice(0, MAX_DRAFTS_PER_CHANGE * 2)) {
     const d = item as Record<string, unknown>;
     const question = typeof d.question === 'string' ? d.question.trim() : '';
     const answer = typeof d.answer === 'string' ? d.answer.trim() : '';
-    const passage = typeof d.source_passage === 'string' ? d.source_passage.trim() : '';
+    const given = typeof d.source_passage === 'string' ? d.source_passage.trim() : '';
     const target = d.target_entry_id == null || d.target_entry_id === '' ? null : String(d.target_entry_id);
     if (!question || !answer) { dropped.push('a draft without a question or an answer'); continue; }
     if ((question + '\n' + answer).length > MAX_ENTRY_CHARS) { dropped.push(`a draft over ${MAX_ENTRY_CHARS} characters`); continue; }
     if (target !== null && !ctx.candidateIds.includes(target)) { dropped.push('a draft naming an entry that was not offered'); continue; }
-    if (!passage || !page.includes(squash(passage))) { dropped.push(`a draft whose source passage is not on the page ("${squash(passage).slice(0, 80)}")`); continue; }
+    const passage = given ? locatePassage(ctx.newText, given) : null;
+    if (!passage) { dropped.push(`a draft whose source passage is not on the page ("${squash(given).slice(0, 80)}")`); continue; }
     if (NRIC.test(`${question} ${answer} ${passage}`)) { dropped.push('a draft containing what looks like an NRIC/FIN'); continue; }
     const low = lowValueReason(question, answer);
     if (low) { dropped.push(low); continue; }

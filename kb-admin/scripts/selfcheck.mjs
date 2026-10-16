@@ -47,12 +47,15 @@ const src = (p) => (existsSync(join(ROOT, p)) ? readFileSync(join(ROOT, p), 'utf
 console.log('static:');
 // The five verbs the design names, as whole words, anywhere in the source.
 const WRITE_WORDS = /\b(insert|update|delete|upsert|rpc)\b/i;
+// The one sentence of prose allowed to use a verb: the watcher's banner, worded by the user (2026-10-16).
+const PROSE_OK = /This update drops existing information/g;
+const scanText = (f) => readFileSync(f, 'utf8').replace(PROSE_OK, '');
 for (const f of code) {
-  const lines = readFileSync(f, 'utf8').split('\n');
+  const lines = scanText(f).split('\n');
   const hits = lines.map((l, i) => (WRITE_WORDS.test(l) ? i + 1 : 0)).filter(Boolean);
   if (hits.length) check(`no write verb in ${rel(f)}`, false, `line(s) ${hits.join(', ')}`);
 }
-check('no write verb in any source file', !code.some((f) => WRITE_WORDS.test(readFileSync(f, 'utf8'))));
+check('no write verb in any source file', !code.some((f) => WRITE_WORDS.test(scanText(f))));
 
 const bad = [
   [/\.from\(\s*['"`]/, 'Supabase data API (.from)'],
@@ -1193,7 +1196,7 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
   }
 }
 
-console.log('KB watcher drafting: overlap check, low-value proposals, index pages, re-draft (2026-10-16; migration 016 not applied yet):');
+console.log('KB watcher drafting: overlap check, low-value proposals, index pages, re-draft (2026-10-16; migration 016 on production):');
 {
   const fx = (n) => readFileSync(join(ROOT, 'scripts/fixtures/watcher', n), 'utf8');
   const X = await import(pathToFileURL(join(ROOT, 'lib/watcher/extract.ts')).href);
@@ -1409,6 +1412,84 @@ console.log('KB watcher drafting: overlap check, low-value proposals, index page
     /reasoning: \{ enabled: false \}/.test(llmTs) && /finish_reason === 'length'/.test(llmTs) && /max_tokens: 6000/.test(llmTs));
   check('the pipeline still imports no database, network or environment code',
     !/from '(postgres|\.\.?\/(db|write|env|embed)|@\/lib\/(db|write|env|embed))'|process\.env|(?<![.\w])fetch\(/.test(src('lib/watcher/pipeline.ts') + src('lib/watcher/overlap.ts') + src('lib/watcher/indexPage.ts') + src('lib/watcher/quality.ts')));
+
+  // --- refinements (2026-10-16, after 016 went to production) ---------------
+  // 1. Quote matching: spacing aside, the words and figures exactly.
+  const FD = await import(pathToFileURL(join(ROOT, 'lib/watcher/factDiff.ts')).href);
+  const payText = payingX.text;
+  {
+    const tidied = 'Normal (1st helper) $300 $9.87 Normal (Subsequent helpers) $450 $14.80';
+    const span = Dr.locatePassage(payText, tidied);
+    check('quote: the MOM table passage the model tidied ("1st" for "1 st", cells on one line) is found, and the PAGE\'s own span is kept',
+      span !== null && /Normal \(1 st helper\)\n\$300/.test(span) && payText.includes(span), JSON.stringify(span));
+    check('quote: tabs, line breaks, non-breaking and zero-width spaces are all spacing',
+      Dr.locatePassage(payText, 'the 17th\tof the\nfollowing​ month') !== null && Dr.locatePassage(payText, 'apply for GIRO. If you do') !== null);
+    check('quote: a different figure is NOT found ($350 for $300; $9.78 for $9.87)',
+      Dr.locatePassage(payText, 'Normal (1st helper) $350') === null && Dr.locatePassage(payText, 'Normal (1st helper) $300 $9.78') === null);
+    check('quote: a different or extra word is NOT found, and two words run together are not the same as two words',
+      Dr.locatePassage(payText, 'Normal (2nd helper) $300') === null && Dr.locatePassage(payText, 'Normal (Subsequenthelpers) $450') === null &&
+      Dr.locatePassage(payText, 'You must pay the levy for each week by the 17th') === null);
+    const collapse = (s) => s.replace(/\s+/g, ' ');
+    check('quote: the kept span passes the database\'s own check (whitespace collapsed only, KB002)', span !== null && collapse(payText).includes(collapse(span)));
+    const parsed = Dr.parseDrafts(JSON.stringify({ drafts: [{ target_entry_id: null, question: 'How much is the levy for my first helper?', answer: 'The normal levy for your first helper is $300 a month, or $9.87 a day.', source_passage: 'Normal (1st helper) $300 $9.87', why: '' }] }), { newText: payText, candidateIds: [] });
+    check('quote: parseDrafts keeps that draft and stores the page\'s span as its source passage',
+      parsed.drafts.length === 1 && parsed.drafts[0].source_passage === 'Normal (1 st helper)\n$300\n$9.87', JSON.stringify(parsed));
+  }
+
+  // 2. A change must not lose facts.
+  const FDW = { question: 'What is the FDW levy?', answer: 'The levy is a monthly fee the Government charges employers of Migrant Domestic Workers. It is a pricing mechanism to manage the number of foreign workers in Singapore — it is not a tax on your helper and it is never deducted from her salary. You will usually pay it through GIRO, which is the simplest way to avoid missing a payment. You must never recover it from your helper’s wages.' };
+  // The dry run's proposal (2026-10-16), shortened.
+  const FDW_NEW = 'The foreign worker levy, commonly known as “levy”, is a pricing mechanism to regulate the number of foreigners in Singapore. As an employer, you must pay a monthly levy for her. For first-time helpers, the levy begins on the 5th day of their arrival.';
+  {
+    const rp = FD.removedPoints(FDW.answer, FDW_NEW, 'The foreign worker levy, commonly known as “levy”, is a pricing mechanism', FDW.question);
+    check('facts: the dry run\'s "What is the FDW levy?" change lists the points it drops (not a tax, GIRO, never from her wages) and none is justified',
+      rp.some((r) => /not a tax/.test(r.sentence)) && rp.some((r) => /GIRO/.test(r.sentence)) && rp.some((r) => /recover it/.test(r.sentence)) &&
+      FD.unjustifiedRemovals(FDW.answer, FDW_NEW, 'x', FDW.question).length === rp.length, JSON.stringify(rp));
+    check('facts: a sentence the proposal still carries is not "removed" (same figure, paraphrased)',
+      FD.removedPoints('Households that qualify for the levy concession pay $60 a month.', 'The levy is $300 per month for a first helper and $60 per month at the concessionary rate.', '').length === 0);
+    check('facts: a sentence whose figure changed is removed - justified when the source states the new figure for the same thing, blocking when not',
+      FD.removedPoints('The monthly levy is $300 for the first helper.', 'The monthly levy is $350 for the first helper.', 'Normal (1 st helper) monthly levy $350')[0]?.contradictedBy !== null &&
+      FD.unjustifiedRemovals('The monthly levy is $300 for the first helper.', 'The monthly levy is $350 for the first helper.', 'Normal (1 st helper) monthly levy $350').length === 0 &&
+      FD.unjustifiedRemovals('The monthly levy is $300 for the first helper.', 'The monthly levy is $350 for the first helper.', 'Apply for GIRO online.').length === 1);
+    check('facts: nothing removed when the change only adds', FD.removedPoints(FDW.answer, `${FDW.answer} The levy ends when the Work Permit is cancelled.`, '').length === 0);
+  }
+  const review2 = src('app/watch/[id]/page.tsx');
+  check('facts: the review page lists "Points removed" in red and blocks Approve with "This update drops existing information" (Edit stays)',
+    /<h2 className="text-\[15px\] font-semibold">Points removed<\/h2>/.test(review2) && /color: 'var\(--bad\)'/.test(review2) &&
+    /title="This update drops existing information"/.test(review2) && /const drops = open && removed\.some\(\(r\) => !r\.contradictedBy\);/.test(review2) &&
+    /viewer\.canApprove && !lock && !stale && !drops \?/.test(review2) && /<EditProposalForm draftId=/.test(review2) &&
+    /\{open \? <PointsRemoved points=\{removed\} \/> : null\}/.test(review2));
+  const actions2 = src('app/watch/actions.ts');
+  check('facts: the approve action refuses it too (the page is not the only lock)',
+    /unjustifiedRemovals\(draft\.current_answer, draft\.proposed_answer, draft\.source_passage, draft\.proposed_question\)\.length\) \{\n    return \{ error: 'This update drops existing information\./.test(actions2) &&
+    actions2.indexOf('unjustifiedRemovals(draft.current_answer') < actions2.indexOf('result = await approveAndPublish('));
+  check('facts: both drafting prompts tell the model to keep every fact of the entry it changes',
+    /keep EVERY fact it states/.test(Dr.buildPrompt({ label: 'l', url: 'u', added: [], removed: [], candidates: [] }).system) &&
+    /Keep EVERY fact the existing entry states/.test(OV.buildMergePrompt({ label: 'l', url: 'u', pairs: [] }).system));
+
+  // 3. No rewording-only changes.
+  {
+    const live = { question: 'How much is the monthly levy?', answer: 'The monthly levy is $300 for the first helper and $450 for each subsequent helper. The concessionary rate is $60.' };
+    check('reword: the same figures reworded is rewording only (the dry runs\' monthly-levy change before it added the daily rates)',
+      /only rewords/.test(FD.rewordingOnlyReason(live, { question: 'How much is the monthly levy for a helper?', answer: 'The levy is $300 a month for your first helper, $450 for subsequent helpers, and $60 at the concessionary rate.' }) ?? ''));
+    check('reword: a new deadline, a new figure or a new rule is something added',
+      FD.rewordingOnlyReason(live, { ...live, answer: `${live.answer} Pay it by the 17th of the following month.` }) === null &&
+      FD.rewordingOnlyReason(live, { ...live, answer: `${live.answer} The daily rate is $9.87.` }) === null &&
+      FD.rewordingOnlyReason(live, { ...live, answer: `${live.answer} The concessionary rate applies to families with a young child, an elderly member or a person with a disability.` }) === null);
+    const reworded = { target_entry_id: ENTRY.id, question: 'What is the monthly levy?', answer: 'For your first helper the normal rate is $300 a month.', source_passage: 'Normal (1st helper) $300', why: '' };
+    const db = fake({ match: 0.5 }); const m = llmSeq([JSON.stringify({ drafts: [reworded] })]);
+    const r = await Pl.checkSource({ ...src16, url: `${LEVY}/paying-levy` }, { ...baseDeps(db, m), fetchPage: payingPage });
+    check('reword: the pipeline does not propose a change that only rewords the live entry', r.drafts.length === 0 && r.dropped.some((d) => /only rewords/.test(d)) && !db.fns().some((f) => /propose/.test(f)), JSON.stringify(r));
+    const adds = { ...reworded, answer: 'For your first helper the normal rate is $300 a month. Pay it by the 17th of the following month.', source_passage: passage };
+    const db2 = fake({ match: 0.5 }); const m2 = llmSeq([JSON.stringify({ drafts: [adds] })]);
+    const r2 = await Pl.checkSource({ ...src16, url: `${LEVY}/paying-levy` }, { ...baseDeps(db2, m2), fetchPage: payingPage });
+    check('reword: ...and does propose one that adds a deadline', r2.drafts.length === 1 && r2.drafts[0].kind === 'edit', JSON.stringify(r2));
+    check('reword: both drafting prompts forbid rewording-only changes',
+      /only rewords an existing entry/.test(Dr.buildPrompt({ label: 'l', url: 'u', added: [], removed: [], candidates: [] }).system) &&
+      /never return a change that only rewords it/.test(OV.buildMergePrompt({ label: 'l', url: 'u', pairs: [] }).system));
+  }
+  check('factDiff imports no database, network or environment code',
+    !/from '(postgres|\.\.?\/(db|write|env|embed)|@\/lib\/(db|write|env|embed))'|process\.env|(?<![.\w])fetch\(/.test(src('lib/watcher/factDiff.ts')));
 
   // --- migration 016 --------------------------------------------------------
   const sqlPath = (f) => join(ROOT, '..', 'scripts/sql', f);

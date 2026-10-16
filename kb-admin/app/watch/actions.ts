@@ -1,6 +1,7 @@
 'use server';
 
 import { redirect } from 'next/navigation';
+import { unjustifiedRemovals } from '@/lib/watcher/factDiff';
 import type { ActionState } from '@/app/editor/actions';
 import { actorForWrite } from '@/lib/auth';
 import { errorMessage, hasNric } from '@/lib/editing';
@@ -270,6 +271,11 @@ export async function approveWatchDraft(_prev: ActionState, form: FormData): Pro
   const confirmFigure = String(form.get('confirm_figure') ?? '') === 'yes';
   const figure = touchesMoney({ targetQuestion: draft.current_question, targetAnswer: draft.current_answer, proposedQuestion: draft.proposed_question, proposedAnswer: draft.proposed_answer });
   if (figure && !confirmFigure) return { error: errorMessage('KB008', '') };
+  // A change must not lose facts: a live sentence the proposal drops, which the source does not contradict, blocks Approve.
+  if (draft.kind === 'edit' && draft.current_answer
+    && unjustifiedRemovals(draft.current_answer, draft.proposed_answer, draft.source_passage, draft.proposed_question).length) {
+    return { error: 'This update drops existing information. Use Edit to put the removed points back, or reject it.' };
+  }
   // 016: it disagrees with a similar live entry (or duplicates one): the same tick (KB009 in the database).
   if (draft.conflict_check && !confirmFigure) return { error: errorMessage('KB009', '') };
   let result;
