@@ -2161,6 +2161,11 @@ _STYLE_ALL = re.compile(
     r"|\bsend\s+(?:me\s+)?(?:them\s+)?all\b|\bin\s+one\s+(?:go|message|reply)\b"
     # Phone test 2026-10-16: "on go" (a typo of "one go") got one by one.
     r"|\b(?:in\s+)?(?:one|on|1)\s+(?:go|shot)\b"
+    # Phone test 2026-10-16, 3:10 PM: "all at ones" got one by one. Typos of
+    # "once", and asking for all of the questions in other words.
+    r"|\bat\s+(?:ones|onece|onse|oncee|onc)\b|\ball\s+at\s+on\w*"
+    r"|\b(?:ask|send|give|tell)\s+(?:me\s+)?(?:all|every(?:thing)?)\b"
+    r"|\ball\s+(?:the\s+)?q\w*s\b|\bevery\s+question"
     r"|^\s*(?:all|second|2|the\s+second(?:\s+one)?)\s*[.!]*\s*$",
     re.IGNORECASE,
 )
@@ -2171,6 +2176,56 @@ def style_offer_services() -> frozenset[str]:
     if not QUESTION_STYLE_OFFER:
         return frozenset()
     return _STYLE_SERVICES | (_STYLE_SHORT_SERVICES if QUESTION_STYLE_OFFER_SHORT else frozenset())
+
+
+# Item 11 (phone test 2026-10-16, 3:14 PM): "I found a Filipino helper in the
+# Philippines" was asked "Is she currently in Singapore...?". Where she is,
+# said in the client's own words, answers the direct-hire route question.
+HELPER_PLACE_FROM_WORDS = True
+_HELPER_OVERSEAS = re.compile(
+    r"\b(?:in|at|still\s+in|back\s+in)\s+(?:the\s+)?(philippines|indonesia|myanmar|burma)\b"
+    r"(?![^.?!\n]*\bsingapore\b)"
+    r"|\b(?:overseas|abroad|in\s+her\s+(?:home\s+)?country|back\s+home|at\s+home\s+in)\b",
+    re.IGNORECASE,
+)
+_SAYS_SINGAPORE = re.compile(r"\bsingapore\b|\bsg\b|\btransfer\b", re.IGNORECASE)
+
+
+def transfer_case_from_words(state: dict, service_type: str | None,
+                             previous: dict, collected: dict) -> str | None:
+    """'no - she is in <place>, not in Singapore' when the client's own lines
+    for this request put the helper overseas and say nothing of Singapore."""
+    if not HELPER_PLACE_FROM_WORDS or service_type != "direct_hiring":
+        return None
+    if str(collected.get("helper_transfer_case") or previous.get("helper_transfer_case") or "").strip():
+        return None
+    since = _history_since(state.get("history_text") or "", state.get("collected_since"))
+    lines = [l[len("Client:"):].strip() for l in since.splitlines() if l.startswith("Client:")]
+    lines.append(str(state.get("incoming_text") or ""))
+    words = "\n".join(lines)
+    if _SAYS_SINGAPORE.search(words):
+        return None
+    match = _HELPER_OVERSEAS.search(words)
+    if not match:
+        return None
+    place = match.group(1)
+    where = f"in {'the Philippines' if place.lower() == 'philippines' else place.title()}" if place else "overseas"
+    return f"no - she is {where}, not in Singapore"
+
+
+# Item 12 (2026-10-16): "Perfect — what email address should we use for
+# updates?". The lead-in reads as a form ticking a box; it is taken off.
+NO_PERFECT_LEAD_IN = True
+_PERFECT_LEAD_IN = re.compile(r"^\s*perfect\s*(?:[,.!:;]|\s[-\u2013\u2014])\s*", re.IGNORECASE)
+
+
+def without_perfect_lead_in(reply: str) -> str:
+    if not NO_PERFECT_LEAD_IN or not reply:
+        return reply
+    out = _PERFECT_LEAD_IN.sub("", reply, count=1)
+    if out == reply or not out.strip():
+        return reply
+    return out[0].upper() + out[1:]
 
 
 def chosen_style(message: str) -> str:
@@ -4353,6 +4408,13 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     direction = _settled_transfer_direction(
         state, service_type, previous, collected
     )
+    place = transfer_case_from_words(state, service_type, previous, collected)
+    if place and "helper_transfer_case" in allowed_keys:
+        logger.info("Conversation %s: direct-hire route read from their words: %s",
+                    state.get("conversation_id"), place)
+        extracted = {**extracted, "helper_transfer_case": place}
+        collected = {**collected, "helper_transfer_case": place}
+
     if direction:
         logger.info(
             "Conversation %s: transfer direction settled as %s without "
@@ -5602,6 +5664,7 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         # back to asking only the first field.
         if not overview:
             reply = one_question_mark(reply, next_field.question)
+        reply = without_perfect_lead_in(reply)
         if overview and (reply or "").strip() == (next_field.question or "").strip():
             logger.error(
                 "Conversation %s: the %s overview was discarded by a guard - the "

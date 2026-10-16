@@ -591,7 +591,9 @@ because the lead is opened early and the ticket is created much later.
 | Somebody else's helper wanting work is a third party, whoever sends it | `intent_classifier.relays_another_helper` (`THIRD_PARTY_RELAY_ANY_SENDER`) -> contact `partner` + `candidate_registration` | Phone test 2026-10-16: an unknown number's "my friend's maid is looking for a new employer" ran the candidate intake and thanked the sender as the helper. A relation's helper (or "I have / know a helper") plus a wish for work is handed over with a ticket, as F3 already did for an employer on file. A helper speaking for herself, or an employer releasing their own, is not a relay. |
 | A one-word line answering a name question in the all-at-once list is that name | `info_collector.names_from_list_reply` + `last_question.lines` (`LIST_LINE_NAMES`) | "pingpong / she is from filipino / ..." had the helper's name on line 1 and was listed as missing. Only name fields the extractor left empty, only when the reply has one line per numbered question. |
 | A name typed with a typo of "myself" is still a name | `info_collector._NAME_LEAD_IN` + `name_in_reply` (`NAME_FROM_REPLY`) | "my vd growwstacks" got "Sorry, I didn't catch your name" and was then filed with the "my". The lead-in takes my / my self / mysef / my nam is; what is left must pass `_looks_like_a_person`. |
-| "On go" / "one go" mean all at once | `info_collector._STYLE_ALL` | A typo of "one go" got the questions one by one. |
+| "On go" / "one go" mean all at once | `info_collector._STYLE_ALL` | A typo of "one go" got the questions one by one. "all at ones" / "all at onece" / "all questions" / "ask all" too (direct hire, 2026-10-16). |
+| Where the client says the helper is answers the direct-hire route question | `info_collector.transfer_case_from_words` (`HELPER_PLACE_FROM_WORDS`) | "I found a Filipino helper in the Philippines" was asked "Is she currently in Singapore...?". "in / still in / back in" PH, ID or MM, overseas, abroad or back home in the client's own lines for this request, with no Singapore or transfer word, files "no - she is in ..., not in Singapore". "from the Philippines" is her nationality and is not read as where she is. |
+| No "Perfect —" in front of a collector question | `info_collector.without_perfect_lead_in` (`NO_PERFECT_LEAD_IN`) + the acknowledgement examples in `COLLECTOR_INSTRUCTION` | "Perfect — what email address should we use for updates?" (2026-10-16). The model's own lead-in, not the field's text (fixed the same day). |
 | No lead time where we hold none (a Myanmar home leave) | `guards.guard_unheld_timeline` inside `guard_nationality_fee`, all three reply paths (`NO_UNHELD_TIMELINE`, `TIMELINE_NOT_HELD`) | Fees document 2026-10-15: a helper's own Myanmar home leave was told "approximately 2 weeks" (the Indonesian span). A sentence giving a lead time is replaced with "Our agent will confirm the timeline for a Myanmar helper's home leave."; the embassy endorsement's ~10 working days (every nationality) is kept. |
 | The agency's fees document is the source of truth for fees, timelines and wording | `load_service_notes.py` (ROWS + generated UPDATES, `TEXT_REPLACEMENTS`), `kb_rules` floors | 2026-10-15, with the client's decisions A-G: $288 replacement fee everywhere, direct hire 1-2 weeks here and PH 5-6 / ID 4 / MM 2-4 weeks after MOM approval, salary floors PH 650 / ID 550 / MM 500, the +$60 lines in the document's words, "falls under her package" never "guarantee period". The .docx is in `docs/`, kept out of git. A closing briefing now also states a fixed fee plainly from its OWN records (`info_collector._write`). |
 | A reply never reads out an internal case number | `guards.without_case_numbers` in `graph.run_turn` (and the preview) (`NO_CASE_NUMBER_READ_OUT`) | Batch G G4. The case numbers held for the client (`matched_cases`, the case row) and anything in the portal's case format (MH-YYYY-NNNN) are taken out, keeping the sentence ("Your case is at the documents stage"). The CB-YYYY-NNNN ticket reference is never touched. |
@@ -925,7 +927,9 @@ Easy to get wrong:
   `intent_classifier.THIRD_PARTY_RELAY_ANY_SENDER` (a relay from any sender is
   handed over), `info_collector.LIST_LINE_NAMES` (name fields read line by line
   from a reply to the list), `info_collector.NAME_FROM_REPLY` (the typed name
-  taken when the extractor misses it).
+  taken when the extractor misses it), `info_collector.HELPER_PLACE_FROM_WORDS`
+  (where the client says the helper is answers the direct-hire route question),
+  `info_collector.NO_PERFECT_LEAD_IN` (no "Perfect —" lead-in).
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2034,6 +2038,14 @@ Append here, newest first. One entry per behavioural change.
   soon" or first-timer question on a transfer, (9) the missing list asks only
   what is missing. Five faults injected, five red (the first run's "green" was
   the copy crashing on a missing portal-ui file).
+  Added to the batch: (10) "all at ones" was read as one by one; typos of
+  "once", "all questions", "ask all" and "send me all" now mean all at once.
+  (11) A direct hire opening "I found a Filipino helper in the Philippines" was
+  asked "Is she currently in Singapore?"; where the client says she is now
+  answers it (`transfer_case_from_words`). (12) The model's "Perfect —" lead-in
+  is taken off collector replies and "Perfect" is out of the acknowledgement
+  examples. Replayed: the list goes out on "all at ones" and neither the list
+  nor the one-by-one flow asks the Singapore question. Three faults, three red.
 
 - **2026-10-16** - **KB watcher: a point an approver's Edit removes is a tick, not a block.** "Can I hire a second helper?": the approver edited out the wrong live "standard levy rate (S$300/month)" (the $450 is on the paying-levy page) and Approve vanished. `factDiff.removalsByOrigin` compares against the watcher's own draft (the first `watch_edited` audit row): a point the model kept and the Edit removed shows under "Points removed" with a notice, and Approve needs "I confirm these points are wrong or outdated" plus the reason (page and action); a model drop still hard-blocks. `EDIT_REMOVAL_CONFIRM = false` restores the block. Self-check 434; fault injected, red.
 - **2026-10-16** - **KB watcher: a replacement carries only facts on its sentence's subject; facts placed once per run.** Off-subject sentences in a replacement are split out and placed as additions, dropped when another offered live entry already says them (the levy rates rode along in the start/stop replacement and tripped the fee lock); changes that replace go before add-only ones and own their facts, so the "ends" line no longer also lands on the work-permit-expiry entry (`additive.parseUpdate` `elsewhere`/`spill`, `drafting.parseDrafts`). Dry run: the FDW replacement has no figures. Self-check 433.

@@ -259,7 +259,7 @@ their reply reads as a form advancing a field: "Her name is Shushi" — "Which \
 country is Shushi's passport from?" -> "When does her passport expire?" is three \
 questions in a row with nothing said to the person answering them. Open with a \
 short acknowledgement \
-— "Got it", "Thanks", "Perfect", "Noted", "Right" — then ask. Vary it, and \
+— "Got it", "Thanks", "Noted", "Right" — then ask. Vary it, and \
 never use the same one twice running.
 
 THEIR NAME IS NOT AN ACKNOWLEDGEMENT. Do not begin the message with the client's \
