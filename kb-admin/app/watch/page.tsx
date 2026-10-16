@@ -24,7 +24,10 @@ function Rows({ drafts }: { drafts: WatchDraftRow[] }) {
             <tr key={d.id} data-draft={d.id}>
               <td className="max-w-[380px]">
                 <Link href={`/watch/${d.id}`} className="link font-medium">{previewText(d.proposed_question, 120)}</Link>
-                <p className="text-[12px] text-muted">{d.kind === 'new' ? 'New entry' : 'Change to an existing entry'}</p>
+                <p className="text-[12px] text-muted">
+                  {d.kind === 'new' ? 'New entry' : 'Change to an existing entry'}
+                  {d.conflict_check && (d.status === 'pending' || d.status === 'blocked') ? <span style={{ color: 'var(--bad)' }}> - disagrees with an existing entry</span> : null}
+                </p>
               </td>
               <td className="max-w-[220px] text-[13px]">{d.source_label}</td>
               <td><Pill tone={DRAFT_STATUS[d.status]?.tone ?? 'off'}>{DRAFT_STATUS[d.status]?.text ?? d.status}</Pill></td>

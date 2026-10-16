@@ -5,7 +5,7 @@ import { checkCronRequest } from '@/lib/watcher/cron';
 import { draftWithModel } from '@/lib/watcher/llm';
 import { checkSource, type WatchCall } from '@/lib/watcher/pipeline';
 import { watchFetcher } from '@/lib/watchFetcher';
-import { lastGoodText, sourcesDue } from '@/lib/watchQueries';
+import { lastGoodText, sourcesDue, watcherSchema16 } from '@/lib/watchQueries';
 import { callWrite } from '@/lib/write';
 import { membership } from '@/lib/queries';
 
@@ -48,6 +48,7 @@ export async function GET(req: NextRequest) {
   const started = Date.now();
   const due = await sourcesDue(schedule.intervalDays);
   const { fetcher, renders } = watchFetcher();
+  const has016 = await watcherSchema16();
   const summary = { due: due.length, checked: 0, unchanged: 0, changed: 0, failed: 0, drafts: 0, left: 0 };
   for (const source of due) {
     if (Date.now() - started > TIME_BUDGET_MS) {
@@ -65,6 +66,7 @@ export async function GET(req: NextRequest) {
         searcher,
         llm: draftWithModel,
         model: cfg.watcher.llm.model,
+        has016,
         log: (line) => console.info(`[watcher] ${line}`),
       });
       summary.checked += 1;

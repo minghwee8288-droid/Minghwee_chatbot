@@ -103,6 +103,8 @@ export function errorMessage(code: string | undefined, dbMessage: string | undef
       return `Needs agency confirmation: ${detail.replace(/^needs agency confirmation:\s*/i, '') || 'this change touches an agency fee'}. A page change can never alter an agency fee or a row from the agency's fees document; reject it, or raise it with Ming Hwee.`;
     case 'KB008':
       return 'This changes a figure: check it against the source page, then tick the box confirming you did, and approve again.';
+    case 'KB009':
+      return 'This proposal disagrees with (or repeats) an existing entry: check both against the source page, then tick the box confirming you did, and approve again.';
     case 'KB006':
       return 'The text contains what looks like an NRIC or FIN number. Remove it and try again: knowledge base text is shown to clients.';
     default:

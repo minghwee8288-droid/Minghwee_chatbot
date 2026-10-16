@@ -7,7 +7,7 @@ import { AmberNotice, PageHeader, Pill, formatDate } from '@/components/ui';
 import { requireViewerWith } from '@/lib/auth';
 import { wordDiff, type DiffPart } from '@/lib/editing';
 import { reviewState } from '@/lib/watcher/feeLock';
-import { watchDraft } from '@/lib/watchQueries';
+import { watchDraft, type SimilarEntry } from '@/lib/watchQueries';
 import { DRAFT_STATUS } from '../status';
 import { EditProposalForm } from './EditProposalForm';
 
@@ -45,6 +45,42 @@ function Compare({ title, leftLabel, rightLabel, before, after }: { title: strin
 }
 
 /**
+ * 016: the live entries the overlap check found close to this proposal, with
+ * the similarity and every figure one states and the other does not. Each
+ * links to the entry, so the reviewer can read it before approving.
+ */
+function SimilarEntries({ entries }: { entries: SimilarEntry[] }) {
+  if (!entries.length) return null;
+  return (
+    <section className="card card-pad space-y-2 text-[13px]" data-similar>
+      <h2 className="text-[15px] font-semibold">Similar existing entries</h2>
+      <p className="text-muted">Live entries the bot's own search ranks close to this proposal. Read them before approving, so the assistant does not end up with two answers to one question.</p>
+      <ul className="space-y-2">
+        {entries.map((e) => {
+          const onlyHere = e.differs?.proposal ?? [];
+          const onlyThere = e.differs?.entry ?? [];
+          return (
+            <li key={e.id} className="border-l-2 pl-3" style={{ borderColor: e.conflicts?.length ? 'var(--bad)' : 'var(--divider)' }}>
+              <Link className="link" href={`/rows/${e.id}`}>{e.question}</Link>{' '}
+              <span className="mono text-muted">similarity {e.similarity.toFixed(2)}</span>
+              {onlyHere.length || onlyThere.length ? (
+                <p className="text-[12px] text-muted">
+                  Figures that differ:
+                  {onlyHere.length ? ` only in the proposal ${onlyHere.join(', ')}` : ''}
+                  {onlyHere.length && onlyThere.length ? ';' : ''}
+                  {onlyThere.length ? ` only in this entry ${onlyThere.join(', ')}` : ''}
+                </p>
+              ) : null}
+              {e.conflicts?.length ? <p className="text-[12px]" style={{ color: 'var(--bad)' }}>Disagrees: {e.conflicts.join('; ')}</p> : null}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/**
  * Stage 3: one proposal. The page that changed, what changed on it, and the
  * knowledge-base change it implies, side by side; then Approve / Edit / Reject.
  * A proposal under the fee lock shows "Needs agency confirmation" and no
@@ -67,6 +103,7 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
   });
   const lock = draft.blocked_reason ?? (open ? review.lock : null);
   const figure = open && !lock && (review.figure || draft.figure_check);
+  const conflict = open && !lock && draft.conflict_check;
   const stale = draft.kind === 'edit' && open && (draft.current_question !== draft.old_question || draft.current_answer !== draft.old_answer);
   const status = DRAFT_STATUS[draft.status] ?? { text: draft.status, tone: 'off' as const };
   const oldEntry = draft.kind === 'edit' ? `${draft.current_question ?? ''}\n\n${draft.current_answer ?? ''}` : '';
@@ -99,6 +136,11 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
           This changes a figure: check it against the source before approving. Open the source page above and confirm the amount word for word; approving asks you to tick that you did.
         </AmberNotice>
       ) : null}
+      {conflict ? (
+        <AmberNotice title="This disagrees with an existing entry">
+          Approving this could leave the assistant with two different answers: {draft.conflict_note ?? 'a similar live entry states a different figure'}. Compare it with the entries under &quot;Similar existing entries&quot; and the source page; approving asks you to tick that you did. If the live entry is the one that is wrong, change that entry instead.
+        </AmberNotice>
+      ) : null}
       {stale ? (
         <AmberNotice title="The entry has changed since this was drafted">Someone has edited the entry since. Approving will be refused; reject this proposal and fetch the page again.</AmberNotice>
       ) : null}
@@ -128,6 +170,7 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
         before={oldEntry}
         after={newEntry}
       />
+      <SimilarEntries entries={draft.similar_entries ?? []} />
 
       {draft.status === 'approved' && draft.version_id ? (
         <AmberNotice title="Approved, not yet live">
@@ -140,6 +183,7 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
           <p>Approved by {draft.approved_by_email} on {formatDate(draft.approved_at)}{draft.published_at ? `; live since ${formatDate(draft.published_at)}` : ''}.</p>
           <p>From {draft.source_url}, fetched {formatDate(draft.source_fetched_at)}.</p>
           {draft.figure_confirmed ? <p>The approver confirmed the figure against the source.</p> : null}
+          {draft.conflict_confirmed ? <p>The approver confirmed it against the similar existing entries.</p> : null}
           {draft.entry_id_after ? <p><Link className="link" href={`/rows/${draft.entry_id_after}`}>Open the entry</Link></p> : null}
         </section>
       ) : null}
@@ -153,7 +197,14 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
             <ReasonAction
               action={approveWatchDraft}
               hidden={{ draft_id: draft.id }}
-              confirm={figure ? { name: 'confirm_figure', label: 'I have checked this figure against the source page.' } : undefined}
+              confirm={figure || conflict ? {
+                name: 'confirm_figure',
+                label: figure && conflict
+                  ? 'I have checked this figure against the source page and against the similar existing entries.'
+                  : conflict
+                    ? 'I have checked this against the similar existing entries and the source page.'
+                    : 'I have checked this figure against the source page.',
+              } : undefined}
               openLabel="Approve"
               submitLabel="Approve and publish"
               busyLabel="Publishing…"

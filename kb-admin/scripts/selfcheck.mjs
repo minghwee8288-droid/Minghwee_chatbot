@@ -110,11 +110,11 @@ const SIXTEEN = [
   'kb_admin_doc_stage', 'kb_admin_doc_upload', 'kb_admin_match_live', 'kb_admin_match_with_batch',
   'kb_admin_publish', 'kb_admin_restore', 'kb_admin_save_draft',
   // Migration 015 (the KB watcher), sorted in with the rest.
-  'kb_admin_source_add', 'kb_admin_source_record_fetch', 'kb_admin_source_remove',
+  'kb_admin_source_add', 'kb_admin_source_record_fetch', 'kb_admin_source_redraft', 'kb_admin_source_remove', 'kb_admin_source_set_suggestions',
   'kb_admin_toggle',
-  'kb_admin_watch_approve', 'kb_admin_watch_edit', 'kb_admin_watch_mark_published', 'kb_admin_watch_propose', 'kb_admin_watch_reject',
+  'kb_admin_watch_approve', 'kb_admin_watch_edit', 'kb_admin_watch_mark_published', 'kb_admin_watch_propose', 'kb_admin_watch_propose_checked', 'kb_admin_watch_reject',
 ];
-const SIX = SIXTEEN; // the name the checks below grew up with (now twenty-four)
+const SIX = SIXTEEN; // the name the checks below grew up with (now twenty-seven: + 016's three)
 const ACTION_FILES = ['app/docs/actions.ts', 'app/editor/actions.ts', 'app/watch/actions.ts'];
 // The one module outside the action files that may write: the watcher's scheduled route.
 const SCHEDULED_WRITER = 'app/api/watcher/run/route.ts';
@@ -126,7 +126,7 @@ for (const f of code) {
   }
 }
 const strays = [...named.keys()].filter((n) => !SIX.includes(n));
-check('the only kb_admin_* functions named are the twenty-four', strays.length === 0, strays.map((n) => `${n} in ${named.get(n)[0]}`).join(', '));
+check('the only kb_admin_* functions named are the twenty-seven', strays.length === 0, strays.map((n) => `${n} in ${named.get(n)[0]}`).join(', '));
 const writeTs = src('lib/write.ts');
 check('lib/write.ts exports callWrite and nothing else', exportsOf(writeTs).join(',') === 'callWrite', exportsOf(writeTs).join(','));
 check('lib/write.ts sends only writeStatement(fn), after isAllowedWrite()',
@@ -143,7 +143,7 @@ for (const file of ACTION_FILES) {
   check(`${file} is a 'use server' module`, /^'use server';/.test(text));
   const fns = [...text.matchAll(/export async function (\w+)\([^)]*\)[^{]*\{\s*\n\s*(.*)/g)];
   const unguarded = fns.filter((m) => m[2].trim() !== 'const auth = await actorForWrite();').map((m) => m[1]);
-  const expected = { 'app/editor/actions.ts': 6, 'app/docs/actions.ts': 9, 'app/watch/actions.ts': 6 }[file];
+  const expected = { 'app/editor/actions.ts': 6, 'app/docs/actions.ts': 9, 'app/watch/actions.ts': 8 }[file];
   check(`every server action in ${file} checks the session and role first (actorForWrite)`, fns.length === expected && unguarded.length === 0,
     `${fns.length} action(s)${unguarded.length ? `; unguarded: ${unguarded.join(', ')}` : ''}`);
 }
@@ -343,8 +343,8 @@ check('token expiry read', secondsLeft(jwt({ exp: now + 300 }), now) === 300);
 check('garbage token reads as expired', secondsLeft('garbage', now) < 0);
 
 console.log('behaviour - writes:');
-check('exactly the twenty-four functions are allowed', Object.keys(WRITE_FUNCTIONS).sort().join(',') === SIX.join(','), Object.keys(WRITE_FUNCTIONS).sort().join(','));
-check('each of the twenty-four statements is allowed', SIX.every((fn) => isAllowedWrite(writeStatement(fn))));
+check('exactly the twenty-seven functions are allowed', Object.keys(WRITE_FUNCTIONS).sort().join(',') === SIX.join(','), Object.keys(WRITE_FUNCTIONS).sort().join(','));
+check('each of the twenty-seven statements is allowed', SIX.every((fn) => isAllowedWrite(writeStatement(fn))));
 const bound = (fn) => WRITE_FUNCTIONS[fn].map((t, i) => `$${i + 1}::${t}`).join(', ');
 check('every statement binds every value ($n) and splices nothing',
   SIX.every((fn) => writeStatement(fn) === (ROW_FUNCTIONS.includes(fn)
@@ -372,7 +372,7 @@ check('anything else is refused (internal helpers, a second statement, raw write
 // kb_admin_editor: five in 005, one in 008, nine in 011, one in 014 (014 also
 // grants kb_admin_doc_publish again, which it replaces).
 const sqlDir = resolve(ROOT, '..', 'scripts', 'sql');
-const grantFiles = ['kb_admin_005_editor_login.sql', 'kb_admin_008_create_entry.sql', 'kb_admin_011_doc_functions.sql', 'kb_admin_014_live_match_baseline.sql', 'kb_admin_015_watcher.sql'];
+const grantFiles = ['kb_admin_005_editor_login.sql', 'kb_admin_008_create_entry.sql', 'kb_admin_011_doc_functions.sql', 'kb_admin_014_live_match_baseline.sql', 'kb_admin_015_watcher.sql', 'kb_admin_016_watcher_overlap.sql'];
 if (grantFiles.every((f) => existsSync(join(sqlDir, f)))) {
   const norm = (t) => t.replace(/\s+/g, '').replace(/float8\[\]/g, 'doubleprecision[]').replace(/doubleprecision/g, 'double precision');
   const sig = (m) => `${m[1]}(${norm(m[2])})`;
@@ -385,7 +385,7 @@ if (grantFiles.every((f) => existsSync(join(sqlDir, f)))) {
   }
   const ours = SIX.map((fn) => `${fn}(${norm(WRITE_FUNCTIONS[fn].join(','))})`).sort().join(' ');
   const theirs = [...granted].sort().join(' ');
-  check('the twenty-four signatures match the kb_admin_editor grants (005, 008, 011, 014, 015)', theirs === ours, theirs);
+  check('the twenty-seven signatures match the kb_admin_editor grants (005, 008, 011, 014, 015, 016)', theirs === ours, theirs);
 } else {
   console.log('  (grant SQL files not found - grant comparison skipped)');
 }
@@ -943,8 +943,10 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
     embed: async (texts) => ({ vectors: texts.map(() => Array(1536).fill(0.01)), model: 'm' }),
     recorder: null, searcher: { userId: 'u', email: 'watcher' }, llm: llm(answer), model: 'test-model',
   });
-  const first = await Pl.checkSource(src0, deps(pageFrom('page_v1.html'), JSON.stringify({ drafts: [] })));
-  check('pipeline: the first read records a snapshot (and asks the model about the whole page)', first.outcome === 'first' && llmCalls === 1);
+  // This fake is a 015-only database: a 016 call without has016 is a named FAIL, not a crash.
+  const first = await Pl.checkSource(src0, deps(pageFrom('page_v1.html'), JSON.stringify({ drafts: [] }))).catch((e) => ({ outcome: `crashed: ${e.message}` }));
+  check('pipeline: the first read records a snapshot (and asks the model about the whole page), calling only 015\'s functions',
+    first.outcome === 'first' && llmCalls === 1, first.outcome);
   const same = await Pl.checkSource(src0, deps(pageFrom('page_v1_reflowed.html'), JSON.stringify({ drafts: [goodDraft] })));
   check('pipeline: whitespace and date stamps only -> recorded as unchanged, NO model call, NO draft',
     same.outcome === 'unchanged' && llmCalls === 1 && db1.proposals.length === 0);
@@ -1011,10 +1013,10 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
     const page = src('app/watch/[id]/page.tsx');
     check('the review page shows the figure warning and makes the approver tick the box',
       /This changes a figure: check it against the source before approving/.test(page) &&
-      /confirm=\{figure \? \{ name: 'confirm_figure'/.test(page) && /category: draft\.source_category/.test(page));
+      /confirm=\{figure \|\| conflict \? \{\s*name: 'confirm_figure'/.test(page) && /category: draft\.source_category/.test(page));
     check('the tick box is required in the form', /type="checkbox" name=\{confirm\.name\} value="yes" required/.test(src('components/ReasonAction.tsx')));
   }
-  check('every watcher action refuses while the watcher is off', (watchActions.match(/const off = watcherOff\(\);/g) ?? []).length === 6);
+  check('every watcher action refuses while the watcher is off', (watchActions.match(/const off = watcherOff\(\);/g) ?? []).length === 8);
   const watcherPages = ['app/sources/page.tsx', 'app/watch/page.tsx', 'app/watch/[id]/page.tsx'];
   check('the watcher pages are 404 unless the watcher is on', watcherPages.every((p) => /if \(!viewer\.watcherOn[^)]*\) notFound\(\);/.test(src(p))));
   const route = src('app/api/watcher/run/route.ts');
@@ -1188,6 +1190,253 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
       G.USER_AGENT === Fe.USER_AGENT && /userAgent: USER_AGENT/.test(server) && /queue = queue\.then\(/.test(server) && /lastHit\.set\(host, Date\.now\(\)\)/.test(server));
     check('render service: its own container, reachable only from the server (127.0.0.1), never part of the bot\'s compose file',
       /"127\.0\.0\.1:8100:8100"/.test(compose) && !/render/.test(readFileSync(join(ROOT, '..', 'docker-compose.yml'), 'utf8')) && !/from '\.\.\/app|import .*app\//.test(server));
+  }
+}
+
+console.log('KB watcher drafting: overlap check, low-value proposals, index pages, re-draft (2026-10-16; migration 016 not applied yet):');
+{
+  const fx = (n) => readFileSync(join(ROOT, 'scripts/fixtures/watcher', n), 'utf8');
+  const X = await import(pathToFileURL(join(ROOT, 'lib/watcher/extract.ts')).href);
+  const Q = await import(pathToFileURL(join(ROOT, 'lib/watcher/quality.ts')).href);
+  const IP = await import(pathToFileURL(join(ROOT, 'lib/watcher/indexPage.ts')).href);
+  const OV = await import(pathToFileURL(join(ROOT, 'lib/watcher/overlap.ts')).href);
+  const Dr = await import(pathToFileURL(join(ROOT, 'lib/watcher/drafting.ts')).href);
+  const Pl = await import(pathToFileURL(join(ROOT, 'lib/watcher/pipeline.ts')).href);
+  const LEVY = 'https://www.mom.gov.sg/passes-and-permits/work-permit-for-foreign-domestic-worker/foreign-domestic-worker-levy';
+  const indexHtml = fx('mom_levy_aspnet_form.html');
+  const payingHtml = fx('mom_paying_levy.html');
+  const indexX = X.extractMainText(indexHtml);
+  const payingX = X.extractMainText(payingHtml);
+
+  // --- 2. low-value proposals -------------------------------------------------
+  // The four production proposals pointed elsewhere like these.
+  const pointers = [
+    ['Where can I find information about the MDW levy?', 'The MOM page provides information on paying levy, levy concession and levy waiver.'],
+    ['What does the MOM levy page cover?', 'The MOM page provides information on paying levy, levy concession and levy waiver.'],
+    ['What is the levy concession?', 'You may also qualify for a levy concession. Find out if you qualify for levy concession for your MDW.'],
+    ['How do I pay the levy?', 'For more information on how to pay the levy, visit the MOM website.'],
+  ];
+  check('quality: a proposal that only points elsewhere is dropped (the production MOM-index shape, 4 of 4)',
+    pointers.every(([q, a]) => /points elsewhere/.test(Q.lowValueReason(q, a) ?? '')), pointers.map(([q, a]) => Q.lowValueReason(q, a)).join(' | '));
+  check('quality: a proposal with no fact a client can act on is dropped',
+    /no fact a client could act on/.test(Q.lowValueReason('What is the levy?', 'The levy is a pricing mechanism to regulate the number of foreigners in Singapore.') ?? ''));
+  const keep = [
+    ['How much is the monthly levy?', 'The levy is $300 a month for the first helper and $450 for each subsequent helper.'],
+    ['When must I pay the levy?', 'You must pay the levy for each month by the 17th of the following month. For more information, visit the MOM website.'],
+    ['Who qualifies for the concessionary rate?', 'The concessionary rate applies to families with a young child, elderly member or person with disability.'],
+    ['How can I pay the levy?', 'You can apply for GIRO, or pay using PayNow QR if you have no GIRO arrangement.'],
+  ];
+  check('quality: an amount, a rule or deadline, an eligibility condition and a step each survive (a trailing pointer sentence is set aside)',
+    keep.every(([q, a]) => Q.lowValueReason(q, a) === null), keep.map(([q, a]) => Q.lowValueReason(q, a)).join(' | '));
+  {
+    const pagePassage = 'You must pay a monthly levy for your migrant domestic worker (MDW).';
+    const parsed = Dr.parseDrafts(JSON.stringify({ drafts: [
+      { target_entry_id: null, question: pointers[0][0], answer: pointers[0][1], source_passage: pagePassage, why: '' },
+      { target_entry_id: null, question: 'Must I pay a levy for my helper?', answer: 'Yes, you must pay a monthly levy for your helper.', source_passage: pagePassage, why: '' },
+    ] }), { newText: indexX.text, candidateIds: [] });
+    check('drafting: parseDrafts drops the pointer and keeps the fact', parsed.drafts.length === 1 && parsed.dropped.some((d) => /points elsewhere/.test(d)), parsed.dropped.join(' | '));
+    const pr = Dr.buildPrompt({ label: 'MOM', url: LEVY, added: ['A'], removed: [], candidates: [] });
+    check('drafting: the prompt asks for an actionable fact, no pointers, nothing from an index, and a change instead of a second entry',
+      /an amount, a rule, a deadline, an eligibility condition or a step/.test(pr.system) && /The MOM page provides information on/.test(pr.system) &&
+      /mainly a list of links to other pages, return no drafts/.test(pr.system) && /never propose a second entry/.test(pr.system) && /character for character/.test(pr.system));
+  }
+
+  // --- 2. index pages ----------------------------------------------------------
+  const subs = IP.findSubPages(indexHtml, LEVY, indexX.paragraphs);
+  check('index: the real MOM levy index offers its three sub-pages, paying-levy (the levy rates) among them',
+    subs.length === 3 && subs[0].url === `${LEVY}/paying-levy` && subs[0].label === 'Paying levy' && subs.every((s) => s.url.startsWith(`${LEVY}/`)), JSON.stringify(subs));
+  check('index: ...and is judged mainly an index', IP.indexVerdict(indexX.paragraphs, subs).index === true);
+  check('index: the real paying-levy page is NOT an index (no sub-pages below it, 4,000+ characters of facts)',
+    IP.findSubPages(payingHtml, `${LEVY}/paying-levy`, payingX.paragraphs).length === 0 && !IP.indexVerdict(payingX.paragraphs, []).index && !IP.looksLikeIndexText(payingX.paragraphs));
+  check('index: from the text alone (a re-draft has no HTML) the index is still recognised, and paying-levy is not',
+    IP.looksLikeIndexText(indexX.paragraphs) && !IP.looksLikeIndexText(X.extractMainText(fx('page_v1.html')).paragraphs));
+  {
+    const nav = `<nav><a href="${LEVY}/secret">Secret</a></nav><main><p>Intro</p><a href="${LEVY}/a"><h2>Alpha page</h2><p>x</p></a>
+      <a href="https://evil.example.com/x">Alpha page</a><a href="${LEVY}/b.pdf">Beta page</a><a href="${LEVY}/c?x=1">Gamma page</a><a href="/other/d">Delta page</a></main>`;
+    const got = IP.findSubPages(nav, LEVY, ['Intro', 'Alpha page', 'Beta page', 'Gamma page', 'Delta page']);
+    check('index: only links below the page, on the same site, https, no file, no query, whose label is in the main text',
+      got.length === 1 && got[0].url === `${LEVY}/a`, JSON.stringify(got));
+  }
+
+  // --- 1. the overlap check ------------------------------------------------
+  const RATES = 'The monthly levy is $300 for a normal first helper, $450 for subsequent helpers, or $60 at the concessionary rate. If a helper does not complete a full calendar month, the daily rates are $9.87, $14.80 and $1.98.';
+  check('overlap: a levy rate against salary figures is NOT a conflict (different subject)',
+    OV.compareFigures(RATES, 'Helper salary: Filipino from S$650 a month, Indonesian from S$550.').conflicts.length === 0);
+  check('overlap: one sentence listing salary, levy and insurance is read figure by figure - a $450 levy is not "against" a $500 salary',
+    OV.compareFigures(RATES, 'Your ongoing monthly costs include: helper salary (from S$500 depending on nationality), monthly levy (S$300 or S$60 concessionary), medical insurance (about S$200 a year) and personal expenses (S$950).').conflicts.length === 0);
+  check('overlap: a daily rate against a yearly saving is NOT a conflict (different period)',
+    OV.compareFigures(RATES, 'The concessionary levy of S$60/month saves S$2,880/year compared to the standard S$300/month.').conflicts.length === 0);
+  check('overlap: the same subject over a different period is NOT a conflict ($1.98 a day against $60 a month for the concessionary levy)',
+    OV.compareFigures('The concessionary levy is $1.98 a day.', 'The concessionary levy is $60 a month.').conflicts.length === 0 &&
+    OV.compareFigures('The concessionary levy is $55 a month.', 'The concessionary levy is $60 a month.').conflicts.length === 1);
+  check('overlap: one text stating MORE figures than the other is listed but is not a conflict',
+    OV.compareFigures(RATES, 'The levy is $300 a month at the normal rate and $60 at the concessionary rate.').conflicts.length === 0 &&
+    OV.compareFigures(RATES, 'The levy is $300 a month at the normal rate and $60 at the concessionary rate.').differs.proposal.includes('$450'));
+  {
+    const c = OV.compareFigures(RATES, 'The monthly levy is $265 for your first helper.');
+    check('overlap: $300 against $265 for the same monthly levy IS a conflict', c.conflicts.some((x) => /\$300 against \$265 \(levy/.test(x)), JSON.stringify(c));
+  }
+  {
+    const live = (id, sim, question = 'Q', answer = 'A') => ({ id, question, answer, similarity: sim });
+    const a = OV.assessOverlap({ question: 'How much is the levy?', answer: 'The monthly levy is $300 for the first helper.', targetId: null }, [
+      live('11111111-1111-1111-1111-111111111111', 0.81, 'How much is the monthly levy?', 'The monthly levy is $265 for the first helper.'),
+      live('22222222-2222-2222-2222-222222222222', 0.55),
+    ]);
+    check('overlap: a NEW proposal duplicating a live entry (0.81) with a different levy figure is a conflict, noted, and the 0.55 entry is not listed',
+      a.conflict && a.similar.length === 1 && /already answers this/.test(a.note) && /\$300 against \$265/.test(a.note), JSON.stringify(a));
+    const e = OV.assessOverlap({ question: 'How much is the levy?', answer: 'It is $300.', targetId: '11111111-1111-1111-1111-111111111111' }, [
+      live('11111111-1111-1111-1111-111111111111', 0.95, 'x', 'It is $265 a month for the levy.'),
+    ]);
+    check('overlap: a change to an entry never lists (or conflicts with) that entry itself', !e.conflict && e.similar.length === 0);
+    const many = OV.assessOverlap({ question: 'q', answer: 'a', targetId: '99999999-9999-9999-9999-999999999999' }, Array.from({ length: 9 }, (_, i) => live(`aaaaaaaa-0000-0000-0000-00000000000${i}`, 0.7 + i / 100)));
+    check('overlap: at most five similar entries, best first', many.similar.length === 5 && many.similar[0].similarity === 0.78);
+    check('overlap: the thresholds are the measured ones (change instead >= 0.72, listed >= 0.60)', OV.EDIT_INSTEAD_SIMILARITY === 0.72 && OV.SIMILAR_SIMILARITY === 0.6);
+  }
+
+  // --- the pipeline with all three, on a fake database ------------------------
+  const ENTRY = { id: 'cccccccc-0000-0000-0000-000000000001', question: 'How much is the monthly levy?', answer: 'At the normal rate it is $300 a month for your first helper.' };
+  const fake = (opts = {}) => {
+    const calls = [];
+    const call = async (fn, params) => {
+      calls.push({ fn, params });
+      if (opts.no016 && ['kb_admin_source_set_suggestions', 'kb_admin_watch_propose_checked', 'kb_admin_source_redraft'].includes(fn)) throw new Error(`function ${fn} does not exist`);
+      if (fn === 'kb_admin_source_record_fetch') return { snapshot_id: 'snap-1', changed: true, first: true };
+      if (fn === 'kb_admin_source_set_suggestions') return (params[3] ?? []).length;
+      if (fn === 'kb_admin_match_live') return opts.match ? [{ id: ENTRY.id, chunk_type: 'qa_pair', question: ENTRY.question, answer: ENTRY.answer, similarity: opts.match }] : [];
+      if (fn === 'kb_admin_watch_propose' || fn === 'kb_admin_watch_propose_checked') return { draft_id: `d-${calls.length}`, status: 'pending', blocked_reason: null };
+      if (fn === 'kb_admin_source_redraft') return { snapshot_id: 'snap-9', previous_snapshot_id: opts.prev ? 'snap-8' : null, superseded: 2 };
+      throw new Error(`unexpected ${fn}`);
+    };
+    return { calls, call, fns: () => calls.map((c) => c.fn) };
+  };
+  const llmSeq = (answers) => { const asked = []; return { asked, llm: async (system, user) => { asked.push({ system, user }); return answers.shift() ?? '{"drafts":[]}'; } }; };
+  const baseDeps = (db, m, has016 = true) => ({
+    call: db.call, previousText: async () => null, embed: async (texts) => ({ vectors: texts.map(() => Array(1536).fill(0.01)), model: 'm' }),
+    recorder: { userId: 'u', email: 'e@x' }, searcher: { userId: 'u', email: 'e@x' }, llm: m.llm, model: 'test-model', has016,
+  });
+  const src16 = { id: 'aaaaaaaa-0000-0000-0000-000000000016', url: LEVY, label: 'MOM levy' };
+  {
+    const db = fake(); const m = llmSeq([]);
+    const r = await Pl.checkSource(src16, { ...baseDeps(db, m), fetchPage: async () => ({ ok: true, status: 200, html: indexHtml, finalUrl: LEVY }) });
+    const sug = db.calls.find((c) => c.fn === 'kb_admin_source_set_suggestions');
+    check('pipeline: the MOM index drafts NOTHING - no model call, no proposal - and records its three sub-pages as suggestions',
+      r.drafts.length === 0 && m.asked.length === 0 && !db.fns().some((f) => /propose/.test(f)) && r.index?.suggestions.length === 3 &&
+      sug?.params[3]?.length === 3 && sug.params[3][0].url === `${LEVY}/paying-levy`, JSON.stringify(r));
+    // Before 016 the fake refuses the 016 functions, as the database would (they do not exist yet).
+    const db0 = fake({ no016: true });
+    await Pl.checkSource(src16, { ...baseDeps(db0, llmSeq([]), false), fetchPage: async () => ({ ok: true, status: 200, html: indexHtml, finalUrl: LEVY }) }).catch(() => null);
+    check('pipeline: before 016 is applied nothing new is called (no suggestions), and still nothing is drafted from the index',
+      !db0.fns().includes('kb_admin_source_set_suggestions') && !db0.fns().some((f) => /propose/.test(f)));
+  }
+  const payingPage = async () => ({ ok: true, status: 200, html: payingHtml, finalUrl: `${LEVY}/paying-levy` });
+  const passage = 'You must pay the levy for each month by the 17th of the following month (or the next working day if it falls on a Saturday, Sunday or public holiday).';
+  const newDraft = { target_entry_id: null, question: 'When must I pay the levy?', answer: 'By the 17th of the following month, or the next working day.', source_passage: passage, why: '' };
+  {
+    const db = fake(); const m = llmSeq([JSON.stringify({ drafts: [newDraft] })]);
+    await Pl.checkSource({ ...src16, url: `${LEVY}/paying-levy` }, { ...baseDeps(db, m), fetchPage: payingPage });
+    const p = db.calls.find((c) => c.fn === 'kb_admin_watch_propose_checked');
+    check('pipeline (016): the paying-levy page is drafted from, and a proposal goes through kb_admin_watch_propose_checked with its overlap (16 arguments; no similar entry = null)',
+      m.asked.length === 1 && p && p.params.length === 16 && p.params[13] === null && p.params[14] === false && db.calls.find((c) => c.fn === 'kb_admin_source_set_suggestions')?.params[3] === null);
+    const db0 = fake({ no016: true }); await Pl.checkSource({ ...src16, url: `${LEVY}/paying-levy` }, { ...baseDeps(db0, llmSeq([JSON.stringify({ drafts: [newDraft] })]), false), fetchPage: payingPage }).catch(() => null);
+    check('pipeline (before 016): the same proposal goes through 015\'s kb_admin_watch_propose with its 13 arguments',
+      db0.calls.find((c) => c.fn === 'kb_admin_watch_propose')?.params.length === 13 && !db0.fns().includes('kb_admin_watch_propose_checked'));
+  }
+  {
+    const merged = { target_entry_id: ENTRY.id, question: ENTRY.question, answer: 'At the normal rate it is $300 a month; pay it by the 17th of the following month.', source_passage: passage, why: '' };
+    const db = fake({ match: 0.81 }); const m = llmSeq([JSON.stringify({ drafts: [newDraft] }), JSON.stringify({ drafts: [merged] })]);
+    const r = await Pl.checkSource({ ...src16, url: `${LEVY}/paying-levy` }, { ...baseDeps(db, m), fetchPage: payingPage });
+    const p = db.calls.find((c) => c.fn === 'kb_admin_watch_propose_checked');
+    check('pipeline: a NEW draft that duplicates a live entry (0.81) becomes a CHANGE to that entry (a second model call writes its full text)',
+      m.asked.length === 2 && /EXISTING entry id cccccccc/.test(m.asked[1].user) && p?.params[3] === ENTRY.id && r.drafts[0]?.kind === 'edit', JSON.stringify(r));
+    check('pipeline: ...and the entry it changes is not listed as "similar" to itself', p?.params[13] === null);
+    const db2 = fake({ match: 0.81 }); const m2 = llmSeq([JSON.stringify({ drafts: [newDraft] }), '{"drafts":[]}']);
+    const r2 = await Pl.checkSource({ ...src16, url: `${LEVY}/paying-levy` }, { ...baseDeps(db2, m2), fetchPage: payingPage });
+    check('pipeline: if the live entry already says it all, nothing is proposed (never a second answer)',
+      r2.drafts.length === 0 && r2.dropped.some((d) => /already answers/.test(d)) && !db2.fns().some((f) => /propose/.test(f)));
+    const db3 = fake({ match: 0.65 }); const m3 = llmSeq([JSON.stringify({ drafts: [newDraft] })]);
+    await Pl.checkSource({ ...src16, url: `${LEVY}/paying-levy` }, { ...baseDeps(db3, m3), fetchPage: payingPage });
+    const p3 = db3.calls.find((c) => c.fn === 'kb_admin_watch_propose_checked');
+    check('pipeline: a partial overlap (0.65) stays a new entry, with the similar entry recorded on it',
+      m3.asked.length === 1 && p3?.params[3] === null && p3.params[13]?.[0]?.id === ENTRY.id && p3.params[13][0].similarity === 0.65);
+  }
+
+  // --- 3. re-draft ------------------------------------------------------------
+  {
+    const db = fake(); const m = llmSeq([JSON.stringify({ drafts: [newDraft] })]);
+    // One timeline for database calls and snapshot reads, so the ORDER is checked.
+    const r = await Pl.redraftSource({ ...src16, suggested: [] }, 'rules improved', { ...baseDeps(db, m), snapshotText: async (id) => { db.calls.push({ fn: 'snapshotText', params: [id] }); return id === 'snap-9' ? payingX.text : null; } });
+    check('re-draft: kb_admin_source_redraft runs FIRST (the database checks the approver and audits the reason), then the latest snapshot is drafted from',
+      db.calls[0].fn === 'kb_admin_source_redraft' && db.calls[0].params[3] === 'rules improved' && db.calls[1].fn === 'snapshotText' && db.calls[1].params[0] === 'snap-9' && m.asked.length === 1 &&
+      db.calls.find((c) => c.fn === 'kb_admin_watch_propose_checked')?.params[2] === 'snap-9' && r.superseded === 2, JSON.stringify(r));
+    const dbI = fake(); const mI = llmSeq([JSON.stringify({ drafts: [newDraft] })]);
+    const rI = await Pl.redraftSource({ ...src16, suggested: [{ url: `${LEVY}/paying-levy`, label: 'Paying levy' }] }, 'x', { ...baseDeps(dbI, mI), snapshotText: async () => payingX.text });
+    const dbT = fake(); const mT = llmSeq([]);
+    const rT = await Pl.redraftSource({ ...src16, suggested: [] }, 'x', { ...baseDeps(dbT, mT), snapshotText: async () => indexX.text });
+    check('re-draft: an index page (by its stored suggestions, or from the text) drafts nothing - the production MOM index would now propose nothing',
+      rI.index && rI.drafts.length === 0 && mI.asked.length === 0 && rT.index && mT.asked.length === 0);
+    const dbP = fake({ prev: true }); const mP = llmSeq([]);
+    await Pl.redraftSource({ ...src16, suggested: [] }, 'x', { ...baseDeps(dbP, mP), snapshotText: async (id) => (id === 'snap-9' ? payingX.text : payingX.text) });
+    check('re-draft: with an earlier snapshot it drafts only from what CHANGED (identical texts -> no model call)', mP.asked.length === 0);
+  }
+
+  // --- wiring -------------------------------------------------------------------
+  const acts = src('app/watch/actions.ts');
+  const redraft = acts.slice(acts.indexOf('export async function redraftSourceAction'), acts.indexOf('export async function watchSuggestedPage'));
+  check('re-draft action: an approver only, checked before anything reaches the database, and only with 016',
+    redraft.indexOf('actor.canApprove') > 0 && redraft.indexOf('actor.canApprove') < redraft.indexOf('redraftSource(') &&
+    redraft.indexOf('watcherSchema16()') < redraft.indexOf('redraftSource(') && /Please say why/.test(redraft));
+  const suggested = acts.slice(acts.indexOf('export async function watchSuggestedPage'));
+  check('"Watch this page": only an address the parent suggests, added with the PARENT\'s category through kb_admin_source_add',
+    /\(parent\.suggested_pages \?\? \[\]\)\.find\(\(p\) => p\.url === url\)/.test(suggested) && /kb_admin_source_add', \[actor\.userId, actor\.email, url, label, parent\.category\]/.test(suggested));
+  const approve = acts.slice(acts.indexOf('export async function approveWatchDraft'));
+  check('approve: a conflicting proposal without the tick is refused before anything reaches the database (KB009)',
+    /if \(draft\.conflict_check && !confirmFigure\) return \{ error: errorMessage\('KB009', ''\) \};/.test(approve) &&
+    approve.indexOf('draft.conflict_check') < approve.indexOf('approveAndPublish(') && /'KB009'/.test(src('lib/editing.ts')));
+  const review = src('app/watch/[id]/page.tsx');
+  check('the review page shows "Similar existing entries" (links, similarity, differing figures) and the conflict banner, and asks for the tick',
+    /Similar existing entries/.test(review) && /href=\{`\/rows\/\$\{e\.id\}`\}/.test(review) && /similarity \{e\.similarity\.toFixed\(2\)\}/.test(review) &&
+    /This disagrees with an existing entry/.test(review) && /const conflict = open && !lock && draft\.conflict_check;/.test(review));
+  const sources = src('app/sources/page.tsx');
+  check('Watched pages: "Suggested pages to watch" with one-click "Watch this page", and "Re-draft from latest snapshot" for approvers only (with 016)',
+    /Suggested pages to watch/.test(sources) && /<WatchSuggestedButton sourceId=\{s\.id\} url=\{p\.url\} \/>/.test(sources) &&
+    /viewer\.canApprove && has16 && s\.last_checked_at/.test(sources) && /Re-draft from latest snapshot/.test(sources) && /Watch this page/.test(src('app/sources/SourceForms.tsx')));
+  const qs = src('lib/watchQueries.ts');
+  check('before 016 is applied the queries read what they did with 015 alone (no new column named)',
+    /'\[\]'::jsonb as suggested_pages/.test(qs) && /'\[\]'::jsonb as similar_entries, false as conflict_check/.test(qs) && /export async function watcherSchema16/.test(qs));
+  check('the schedule passes the 016 switch too', /has016,/.test(src('app/api/watcher/run/route.ts')));
+  const llmTs = src('lib/watcher/llm.ts');
+  check('the drafting call switches thinking off (as the bot does) and refuses an answer cut off at the token limit',
+    /reasoning: \{ enabled: false \}/.test(llmTs) && /finish_reason === 'length'/.test(llmTs) && /max_tokens: 6000/.test(llmTs));
+  check('the pipeline still imports no database, network or environment code',
+    !/from '(postgres|\.\.?\/(db|write|env|embed)|@\/lib\/(db|write|env|embed))'|process\.env|(?<![.\w])fetch\(/.test(src('lib/watcher/pipeline.ts') + src('lib/watcher/overlap.ts') + src('lib/watcher/indexPage.ts') + src('lib/watcher/quality.ts')));
+
+  // --- migration 016 --------------------------------------------------------
+  const sqlPath = (f) => join(ROOT, '..', 'scripts/sql', f);
+  const s16 = existsSync(sqlPath('kb_admin_016_watcher_overlap.sql')) ? readFileSync(sqlPath('kb_admin_016_watcher_overlap.sql'), 'utf8') : '';
+  const s15 = existsSync(sqlPath('kb_admin_015_watcher.sql')) ? readFileSync(sqlPath('kb_admin_015_watcher.sql'), 'utf8') : '';
+  if (s16 && s15) {
+    const body = (t) => /create or replace function public\.kb_admin_watch_approve\([\s\S]*?\n\$\$;\n/.exec(t)?.[0] ?? '';
+    const unpatched = body(s16)
+      .replace(/    -- 016: the proposal states[\s\S]*?using errcode = 'KB009';\n    end if;\n/, '')
+      .replace(',\n           conflict_confirmed = v_d.conflict_check\n', '\n')
+      .replace(",\n                               'conflict_confirmed', v_d.conflict_check),\n", '),\n');
+    check('016: kb_admin_watch_approve is 015\'s, character for character, plus the KB009 tick and its record', unpatched === body(s15) && /errcode = 'KB009'/.test(body(s16)));
+    check('016: the re-draft is approver-only and audit-logged as source_redrafted',
+      /kb_admin_source_redraft[\s\S]*?kb_admin__require_actor\(p_actor_id, 'approver'\)[\s\S]*?'source_redrafted'/.test(s16));
+    check('016: proposals still go through 015\'s kb_admin_watch_propose (passage check, fee lock, figure check)',
+      /v := public\.kb_admin_watch_propose\(p_actor_id/.test(s16));
+    check('016: a suggested page must be https, on the page\'s own site, labelled; at most 20',
+      /<> v_host/.test(s16) && /jsonb_array_length\(v_pages\) > 20/.test(s16) && /\^https:\/\//.test(s16));
+    check('016: additive - the live knowledge-base table is not altered, nothing is deleted, editor ends with 27 functions',
+      !/alter table public\.cb_knowledge_base_updated/i.test(s16) && !/\bdelete from\b/i.test(s16) && /if n <> 27 then/.test(s16));
+    const rb16 = existsSync(sqlPath('rollback/rollback_kb_admin_016_watcher_overlap.sql')) ? readFileSync(sqlPath('rollback/rollback_kb_admin_016_watcher_overlap.sql'), 'utf8') : '';
+    check('016: a rollback exists, restores 015\'s approve, and refuses once 016 has been used',
+      /ROLLBACK 016 REFUSED: cb_kb_audit holds 016 actions/.test(rb16) && rb16.includes(body(s15)));
+    const s12 = readFileSync(sqlPath('kb_admin_012_grants_checks.sql'), 'utf8');
+    check('012 follows what is installed: 16, 24 after 015, 27 after 016',
+      /kb_admin_watch_propose_checked\(uuid,text,uuid,uuid/.test(s12) && /column_name = 'conflict_check'/.test(s12));
+  } else {
+    console.log('  (migration SQL not found - 016 checks skipped)');
   }
 }
 

@@ -27,7 +27,12 @@ export async function draftWithModel(system: string, user: string): Promise<stri
         body: JSON.stringify({
           model,
           temperature: 0,
-          max_tokens: 2500,
+          // Thinking off, as the bot runs the same model (app/config.py
+          // reasoning_body): left on, hidden reasoning could spend the budget
+          // and cut the JSON short - seen in the 2026-10-15 dry run on MOM's
+          // paying-levy page, which then drafted nothing.
+          max_tokens: 6000,
+          reasoning: { enabled: false },
           response_format: { type: 'json_object' },
           messages: [
             { role: 'system', content: system },
@@ -46,9 +51,10 @@ export async function draftWithModel(system: string, user: string): Promise<stri
       continue;
     }
     if (!res.ok) throw new DraftingError(`the drafting model answered ${res.status}`);
-    const data = (await res.json().catch(() => null)) as { choices?: { message?: { content?: unknown } }[] } | null;
+    const data = (await res.json().catch(() => null)) as { choices?: { message?: { content?: unknown }; finish_reason?: string }[] } | null;
     const content = data?.choices?.[0]?.message?.content;
     if (typeof content !== 'string') throw new DraftingError('the drafting model returned no text');
+    if (data?.choices?.[0]?.finish_reason === 'length') throw new DraftingError('the drafting model\'s answer was cut off before it finished');
     return content;
   }
   throw new DraftingError(lastError || 'the drafting model failed');

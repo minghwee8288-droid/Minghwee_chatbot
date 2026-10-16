@@ -52,10 +52,10 @@ export function isSingleRead(query: string): boolean {
 
 /**
  * The ONLY database calls kb-admin makes as kb_admin_editor: one call to one of
- * these twenty-four functions. Each is SECURITY DEFINER in the database and checks
+ * these twenty-seven functions. Each is SECURITY DEFINER in the database and checks
  * the caller's role itself; the editor login can call these and nothing else.
- * This list is the code-side twin of that grant: the same twenty-four signatures
- * that migrations 005, 008, 011, 014 and 015 grant to kb_admin_editor. The
+ * This list is the code-side twin of that grant: the same twenty-seven signatures
+ * that migrations 005, 008, 011, 014, 015 and 016 grant to kb_admin_editor. The
  * eight of 015 exist only once that migration is applied; until then nothing
  * calls them, because the watcher pages are off unless KB_SOURCES_ENABLED=true.
  */
@@ -92,6 +92,12 @@ export const WRITE_FUNCTIONS = {
   kb_admin_watch_reject: ['uuid', 'text', 'uuid', 'text'],
   kb_admin_watch_approve: ['uuid', 'text', 'uuid', 'text', 'boolean'],
   kb_admin_watch_mark_published: ['uuid', 'text', 'uuid'],
+  // Migration 016: the overlap results on a proposal, an index page's suggested
+  // sub-pages, and the approver's re-draft. Called only once 016 is installed
+  // (lib/watchQueries.ts watcherSchema16); none touches the knowledge base.
+  kb_admin_watch_propose_checked: ['uuid', 'text', 'uuid', 'uuid', 'text', 'text', 'text', 'text', 'text', 'text', 'text', 'text', 'text', 'jsonb', 'boolean', 'text'],
+  kb_admin_source_set_suggestions: ['uuid', 'text', 'uuid', 'jsonb'],
+  kb_admin_source_redraft: ['uuid', 'text', 'uuid', 'text'],
 } as const;
 export type WriteFunction = keyof typeof WRITE_FUNCTIONS;
 

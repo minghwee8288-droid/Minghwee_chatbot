@@ -10,8 +10,8 @@ import { addressProblem } from '@/lib/watcher/fetcher';
 import { watchFetcher } from '@/lib/watchFetcher';
 import { DraftingError, draftWithModel } from '@/lib/watcher/llm';
 import { touchesMoney } from '@/lib/watcher/feeLock';
-import { approveAndPublish, checkSource, type WatchCall } from '@/lib/watcher/pipeline';
-import { lastGoodText, sourceById, watchDraft } from '@/lib/watchQueries';
+import { approveAndPublish, checkSource, redraftSource, type WatchCall } from '@/lib/watcher/pipeline';
+import { lastGoodText, snapshotText, sourceById, watchDraft, watcherSchema16 } from '@/lib/watchQueries';
 import { callWrite } from '@/lib/write';
 
 /**
@@ -115,6 +115,7 @@ export async function fetchNow(_prev: ActionState, form: FormData): Promise<Acti
   const source = await sourceById(sourceId);
   if (!source || !source.active) return { error: 'That page is no longer watched.' };
   const { fetcher, renders } = watchFetcher();
+  const has016 = await watcherSchema16();
   let result;
   try {
     result = await checkSource(source, {
@@ -127,13 +128,85 @@ export async function fetchNow(_prev: ActionState, form: FormData): Promise<Acti
       searcher: { userId: actor.userId, email: actor.email },
       llm: draftWithModel,
       model: env().watcher!.llm.model,
+      has016,
       log: (line) => console.info(`[watcher] ${line}`),
     });
   } catch (error) {
     return failure('fetch_now', actor.userId, sourceId, error);
   }
-  log('fetch_now', actor.userId, sourceId, `${result.outcome} drafts=${result.drafts.length}`);
-  redirect(`/sources?checked=${result.outcome}&drafts=${result.drafts.length}&source=${sourceId}`);
+  log('fetch_now', actor.userId, sourceId, `${result.outcome} drafts=${result.drafts.length} index=${result.index ? 'yes' : 'no'}`);
+  redirect(`/sources?checked=${result.outcome}&drafts=${result.drafts.length}&index=${result.index ? result.index.suggestions.length : -1}&source=${sourceId}`);
+}
+
+/**
+ * Re-draft from the latest snapshot (APPROVER only, migration 016): the page's
+ * open proposals are superseded and drafted again with the current rules,
+ * without waiting for the page to change. The database checks the role and
+ * audit-logs it ('source_redrafted', with the reason).
+ */
+export async function redraftSourceAction(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const auth = await actorForWrite();
+  if (!auth.ok) return { error: auth.message };
+  const { actor } = auth;
+  if (!actor.canApprove) return { error: 'Only an approver can re-draft a page.' };
+  const off = watcherOff();
+  if (off) return off;
+  if (!(await watcherSchema16())) return { error: 'Re-drafting needs the watcher migration 016, which is not applied yet.' };
+  const sourceId = id(form, 'source_id');
+  if (!sourceId) return { error: 'No page was named.' };
+  const reason = text(form, 'reason', 500).trim();
+  if (!reason) return { error: 'Please say why the proposals should be drafted again.' };
+  const source = await sourceById(sourceId);
+  if (!source || !source.active) return { error: 'That page is no longer watched.' };
+  let result;
+  try {
+    result = await redraftSource({ ...source, suggested: source.suggested_pages ?? [] }, reason, {
+      call,
+      embed: embedTexts,
+      recorder: { userId: actor.userId, email: actor.email },
+      searcher: { userId: actor.userId, email: actor.email },
+      llm: draftWithModel,
+      model: env().watcher!.llm.model,
+      has016: true,
+      snapshotText,
+      log: (line) => console.info(`[watcher] ${line}`),
+    });
+  } catch (error) {
+    return failure('redraft', actor.userId, sourceId, error);
+  }
+  log('redraft', actor.userId, sourceId, `superseded=${result.superseded} drafts=${result.drafts.length} index=${result.index ? 'yes' : 'no'}`);
+  redirect(`/sources?redrafted=1&drafts=${result.drafts.length}&superseded=${result.superseded}&index=${result.index ? 1 : 0}&source=${sourceId}`);
+}
+
+/**
+ * "Watch this page": one of an index page's suggested sub-pages, added with
+ * the parent's category through the existing kb_admin_source_add. Only an
+ * address the parent actually suggests is accepted.
+ */
+export async function watchSuggestedPage(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const auth = await actorForWrite();
+  if (!auth.ok) return { error: auth.message };
+  const { actor } = auth;
+  const off = watcherOff();
+  if (off) return off;
+  const parentId = id(form, 'source_id');
+  if (!parentId) return { error: 'No page was named.' };
+  const url = text(form, 'url', 2000).trim();
+  const parent = await sourceById(parentId);
+  if (!parent || !parent.active) return { error: 'That page is no longer watched.' };
+  const page = (parent.suggested_pages ?? []).find((p) => p.url === url);
+  if (!page) return { error: 'That page is not one of the suggested pages.' };
+  const problem = addressProblem(url);
+  if (problem) return { error: `That address cannot be watched: ${problem}.` };
+  const label = `${parent.label} - ${page.label}`.slice(0, 200);
+  let sourceId: string;
+  try {
+    sourceId = await callWrite<string>('kb_admin_source_add', [actor.userId, actor.email, url, label, parent.category]);
+  } catch (error) {
+    return failure('source_add_suggested', actor.userId, parentId, error);
+  }
+  log('source_add_suggested', actor.userId, sourceId, `ok parent=${parentId.slice(0, 8)}`);
+  redirect('/sources?added=1');
 }
 
 export async function editWatchDraft(_prev: ActionState, form: FormData): Promise<ActionState> {
@@ -197,6 +270,8 @@ export async function approveWatchDraft(_prev: ActionState, form: FormData): Pro
   const confirmFigure = String(form.get('confirm_figure') ?? '') === 'yes';
   const figure = touchesMoney({ targetQuestion: draft.current_question, targetAnswer: draft.current_answer, proposedQuestion: draft.proposed_question, proposedAnswer: draft.proposed_answer });
   if (figure && !confirmFigure) return { error: errorMessage('KB008', '') };
+  // 016: it disagrees with a similar live entry (or duplicates one): the same tick (KB009 in the database).
+  if (draft.conflict_check && !confirmFigure) return { error: errorMessage('KB009', '') };
   let result;
   try {
     result = await approveAndPublish(

@@ -2,7 +2,7 @@
 
 import { useFormState, useFormStatus } from 'react-dom';
 import type { ActionState } from '@/app/editor/actions';
-import { addSource, fetchNow } from '@/app/watch/actions';
+import { addSource, fetchNow, watchSuggestedPage } from '@/app/watch/actions';
 import { CATEGORY_LABELS } from './categories';
 
 function Submit({ label, busy, tone = 'primary' }: { label: string; busy: string; tone?: 'primary' | 'secondary' }) {
@@ -54,6 +54,20 @@ export function FetchNowButton({ sourceId }: { sourceId: string }) {
       <input type="hidden" name="source_id" value={sourceId} />
       <Submit label="Fetch now" busy="Fetching…" tone="secondary" />
       {fetchState.error ? <span className="text-[12px]" style={{ color: 'var(--bad)' }} role="alert">{fetchState.error}</span> : null}
+    </form>
+  );
+}
+
+/** One click: watch a suggested sub-page, with the parent page's category. */
+export function WatchSuggestedButton({ sourceId, url }: { sourceId: string; url: string }) {
+  const [raw, formAction] = useFormState(watchSuggestedPage, { error: '' });
+  const state: ActionState = raw ?? { error: '' };
+  return (
+    <form action={formAction} className="inline-flex flex-col items-start gap-1">
+      <input type="hidden" name="source_id" value={sourceId} />
+      <input type="hidden" name="url" value={url} />
+      <Submit label="Watch this page" busy="Adding…" tone="secondary" />
+      {state.error ? <span className="text-[12px]" style={{ color: 'var(--bad)' }} role="alert">{state.error}</span> : null}
     </form>
   );
 }

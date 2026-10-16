@@ -137,8 +137,9 @@ $$;
 -- 3. kb_admin_editor: EXECUTE on exactly 16 functions, no table, no helper
 --    (6 Q&A + 9 document from 011 + kb_admin_match_live from 014) - or 24
 --    once kb_admin_015_watcher is applied (+ its 8 watcher functions; applied
---    to production 2026-10-15). The count follows what is installed, so this
---    file stays re-runnable before and after 015.
+--    to production 2026-10-15) - or 27 once kb_admin_016_watcher_overlap is
+--    applied (+ its 3). The count follows what is installed, so this file stays
+--    re-runnable before and after 015 and 016.
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -168,11 +169,20 @@ declare
         'kb_admin_watch_reject(uuid,text,uuid,text)',
         'kb_admin_watch_approve(uuid,text,uuid,text,boolean)',
         'kb_admin_watch_mark_published(uuid,text,uuid)'];
+    watcher16 text[] := array[
+        'kb_admin_watch_propose_checked(uuid,text,uuid,uuid,text,text,text,text,text,text,text,text,text,jsonb,boolean,text)',
+        'kb_admin_source_set_suggestions(uuid,text,uuid,jsonb)',
+        'kb_admin_source_redraft(uuid,text,uuid,text)'];
     got text[];
     t record;
 begin
     if to_regclass('public.cb_kb_drafts') is not null then
         expected := expected || watcher;
+    end if;
+    -- kb_admin_016_watcher_overlap: three more (27 in all).
+    if exists (select 1 from information_schema.columns where table_schema = 'public'
+                and table_name = 'cb_kb_drafts' and column_name = 'conflict_check') then
+        expected := expected || watcher16;
     end if;
     select array_agg(p.oid::regprocedure::text order by 1) into got
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -189,7 +199,7 @@ begin
         end if;
     end loop;
     raise notice 'PASS: kb_admin_editor executes exactly % functions (6 Q&A + 9 document + live match%) and holds no table privilege',
-        cardinality(expected), case when cardinality(expected) = 24 then ' + 8 watcher' else '' end;
+        cardinality(expected), case when cardinality(expected) = 27 then ' + 11 watcher' when cardinality(expected) = 24 then ' + 8 watcher' else '' end;
 end
 $$;
 

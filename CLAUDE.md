@@ -116,7 +116,9 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
                      baseline batch on first replacement); 009..014 on TEST
                      and production (2026-10-05; run 012 AFTER 014); kb_admin_015_watcher
                      (the KB watcher; on PRODUCTION since 2026-10-15, not on TEST;
-                     012's editor check now expects 16, or 24 once 015 is there)
+                     012's editor check now expects 16, or 24 once 015 is there, 27 with 016),
+                     kb_admin_016_watcher_overlap (overlap on proposals, suggested
+                     sub-pages, approver re-draft, KB009; NOT applied anywhere yet)
                      — applied ONLY via apply_sql.py --expect-ref <project ref>
   gen_fee_locked.py  the watcher's fee lock: the 23 questions + 7 corrections the
                      fees document set, read from the loader, written into
@@ -598,6 +600,8 @@ because the lead is opened early and the ticket is created much later.
 | A page with no readable text says why, and bot protection is never worked around | `lib/watcher/emptyPage.ts` + `fetcher.ts` (`BLOCKED_BY_SITE`, `renderPage`) + `pipeline.ts` | 2026-10-15: the MOM levy page failed "no readable main text" because the extractor dropped every `<form>` and ASP.NET wraps the whole page in one (`unwrapPageForms`, real MOM fixtures). Now: a challenge page (403/429/503 or an empty 200) is "Blocked by site", never retried or rendered; a /maintenance/ redirect is "under maintenance"; a JavaScript app shell is sent to `render-service/` through the same address, robots.txt and per-host-gap checks, or reported as needing it. A working page with a reCAPTCHA form is not "blocked". |
 | A page that only changed its whitespace or date stamps produces no proposal | `lib/watcher/change.ts` (`normalisedForm`, `contentHash`) | Hash of normalised paragraphs: whitespace, case, curly quotes, date-only lines and date stamps ("Last updated ...", "Reviewed on ...") dropped. A date INSIDE a sentence is kept on purpose: a changed effective date is a changed rule. Unchanged = no model call at all. |
 | The watcher fetches politely and never silently drops a failure | `lib/watcher/fetcher.ts` + `kb_admin_source_record_fetch(ok=false)` | Clear user-agent, https + public hosts only, robots.txt (and Crawl-delay) obeyed, 20 s timeout, 3 attempts with backoff on 5xx/429/network, no retry on other 4xx, 10 s minimum gap per host, 3 MB cap. A failure is a snapshot row and is shown on the source. |
+| A watcher proposal states a fact a client can act on, and an index page drafts nothing | `lib/watcher/quality.ts` (`lowValueReason`) in `parseDrafts` + `lib/watcher/indexPage.ts` (`indexVerdict`) in `checkSource` | Production 2026-10-15: MOM's levy INDEX page drafted four "The MOM page provides information on..." entries. A draft that only points elsewhere, or carries no amount, rule, deadline, eligibility condition or step, is dropped; an index page drafts nothing and its sub-pages (below it, same site, named in its main text) become "Suggested pages to watch" (016). |
+| A watcher approval never silently creates a second, conflicting answer | `lib/watcher/overlap.ts` + `draftFromSnapshot` + `kb_admin_watch_approve` (016, KB009) | Each draft is searched with the bot's own live search: a new draft at 0.72+ against a live entry becomes a change to that entry (or nothing, if it already says it); entries at 0.60+ are listed with the figures that differ; two figures of the same kind, period and subject that disagree raise the conflict banner and the approver's tick, which the database requires. Thresholds measured on the live KB (true duplicates 0.68-0.88, same topic 0.55-0.64). |
 | A proposal cites the page word for word | `lib/watcher/drafting.ts` `parseDrafts` + the passage check in `kb_admin_watch_propose` | The model may only target an entry it was shown; the source passage must be on the fetched page (whitespace aside) or the draft is dropped (and refused by the database too). |
 | ...searched for the whole service, with the filter kept whatever money words it contains | `rag_retriever.ENQUIRY_OVERVIEW_QUERY` / `_service_filter` | "costs" dropped the service filter, and the wider search returned a no-agency comparison that told the client the permit and bond were theirs to do. 12 rows, never widened - plus `ENQUIRY_OVERVIEW_EXTRA_QUERIES`, a separate search per service for a question the agency named that the shared query cannot reach (direct hire's failed medical ranks 21st under it). |
 
@@ -718,7 +722,10 @@ approved | published | rejected | superseded, and the provenance of an approved 
 `source_url`, `source_fetched_at`, `approved_by(_email)`, `approved_at`, `entry_id_after`,
 `version_id`; `figure_check` / `figure_confirmed` for a government figure). RLS on, nothing for anon/authenticated/service_role; `kb_admin_reader`
 SELECTs, `kb_admin_fn_owner` writes through the functions only. The live KB table gets no
-new column; `cb_kb_audit`'s action CHECK gains nine watcher actions.
+new column; `cb_kb_audit`'s action CHECK gains nine watcher actions. Migration 016 (written,
+NOT applied) adds `cb_kb_sources.suggested_pages`/`suggested_at`, `cb_kb_drafts.similar_entries`/
+`conflict_check`/`conflict_note`/`conflict_confirmed`, and the audit actions `source_redrafted`,
+`source_suggested`.
 
 ---
 
@@ -1570,6 +1577,13 @@ Ordered by what will hurt first.
     `KB_RENDER_URL`/`KB_RENDER_SECRET` on Vercel; until then it is reported as "needs the
     page renderer". MOM's `foreign-domestic-worker-levy` URL is an index page - the rates
     are on `.../foreign-domestic-worker-levy/paying-levy`, which is the page to watch for them.
+    (f) **Migration `kb_admin_016_watcher_overlap.sql` is written and applied NOWHERE**
+    (2026-10-16). Until it is, kb-admin drafts with the new rules (no pointer proposals, an
+    index page drafts nothing, a duplicate new entry becomes a change) but cannot record the
+    similar-entries panel, the conflict tick, suggested sub-pages or offer Re-draft. Apply with
+    `apply_sql.py --expect-ref` on a go-word; no env var and no redeploy needed. The four
+    rejected MOM-index proposals are gone either way: Re-draft (after 016) or the next fetch now
+    proposes nothing from that page.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -1902,6 +1916,7 @@ behaviour behind one switch. Details of each step are in §11.
 | KBW | KB watcher stages 1-3 (Thomas's item 5): watched pages, scheduled re-check, review queue; all off | see git log |
 | KBW2 | Fee lock eased for government figures (warning + required tick, KB008); migration 015 applied to production | see git log |
 | KBW3 | "No readable main text" diagnosed: extractor reads ASP.NET form-wrapped pages (MOM); blocked / maintenance / JS pages explained; render-service/ for JS pages | see git log |
+| KBW4 | Drafting: overlap check (change instead of a duplicate, similar-entries panel, conflict tick KB009), low-value and index pages dropped (suggested sub-pages), approver re-draft; migration 016 written, not applied | see git log |
 
 **Still to do, in order:** Step 5 is done (every item, the last being item 2 in Batch G), Step 6 is done (parts 1-4, 6b, 6c), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
@@ -1978,6 +1993,42 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-16** - **KB watcher drafting: overlap check, no low-value proposals, index pages
+  suggest their sub-pages, approver re-draft.** No bot change; the schedule stays off; nothing
+  written to any database. Production showed MOM's levy INDEX page drafting four "new entry"
+  proposals that only pointed elsewhere, none checked against the KB (all rejected).
+  (1) **Low-value drafts dropped** (`lib/watcher/quality.ts`, in `parseDrafts` and the prompt):
+  a question asking where to find information, or an answer that - pointer sentences aside -
+  states no amount, rule, deadline, eligibility condition or step.
+  (2) **Index pages** (`lib/watcher/indexPage.ts`): mostly links to pages below it, labelled by
+  lines of its main text (a card link by its heading) - no model call, nothing drafted; the
+  sub-pages are recorded on the source and shown as "Suggested pages to watch" with one-click
+  "Watch this page" (parent's category, only a suggested address accepted).
+  (3) **Overlap** (`lib/watcher/overlap.ts`, `draftFromSnapshot`): each draft's text is searched
+  with `kb_admin_match_live`; a NEW draft at 0.72+ becomes a change to that entry (one more
+  model call writes its full text; nothing if it already says it); entries at 0.60+ are stored
+  on the proposal with the differing figures; a conflict = two figures of the same kind, period
+  (day/month/year) and subject (the words around each figure in its clause) that disagree, or a
+  near-duplicate kept new. The review page shows "Similar existing entries" and the conflict
+  banner; Approve needs the tick (action + `kb_admin_watch_approve` KB009).
+  (4) **Re-draft from latest snapshot** (approver, reason, audit `source_redrafted`).
+  (5) The drafting call now switches thinking off as the bot does (`reasoning: {enabled:false}`,
+  6,000 tokens) and refuses a cut-off answer: the first dry run on paying-levy came back as
+  invalid JSON and drafted nothing.
+  **Migration `kb_admin_016_watcher_overlap.sql`** (+ rollback): written and NOT applied; kb-admin
+  detects it (`watcherSchema16`) and until then behaves exactly as with 015. Approve is 015's
+  body plus the KB009 check (asserted character for character). PGlite (real Postgres, real
+  001-009 + 015 + 016): 32 checks, 4 SQL faults red, rollback clean, re-runnable. 012's editor
+  check follows it (27).
+  **Measured:** thresholds read off the live KB (read-only). Dry runs on the saved MOM pages
+  (real model, the bot's embeddings, the production search inside READ ONLY, writes faked): the
+  levy index -> 0 model calls, 0 proposals, 3 suggested sub-pages (paying-levy, levy-concession,
+  apply-for-levy-waiver); paying-levy -> 4-6 proposals over 6 runs (changes to the levy-rate,
+  concession and "What is the FDW levy?" entries; new entries for the 17th-of-the-month due date,
+  late-payment penalties and GIRO deduction), no false conflicts after the clause-level subject
+  rule; a quoted table passage is still occasionally dropped as not on the page (model variance).
+  kb-admin self-check 377 (47 new); 18 faults injected, 18 red; the earlier 16, 16 red; build passes.
 
 - **2026-10-15** - **The Ming Hwee logo in the three Vercel apps (UI only).** From
   `assets/minghwee-logo.png`: favicon.ico (16+32), favicon-32x32, apple-touch-icon (180)

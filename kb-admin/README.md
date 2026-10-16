@@ -42,7 +42,9 @@ Every credential is server-side (nothing is `NEXT_PUBLIC_`).
    - the KB watcher (owner `kb_admin_fn_owner`, migration 015): `kb_admin_source_add`,
      `kb_admin_source_remove`, `kb_admin_source_record_fetch`, `kb_admin_watch_propose`,
      `kb_admin_watch_edit`, `kb_admin_watch_reject`, `kb_admin_watch_approve`,
-     `kb_admin_watch_mark_published`.
+     `kb_admin_watch_mark_published`; and once migration 016 is applied,
+     `kb_admin_watch_propose_checked`, `kb_admin_source_set_suggestions`,
+     `kb_admin_source_redraft`.
    They enforce every rule themselves: the caller's role, the character limits, no
    NRIC/FIN, which changes need an approver, stale drafts and impact checks, the canary,
    and an audit row for each write. `lib/write.ts` exports only `callWrite`, which sends
@@ -145,6 +147,28 @@ Migration `scripts/sql/kb_admin_015_watcher.sql` (on production since 2026-10-15
 
 The extractor reads ASP.NET pages that wrap the whole page in one `<form>` (mom.gov.sg), and
 reads a listing page with several `<article>`s whole.
+
+**Better drafting (2026-10-16; the last two need migration 016):**
+- **Low-value proposals are dropped.** A draft that only points elsewhere ("Where can I find
+  information about...", "The MOM page provides information on...", "visit this page") or that
+  states no fact a client could act on (an amount, a rule, a deadline, an eligibility condition,
+  a step) is never proposed (`lib/watcher/quality.ts`, and the same rule in the prompt).
+- **An index page drafts nothing.** A page that is mostly links to the pages below it (MOM's
+  `.../foreign-domestic-worker-levy`) is recognised (`lib/watcher/indexPage.ts`); its useful
+  sub-pages appear on its Watched pages row as **Suggested pages to watch**, each with a
+  one-click **Watch this page** (category = the parent's).
+- **Overlap check.** Every draft is searched against the live knowledge base with the bot's own
+  search. A new draft that duplicates a live entry (similarity 0.72 or more) becomes a change to
+  that entry, or nothing if the entry already says it. Live entries at 0.60 or more are listed on
+  the proposal under **Similar existing entries** (link, similarity, figures that differ). Two
+  figures that disagree (same kind, same period, said of the same thing - "$350 against $300 for
+  the levy") put up a conflict banner and need the approver's tick; the database refuses the
+  approval without it (KB009).
+- **Re-draft from latest snapshot** (approvers only, audit-logged with a reason): supersedes the
+  page's open proposals and drafts again from its last snapshot, without waiting for the page to
+  change.
+Before 016 is applied kb-admin reads and calls exactly what it did with 015 (no suggestions, no
+panel, no re-draft); it checks once a minute, so applying 016 needs no redeploy.
 
 `WATCHER_ENABLED=true` (+ `CRON_SECRET`, `KB_WATCHER_ACTOR_ID`) adds the schedule:
 `vercel.json` calls `/api/watcher/run` daily and each page is re-checked every
