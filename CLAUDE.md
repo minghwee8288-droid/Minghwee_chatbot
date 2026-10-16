@@ -2003,6 +2003,8 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-10-16** - **KB watcher: a replacement carries only facts on its sentence's subject; facts placed once per run.** Off-subject sentences in a replacement are split out and placed as additions, dropped when another offered live entry already says them (the levy rates rode along in the start/stop replacement and tripped the fee lock); changes that replace go before add-only ones and own their facts, so the "ends" line no longer also lands on the work-permit-expiry entry (`additive.parseUpdate` `elsewhere`/`spill`, `drafting.parseDrafts`). Dry run: the FDW replacement has no figures. Self-check 433.
+
 - **2026-10-16** - **KB watcher: a contradicting addition replaces the live sentence; one fact, one proposal.** Additions on the subject of a live sentence (its distinctive words; begin/start, end/stop alike) that the page justifies become one replacement of it, folded into the model's own replacement if there is one; undecided -> "Possible conflict with live sentence: ..." and the conflict tick (`additive.mergeConflictingAdditions`, conflict note in `pipeline`). New entries are parsed first and an addition a new entry in the same run states is dropped (`drafting.parseDrafts`). Paying-levy dry run (read-only): the start/stop sentence replaced by the begin + end lines, no separate addition. Self-check 431.
 
 - **2026-10-16** - **KB watcher: the live existing-entry search was returning nothing usable.**

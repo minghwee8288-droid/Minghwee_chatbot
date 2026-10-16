@@ -1,4 +1,4 @@
-import { alreadySays, contentWords, contradicts, replacementJustification, sentenceCarried, KEPT_COVERAGE } from './factDiff.ts';
+import { alreadySays, contentWords, contradicts, replacementJustification, sentenceCarried, sentencesOf, KEPT_COVERAGE } from './factDiff.ts';
 
 export { entryDiff, type DiffSegment } from './factDiff.ts';
 import { locatePassage, locateSpan } from './passage.ts';
@@ -96,8 +96,13 @@ export function parseUpdate(
   pageText: string,
   /** Question plus answer may not grow past this (the editor's 1,200): additions are taken in order while they fit. */
   maxChars = Number.POSITIVE_INFINITY,
+  /** The other live entries offered with this one: an addition one of them already says is dropped (it lives there). */
+  elsewhere: { question: string; answer: string }[] = [],
 ): UpdateParse {
   const dropped: string[] = [];
+  // Facts that are not about the replaced sentence's subject: placed like any addition (re-draft 16 Oct 4:08 pm,
+  // the levy rates rode along in the start/stop replacement and tripped the fee lock).
+  const spill: Record<string, unknown>[] = [];
   const liveText = `${live.question}\n${live.answer}`;
   const passageAt: { start: number; end: number }[] = [];
   const onPage = (given: string) => {
@@ -113,7 +118,7 @@ export function parseUpdate(
   for (const raw of replaceList) {
     const r = (raw ?? {}) as Record<string, unknown>;
     const old = str(r.old);
-    const next = str(r.new);
+    let next = str(r.new);
     const given = str(r.source_passage);
     if (!old || !next) { dropped.push('a replacement without the old or the new sentence'); continue; }
     if (old.length < MIN_OLD_CHARS) { dropped.push(`a replacement of a fragment, not a sentence ("${short(old)}")`); continue; }
@@ -121,6 +126,14 @@ export function parseUpdate(
     if (!at) { dropped.push(`a replacement whose old sentence is not in the live entry ("${short(old)}")`); continue; }
     if (replaced.some((x) => x.start < at.end && at.start < x.end)) { dropped.push(`a second replacement of the same sentence ("${short(old)}")`); continue; }
     const whole = live.answer.slice(at.start, at.end);
+    // A replacement carries only facts on the subject of the sentence it replaces.
+    const subject = subjectWords(live, whole);
+    const parts = sentencesOf(asSentence(next));
+    const onSubject = parts.filter((p) => words(p).some((w) => subject.has(w)));
+    if (onSubject.length && onSubject.length < parts.length) {
+      for (const p of parts) if (!onSubject.includes(p)) spill.push({ sentence: p, source_passage: given, after: whole });
+      next = onSubject.join(' ');
+    }
     const passage = onPage(given);
     if (!passage) { dropped.push(`a replacement whose source passage is not on the page ("${short(given)}")`); continue; }
     const contradiction = replacementJustification(passage, whole, asSentence(next));
@@ -135,7 +148,7 @@ export function parseUpdate(
   }
 
   const added: (Addition & { pos: number; order: number })[] = [];
-  const addList = Array.isArray(item.add) ? item.add.slice(0, MAX_OPS) : [];
+  const addList = [...(Array.isArray(item.add) ? item.add.slice(0, MAX_OPS) : []), ...spill];
   const spans = sentenceSpans(live.answer);
   const afterReplacements = `${liveText}\n${replaced.map((r) => r.new).join(' ')}`;
   for (const raw of addList) {
@@ -148,6 +161,8 @@ export function parseUpdate(
       dropped.push(`an addition the entry already says ("${short(sentence)}")`);
       continue;
     }
+    const home = elsewhere.find((e) => alreadySays(`${e.question}\n${e.answer}`, sentence));
+    if (home) { dropped.push(`an addition the live entry "${short(home.question)}" already says ("${short(sentence)}")`); continue; }
     const grown = live.question.length + 1 + live.answer.trimEnd().length
       + replaced.reduce((n, r) => n + r.new.length - (r.end - r.start), 0)
       + added.reduce((n, x) => n + 1 + x.sentence.length, 0) + 1 + asSentence(sentence).length;
@@ -201,6 +216,13 @@ export function parseUpdate(
 const SYNONYM: Record<string, string> = { begin: 'start', commence: 'start', commenc: 'start', end: 'stop', cease: 'stop', ceas: 'stop' };
 const words = (s: string) => contentWords(s).map((w) => SYNONYM[w] ?? w);
 const EVENT = new Set(['start', 'stop']);
+
+/** A live sentence's subject: its words in no other live sentence and not in the question (begin/start, end/stop alike). */
+function subjectWords(live: { question: string; answer: string }, sentence: string): Set<string> {
+  const q = new Set(words(live.question));
+  const others = new Set(sentencesOf(live.answer).filter((s) => s.trim() !== sentence.trim()).flatMap(words));
+  return new Set(words(sentence).filter((w) => !q.has(w) && !others.has(w)));
+}
 
 /**
  * For each live sentence not already replaced: the additions that share its

@@ -116,7 +116,10 @@ export function parseDrafts(
   // month rule went into both "What is the FDW levy?" and its own new entry).
   const items = list.slice(0, MAX_DRAFTS_PER_CHANGE * 2).map((x) => (x ?? {}) as Record<string, unknown>);
   const isNew = (d: Record<string, unknown>) => d.target_entry_id == null || d.target_entry_id === '';
-  for (const d of [...items.filter(isNew), ...items.filter((x) => !isNew(x))]) {
+  // Then changes that replace a live sentence (they own the facts they settle), then add-only changes.
+  const replaces = (d: Record<string, unknown>) => Array.isArray(d.replace) && d.replace.length > 0;
+  const updates = items.filter((x) => !isNew(x));
+  for (const d of [...items.filter(isNew), ...updates.filter(replaces), ...updates.filter((x) => !replaces(x))]) {
     const target = d.target_entry_id == null || d.target_entry_id === '' ? null : String(d.target_entry_id);
     if (target !== null) {
       // A change to an existing entry: additions and contradicted sentences only; the answer is built here.
@@ -128,15 +131,17 @@ export function parseDrafts(
         dropped.push(`a change to "${live.question.slice(0, 80)}" written as a whole new answer instead of additions and replacements`);
         continue;
       }
-      const owned = drafts.filter((x) => x.target_entry_id === null).map((x) => x.answer);
+      // Facts already placed in this run: a new entry's answer, another change's replacements and additions.
+      const owned = drafts.flatMap((x) => (x.target_entry_id === null ? [x.answer] : [...(x.change?.replaced.map((r) => r.new) ?? []), ...(x.change?.added.map((a) => a.sentence) ?? [])]));
       const adds = Array.isArray(d.add) ? (d.add as Record<string, unknown>[]) : [];
       const own = adds.filter((a) => {
         const s = typeof a?.sentence === 'string' ? a.sentence : '';
         const other = s ? owned.find((ans) => sentenceCarried(s, ans)) : undefined;
-        if (other) dropped.push(`an addition to "${live.question.slice(0, 60)}" that a new entry in this run already states ("${squash(s).slice(0, 80)}") - one fact, one proposal`);
+        if (other) dropped.push(`an addition to "${live.question.slice(0, 60)}" that another proposal in this run already states ("${squash(s).slice(0, 80)}") - one fact, one proposal`);
         return !other;
       });
-      const u = parseUpdate(adds.length === own.length ? d : { ...d, add: own }, live, ctx.newText, MAX_ENTRY_CHARS);
+      const elsewhere = [...(ctx.live?.entries() ?? [])].filter(([id]) => id !== target).map(([, e]) => e);
+      const u = parseUpdate(adds.length === own.length ? d : { ...d, add: own }, live, ctx.newText, MAX_ENTRY_CHARS, elsewhere);
       dropped.push(...u.dropped);
       if (!u.built) continue;
       if ((live.question + '\n' + u.built.answer).length > MAX_ENTRY_CHARS) {

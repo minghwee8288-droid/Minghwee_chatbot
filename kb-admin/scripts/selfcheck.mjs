@@ -1685,6 +1685,29 @@ console.log('KB watcher drafting: overlap check, low-value proposals, index page
       check('one-fact: the 17th rule goes into the dedicated new entry only, never also appended to the general entry',
         both.drafts.length === 1 && both.drafts[0].target_entry_id === null && /one fact, one proposal/.test(both.dropped.join(' ')), JSON.stringify(both));
     }
+    // Re-draft 16 Oct 4:08 pm: the rates rode along in the start/stop replacement (fee lock), and the "ends" line also went into the work-permit-expiry entry.
+    {
+      const fdwId = 'f65f728e-0000-0000-0000-000000000001'; const ratesId = '480fb1a4-0000-0000-0000-000000000001'; const wpId = 'aaaaaaaa-0000-0000-0000-000000000009';
+      const fdwL = { question: 'What is the FDW levy?', answer: "The levy is a monthly fee the Government charges employers of Migrant Domestic Workers. It is not a tax on your helper and it is never deducted from her salary. The levy starts when your helper's Work Permit is issued and stops when it is cancelled. You will usually pay it through GIRO, which is the simplest way to avoid missing a payment." };
+      const ratesL = { question: 'How much is the monthly levy for a domestic helper in Singapore?', answer: 'The Ministry of Manpower charges employers a monthly levy. At the normal rate it is $300 a month for your first helper and $450 a month for each subsequent helper . Households that qualify for the levy concession pay $60 a month .' };
+      const wpL = { question: "What happens if my helper's work permit expires and I haven't renewed it?", answer: 'If the work permit expires without renewal, your helper is working illegally. This exposes both you and your helper to legal penalties from MOM.' };
+      const live = new Map([[fdwId, fdwL], [ratesId, ratesL], [wpId, wpL]]);
+      const begin = 'For a first-time helper, the levy begins on the 5th day of her arrival, including the arrival date; otherwise, it begins the day after she arrives.';
+      const ends = 'The levy ends when the Work Permit is cancelled or expires.';
+      const pBegin = 'For first-time helpers , the levy will begin on the 5th day of their arrival (including the arrival date). Otherwise, the levy will begin the next day after the helper arrives.';
+      const out = Dr.parseDrafts(JSON.stringify({ drafts: [
+        { target_entry_id: wpId, add: [{ sentence: ends, after: '', source_passage: ends }], why: 'w' },
+        { target_entry_id: fdwId, replace: [{ old: "The levy starts when your helper's Work Permit is issued and stops when it is cancelled.",
+          new: `The normal monthly levy is $300 for the first helper, $450 for subsequent helpers, and $60 at the concessionary rate. ${begin} ${ends}`,
+          source_passage: `${pBegin}\nThe levy ends when the Work Permit is cancelled or expires.` }], why: 'w' },
+      ] }), { newText: payText, candidateIds: [fdwId, ratesId, wpId], live });
+      const f = out.drafts.find((x) => x.target_entry_id === fdwId);
+      check('replace-subject: a replacement carries only facts on its sentence\'s subject - the rates go, a live entry already says them (no figures, no fee lock)',
+        f?.change?.replaced.length === 1 && f.change.replaced[0].new === `${begin} ${ends}` && f.change.added.length === 0 && !/\$/.test(f.answer) &&
+        out.dropped.some((x) => /live entry "How much is the monthly levy/.test(x)), JSON.stringify(out));
+      check('one-fact: a fact a replacement in this run settles is not also added to another entry (the "ends" line, work-permit expiry)',
+        !out.drafts.some((x) => x.target_entry_id === wpId) && out.dropped.some((x) => /another proposal in this run already states/.test(x)), JSON.stringify(out.dropped));
+    }
     const review3 = src('app/watch/[id]/page.tsx');
     check('additive: the review page shows a change as added (green), replaced (old -> new with the source) and unchanged (grey)',
       /const segments = draft\.kind === 'edit' && draft\.current_answer \? entryDiff\(draft\.current_answer, draft\.proposed_answer\) : null;/.test(review3) &&
