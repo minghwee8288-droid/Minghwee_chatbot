@@ -1469,13 +1469,29 @@ console.log('KB watcher drafting: overlap check, low-value proposals, index page
   const review2 = src('app/watch/[id]/page.tsx');
   check('facts: the review page lists "Points removed" in red and blocks Approve with "This update drops existing information" (Edit stays)',
     /<h2 className="text-\[15px\] font-semibold">Points removed<\/h2>/.test(review2) && /color: 'var\(--bad\)'/.test(review2) &&
-    /title="This update drops existing information"/.test(review2) && /const drops = open && removed\.some\(\(r\) => !r\.contradictedBy\);/.test(review2) &&
+    /title="This update drops existing information"/.test(review2) && /const drops = open && byOrigin\.model\.length > 0;/.test(review2) &&
     /viewer\.canApprove && !lock && !stale && !drops \?/.test(review2) && /<EditProposalForm draftId=/.test(review2) &&
-    /\{drops \? <PointsRemoved points=\{removed\.filter\(\(r\) => !r\.contradictedBy\)\} \/> : null\}/.test(review2));
+    /\{drops \|\| editDrops \? <PointsRemoved points=\{removed\.filter\(\(r\) => !r\.contradictedBy\)\} \/> : null\}/.test(review2));
   const actions2 = src('app/watch/actions.ts');
   check('facts: the approve action refuses it too (the page is not the only lock)',
-    /unjustifiedRemovals\(draft\.current_answer, draft\.proposed_answer, draft\.source_passage, draft\.proposed_question\)\.length\) \{\n    return \{ error: 'This update drops existing information\./.test(actions2) &&
-    actions2.indexOf('unjustifiedRemovals(draft.current_answer') < actions2.indexOf('result = await approveAndPublish('));
+    /if \(drops\.model\.length\) return \{ error: 'This update drops existing information\./.test(actions2) &&
+    actions2.indexOf('removalsByOrigin(draft.current_answer') < actions2.indexOf('result = await approveAndPublish('));
+  {
+    // 2026-10-16, "Can I hire a second helper?": the approver's Edit removed a wrong live rate this page cannot contradict.
+    const live = 'A second helper is allowed if you meet the income criteria. The second helper attracts the standard levy rate (S$300/month) unless a concession applies.';
+    const model = `${live} Households with a young child may qualify for the concession.`;
+    const edited = 'A second helper is allowed if you meet the income criteria. Households with a young child may qualify for the concession.';
+    const src2 = 'Households with a young child may qualify for the concession.';
+    const byEdit = FD.removalsByOrigin(live, model, edited, src2, 'Can I hire a second helper?');
+    const byModel = FD.removalsByOrigin(live, null, edited, src2, 'Can I hire a second helper?');
+    check('facts: a point an approver\'s Edit removed is a tick, not a block; the same drop by the model still blocks (page + action)',
+      byEdit.model.length === 0 && byEdit.edit.length === 1 && /S\$300/.test(byEdit.edit[0].sentence) &&
+      byModel.model.length === 1 && byModel.edit.length === 0 &&
+      /title="Your edit removes existing information"/.test(review2) &&
+      /confirmAlso=\{editDrops \? \{ name: 'confirm_removed', label: 'I confirm these points are wrong or outdated\.' \}/.test(review2) &&
+      /drops\.edit\.length && String\(form\.get\('confirm_removed'\) \?\? ''\) !== 'yes'/.test(actions2) &&
+      /a\.action = 'watch_edited' and a\.new_values->>'draft_id' = \$1/.test(src('lib/watchQueries.ts')), JSON.stringify({ byEdit, byModel }));
+  }
   {
     const p1 = Dr.buildPrompt({ label: 'l', url: 'u', added: [], removed: [], candidates: [] }).system;
     const p2 = OV.buildMergePrompt({ label: 'l', url: 'u', pairs: [] }).system;

@@ -31,6 +31,7 @@ export function ReasonAction({
   help,
   tone = 'secondary',
   confirm,
+  confirmAlso,
 }: {
   action: Action;
   hidden: Record<string, string>;
@@ -40,6 +41,8 @@ export function ReasonAction({
   help?: string;
   tone?: 'primary' | 'secondary';
   confirm?: { name: string; label: string };
+  /** A second required tick box (an approver's Edit that removes live points: "wrong or outdated"). */
+  confirmAlso?: { name: string; label: string };
 }) {
   const [open, setOpen] = useState(false);
   const [raw, formAction] = useFormState(action, { error: '' });
@@ -77,6 +80,12 @@ export function ReasonAction({
         <label className="flex items-start gap-2 text-[13px]">
           <input type="checkbox" name={confirm.name} value="yes" required className="mt-0.5" />
           <span>{confirm.label}</span>
+        </label>
+      ) : null}
+      {confirmAlso ? (
+        <label className="flex items-start gap-2 text-[13px]">
+          <input type="checkbox" name={confirmAlso.name} value="yes" required className="mt-0.5" />
+          <span>{confirmAlso.label}</span>
         </label>
       ) : null}
       {state.error ? (

@@ -1,7 +1,7 @@
 'use server';
 
 import { redirect } from 'next/navigation';
-import { unjustifiedRemovals } from '@/lib/watcher/factDiff';
+import { removalsByOrigin } from '@/lib/watcher/factDiff';
 import type { ActionState } from '@/app/editor/actions';
 import { actorForWrite } from '@/lib/auth';
 import { errorMessage, hasNric } from '@/lib/editing';
@@ -12,7 +12,7 @@ import { watchFetcher } from '@/lib/watchFetcher';
 import { DraftingError, draftWithModel } from '@/lib/watcher/llm';
 import { touchesMoney } from '@/lib/watcher/feeLock';
 import { OverlapCheckError, approveAndPublish, checkSource, redraftSource, type WatchCall } from '@/lib/watcher/pipeline';
-import { lastGoodText, liveEntryTexts, snapshotText, sourceById, watchDraft, watcherSchema16 } from '@/lib/watchQueries';
+import { lastGoodText, liveEntryTexts, modelDraftAnswer, snapshotText, sourceById, watchDraft, watcherSchema16 } from '@/lib/watchQueries';
 import { callWrite } from '@/lib/write';
 
 /**
@@ -278,10 +278,15 @@ export async function approveWatchDraft(_prev: ActionState, form: FormData): Pro
   const confirmFigure = String(form.get('confirm_figure') ?? '') === 'yes';
   const figure = touchesMoney({ targetQuestion: draft.current_question, targetAnswer: draft.current_answer, proposedQuestion: draft.proposed_question, proposedAnswer: draft.proposed_answer });
   if (figure && !confirmFigure) return { error: errorMessage('KB008', '') };
-  // A change must not lose facts: a live sentence the proposal drops, which the source does not contradict, blocks Approve.
-  if (draft.kind === 'edit' && draft.current_answer
-    && unjustifiedRemovals(draft.current_answer, draft.proposed_answer, draft.source_passage, draft.proposed_question).length) {
-    return { error: 'This update drops existing information. Use Edit to put the removed points back, or reject it.' };
+  // A change must not lose facts: a live sentence the proposal drops, which the source does not contradict, blocks Approve -
+  // unless an approver's Edit took it out, which needs the "wrong or outdated" tick (removalsByOrigin).
+  if (draft.kind === 'edit' && draft.current_answer) {
+    const modelAnswer = draft.edited_by_email ? await modelDraftAnswer(draftId) : null;
+    const drops = removalsByOrigin(draft.current_answer, modelAnswer, draft.proposed_answer, draft.source_passage, draft.proposed_question);
+    if (drops.model.length) return { error: 'This update drops existing information. Use Edit to put the removed points back, or reject it.' };
+    if (drops.edit.length && String(form.get('confirm_removed') ?? '') !== 'yes') {
+      return { error: 'Your edit removes points from the live entry. Tick "I confirm these points are wrong or outdated" and give the reason.' };
+    }
   }
   // 016: it disagrees with a similar live entry (or duplicates one): the same tick (KB009 in the database).
   if (draft.conflict_check && !confirmFigure) return { error: errorMessage('KB009', '') };

@@ -230,3 +230,24 @@ export function entryDiff(liveAnswer: string, proposedAnswer: string): DiffSegme
   flush();
   return out;
 }
+
+/**
+ * Who removed each unjustified point (2026-10-16, "Can I hire a second
+ * helper?"): the drop block exists to stop the MODEL losing facts. An
+ * approver who used Edit to take out a live sentence that is wrong (the live
+ * "standard levy rate (S$300/month)" for a second helper; the correct $450 is
+ * on another page, so this page could not contradict it) is not blocked: the
+ * point is shown under "Points removed" and Approve asks for a tick ("I
+ * confirm these points are wrong or outdated") and the reason. A point the
+ * model's own draft already dropped stays a hard block. `modelAnswer` is the
+ * proposal as the watcher drafted it (null when nobody edited it).
+ * EDIT_REMOVAL_CONFIRM = false: every unjustified removal blocks, as before.
+ */
+export const EDIT_REMOVAL_CONFIRM = true;
+export function removalsByOrigin(liveAnswer: string, modelAnswer: string | null, proposedAnswer: string, sourcePassage: string,
+  proposedQuestion = ''): { model: RemovedPoint[]; edit: RemovedPoint[] } {
+  const unjustified = unjustifiedRemovals(liveAnswer, proposedAnswer, sourcePassage, proposedQuestion);
+  if (!EDIT_REMOVAL_CONFIRM || modelAnswer === null) return { model: unjustified, edit: [] };
+  const byEdit = (r: RemovedPoint) => sentenceCarried(r.sentence, `${proposedQuestion}\n${modelAnswer}`);
+  return { model: unjustified.filter((r) => !byEdit(r)), edit: unjustified.filter(byEdit) };
+}

@@ -182,6 +182,15 @@ export async function watchDraft(id: string): Promise<WatchDraftRow | null> {
  * existing-entry search: kb_admin_match_live returns only a preview, so the
  * pipeline joins its matches to their text here (read-only, as kb_admin_reader).
  */
+/** The proposal as the watcher drafted it, before any Edit (the first watch_edited audit row's old answer), or null when it was never edited. */
+export async function modelDraftAnswer(draftId: string): Promise<string | null> {
+  const [row] = await select<{ answer: string | null }>(
+    `select a.old_values->>'answer' as answer from public.cb_kb_audit a
+      where a.action = 'watch_edited' and a.new_values->>'draft_id' = $1
+      order by a.created_at asc, a.id asc limit 1`, [draftId]);
+  return row?.answer ?? null;
+}
+
 export async function liveEntryTexts(ids: string[]): Promise<{ id: string; question: string | null; answer: string | null }[]> {
   const wanted = ids.filter((x) => /^[0-9a-f-]{36}$/i.test(x));
   if (!wanted.length) return [];

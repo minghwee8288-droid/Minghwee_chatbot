@@ -6,10 +6,10 @@ import { Shell } from '@/components/Shell';
 import { AmberNotice, PageHeader, Pill, formatDate } from '@/components/ui';
 import { requireViewerWith } from '@/lib/auth';
 import { wordDiff, type DiffPart } from '@/lib/editing';
-import { removedPoints, type RemovedPoint } from '@/lib/watcher/factDiff';
+import { removalsByOrigin, removedPoints, type RemovedPoint } from '@/lib/watcher/factDiff';
 import { reviewState } from '@/lib/watcher/feeLock';
 import { contradictingLine, entryDiff, type DiffSegment } from '@/lib/watcher/additive';
-import { watchDraft, type SimilarEntry } from '@/lib/watchQueries';
+import { modelDraftAnswer, watchDraft, type SimilarEntry } from '@/lib/watchQueries';
 import { DRAFT_STATUS } from '../status';
 import { EditProposalForm } from './EditProposalForm';
 
@@ -176,7 +176,13 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
   const removed = draft.kind === 'edit' && draft.current_answer
     ? removedPoints(draft.current_answer, draft.proposed_answer, draft.source_passage, draft.proposed_question)
     : [];
-  const drops = open && removed.some((r) => !r.contradictedBy);
+  // Removed by the model's draft: hard block. Removed by an approver's Edit: shown, and Approve asks for the "wrong or outdated" tick.
+  const modelAnswer = draft.kind === 'edit' && draft.current_answer && draft.edited_by_email ? await modelDraftAnswer(draft.id).catch(() => null) : null;
+  const byOrigin = draft.kind === 'edit' && draft.current_answer
+    ? removalsByOrigin(draft.current_answer, modelAnswer, draft.proposed_answer, draft.source_passage, draft.proposed_question)
+    : { model: [], edit: [] };
+  const drops = open && byOrigin.model.length > 0;
+  const editDrops = open && !drops && byOrigin.edit.length > 0;
   const segments = draft.kind === 'edit' && draft.current_answer ? entryDiff(draft.current_answer, draft.proposed_answer) : null;
   const status = DRAFT_STATUS[draft.status] ?? { text: draft.status, tone: 'off' as const };
   const oldEntry = draft.kind === 'edit' ? `${draft.current_question ?? ''}\n\n${draft.current_answer ?? ''}` : '';
@@ -219,6 +225,11 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
           This update drops existing information: the points in red under &quot;Points removed&quot; are in the live entry now, and the source page does not contradict them. Approving is not possible until they are put back: use Edit to add them to the proposal, or reject it.
         </AmberNotice>
       ) : null}
+      {editDrops ? (
+        <AmberNotice title="Your edit removes existing information">
+          The points in red under &quot;Points removed&quot; are in the live entry now and the source page does not contradict them; they were taken out by an Edit, not by the watcher. Approving asks you to tick that they are wrong or outdated, and to say why in the reason.
+        </AmberNotice>
+      ) : null}
       {stale ? (
         <AmberNotice title="The entry has changed since this was drafted">Someone has edited the entry since. Approving will be refused; reject this proposal and fetch the page again.</AmberNotice>
       ) : null}
@@ -251,7 +262,7 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
       ) : (
         <Compare title="The knowledge-base change" leftLabel="No entry yet" rightLabel="Proposed" before={oldEntry} after={newEntry} />
       )}
-      {drops ? <PointsRemoved points={removed.filter((r) => !r.contradictedBy)} /> : null}
+      {drops || editDrops ? <PointsRemoved points={removed.filter((r) => !r.contradictedBy)} /> : null}
       <SimilarEntries entries={draft.similar_entries ?? []} />
 
       {draft.status === 'approved' && draft.version_id ? (
@@ -287,6 +298,7 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
                     ? 'I have checked this against the similar existing entries and the source page.'
                     : 'I have checked this figure against the source page.',
               } : undefined}
+              confirmAlso={editDrops ? { name: 'confirm_removed', label: 'I confirm these points are wrong or outdated.' } : undefined}
               openLabel="Approve"
               submitLabel="Approve and publish"
               busyLabel="Publishing…"
