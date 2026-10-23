@@ -23,6 +23,24 @@ logger = logging.getLogger(__name__)
 # No phone number is added to any line. False = the old logging.
 INBOUND_RECEIPT_LOG = True
 
+# 2026-10-23: the receipt line also says what KIND of chat id arrived - phone,
+# lid, group, broadcast or other - never the id itself, so a log alone shows
+# whether a missing reply was a LID, a group or a phone chat. False = id, type
+# and from_me only, as before.
+RECEIPT_LOG_CHAT_KIND = True
+
+
+def chat_kind(chat_id: str) -> str:
+    """phone / lid / group / broadcast / other / none - no digits."""
+    chat_id = str(chat_id or "")
+    if not chat_id:
+        return "none"
+    for suffix, kind in (("@s.whatsapp.net", "phone"), ("@c.us", "phone"), ("@lid", "lid"),
+                         ("@g.us", "group"), ("@broadcast", "broadcast"), ("@newsletter", "other")):
+        if chat_id.endswith(suffix):
+            return kind
+    return "phone" if chat_id.lstrip("+").isdigit() else "other"
+
 # Whapi message types that carry a media object of the same name.
 MEDIA_TYPES = ("image", "video", "audio", "voice", "document", "sticker")
 
@@ -117,6 +135,20 @@ class IncomingMessage:
     @property
     def is_transcribed(self) -> bool:
         return bool(self.transcript)
+
+    @property
+    def quoted_id(self) -> str | None:
+        """The id of the message this one quotes (WhatsApp "reply"), if any.
+
+        Whapi puts it in `context.quoted_id`. Read by the webhook: a client
+        quoting a staff member's message is talking to that person, not to the
+        bot (2026-10-23, webhook.QUOTED_HUMAN_REPLY_PAUSES).
+        """
+        context = (self.raw or {}).get("context")
+        if not isinstance(context, dict):
+            return None
+        quoted = context.get("quoted_id") or context.get("id")
+        return str(quoted) if quoted else None
 
     @property
     def text_for_llm(self) -> str:
@@ -248,10 +280,17 @@ def parse_webhook(payload: dict[str, Any]) -> list[IncomingMessage]:
         # Batch E item 8: every message that reaches us is logged here, before
         # any filter, dedupe or ignore rule, by id and type only - no number.
         if INBOUND_RECEIPT_LOG:
-            logger.info(
-                "Webhook message received: id=%s type=%s from_me=%s",
-                message.get("id"), message.get("type"), bool(message.get("from_me")),
-            )
+            if RECEIPT_LOG_CHAT_KIND:
+                logger.info(
+                    "Webhook message received: id=%s type=%s from_me=%s chat=%s",
+                    message.get("id"), message.get("type"), bool(message.get("from_me")),
+                    chat_kind(message.get("chat_id")),
+                )
+            else:
+                logger.info(
+                    "Webhook message received: id=%s type=%s from_me=%s",
+                    message.get("id"), message.get("type"), bool(message.get("from_me")),
+                )
         # Group chats are out of scope: the bot only handles 1:1 client threads.
         chat_id = str(message.get("chat_id") or "")
         if chat_id.endswith("@g.us") or chat_id.endswith("@broadcast"):

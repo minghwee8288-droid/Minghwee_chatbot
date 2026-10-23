@@ -272,6 +272,23 @@ class Settings(BaseSettings):
     # until explicitly resolved, the old behaviour).
     agent_pause_minutes: int = 10
 
+    # 2026-10-23: a human message on a thread (an agent's, a quoted reply to
+    # one, an agent picking up the ticket) pauses the bot for this many hours,
+    # in place of agent_pause_minutes (webhook.HUMAN_PAUSE_HOURS_GATE). Ten
+    # minutes let the bot answer a client's "Okay." to a staff message sent
+    # half an hour earlier.
+    human_pause_hours: float = 24
+
+    # A collector question this many hours old is not answered by the next
+    # message: the collection is dropped and the message read as a fresh one
+    # (graph.STALE_INTAKE_RESET).
+    intake_stale_hours: float = 6
+
+    # Owner and staff numbers the bot never replies to, comma-separated, any
+    # format (webhook.INTERNAL_NUMBERS_SILENT). The cb_internal_contacts table
+    # adds to this list once its SQL file is applied.
+    internal_numbers: str = ""
+
     # The WhatsApp Business app can send greeting and away messages by itself.
     # They arrive as outbound messages the bot did not send, which the agent
     # detector would otherwise read as "a human has taken over" — silencing the
@@ -314,6 +331,18 @@ class Settings(BaseSettings):
                 # e.g. a leftover '+65XXXXXXXX' placeholder.
                 continue
             numbers.add(normalize_phone(part))
+        return numbers
+
+    @property
+    def internal_number_set(self) -> set[str]:
+        """INTERNAL_NUMBERS parsed the way BOT_ALLOWED_NUMBERS is."""
+        from app.utils import digits_only, normalize_phone
+
+        numbers: set[str] = set()
+        for part in self.internal_numbers.replace(";", ",").split(","):
+            part = part.strip()
+            if part and len(digits_only(part)) >= 8:
+                numbers.add(normalize_phone(part))
         return numbers
     # The WhatsApp portal is subscribed to the same Whapi channel and already
     # maintains last_message_body/last_message_at/last_direction/unread_count.

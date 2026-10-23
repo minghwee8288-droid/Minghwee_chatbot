@@ -8,7 +8,12 @@ import re
 from typing import Any
 
 from app.graph.closure import is_closing, is_pure_acknowledgement, needs_no_reply
-from app.graph.guards import answering_our_question
+from app.graph.guards import (
+    answering_our_question,
+    asks_own_helper_rights,
+    confirms_being_a_helper,
+    greeting_only,
+)
 from app.graph.language import mainly_non_english
 from app.graph.llm import complete_json
 from app.graph.prompts.templates import (
@@ -608,6 +613,35 @@ def relays_another_helper(message: str) -> bool:
     return bool(_RELAYS_SOMEONE.search(text) and _WANTS_WORK.search(text))
 
 
+# 2026-10-23: see the call site in intent_classifier. False = only a single
+# acknowledgement (closure.needs_no_reply) is left unanswered.
+ACKS_NEVER_ANSWER = True
+_SALUTATION = re.compile(
+    r"^\W*(?:good\s+)?(?:morning|afternoon|evening|night|day)\W*$|^\W*(?:gd\s+)?(?:mrng|morn|aftn|eve)\W*$",
+    re.IGNORECASE,
+)
+_BARE_YES_NO_LINE = re.compile(
+    r"^\W*(?:yes|yeah|yep|yup|ya|yah|no|nope|nah|correct)\W*$", re.IGNORECASE
+)
+
+
+def only_acknowledgements(message: str) -> bool:
+    """Every line acknowledges or greets ("Afternoon" / "Okay." / "👍"), and
+    none of them is a bare yes or no, which can answer a question."""
+    lines = [line.strip() for line in (message or "").splitlines() if line.strip()]
+    if not lines:
+        return False
+    for line in lines:
+        if _BARE_YES_NO_LINE.match(line):
+            return False
+        if not re.search(r"[\w?]", line):
+            continue  # an emoji or punctuation alone
+        if is_pure_acknowledgement(line) or greeting_only(line) or _SALUTATION.match(line):
+            continue
+        return False
+    return True
+
+
 def _detected_contact_type(intent: str, raw: Any, message: str = "") -> str | None:
     """Who the classifier thinks this is, or None while it cannot tell."""
     if THIRD_PARTY_RELAY_ANY_SENDER and relays_another_helper(message):
@@ -678,6 +712,25 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
     if needs_no_reply(message, history_text=state.get("history_text") or ""):
         logger.info(
             "Conversation %s: %r needs no reply — staying silent",
+            state.get("conversation_id"),
+            message[:60],
+        )
+        return {"suppress_reply": True, "reply": ""}
+
+    # ...and acknowledgements and greetings, line by line, never answer an
+    # intake question (2026-10-23). "Afternoon" and "Okay." arrived as one
+    # batch, the pair matched neither the acknowledgement nor the greeting
+    # pattern, and the collector took them as an answer and asked its next
+    # question - inside a conversation the client was having with a member of
+    # staff. A bare yes or no is still an answer.
+    if (
+        ACKS_NEVER_ANSWER
+        and state.get("last_question")
+        and only_acknowledgements(message)
+    ):
+        logger.info(
+            "Conversation %s: %r only acknowledges - not an answer to our question, "
+            "staying silent",
             state.get("conversation_id"),
             message[:60],
         )
@@ -1169,6 +1222,13 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
         detected = _detected_contact_type(
             intent, result.get("contact_type"), state.get("incoming_text") or ""
         )
+        # 2026-10-23 (CB-2026-0124): a helper asking for her own rights, or
+        # answering yes to "are you asking about your rights as a domestic
+        # helper?", is the helper herself.
+        if asks_own_helper_rights(state.get("incoming_text") or "") or confirms_being_a_helper(
+            state.get("incoming_text") or "", state.get("history_text") or ""
+        ):
+            detected = "candidate"
         if detected:
             update["detected_contact_type"] = detected
             stored = (state.get("contact_type") or "unknown").strip()

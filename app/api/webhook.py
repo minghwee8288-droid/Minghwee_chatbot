@@ -37,6 +37,7 @@ from app.services import assignment as assignment_service
 from app.services import contact as contact_service
 from app.services import conversation as conversation_service
 from app.services import handover as handover_service
+from app.services import internal_contacts
 from app.services import lead as lead_service
 from app.services import message as message_service
 from app.services import ticket as ticket_service
@@ -53,6 +54,26 @@ router = APIRouter(tags=["webhook"])
 
 # Marker for the one stand-down reason no emergency may override.
 ALLOWLIST_BLOCK = "number not in BOT_ALLOWED_NUMBERS"
+# ...and its twin: an owner's or a staff member's own number.
+INTERNAL_BLOCK = "an internal (owner/staff) number"
+
+# 2026-10-23, the bot answering inside a staff conversation. Each False for the
+# earlier behaviour.
+#
+# A human message pauses the bot for settings.human_pause_hours (24) instead
+# of agent_pause_minutes (10): a staff member wrote to a client at 2:49 PM, the
+# client answered "Afternoon" / "Okay." at 3:20 PM, and the ten-minute pause
+# had long expired, so the bot resumed and asked an old intake question.
+HUMAN_PAUSE_HOURS_GATE = True
+# Owner/staff numbers (INTERNAL_NUMBERS, cb_internal_contacts) are never
+# answered, not even by the emergency override - they are colleagues.
+INTERNAL_NUMBERS_SILENT = True
+# A client quoting a message the bot did not send (a staff message) is talking
+# to that person: no reply, and the thread is paused as for an agent message.
+QUOTED_HUMAN_REPLY_PAUSES = True
+# A ticket an agent has picked up (status in_progress, within the pause) keeps
+# the bot quiet on the whole thread.
+TICKET_PICKUP_PAUSES = True
 
 # How recent "our last message" has to be for the repeat guard below to apply.
 # The guard exists for one specific race — two messages typed seconds apart
@@ -404,6 +425,9 @@ async def may_engage(phone: str, conversation: dict[str, Any] | None) -> tuple[b
         # for an emergency.
         return False, ALLOWLIST_BLOCK
 
+    if INTERNAL_NUMBERS_SILENT and await internal_contacts.is_internal(phone):
+        return False, INTERNAL_BLOCK
+
     if conversation is None:
         return True, "new conversation"
 
@@ -497,11 +521,22 @@ async def maybe_return_to_bot(conversation: dict[str, Any]) -> dict[str, Any]:
         return await conversation_service.get_by_id(conversation_id) or conversation
 
     last_agent = await message_service.last_agent_message_at(conversation_id)
+    if HUMAN_PAUSE_HOURS_GATE:
+        # A takeover that left no agent message to measure from (a quoted
+        # staff message) starts the pause too - from when it happened.
+        takeover_at = await handover_service.latest_takeover_at(conversation_id)
+        if takeover_at is not None and (last_agent is None or takeover_at > last_agent):
+            last_agent = takeover_at
     if last_agent is not None:
         if settings.agent_pause_minutes <= 0:
             return conversation  # auto-resume disabled — permanent until explicitly resolved
         idle = max(datetime.now(tz=timezone.utc) - last_agent, timedelta(0))
-        if idle >= timedelta(minutes=settings.agent_pause_minutes):
+        pause = (
+            timedelta(hours=settings.human_pause_hours)
+            if HUMAN_PAUSE_HOURS_GATE and settings.human_pause_hours > 0
+            else timedelta(minutes=settings.agent_pause_minutes)
+        )
+        if idle >= pause:
             logger.info(
                 "Conversation %s: agent quiet for %.0f min — resuming the bot",
                 conversation_id,
@@ -560,6 +595,35 @@ async def maybe_return_to_bot(conversation: dict[str, Any]) -> dict[str, Any]:
     return await conversation_service.get_by_id(conversation_id) or conversation
 
 
+async def _human_conversation(conversation: dict[str, Any], message: IncomingMessage) -> bool:
+    """True when this inbound message belongs to a conversation with a person.
+
+    2026-10-23 (the bot answering inside a staff conversation): a client
+    quoting a staff member's message is replying to that person, and a ticket
+    an agent has picked up means an agent is on the thread. Either way the bot
+    keeps out - the portal stores the message from its own webhook - and a
+    report of harm still gets the safety reply.
+    """
+    conversation_id = conversation["id"]
+    why = ""
+    quoted = message.quoted_id if QUOTED_HUMAN_REPLY_PAUSES else None
+    if quoted:
+        origin = await message_service.quoted_message_origin(quoted)
+        if origin in ("agent", "unknown"):
+            why = f"the client quoted a message the bot did not send ({origin})"
+            await handover_service.agent_took_over(conversation)
+    if not why and TICKET_PICKUP_PAUSES and await ticket_service.picked_up_recently(
+        conversation_id, settings.human_pause_hours
+    ):
+        why = "a live agent has picked up a ticket on this thread"
+    if not why:
+        return False
+    logger.info("Conversation %s: %s - bot staying quiet", conversation_id, why)
+    if not await emergency_override(conversation, message.text_for_llm):
+        await acknowledge_direct_address(conversation, message.text_for_llm, message.customer_number)
+    return True
+
+
 async def handle_inbound(message: IncomingMessage) -> None:
     """Store an incoming client message and queue it for the bot."""
     if _already_processed(message.whapi_message_id):
@@ -600,7 +664,7 @@ async def handle_inbound(message: IncomingMessage) -> None:
     # below, which is exactly the path a distressed client is most likely to
     # send a voice note down. Skipped for allowlist-blocked numbers, where the
     # bot touches nothing at all.
-    if reason != ALLOWLIST_BLOCK and transcription_service.is_speech(message):
+    if reason not in (ALLOWLIST_BLOCK, INTERNAL_BLOCK) and transcription_service.is_speech(message):
         message.transcript = await transcription_service.transcribe(message)
 
     if not engage:
@@ -608,10 +672,13 @@ async def handle_inbound(message: IncomingMessage) -> None:
         # already storing the message from its own webhook.
         logger.info("Bot standing down on %s: %s", phone, reason)
         # ...unless someone is reporting harm. Silence is not an option there.
-        if reason != ALLOWLIST_BLOCK and existing is not None:
+        if reason not in (ALLOWLIST_BLOCK, INTERNAL_BLOCK) and existing is not None:
             if await emergency_override(existing, message.text_for_llm):
                 return
             await acknowledge_direct_address(existing, message.text_for_llm, phone)
+        return
+
+    if existing is not None and await _human_conversation(existing, message):
         return
 
     if existing is not None:
@@ -639,10 +706,11 @@ async def handle_inbound(message: IncomingMessage) -> None:
             # nothing (the portal owns the thread and is storing the message
             # from its own webhook), but never stay silent on a report of harm.
             logger.info(
-                "Conversation %s still with a human — bot quiet until the agent "
-                "has been idle %d min",
+                "Conversation %s still with a human — bot quiet until the pause "
+                "(%s) is over",
                 existing["id"],
-                settings.agent_pause_minutes,
+                f"{settings.human_pause_hours:g} h" if HUMAN_PAUSE_HOURS_GATE
+                else f"{settings.agent_pause_minutes} min",
             )
             if not await emergency_override(existing, message.text_for_llm):
                 await acknowledge_direct_address(existing, message.text_for_llm, phone)

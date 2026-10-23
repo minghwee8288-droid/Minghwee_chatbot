@@ -462,6 +462,53 @@ _TURN_RESET: dict[str, Any] = {
 # False = the reply goes out exactly as the node wrote it.
 NO_TAG_BEFORE_POSSESSIVE = True
 
+# 2026-10-23: a collector question older than settings.intake_stale_hours is
+# not answered by the next message. The collection is dropped before the turn,
+# so the message is read as a fresh one (the welcome-back rule still applies).
+# Live: a client's "Okay." to a staff message was taken as the answer to an
+# old intake question and the bot asked the next one. False = the collection
+# resumes however old it is.
+STALE_INTAKE_RESET = True
+
+
+def stale_intake_reset(values: dict[str, Any], last_turn_at: Any, now: Any = None) -> dict[str, Any]:
+    """The state to apply before a turn when the pending question has gone stale.
+
+    `values` is the checkpoint's state and `last_turn_at` when it was written
+    (the bot's last turn on this thread). Empty when nothing is pending, when
+    the time is unknown, or when the question is still fresh.
+    """
+    from datetime import datetime, timezone
+
+    from app.graph.state import RESET_KEY
+
+    if not STALE_INTAKE_RESET or settings.intake_stale_hours <= 0:
+        return {}
+    if not (values or {}).get("last_question"):
+        return {}
+    if isinstance(last_turn_at, str):
+        try:
+            last_turn_at = datetime.fromisoformat(last_turn_at.replace("Z", "+00:00"))
+        except ValueError:
+            return {}
+    if not isinstance(last_turn_at, datetime):
+        return {}
+    if last_turn_at.tzinfo is None:
+        last_turn_at = last_turn_at.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    if (now - last_turn_at).total_seconds() < settings.intake_stale_hours * 3600:
+        return {}
+    return {
+        "collected_info": {RESET_KEY: True},
+        "asked_field_counts": {RESET_KEY: True},
+        "service_type": None,
+        "intent": "",
+        "collected_service": None,
+        "collected_since": None,
+        "last_question": None,
+        "missing_field_keys": [],
+    }
+
 
 async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Run one conversation turn and return the resulting state."""
@@ -472,6 +519,21 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     graph = get_graph()
     state_input = {**_TURN_RESET, **payload}
     config = {"configurable": {"thread_id": thread_id}}
+    if STALE_INTAKE_RESET and hasattr(graph, "aget_state"):
+        try:
+            snapshot = await graph.aget_state(config)
+            reset = stale_intake_reset(dict(snapshot.values or {}), snapshot.created_at)
+        except Exception:  # noqa: BLE001 - a failed read must not cost the turn
+            logger.exception("Could not read the checkpoint to check for a stale intake")
+            reset = {}
+        if reset:
+            logger.info(
+                "Conversation %s: the pending question is over %gh old - dropping the "
+                "collection and reading this message as a fresh one",
+                payload.get("conversation_id"),
+                settings.intake_stale_hours,
+            )
+            state_input = {**state_input, **reset}
     result = dict(await graph.ainvoke(state_input, config=config))
     # Step 2c: every node's reply passes here, so the tag is fixed once.
     if NO_TAG_BEFORE_POSSESSIVE and result.get("reply"):

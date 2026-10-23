@@ -600,6 +600,14 @@ because the lead is opened early and the ticket is created much later.
 | Where the client says the helper is answers the direct-hire route question | `info_collector.transfer_case_from_words` (`HELPER_PLACE_FROM_WORDS`) | "I found a Filipino helper in the Philippines" was asked "Is she currently in Singapore...?". "in / still in / back in" PH, ID or MM, overseas, abroad or back home in the client's own lines for this request, with no Singapore or transfer word, files "no - she is in ..., not in Singapore". "from the Philippines" is her nationality and is not read as where she is. |
 | Half of a combined question left unanswered is asked once more on its own | `info_collector` (`last_question["partner"]`, the `exhausted` exception) (`REASK_PAIR_PARTNER`) | Phone test 2026-10-16 (3766): the rest-days + salary pair got the rest days only and the registration closed with the salary "not provided" - both halves had been counted as asked. Any flow; once only, then the ordinary limit. |
 | No "Perfect —" in front of a collector question | `info_collector.without_perfect_lead_in` (`NO_PERFECT_LEAD_IN`) + the acknowledgement examples in `COLLECTOR_INSTRUCTION` | "Perfect — what email address should we use for updates?" (2026-10-16). The model's own lead-in, not the field's text (fixed the same day). |
+| A human message pauses the bot for 24 hours, not 10 minutes | `webhook.maybe_return_to_bot` (`HUMAN_PAUSE_HOURS_GATE`, `HUMAN_PAUSE_HOURS`) | 2026-10-23: a staff member wrote to a client at 2:49 PM, the client answered at 3:20 PM, the 10-minute agent pause had expired and the bot asked an old intake question. The pause runs from the last agent message or the last takeover, whichever is later; a portal resolve still returns the thread at once. |
+| Owner and staff numbers are never answered | `webhook.may_engage` + `app/services/internal_contacts.py` (`INTERNAL_NUMBERS_SILENT`) | `INTERNAL_NUMBERS` in .env, plus `cb_internal_contacts` once `internal_contacts_001` is applied. No emergency override for them. No number is written in code. |
+| A client quoting a staff message is talking to that person | `webhook._human_conversation` + `message.quoted_message_origin` + `IncomingMessage.quoted_id` (`QUOTED_HUMAN_REPLY_PAUSES`) | Quoting a message the bot did not send (an agent's, or one we cannot find) gets no reply and starts the pause. Quoting the bot or their own message is an ordinary turn. |
+| A ticket an agent has picked up keeps the bot quiet | `ticket.picked_up_recently` (`TICKET_PICKUP_PAUSES`) | Status `in_progress`, changed within the pause window. The safety reply still goes out. |
+| A stale intake question is not answered by the next message | `graph.stale_intake_reset` in `run_turn` (`STALE_INTAKE_RESET`, `INTAKE_STALE_HOURS` 6) | The checkpoint's last turn is older than the window and a collector question is pending: the collection is dropped before the turn and the message is read as a fresh one. |
+| Acknowledgements and greetings never answer an intake question | `intent_classifier.only_acknowledgements` (`ACKS_NEVER_ANSWER`) | Line by line: "Afternoon" / "Okay." arrived as one batch, matched neither pattern, and was taken as an answer. A bare yes or no still answers. |
+| A "yes" to our clarifying question is about the question before it | `guards.confirms_our_question` / `subject_of_turn` in `rag_retriever` and `response_generator`; `guards.confirms_being_a_helper` (`CONFIRMATION_IS_FOLLOW_UP`) | CB-2026-0124: "what are the helper rights for me?" -> "are you asking about your rights as a domestic helper?" -> "yes", searched on its own (0.000) and handed over. Now searched with the question, she reads as a helper, and gets the rights list. |
+| "Helper rights for me" is the helper asking | `guards.asks_own_helper_rights` (`HELPER_RIGHTS_SELF_ID`) | She gets the rights list on the first message. |
 | No lead time where we hold none (a Myanmar home leave) | `guards.guard_unheld_timeline` inside `guard_nationality_fee`, all three reply paths (`NO_UNHELD_TIMELINE`, `TIMELINE_NOT_HELD`) | Fees document 2026-10-15: a helper's own Myanmar home leave was told "approximately 2 weeks" (the Indonesian span). A sentence giving a lead time is replaced with "Our agent will confirm the timeline for a Myanmar helper's home leave."; the embassy endorsement's ~10 working days (every nationality) is kept. |
 | The agency's fees document is the source of truth for fees, timelines and wording | `load_service_notes.py` (ROWS + generated UPDATES, `TEXT_REPLACEMENTS`), `kb_rules` floors | 2026-10-15, with the client's decisions A-G: $288 replacement fee everywhere, direct hire 1-2 weeks here and PH 5-6 / ID 4 / MM 2-4 weeks after MOM approval, salary floors PH 650 / ID 550 / MM 500, the +$60 lines in the document's words, "falls under her package" never "guarantee period". The .docx is in `docs/`, kept out of git. A closing briefing now also states a fixed fee plainly from its OWN records (`info_collector._write`). |
 | A reply never reads out an internal case number | `guards.without_case_numbers` in `graph.run_turn` (and the preview) (`NO_CASE_NUMBER_READ_OUT`) | Batch G G4. The case numbers held for the client (`matched_cases`, the case row) and anything in the portal's case format (MH-YYYY-NNNN) are taken out, keeping the sentence ("Your case is at the documents stage"). The CB-YYYY-NNNN ticket reference is never touched. |
@@ -948,6 +956,15 @@ Easy to get wrong:
   `info_collector.NO_PERFECT_LEAD_IN` (no "Perfect —" lead-in),
   `info_collector.REASK_PAIR_PARTNER` (the unanswered half of a combined
   question is asked once more).
+  Go-live guard (2026-10-23), each `False` for the earlier behaviour:
+  `webhook.HUMAN_PAUSE_HOURS_GATE`, `webhook.INTERNAL_NUMBERS_SILENT`,
+  `webhook.QUOTED_HUMAN_REPLY_PAUSES`, `webhook.TICKET_PICKUP_PAUSES`,
+  `graph.STALE_INTAKE_RESET`, `intent_classifier.ACKS_NEVER_ANSWER`,
+  `guards.CONFIRMATION_IS_FOLLOW_UP`, `guards.HELPER_RIGHTS_SELF_ID`. Settings:
+  `HUMAN_PAUSE_HOURS` (24), `INTAKE_STALE_HOURS` (6), `INTERNAL_NUMBERS`
+  (empty; owner/staff numbers, comma-separated, never in code).
+  `parser.RECEIPT_LOG_CHAT_KIND` (2026-10-23): the receipt line also says
+  chat=phone/lid/group/broadcast/other, never the id.
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -1596,6 +1613,17 @@ Ordered by what will hurt first.
     (before Batch G) it failed 4 of 4 runs, on Batch G 3 of 4. The pair is meant
     to be one natural sentence (`PAIRED_QUESTION_NOTE`); not fixed here.
 
+46. **Four webhooks on the SG Whapi channel, and two should not be there**
+    (read with `GET /settings`, 2026-10-23): the portal
+    (`os.minghwee.com/api/whapi/webhook/...`), this bot
+    (`bot.minghwee.com/webhook/whapi/<secret>`), a **cloudflared quick tunnel**
+    (`*.trycloudflare.com/webhook/whapi/<secret>` - our route shape, so a copy of
+    this bot running on somebody's machine, receiving every client message), and
+    **`requestbin.whapi.cloud/...`** receiving every event type. Both last two get
+    clients' messages; remove them in the Whapi dashboard (channel -> Settings ->
+    Webhooks) unless someone owns them. No n8n URL is subscribed. The portal also
+    has a second account, `PH` (account 4, 5 conversations), whose token is not
+    in the database, so its webhooks cannot be read from here.
 45. **The KB watcher (2026-10-15) is built and switched off; four things to know before
     switching it on.** (a) Migration `kb_admin_015_watcher.sql` is applied on PRODUCTION
     (2026-10-15, its checks PASS, every existing row unchanged) and on no other database;
@@ -1800,6 +1828,10 @@ python scripts/selfcheck_flows.py      # behavioural assertions; also runs IN th
                                        #   docker compose exec chatbot python /app/scripts/selfcheck_flows.py
                                        # Note the `/.` — see "the second copy" below.
                                        # Verifies BEHAVIOUR, not grep counts — see the note below.
+python scripts/selfcheck_golive.py     # the 2026-10-23 replays: staff message + client
+                                       #   "Okay" -> silent, quoted staff message -> silent,
+                                       #   internal number, picked-up ticket, stale intake +
+                                       #   "ok", helper rights -> the list, no ticket. No network.
 python scripts/selfcheck_recognition.py   # 4 contacts (case employer, past placement,
                                        #   candidate, new) through identify, the webhook
                                        #   payload and the real nodes on a fake DB; no
@@ -2040,6 +2072,46 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-23** - **Go-live guard: the bot inside a staff conversation, and a
+  helper's rights handed over.** (1) Thomas's chat: staff wrote at 2:49 PM, he
+  answered "Afternoon" and "Okay." (quoting it) at 3:20 PM, and the bot asked
+  "what type of home are you in". The code path: the thread was `human_active`
+  from the staff message, `maybe_return_to_bot` resumed it after the 10-minute
+  `agent_pause_minutes`, the two messages arrived as one batch that matched
+  neither the acknowledgement nor the greeting pattern, and the collector took
+  them as an answer. That exchange is NOT in the production database (no stored
+  message, no checkpoint, no bot message row for it; the thread's last stored
+  message is 10:29 AM), so the state it read could not be confirmed. Fixed: a
+  24-hour human pause (`HUMAN_PAUSE_HOURS`), owner/staff numbers never answered
+  (`INTERNAL_NUMBERS` + `cb_internal_contacts`, SQL not applied), a quoted
+  staff message silent and pausing, a picked-up ticket silent, a pending
+  question over `INTAKE_STALE_HOURS` dropped before the turn, and
+  acknowledgement/greeting-only messages never answering an intake question.
+  (2) CB-2026-0124: "Hello what are the helper rights for me? Please explain"
+  got a clarifying question (unknown sender), and "yes" was searched on its own
+  (0.000), so the weak-retrieval rule handed it over; the KB entry "What are my
+  rights as a domestic helper in Singapore?" was there all along. Now a "yes" to
+  our question searches the question before it, confirms she is a helper, and
+  sends the rights list; "helper rights for me" does so on the first message.
+  Replayed through the real nodes and model: both turns send the list, no
+  ticket. `kb_audience_001` (not applied) opens 8 employer-tagged MOM rule rows
+  to helpers (rest days, room, food, salary date, insurance, levy, 6ME).
+  `scripts/selfcheck_golive.py`: 24 checks; 9 faults injected, 9 red.
+  **Follow-up the same day: the 3:25 PM reply was not sent by this bot or on
+  this channel.** Read-only: the text is in no `wp_chat_messages` row of any
+  conversation (any chat-id shape) since 22 Oct, the bot stored 2 messages all
+  day (both CB-2026-0124, 4:02 PM), no checkpoint was written 06:40-07:30 UTC,
+  and Whapi's own history for the SG channel (`GET /messages/list`, 635
+  messages over 22-23 Oct) holds neither it nor the 2:49 PM staff message -
+  Thomas's chat there has 0 messages. So that conversation is on another
+  WhatsApp number; the only copies of our code subscribed to anything are the
+  server and an unknown cloudflared tunnel (section 9.46). LIDs: both
+  directions already resolve `@lid` to the phone before any lookup
+  (`_resolve_lid`, since 2026-09-10/14); the 2 LID-keyed rows created since are
+  `created_source='webhook'`, which our code never writes (the portal). Added
+  the chat kind to the receipt log (`RECEIPT_LOG_CHAT_KIND`); 29 checks, the
+  fault red.
 
 - **2026-10-16** - **KB watcher: the salary/fee lock fires only on a CHANGED sentence** (an added, replaced or removed sentence carrying a money figure and salary/fee wording); an unchanged "Her salary is S$650." no longer locks a new rest-day line. Fees-document rows, agency-fee wording and non-government money are unchanged. kb-admin `feeLock.SENTENCE_SCOPED_SALARY_LOCK` + migration `kb_admin_018_fee_lock_sentences.sql` (wraps 015's function, renamed `_015`; PGlite over 001-017: 13 cases agree with kb-admin, rollback clean; WRITTEN, NOT APPLIED - until it is, the database still blocks such drafts).
 

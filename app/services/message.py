@@ -163,6 +163,27 @@ async def was_sent_by_bot(whapi_message_id: str) -> bool:
     return bool(row and row.get("is_bot"))
 
 
+async def quoted_message_origin(whapi_message_id: str) -> str:
+    """Who wrote a quoted message: "bot", "client", "agent" or "unknown".
+
+    2026-10-23: a client quoting a STAFF message is talking to that person, so
+    the bot keeps out (webhook.QUOTED_HUMAN_REPLY_PAUSES). Quoting the bot or
+    their own earlier message is an ordinary turn.
+    """
+    if recently_sent_by_bot(whapi_message_id):
+        return "bot"
+    try:
+        row = await db.select_one(TABLE, "id, is_bot, direction", whapi_message_id=whapi_message_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not read quoted message %s", whapi_message_id)
+        return "unknown"
+    if not row:
+        return "unknown"
+    if row.get("is_bot"):
+        return "bot"
+    return "client" if row.get("direction") == "inbound" else "agent"
+
+
 def _storable_body(message: IncomingMessage) -> str | None:
     """Body that satisfies the portal's wp_chat_messages_has_content constraint.
 

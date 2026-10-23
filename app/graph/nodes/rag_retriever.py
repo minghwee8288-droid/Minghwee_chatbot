@@ -7,7 +7,12 @@ import re
 from typing import Any
 
 from app.config import settings
-from app.graph.guards import asks_about_price, last_bot_line, last_client_line
+from app.graph.guards import (
+    asks_about_price,
+    confirms_our_question,
+    last_bot_line,
+    last_client_line,
+)
 from app.services import kb_rules
 from app.graph.nodes.info_collector import (
     briefs_on_this_turn,
@@ -877,11 +882,20 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
     # only for a question, and only when it points back ("that", "it"...); the
     # same filters, and the joined result is kept only if it scores better.
     incoming = state.get("incoming_text") or ""
+    # 2026-10-23 (CB-2026-0124): a bare "yes" to our own clarifying question is
+    # a follow-up too, whatever the intent was labelled - its subject is the
+    # question before it.
+    confirmation = confirms_our_question(incoming, state.get("history_text") or "")
     if (
         best < settings.rag_soft_floor
         and not briefing
-        and state.get("intent") in (KB_QUESTION_INTENTS | {"other"})
-        and _REFERS_BACK.search(incoming)
+        and (
+            confirmation
+            or (
+                state.get("intent") in (KB_QUESTION_INTENTS | {"other"})
+                and _REFERS_BACK.search(incoming)
+            )
+        )
     ):
         previous = last_client_line(state.get("history_text") or "")
         if previous:

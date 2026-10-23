@@ -15,6 +15,7 @@ from app.graph.guards import (
     asks_again,
     asks_for_process,
     asks_for_rights,
+    subject_of_turn,
     clamp_reply,
     claire_has_spoken,
     greeting_only,
@@ -277,9 +278,14 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         instruction_template = PROCESS_INSTRUCTION
     # A helper's rights as a whole: ten of them, as a list (2026-10-12). Rides
     # on the stepped answer's length and formatting allowances below.
+    # The subject is the previous message when this one only says yes to our
+    # clarifying question (2026-10-23, guards.CONFIRMATION_IS_FOLLOW_UP).
+    rights_subject = subject_of_turn(
+        state.get("incoming_text") or "", state.get("history_text") or ""
+    )
     rights_question = bool(
         (state.get("rag_context") or "").strip()
-        and asks_for_rights(state.get("incoming_text") or "")
+        and asks_for_rights(rights_subject)
     )
     if rights_question:
         logger.info(
@@ -295,7 +301,7 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
     # unknown sender stays on the model path above: "what are my rights" may be
     # an employer's question.
     if (
-        asks_for_rights(state.get("incoming_text") or "")
+        asks_for_rights(rights_subject)
         and effective_contact_type(state) == "candidate"
     ):
         logger.info(

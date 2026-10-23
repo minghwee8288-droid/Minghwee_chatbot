@@ -2924,6 +2924,41 @@ async def recent_for_conversation(conversation_id: int, *, limit: int = 3) -> li
     return result.data or []
 
 
+async def picked_up_recently(conversation_id: int, hours: float) -> bool:
+    """Whether a live agent has a ticket on this conversation in progress.
+
+    The portal moves a ticket to `in_progress` when an agent picks it up; the
+    bot never writes a ticket's status. Within `hours` of that change the bot
+    stays quiet on the whole thread (webhook.TICKET_PICKUP_PAUSES, 2026-10-23).
+    A failed read is "no" - this pause is one more lock, not the only one.
+    """
+    if hours <= 0:
+        return False
+    cutoff = datetime.now(timezone.utc).timestamp() - hours * 3600
+    try:
+        result = await db.execute(
+            db.table(TABLE)
+            .select("updated_at")
+            .eq("conversation_id", conversation_id)
+            .eq("status", "in_progress")
+            .order("updated_at", desc=True)
+            .limit(1)
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not read picked-up tickets for conversation %s", conversation_id)
+        return False
+    for row in result.data or []:
+        try:
+            when = datetime.fromisoformat(str(row.get("updated_at")).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when.timestamp() >= cutoff:
+            return True
+    return False
+
+
 async def completed_topics_for_conversation(conversation_id: int) -> dict[str, dict[str, Any]]:
     """Topics whose LATEST ticket on this conversation a human has resolved or
     closed, keyed like open_topics_for_conversation.

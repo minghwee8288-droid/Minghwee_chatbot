@@ -127,6 +127,36 @@ async def latest_bot_to_human_reason(conversation_id: int) -> str | None:
     return rows[0].get("reason") if rows else None
 
 
+async def latest_takeover_at(conversation_id: int):
+    """When a human last took this thread over (agent_takeover), if ever.
+
+    The pause start for a takeover that left no agent message to measure from:
+    a client quoting a staff message (webhook.QUOTED_HUMAN_REPLY_PAUSES).
+    """
+    from datetime import datetime
+
+    try:
+        result = await db.execute(
+            db.table(TABLE)
+            .select("created_at")
+            .eq("conversation_id", conversation_id)
+            .eq("direction", BOT_TO_HUMAN)
+            .eq("reason", REASON_AGENT_TAKEOVER)
+            .order("created_at", desc=True)
+            .limit(1)
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not read takeovers for conversation %s", conversation_id)
+        return None
+    rows = result.data or []
+    if not rows:
+        return None
+    try:
+        return datetime.fromisoformat(str(rows[0]["created_at"]).replace("Z", "+00:00"))
+    except (KeyError, ValueError):
+        return None
+
+
 async def to_human(
     conversation: dict[str, Any],
     *,

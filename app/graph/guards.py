@@ -1894,6 +1894,64 @@ def asks_for_rights(text: str) -> bool:
     return bool(_ASKS_FOR_RIGHTS.search(text or ""))
 
 
+# 2026-10-23, ticket CB-2026-0124: "Hello what are the helper rights for me?
+# Please explain" -> "Are you asking about your rights as a domestic helper in
+# Singapore?" -> "yes" -> handover. The "yes" was searched on its own (0.000),
+# so the weak-retrieval rule handed a question the KB answers to a person.
+# Each False for the earlier behaviour.
+#
+# A bare "yes" to a question we just asked is about the client's previous
+# message: retrieval searches that message, and a rights question stays one.
+CONFIRMATION_IS_FOLLOW_UP = True
+# "...for me", "my rights as a helper": the sender is the helper herself.
+HELPER_RIGHTS_SELF_ID = True
+
+_CONFIRMS = re.compile(
+    r"^\W*(?:yes|yess+|yeah|yep|yup|ya|yah|yes\s+please|correct|right|exactly|"
+    r"that'?s\s+(?:right|correct)|true|confirm(?:ed)?)\W*$",
+    re.IGNORECASE,
+)
+_ASKED_IF_HELPER = re.compile(
+    r"\b(?:as\s+a\s+(?:domestic\s+)?(?:helper|maid|worker)|are\s+you\s+(?:a|the)\s+"
+    r"(?:domestic\s+)?(?:helper|maid)|your\s+(?:own\s+)?rights)\b",
+    re.IGNORECASE,
+)
+_OWN_HELPER_RIGHTS = re.compile(
+    r"\b(?:helper|maid|domestic\s+worker|worker)s?'?\s+rights?\s+(?:for|of)\s+me\b"
+    r"|\bmy\s+rights?\s+as\s+an?\s+(?:domestic\s+)?(?:helper|maid|worker)\b",
+    re.IGNORECASE,
+)
+
+
+def confirms_our_question(text: str, history_text: str) -> bool:
+    """A bare yes to the question our last message asked."""
+    return bool(
+        CONFIRMATION_IS_FOLLOW_UP
+        and _CONFIRMS.match(text or "")
+        and last_bot_line(history_text).rstrip().endswith("?")
+    )
+
+
+def subject_of_turn(text: str, history_text: str) -> str:
+    """What this turn is about: the previous client message when this one only
+    confirms our question, else the message itself."""
+    if confirms_our_question(text, history_text):
+        return last_client_line(history_text) or text
+    return text
+
+
+def confirms_being_a_helper(text: str, history_text: str) -> bool:
+    """A yes to "are you asking about your rights as a domestic helper?"."""
+    return confirms_our_question(text, history_text) and bool(
+        _ASKED_IF_HELPER.search(last_bot_line(history_text))
+    )
+
+
+def asks_own_helper_rights(text: str) -> bool:
+    """A helper asking for her own rights ("helper rights for me")."""
+    return bool(HELPER_RIGHTS_SELF_ID and _OWN_HELPER_RIGHTS.search(text or ""))
+
+
 # The client telling us they have already asked, or that we never answered.
 #
 # Live, 2026-09-18 12:05: a work permit renewal collected four fields, raised a
