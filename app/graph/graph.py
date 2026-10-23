@@ -471,12 +471,29 @@ NO_TAG_BEFORE_POSSESSIVE = True
 STALE_INTAKE_RESET = True
 
 
-def stale_intake_reset(values: dict[str, Any], last_turn_at: Any, now: Any = None) -> dict[str, Any]:
+def _as_utc(value: Any):
+    from datetime import datetime, timezone
+
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def stale_intake_reset(
+    values: dict[str, Any], last_turn_at: Any, now: Any = None, human_since: Any = None
+) -> dict[str, Any]:
     """The state to apply before a turn when the pending question has gone stale.
 
     `values` is the checkpoint's state and `last_turn_at` when it was written
-    (the bot's last turn on this thread). Empty when nothing is pending, when
-    the time is unknown, or when the question is still fresh.
+    (the bot's last turn on this thread). Stale = older than intake_stale_hours,
+    or a human was on the chat after it (`human_since`, the agreed handover
+    rule: after a human pause the next message is a new conversation). Empty
+    when nothing is pending, when the time is unknown, or when it is fresh.
     """
     from datetime import datetime, timezone
 
@@ -496,7 +513,9 @@ def stale_intake_reset(values: dict[str, Any], last_turn_at: Any, now: Any = Non
     if last_turn_at.tzinfo is None:
         last_turn_at = last_turn_at.replace(tzinfo=timezone.utc)
     now = now or datetime.now(timezone.utc)
-    if (now - last_turn_at).total_seconds() < settings.intake_stale_hours * 3600:
+    human_since = _as_utc(human_since)
+    after_human = human_since is not None and human_since > last_turn_at
+    if not after_human and (now - last_turn_at).total_seconds() < settings.intake_stale_hours * 3600:
         return {}
     return {
         "collected_info": {RESET_KEY: True},
@@ -517,19 +536,23 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     # RULES_FROM_DB off, and at most one read a minute with it on.
     await kb_rules.refresh()
     graph = get_graph()
+    payload = dict(payload)
+    human_since = payload.pop("last_human_at", None)
     state_input = {**_TURN_RESET, **payload}
     config = {"configurable": {"thread_id": thread_id}}
     if STALE_INTAKE_RESET and hasattr(graph, "aget_state"):
         try:
             snapshot = await graph.aget_state(config)
-            reset = stale_intake_reset(dict(snapshot.values or {}), snapshot.created_at)
+            reset = stale_intake_reset(
+                dict(snapshot.values or {}), snapshot.created_at, human_since=human_since
+            )
         except Exception:  # noqa: BLE001 - a failed read must not cost the turn
             logger.exception("Could not read the checkpoint to check for a stale intake")
             reset = {}
         if reset:
             logger.info(
-                "Conversation %s: the pending question is over %gh old - dropping the "
-                "collection and reading this message as a fresh one",
+                "Conversation %s: the pending question is over %gh old or from before a "
+                "human pause - dropping the collection and reading this message as a fresh one",
                 payload.get("conversation_id"),
                 settings.intake_stale_hours,
             )

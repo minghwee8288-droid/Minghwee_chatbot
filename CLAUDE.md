@@ -600,7 +600,7 @@ because the lead is opened early and the ticket is created much later.
 | Where the client says the helper is answers the direct-hire route question | `info_collector.transfer_case_from_words` (`HELPER_PLACE_FROM_WORDS`) | "I found a Filipino helper in the Philippines" was asked "Is she currently in Singapore...?". "in / still in / back in" PH, ID or MM, overseas, abroad or back home in the client's own lines for this request, with no Singapore or transfer word, files "no - she is in ..., not in Singapore". "from the Philippines" is her nationality and is not read as where she is. |
 | Half of a combined question left unanswered is asked once more on its own | `info_collector` (`last_question["partner"]`, the `exhausted` exception) (`REASK_PAIR_PARTNER`) | Phone test 2026-10-16 (3766): the rest-days + salary pair got the rest days only and the registration closed with the salary "not provided" - both halves had been counted as asked. Any flow; once only, then the ordinary limit. |
 | No "Perfect —" in front of a collector question | `info_collector.without_perfect_lead_in` (`NO_PERFECT_LEAD_IN`) + the acknowledgement examples in `COLLECTOR_INSTRUCTION` | "Perfect — what email address should we use for updates?" (2026-10-16). The model's own lead-in, not the field's text (fixed the same day). |
-| A human message pauses the bot for 24 hours, not 10 minutes | `webhook.maybe_return_to_bot` (`HUMAN_PAUSE_HOURS_GATE`, `HUMAN_PAUSE_HOURS`) | 2026-10-23: a staff member wrote to a client at 2:49 PM, the client answered at 3:20 PM, the 10-minute agent pause had expired and the bot asked an old intake question. The pause runs from the last agent message or the last takeover, whichever is later; a portal resolve still returns the thread at once. |
+| A chat a human is handling stays paused until the ticket is closed or the human has been quiet 30 min | `webhook.maybe_return_to_bot` + `last_human_activity_at` + `ticket.latest_closed_at` (`HUMAN_IDLE_GATE`, `HUMAN_IDLE_MINUTES` 30) | The agreed handover rule, on the per-chat pause that already existed (`agent_took_over` -> `human_active`): a human message from the agency number, a quoted staff message or an agent picking up the ticket pauses that chat only. It ends when a ticket on the chat is closed after the last human message, or after 30 min with no human message (each one restarts it). While paused the bot sends nothing and runs no turn. After it, a question pending from before the pause is dropped (`graph.stale_intake_reset(human_since=)`), so the next message is a new conversation; Claire does not re-introduce herself (`claire_has_spoken`). A bot-raised ticket still parks only its topic. Live 2026-10-23: staff wrote at 2:49 PM, the client answered at 3:20 PM, the 10-minute pause had expired and an old intake question went out. |
 | Owner and staff numbers are never answered | `webhook.may_engage` + `app/services/internal_contacts.py` (`INTERNAL_NUMBERS_SILENT`) | `INTERNAL_NUMBERS` in .env, plus `cb_internal_contacts` once `internal_contacts_001` is applied. No emergency override for them. No number is written in code. |
 | A client quoting a staff message is talking to that person | `webhook._human_conversation` + `message.quoted_message_origin` + `IncomingMessage.quoted_id` (`QUOTED_HUMAN_REPLY_PAUSES`) | Quoting a message the bot did not send (an agent's, or one we cannot find) gets no reply and starts the pause. Quoting the bot or their own message is an ordinary turn. |
 | A ticket an agent has picked up keeps the bot quiet | `ticket.picked_up_recently` (`TICKET_PICKUP_PAUSES`) | Status `in_progress`, changed within the pause window. The safety reply still goes out. |
@@ -957,11 +957,11 @@ Easy to get wrong:
   `info_collector.REASK_PAIR_PARTNER` (the unanswered half of a combined
   question is asked once more).
   Go-live guard (2026-10-23), each `False` for the earlier behaviour:
-  `webhook.HUMAN_PAUSE_HOURS_GATE`, `webhook.INTERNAL_NUMBERS_SILENT`,
+  `webhook.HUMAN_IDLE_GATE`, `webhook.INTERNAL_NUMBERS_SILENT`,
   `webhook.QUOTED_HUMAN_REPLY_PAUSES`, `webhook.TICKET_PICKUP_PAUSES`,
   `graph.STALE_INTAKE_RESET`, `intent_classifier.ACKS_NEVER_ANSWER`,
   `guards.CONFIRMATION_IS_FOLLOW_UP`, `guards.HELPER_RIGHTS_SELF_ID`. Settings:
-  `HUMAN_PAUSE_HOURS` (24), `INTAKE_STALE_HOURS` (6), `INTERNAL_NUMBERS`
+  `HUMAN_IDLE_MINUTES` (30), `INTAKE_STALE_HOURS` (6), `INTERNAL_NUMBERS`
   (empty; owner/staff numbers, comma-separated, never in code).
   `parser.RECEIPT_LOG_CHAT_KIND` (2026-10-23): the receipt line also says
   chat=phone/lid/group/broadcast/other, never the id.
@@ -2073,6 +2073,23 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-10-23** - **The human pause follows the agreed handover rule, not a
+  fixed 24 hours** (corrects a6e9559). It reuses the per-chat pause that
+  already existed: `handle_outbound` -> `agent_took_over` sets the chat
+  `human_active`, and `maybe_return_to_bot` ends it (a portal resolve at once,
+  else after `agent_pause_minutes` 10 with no human message). Now, with
+  `HUMAN_IDLE_GATE` on: the pause ends when a ticket on the chat is resolved or
+  closed after the last human message (`ticket.latest_closed_at`), or after
+  `HUMAN_IDLE_MINUTES` (30) with no human message; a quoted staff message and a
+  picked-up ticket use the same 30 minutes. `HUMAN_PAUSE_HOURS` is gone. The
+  payload carries `last_human_at`, and `run_turn` drops a question pending from
+  before the pause, so the next message is a new conversation. A bot-raised
+  ticket still parks only its topic (unchanged). `selfcheck_golive.py` 37 checks
+  (human reply -> silent, a second human message restarts the clock, 30 min idle
+  -> answers, ticket closed -> answers at once, closed before the last human
+  message -> still paused, pending question dropped after a pause); 5 faults
+  injected, 5 red.
+
 - **2026-10-23** - **Go-live guard: the bot inside a staff conversation, and a
   helper's rights handed over.** (1) Thomas's chat: staff wrote at 2:49 PM, he
   answered "Afternoon" and "Okay." (quoting it) at 3:20 PM, and the bot asked
@@ -2083,7 +2100,7 @@ Append here, newest first. One entry per behavioural change.
   them as an answer. That exchange is NOT in the production database (no stored
   message, no checkpoint, no bot message row for it; the thread's last stored
   message is 10:29 AM), so the state it read could not be confirmed. Fixed: a
-  24-hour human pause (`HUMAN_PAUSE_HOURS`), owner/staff numbers never answered
+  human pause (corrected the same day, see below), owner/staff numbers never answered
   (`INTERNAL_NUMBERS` + `cb_internal_contacts`, SQL not applied), a quoted
   staff message silent and pausing, a picked-up ticket silent, a pending
   question over `INTAKE_STALE_HOURS` dropped before the turn, and

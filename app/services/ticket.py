@@ -2924,6 +2924,33 @@ async def recent_for_conversation(conversation_id: int, *, limit: int = 3) -> li
     return result.data or []
 
 
+async def latest_closed_at(conversation_id: int) -> datetime | None:
+    """When a ticket on this conversation was last resolved or closed, if ever.
+
+    The portal owns ticket status; an agent closing one ends the human pause on
+    the chat at once (webhook.HUMAN_IDLE_GATE). A failed read is None.
+    """
+    try:
+        result = await db.execute(
+            db.table(TABLE)
+            .select("updated_at")
+            .eq("conversation_id", conversation_id)
+            .in_("status", ["resolved", "closed"])
+            .order("updated_at", desc=True)
+            .limit(1)
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not read closed tickets for conversation %s", conversation_id)
+        return None
+    for row in result.data or []:
+        try:
+            when = datetime.fromisoformat(str(row.get("updated_at")).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+    return None
+
+
 async def picked_up_recently(conversation_id: int, hours: float) -> bool:
     """Whether a live agent has a ticket on this conversation in progress.
 

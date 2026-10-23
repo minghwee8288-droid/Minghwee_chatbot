@@ -60,11 +60,15 @@ INTERNAL_BLOCK = "an internal (owner/staff) number"
 # 2026-10-23, the bot answering inside a staff conversation. Each False for the
 # earlier behaviour.
 #
-# A human message pauses the bot for settings.human_pause_hours (24) instead
-# of agent_pause_minutes (10): a staff member wrote to a client at 2:49 PM, the
-# client answered "Afternoon" / "Okay." at 3:20 PM, and the ten-minute pause
-# had long expired, so the bot resumed and asked an old intake question.
-HUMAN_PAUSE_HOURS_GATE = True
+# The agreed handover rule, on the per-chat pause that already existed
+# (agent_took_over -> human_active, maybe_return_to_bot): the pause ends when a
+# ticket on the chat is closed in the portal, or after settings.
+# human_idle_minutes (30) with no human message - each one restarts it - in
+# place of agent_pause_minutes (10). A staff member wrote to a client at
+# 2:49 PM, the client answered "Afternoon" / "Okay." at 3:20 PM, and the
+# ten-minute pause had expired, so the bot asked an old intake question. After
+# the pause the pending question is dropped (graph.stale_intake_reset).
+HUMAN_IDLE_GATE = True
 # Owner/staff numbers (INTERNAL_NUMBERS, cb_internal_contacts) are never
 # answered, not even by the emergency override - they are colleagues.
 INTERNAL_NUMBERS_SILENT = True
@@ -488,6 +492,21 @@ def _is_paused_for_agent(conversation: dict[str, Any]) -> bool:
     ) == conversation_service.HUMAN_ACTIVE
 
 
+async def last_human_activity_at(conversation_id: int) -> datetime | None:
+    """The later of the last human message on the chat and the last takeover.
+
+    A takeover with no agent message to measure from (a quoted staff message)
+    starts the pause too, from when it happened. None when neither exists.
+    """
+    last_agent = await message_service.last_agent_message_at(conversation_id)
+    if not HUMAN_IDLE_GATE:
+        return last_agent
+    takeover_at = await handover_service.latest_takeover_at(conversation_id)
+    if takeover_at is not None and (last_agent is None or takeover_at > last_agent):
+        return takeover_at
+    return last_agent
+
+
 async def maybe_return_to_bot(conversation: dict[str, Any]) -> dict[str, Any]:
     """Hand a conversation back to the bot once the pause that silenced it is over.
 
@@ -520,22 +539,26 @@ async def maybe_return_to_bot(conversation: dict[str, Any]) -> dict[str, Any]:
         await handover_service.back_to_bot(conversation, reason=handover_service.REASON_AGENT_RESOLVED)
         return await conversation_service.get_by_id(conversation_id) or conversation
 
-    last_agent = await message_service.last_agent_message_at(conversation_id)
-    if HUMAN_PAUSE_HOURS_GATE:
-        # A takeover that left no agent message to measure from (a quoted
-        # staff message) starts the pause too - from when it happened.
-        takeover_at = await handover_service.latest_takeover_at(conversation_id)
-        if takeover_at is not None and (last_agent is None or takeover_at > last_agent):
-            last_agent = takeover_at
+    last_agent = await last_human_activity_at(conversation_id)
     if last_agent is not None:
-        if settings.agent_pause_minutes <= 0:
+        if HUMAN_IDLE_GATE:
+            # The agent closing a ticket on this chat after the last human
+            # message ends the pause at once, even with other tickets open.
+            closed_at = await ticket_service.latest_closed_at(conversation_id)
+            if closed_at is not None and closed_at >= last_agent:
+                logger.info(
+                    "Conversation %s: a ticket was closed after the last human message — resuming the bot",
+                    conversation_id,
+                )
+                await handover_service.resume_from_pause(
+                    conversation, reason=handover_service.REASON_AGENT_RESOLVED
+                )
+                return await conversation_service.get_by_id(conversation_id) or conversation
+        minutes = settings.human_idle_minutes if HUMAN_IDLE_GATE else settings.agent_pause_minutes
+        if minutes <= 0:
             return conversation  # auto-resume disabled — permanent until explicitly resolved
         idle = max(datetime.now(tz=timezone.utc) - last_agent, timedelta(0))
-        pause = (
-            timedelta(hours=settings.human_pause_hours)
-            if HUMAN_PAUSE_HOURS_GATE and settings.human_pause_hours > 0
-            else timedelta(minutes=settings.agent_pause_minutes)
-        )
+        pause = timedelta(minutes=minutes)
         if idle >= pause:
             logger.info(
                 "Conversation %s: agent quiet for %.0f min — resuming the bot",
@@ -613,7 +636,8 @@ async def _human_conversation(conversation: dict[str, Any], message: IncomingMes
             why = f"the client quoted a message the bot did not send ({origin})"
             await handover_service.agent_took_over(conversation)
     if not why and TICKET_PICKUP_PAUSES and await ticket_service.picked_up_recently(
-        conversation_id, settings.human_pause_hours
+        conversation_id,
+        (settings.human_idle_minutes if HUMAN_IDLE_GATE else settings.agent_pause_minutes) / 60,
     ):
         why = "a live agent has picked up a ticket on this thread"
     if not why:
@@ -709,7 +733,7 @@ async def handle_inbound(message: IncomingMessage) -> None:
                 "Conversation %s still with a human — bot quiet until the pause "
                 "(%s) is over",
                 existing["id"],
-                f"{settings.human_pause_hours:g} h" if HUMAN_PAUSE_HOURS_GATE
+                f"{settings.human_idle_minutes} min idle or a closed ticket" if HUMAN_IDLE_GATE
                 else f"{settings.agent_pause_minutes} min",
             )
             if not await emergency_override(existing, message.text_for_llm):
@@ -1194,8 +1218,19 @@ async def _process_locked(
         except (KeyError, TypeError, ValueError):
             hours_since_last_message = None
 
+    # When a human was last on this chat, so a question pending from before the
+    # pause is not answered by the first message after it (run_turn).
+    last_human_at = None
+    if HUMAN_IDLE_GATE:
+        try:
+            when = await last_human_activity_at(conversation["id"])
+            last_human_at = when.isoformat() if when else None
+        except Exception:  # noqa: BLE001 - a failed read must not cost the turn
+            logger.exception("Could not read the last human message on %s", conversation["id"])
+
     payload = {
         "conversation_id": conversation["id"],
+        "last_human_at": last_human_at,
         "phone": phone,
         "customer_name": conversation.get("customer_name") or "",
         "thread_id": thread_id,

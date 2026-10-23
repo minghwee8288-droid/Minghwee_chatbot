@@ -272,12 +272,13 @@ class Settings(BaseSettings):
     # until explicitly resolved, the old behaviour).
     agent_pause_minutes: int = 10
 
-    # 2026-10-23: a human message on a thread (an agent's, a quoted reply to
-    # one, an agent picking up the ticket) pauses the bot for this many hours,
-    # in place of agent_pause_minutes (webhook.HUMAN_PAUSE_HOURS_GATE). Ten
-    # minutes let the bot answer a client's "Okay." to a staff message sent
-    # half an hour earlier.
-    human_pause_hours: float = 24
+    # 2026-10-23, the agreed handover rule: a chat a human is handling (an
+    # agent's message from the agency number, a quoted reply to one, an agent
+    # picking up its ticket) stays paused until the ticket is closed in the
+    # portal OR no human message has been sent in it for this many minutes.
+    # Every new human message restarts the clock. Used in place of
+    # agent_pause_minutes while webhook.HUMAN_IDLE_GATE is on.
+    human_idle_minutes: int = 30
 
     # A collector question this many hours old is not answered by the next
     # message: the collection is dropped and the message read as a fresh one

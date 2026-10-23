@@ -70,13 +70,14 @@ class World:
     """One conversation row and what the webhook reads about it."""
 
     def __init__(self, status: str = _conv.BOT_ACTIVE, *, last_agent=None, ticket=False,
-                 quoted_origin: str = "agent") -> None:
+                 quoted_origin: str = "agent", closed_at=None) -> None:
         self.row = {"id": 26, "customer_number": CLIENT.lstrip("+"), "bot_status": status,
                     "status": "open", "langgraph_thread_id": "t-26", "last_bot_reply_at": None,
                     "updated_at": NOW.isoformat()}
         self.last_agent = last_agent
         self.ticket = ticket
         self.quoted_origin = quoted_origin
+        self.closed_at = closed_at
         self.queued: list[str] = []
         self.takeovers = 0
 
@@ -118,6 +119,8 @@ class World:
             patch.object(h, "agent_took_over", new=self.took_over),
             patch.object(h, "resume_from_pause", new=self.resumed),
             patch.object(h, "latest_takeover_at", new=AsyncMock(return_value=None)),
+            patch.object(_wh.ticket_service, "latest_closed_at",
+                         new=AsyncMock(side_effect=lambda cid: self.closed_at)),
             patch.object(_wh.ticket_service, "picked_up_recently",
                          new=AsyncMock(side_effect=lambda cid, hours: self.ticket)),
             patch.object(_wh, "_schedule_read_receipt", new=lambda *a, **k: None),
@@ -148,26 +151,46 @@ async def outbound(world: World, m: IncomingMessage) -> None:
         p.start()
     try:
         await _wh.handle_outbound(m)
-        world.last_agent = NOW - timedelta(minutes=31)  # the staff message, 2:49 PM
+        world.last_agent = NOW - timedelta(minutes=5)
     finally:
         for p in reversed(ps):
             p.stop()
 
 
 async def scenario_staff_then_okay() -> None:
-    # 1. A staff message on the thread, then the client's "Afternoon" / "Okay."
-    # 31 minutes later.
+    # The agreed handover rule: a human message pauses the chat; the pause ends
+    # after HUMAN_IDLE_MINUTES (30) with no human message, or at once when a
+    # ticket is closed.
     world = World()
     await outbound(world, message("Good afternoon, require to purchase 4 insurance",
                                   mid="staff-1", from_me=True))
     check("staff message pauses the bot (human_active)", world.row["bot_status"] == _conv.HUMAN_ACTIVE)
     await inbound(world, message("Afternoon", mid="c-1"))
-    await inbound(world, message("Okay.", mid="c-2", quoted="staff-1"))
-    check("staff message + client 'Okay' 31 min later -> silent", world.queued == [])
-    # ...and after the 24-hour pause the bot answers again.
-    world.last_agent = NOW - timedelta(hours=25)
+    world.last_agent = NOW - timedelta(minutes=20)
+    await inbound(world, message("Okay.", mid="c-2"))
+    check("human reply -> silent (client writes 5 and 20 min after it)", world.queued == [])
+    # A second human message restarts the clock: 40 min after the first,
+    # 10 after the second, still silent.
+    world.last_agent = NOW - timedelta(minutes=10)
+    await inbound(world, message("ok noted", mid="c-2b"))
+    check("each new human message restarts the 30 min", world.queued == []
+          and world.row["bot_status"] == _conv.HUMAN_ACTIVE)
+    world.last_agent = NOW - timedelta(minutes=31)
     await inbound(world, message("Hi, I need a helper", mid="c-3"))
-    check("after the 24h pause the bot answers again", world.queued == ["Hi, I need a helper"])
+    check("30 min with no human message -> the bot answers", world.queued == ["Hi, I need a helper"])
+
+
+async def scenario_ticket_closed() -> None:
+    world = World(status=_conv.HUMAN_ACTIVE, last_agent=NOW - timedelta(minutes=5))
+    await inbound(world, message("hello?", mid="tc-0"))
+    check("paused 5 min after a human message, ticket open -> silent", world.queued == [])
+    world.closed_at = NOW - timedelta(minutes=1)
+    await inbound(world, message("Is it done?", mid="tc-1"))
+    check("ticket closed in the portal -> the bot answers immediately", world.queued == ["Is it done?"])
+    world = World(status=_conv.HUMAN_ACTIVE, last_agent=NOW - timedelta(minutes=2),
+                  closed_at=NOW - timedelta(minutes=9))
+    await inbound(world, message("hello?", mid="tc-2"))
+    check("...a ticket closed BEFORE the last human message does not end the pause", world.queued == [])
 
 
 async def scenario_internal_number() -> None:
@@ -201,6 +224,10 @@ async def scenario_stale_intake() -> None:
           and reset.get("collected_info", {}).get(RESET_KEY) is True
           and reset.get("last_question") is None and reset.get("service_type") is None)
     check("...one asked 1h ago is kept", _graph.stale_intake_reset(pending, NOW - timedelta(hours=1)) == {})
+    check("a question pending from before a human pause is dropped after it",
+          bool(_graph.stale_intake_reset(pending, NOW - timedelta(hours=1), human_since=NOW - timedelta(minutes=40))))
+    check("...a human message before that question does not drop it",
+          _graph.stale_intake_reset(pending, NOW - timedelta(hours=1), human_since=NOW - timedelta(hours=2)) == {})
     check("...and nothing pending is never reset",
           _graph.stale_intake_reset({"service_type": "new_hiring"}, NOW - timedelta(hours=9)) == {})
 
@@ -218,6 +245,23 @@ async def scenario_stale_intake() -> None:
     with patch.object(_graph, "get_graph", new=lambda: FakeGraph()), \
          patch.object(_graph.kb_rules, "refresh", new=AsyncMock()):
         await _graph.run_turn("t-26", {"conversation_id": 26, "incoming_text": "Okay."})
+    seen_fresh: dict = {}
+
+    class FreshGraph(FakeGraph):
+        async def aget_state(self, config):
+            return SimpleNamespace(values=pending, created_at=(NOW - timedelta(minutes=50)).isoformat())
+
+        async def ainvoke(self, state_input, config=None):
+            seen_fresh.update(state_input)
+            return {"reply": ""}
+
+    with patch.object(_graph, "get_graph", new=lambda: FreshGraph()), \
+         patch.object(_graph.kb_rules, "refresh", new=AsyncMock()):
+        await _graph.run_turn("t-26", {"conversation_id": 26, "incoming_text": "Hi",
+                                       "last_human_at": (NOW - timedelta(minutes=40)).isoformat()})
+    check("run_turn: after a human pause the next message is a new conversation",
+          (seen_fresh.get("collected_info") or {}).get(RESET_KEY) is True
+          and "last_human_at" not in seen_fresh)
     check("run_turn drops a stale collection before the turn",
           (seen.get("collected_info") or {}).get(RESET_KEY) is True and seen.get("last_question") is None)
 
@@ -273,7 +317,8 @@ async def scenario_defaults() -> None:
     from app.config import Settings
 
     fields = Settings.model_fields
-    check("HUMAN_PAUSE_HOURS defaults to 24", fields["human_pause_hours"].default == 24)
+    check("HUMAN_IDLE_MINUTES defaults to 30", fields["human_idle_minutes"].default == 30)
+    check("no fixed 24 h pause setting remains", "human_pause_hours" not in fields)
     check("INTAKE_STALE_HOURS defaults to 6", fields["intake_stale_hours"].default == 6)
     check("no internal number is written in code", fields["internal_numbers"].default == "")
 
@@ -308,7 +353,7 @@ async def scenario_receipt_chat_kind() -> None:
 
 
 async def main() -> int:
-    for scenario in (scenario_defaults, scenario_receipt_chat_kind,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
+    for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
                      scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights):
         try:
             await scenario()
