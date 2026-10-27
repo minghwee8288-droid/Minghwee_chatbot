@@ -14,7 +14,8 @@ A draft is kept only if it passes all of these, in order:
 7. the identity check again, on the final text - the drafts are sent by a
    human consultant - and no handover to "a live agent" (the consultant is
    one), including the line a bot guard swaps in for a reply it rejects;
-8. at most 700 characters, not a duplicate of another draft.
+8. not cut by the guards: shortened by more than 40%, or ending mid-thought;
+9. at most 700 characters, not a duplicate of another draft.
 
 Kept drafts then carry "flags", and any flag sets confidence "low":
 - "unverified_figures": a number neither a cited record nor our own messages
@@ -87,6 +88,27 @@ _HANDOVER = re.compile(
 
 def announces_handover(text: str) -> bool:
     return bool(_HANDOVER.search(text))
+
+
+# --- Cut by a guard -----------------------------------------------------------
+# Live, 2026-10-27 (eval, conversation 4633): a guard trimmed a draft to
+# "Hi Geraldine, thank you for completing our form." - a greeting with the
+# substance gone, still offered as a "Next step". A cut draft is dropped, never
+# offered in its cut form.
+
+MAX_SHRINK = 0.4
+_MID_THOUGHT = re.compile(
+    r"(?:[,;:\-–—(]|\b(?:and|or|but|so|to|the|a|an|of|for|with|that|which|because|if|as))\s*$",
+    re.IGNORECASE,
+)
+
+
+def cut_by_guards(before: str, after: str) -> bool:
+    """The guards removed more than 40% of the draft, or left it ending mid-thought."""
+    before, after = before.strip(), after.strip()
+    if before and len(after) < (1 - MAX_SHRINK) * len(before):
+        return True
+    return after != before and bool(_MID_THOUGHT.search(after))
 
 
 # --- Grounding --------------------------------------------------------------
@@ -408,6 +430,7 @@ def validate(
             result.dropped.append({"label": label, "reason": "names Claire or claims to be an AI"})
             continue
         text = redact_nric(draft["text"], context="suggest:draft")
+        written = text
 
         text, reason = _node_guards(text, state, rag_context, ours)
         if reason:
@@ -442,6 +465,9 @@ def validate(
 
         if not text:
             result.dropped.append({"label": label, "reason": "empty after guards"})
+            continue
+        if cut_by_guards(written, text):
+            result.dropped.append({"label": label, "reason": "cut short by the guards"})
             continue
         if identifies_as_claire_or_ai(text):
             result.dropped.append({"label": label, "reason": "names Claire or claims to be an AI"})

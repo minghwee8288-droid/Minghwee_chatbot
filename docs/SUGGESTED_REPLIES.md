@@ -216,6 +216,10 @@ Contact, ticket and case context in the eval is today's, not as it was then.
 
 Newest first.
 
+- **2026-10-27** - A draft the guards shorten by more than 40%, or leave
+  ending mid-thought, is dropped ("cut short by the guards") instead of
+  offered in its cut form (4633). Self-check 83.
+
 - **2026-10-27** - From the 10-conversation eval: WhatsApp Business
   auto-replies ignored (4633 was stale); our earlier messages ground the
   figure guard (4641's $1,388 was dropped); a fee belonging to another or an

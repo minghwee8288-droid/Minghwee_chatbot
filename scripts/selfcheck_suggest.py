@@ -672,6 +672,17 @@ def checks_eval_round() -> None:
     check("eval: the transcript is in created_at order, not id order",
           [r["id"] for r in eval_module._time_order(shuffled)] == [30, 20, 10])
 
+    # 5. 4633: a guard cut a draft down to its greeting, and the cut version
+    # was offered as a "Next step".
+    full = ("Hi Geraldine, thank you for completing our form. We help with new hiring, transfers "
+            "and renewals, and can arrange a free consultation.")
+    check("cut drafts: shortened by more than 40% or ending mid-thought is dropped; untouched is kept",
+          sg_validate.cut_by_guards(full, "Hi Geraldine, thank you for completing our form.")
+          and sg_validate.cut_by_guards("The fee is $695, and it takes about 1 week.",
+                                        "The fee is $695, and it takes about 1 week and")
+          and not sg_validate.cut_by_guards(full, full)
+          and not sg_validate.cut_by_guards(full, full.replace("Hi Geraldine, ", "")))
+
     # 4. 4645: staff said the helpers are in the Philippines / Myanmar; a draft
     # quoted the Indonesian charges from an ID-labelled record.
     indonesian = {"id": "kb-3", "similarity": 0.8, "chunk_type": "qa_pair",
