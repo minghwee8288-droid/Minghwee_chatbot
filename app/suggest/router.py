@@ -92,9 +92,10 @@ def _parse(raw: bytes) -> SuggestRequest:
         ) from exc
 
 
-def _empty(status: str, anchor: int, bot_status: str, model: str) -> dict[str, Any]:
+def _empty(status: str, anchor: int, bot_status: str, model: str, reason: str = "") -> dict[str, Any]:
     return {
         "status": status,
+        "reason": reason,
         "anchor_message_id": anchor,
         "bot_status": bot_status,
         "suggestions": [],
@@ -120,9 +121,11 @@ async def run_suggest(
     model = model or suggest_settings.model()
     ctx = await context.build(conversation_id, anchor_message_id, as_of=as_of)
     bot_status = str(ctx.conversation.get("bot_status") or "")
-    if ctx.status == "stale":
-        body = _empty("stale", anchor_message_id, bot_status, model)
-        body["_dropped"] = [{"label": "", "reason": ctx.stale_reason}]
+    if ctx.status in ("stale", "skipped"):
+        # No retrieval and no model call: there is nothing to draft (stale) or
+        # nobody to draft for (skipped: a group chat, or one of our own people).
+        body = _empty(ctx.status, anchor_message_id, bot_status, model, ctx.reason)
+        body["_dropped"] = []
         body["latency_ms"] = int((time.monotonic() - started) * 1000)
         return body
 
@@ -156,6 +159,7 @@ async def run_suggest(
     lang = raw.get("language") if isinstance(raw.get("language"), str) else ""
     body = {
         "status": "ready" if checked.kept else "insufficient",
+        "reason": "" if checked.kept else "no_valid_draft",
         "anchor_message_id": anchor_message_id,
         "bot_status": bot_status,
         "suggestions": checked.kept,

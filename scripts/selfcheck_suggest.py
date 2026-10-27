@@ -359,11 +359,11 @@ def checks_labelling() -> None:
     reason, earlier, batch = sg_context.split_at_anchor(rows, 7)
     check("anchor: the newest inbound message is not stale", reason == "" and [r["id"] for r in batch] == [7])
     reason, _, _ = sg_context.split_at_anchor(rows, 4)
-    check("anchor: an older inbound message is stale", reason.startswith("anchor is not"))
+    check("anchor: an older inbound message is stale", reason == sg_context.NOT_NEWEST_INBOUND)
     answered = rows + [{"id": 8, "direction": "outbound", "is_bot": False, "sent_by": "agent",
                         "body": "It is $695.", "created_at": _at(0)}]
     reason, _, _ = sg_context.split_at_anchor(answered, 7)
-    check("anchor: a message already answered by staff is stale", reason.endswith("already been answered"))
+    check("anchor: a message already answered by staff is stale", reason == sg_context.ALREADY_ANSWERED)
     burst = rows + [{"id": 9, "direction": "inbound", "is_bot": False, "sent_by": None,
                      "body": "and how long?", "created_at": _at(0)}]
     reason, _, batch = sg_context.split_at_anchor(burst, 9)
@@ -540,6 +540,92 @@ def checks_drafting() -> None:
             check("llm: output that is not JSON is an error, not drafts", True)
 
 
+def checks_skipped() -> None:
+    """A group chat or one of our own numbers: status skipped, no model call."""
+    with World() as world:
+        world.store.rows["wp_chat_conversations"] = [dict(CONVERSATION, is_group=True)]
+        out = _suggest(world)
+        check("skipped: a group chat -> status skipped, reason group, no model call",
+              out["status"] == "skipped" and out["reason"] == "group"
+              and out["suggestions"] == [] and not world.llm.calls, json.dumps(out)[:200])
+
+    with World() as world, patch.object(settings, "internal_numbers", "+65 9000 1234"):
+        out = _suggest(world)
+        check("skipped: an INTERNAL_NUMBERS number -> status skipped, reason internal, no model call",
+              out["status"] == "skipped" and out["reason"] == "internal" and not world.llm.calls,
+              json.dumps(out)[:200])
+
+    with World() as world:
+        world.store.rows["cb_internal_contacts"] = [{"phone": "6590001234", "active": True}]
+        out = _suggest(world)
+        check("skipped: a cb_internal_contacts number -> skipped internal",
+              out["status"] == "skipped" and out["reason"] == "internal" and not world.llm.calls)
+
+    with World() as world, patch.object(settings, "internal_numbers", "+65 9999 8888"):
+        out = _suggest(world)
+        check("skipped: an ordinary client number is drafted", out["status"] == "ready", out["status"])
+
+
+def checks_flags() -> None:
+    """Kept drafts carry flags, and any flag makes confidence low."""
+    with World() as world:
+        out = _suggest(world)
+        good = out["suggestions"][0]
+        check("flags: a draft whose figures are in the cited record has no flag and keeps its confidence",
+              good["flags"] == [] and good["confidence"] == "high", json.dumps(good))
+        check("flags: every kept draft carries a flags list",
+              all(isinstance(s.get("flags"), list) for s in out["suggestions"]))
+        system = world.llm.calls[0]["messages"][0]["content"]
+        check("prompt: a yes/no is given only when the records state it",
+              "gets a yes or a no ONLY if \"Our records\" state that answer explicitly" in system)
+
+    # Live, 2026-10-27 (eval, conversation 1381): the client asked why it is
+    # "52 or 78" and a draft explained both figures with invented rest-day counts.
+    client_numbers = {"label": "Answer", "kb_refs": ["kb-1"], "confidence": "high",
+                      "text": "The rest day compensation is $52 or $78, for 2 or 3 rest days."}
+    invented_count = {"label": "Next step", "kb_refs": [], "confidence": "high",
+                      "text": "We will send you 2 copies of the agreement to sign."}
+    with World(model_output(client_numbers, invented_count, CLARIFY)) as world:
+        world.store.rows["wp_chat_messages"][0] = dict(
+            world.store.rows["wp_chat_messages"][0],
+            body="Why does the rest day compensation say 52 or 78?")
+        out = _suggest(world)
+        by_label = {s["label"]: s for s in out["suggestions"]}
+        first = by_label.get("Answer", {})
+        check("flags: a number only the client wrote is kept, flagged unverified_figures, confidence low",
+              "unverified_figures" in first.get("flags", []) and first.get("confidence") == "low",
+              json.dumps(out["suggestions"])[:400])
+        second = by_label.get("Next step", {})
+        check("flags: a count nobody wrote is flagged unverified_figures",
+              second.get("flags") == ["unverified_figures"] and second.get("confidence") == "low",
+              json.dumps(second))
+        check("flags: a Clarify with no numbers and no claims has no flag",
+              by_label.get("Clarify", {}).get("flags") == [], json.dumps(out["suggestions"])[-200:])
+
+    # Live, 2026-10-27 (conversation 2409): "Yes, we can start the renewal while
+    # she goes for the medical" from a record that lists the steps, not that.
+    overreach = {"label": "Answer", "kb_refs": ["kb-1"], "confidence": "high",
+                 "text": "Yes, we can kickstart the application while she attends the medical examination."}
+    clarify_overreach = dict(overreach, label="Clarify",
+                             text="Shall we kickstart the application while she attends the medical examination?")
+    with World(model_output(overreach, clarify_overreach)) as world:
+        out = _suggest(world)
+        by_label = {s["label"]: s for s in out["suggestions"]}
+        answer = by_label.get("Answer", {})
+        check("flags: an Answer whose claim words are not in its cited record -> weak_support, low",
+              answer.get("flags") == ["weak_support"] and answer.get("confidence") == "low",
+              json.dumps(answer))
+        check("flags: the support check applies to Answer drafts only",
+              "weak_support" not in by_label.get("Clarify", {}).get("flags", ["?"]),
+              json.dumps(by_label.get("Clarify")))
+    check("flags: an Answer citing nothing that makes claims is weak_support",
+          sg_validate.weakly_supported("We can kickstart the application tomorrow.", "", "hi"))
+    check("flags: claim words the client used themselves do not count against support",
+          not sg_validate.weakly_supported("Yes, the renewal fee is noted.",
+                                           "The work permit renewal fee is $695.",
+                                           "what is the renewal fee?"))
+
+
 def checks_stale_and_state() -> None:
     with World() as world:
         out = _suggest(world, anchor=4)
@@ -681,16 +767,29 @@ def checks_http() -> None:
 
                 r = client.post("/internal/suggest", json=body, headers={"X-Suggest-Secret": SECRET})
                 data = r.json()
-                keys = {"status", "anchor_message_id", "bot_status", "suggestions", "kb_gap",
+                keys = {"status", "reason", "anchor_message_id", "bot_status", "suggestions", "kb_gap",
                         "sensitive", "language", "model", "usage", "latency_ms", "prompt_version"}
+                draft_keys = {"label", "text", "kb_refs", "confidence", "flags"}
                 check("http: 200 with exactly the response contract",
                       r.status_code == 200 and set(data) == keys and data["status"] == "ready"
-                      and data["bot_status"] == "bot_active", json.dumps(data)[:300])
+                      and data["reason"] == "" and data["bot_status"] == "bot_active"
+                      and all(set(d) == draft_keys and isinstance(d["flags"], list)
+                              for d in data["suggestions"]), json.dumps(data)[:300])
 
                 r = client.post("/internal/suggest", json=dict(body, anchor_message_id=4),
                                 headers={"X-Suggest-Secret": SECRET})
                 check("http: a stale anchor -> 200 status stale", r.status_code == 200
-                      and r.json()["status"] == "stale")
+                      and r.json()["status"] == "stale"
+                      and r.json()["reason"] == sg_context.NOT_NEWEST_INBOUND)
+
+            with World() as world:
+                sg_router._semaphore = None
+                world.store.rows["wp_chat_conversations"] = [dict(CONVERSATION, group_jid="1203@g.us")]
+                r = client.post("/internal/suggest", json=body, headers={"X-Suggest-Secret": SECRET})
+                check("http: a group chat -> 200 status skipped, reason group, no model call",
+                      r.status_code == 200 and r.json()["status"] == "skipped"
+                      and r.json()["reason"] == "group" and r.json()["suggestions"] == []
+                      and not world.llm.calls, r.text[:200])
 
             with World() as world:
                 world.store.rows["wp_chat_conversations"] = []
@@ -744,7 +843,8 @@ def main() -> int:
     with patch.object(httpx.HTTPTransport, "handle_request", _refuse_sync), \
             patch.object(httpx.AsyncHTTPTransport, "handle_async_request", _refuse_async):
         for group in (checks_labelling, checks_identity, checks_grounding_units, checks_drafting,
-                      checks_stale_and_state, checks_tripwire, checks_readonly_scope, checks_http):
+                      checks_stale_and_state, checks_skipped, checks_flags, checks_tripwire,
+                      checks_readonly_scope, checks_http):
             try:
                 group()
             except Exception as exc:  # noqa: BLE001 - a crash is a FAIL, never silence

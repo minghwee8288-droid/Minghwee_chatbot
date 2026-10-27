@@ -19,6 +19,7 @@ from typing import Any
 from app.config import settings
 from app.db.supabase import db
 from app.services import contact as contact_service
+from app.suggest import audience
 from app.services import conversation as conversation_service
 from app.services import lead as lead_service
 from app.services import ticket as ticket_service
@@ -39,19 +40,24 @@ STAFF = "STAFF"
 _PREFIX = {CUSTOMER: "Client", CLAIRE: "You", STAFF: "Agent"}
 
 
+# Why a request gets no drafts (the response's "reason").
+NOT_NEWEST_INBOUND = "not_newest_inbound"
+ALREADY_ANSWERED = "already_answered"
+
+
 class ConversationNotFound(LookupError):
     pass
 
 
 @dataclass
 class SuggestContext:
-    status: str  # "ok" | "stale"
+    status: str  # "ok" | "stale" | "skipped"
     conversation: dict[str, Any]
     anchor_message_id: int
     state: dict[str, Any] = field(default_factory=dict)
     payload: dict[str, Any] = field(default_factory=dict)
     history: list[dict[str, Any]] = field(default_factory=list)
-    stale_reason: str = ""
+    reason: str = ""  # a code: see split_at_anchor and audience.skip_reason
 
 
 def label_of(row: dict[str, Any]) -> str | None:
@@ -114,7 +120,7 @@ async def _recent_rows(conversation_id: int, up_to_id: int | None = None) -> lis
 def split_at_anchor(
     rows: list[dict[str, Any]], anchor_message_id: int
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
-    """(stale_reason, earlier history, the client's unanswered messages).
+    """(stale reason code, earlier history, the client's unanswered messages).
 
     The incoming batch is the run of inbound messages ending at the anchor, as
     the debouncer would have batched them. Stale when the anchor is not the
@@ -122,11 +128,11 @@ def split_at_anchor(
     """
     inbound = [r for r in rows if r.get("direction") == "inbound"]
     if not inbound or inbound[-1].get("id") != anchor_message_id:
-        return "anchor is not the newest inbound message", [], []
+        return NOT_NEWEST_INBOUND, [], []
     index = next(i for i, r in enumerate(rows) if r.get("id") == anchor_message_id)
     if any(label_of(r) in (CLAIRE, STAFF) and (r.get("body") or "").strip()
            for r in rows[index + 1:]):
-        return "the customer's message has already been answered", [], []
+        return ALREADY_ANSWERED, [], []
     start = index
     while start > 0 and (
         rows[start - 1].get("direction") == "inbound"
@@ -171,10 +177,16 @@ async def build(
     if not conversation:
         raise ConversationNotFound(conversation_id)
 
+    # A group chat or one of our own numbers is not a client: no drafts, and
+    # nothing else is read.
+    skip = await audience.skip_reason(conversation)
+    if skip:
+        return SuggestContext("skipped", conversation, anchor_message_id, reason=skip)
+
     rows = await _recent_rows(conversation_id, anchor_message_id if as_of else None)
     reason, earlier, batch = split_at_anchor(rows, anchor_message_id)
     if reason:
-        return SuggestContext("stale", conversation, anchor_message_id, stale_reason=reason)
+        return SuggestContext("stale", conversation, anchor_message_id, reason=reason)
 
     history = labelled(earlier)[-settings.history_limit:]
     combined = "\n".join((r.get("body") or "").strip() for r in batch if (r.get("body") or "").strip())

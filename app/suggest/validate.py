@@ -16,6 +16,12 @@ A draft is kept only if it passes all of these, in order:
    one), including the line a bot guard swaps in for a reply it rejects;
 8. at most 700 characters, not a duplicate of another draft.
 
+Kept drafts then carry "flags", and any flag sets confidence "low":
+- "unverified_figures": a number neither a cited record nor our own messages
+  state (one only the client wrote, or one nobody wrote);
+- "weak_support": an Answer whose key claim words are mostly not in the
+  records it cites (a simple keyword check).
+
 At most three survive. Drops are returned with their reason and never logged
 with their text.
 """
@@ -118,6 +124,79 @@ def numbers_in(text: str) -> set[str]:
 def ungrounded(text: str, sources: str) -> set[str]:
     """Figures in the draft that no source states."""
     return figures_in(text) - numbers_in(sources)
+
+
+# --- Flags: kept, but marked for the consultant ---------------------------------
+
+UNVERIFIED_FIGURES = "unverified_figures"
+WEAK_SUPPORT = "weak_support"
+
+_SPEAKER = re.compile(r"^(Client|You|Agent):\s?")
+
+
+def split_speakers(history_text: str, incoming_text: str) -> tuple[str, str]:
+    """(what the client wrote, what we wrote) from the rendered transcript. A
+    line with no prefix continues the message above it."""
+    client: list[str] = [incoming_text or ""]
+    ours: list[str] = []
+    current = client
+    for line in (history_text or "").splitlines():
+        match = _SPEAKER.match(line)
+        if match:
+            current = client if match.group(1) == "Client" else ours
+            line = line[match.end():]
+        current.append(line)
+    return "\n".join(client), "\n".join(ours)
+
+
+def unverified_numbers(text: str, cited: str, ours: str) -> set[str]:
+    """Every number in the draft that neither a cited record nor one of our own
+    messages (Claire's or staff's) states. That covers a number only the client
+    wrote - live, 2026-10-27, a draft "explained" the client's "$52 or $78" -
+    and a count nobody wrote at all ("2 rest days" in the same draft), which
+    the money/duration grounding check does not see."""
+    return numbers_in(text) - numbers_in(cited) - numbers_in(ours)
+
+
+_CONTENT = re.compile(r"[a-z][a-z']{3,}")
+_COMMON = set("""
+about after again also been before being both cannot come could does done each even every
+from give going have here into just know like made make many more most much need once only
+other over please same should some such than that their them then there these they this those
+through very want well were what when where which while will with within would your yours
+yeah sure okay noted thank thanks help check confirm update let know able
+""".split())
+
+
+def _stem(word: str) -> str:
+    return word.rstrip("'s")[:5]
+
+
+def claim_words(text: str, client_text: str) -> set[str]:
+    """The draft's key claim words: content words that are not filler and not
+    simply the client's own words handed back to them."""
+    echoed = {_stem(w) for w in _CONTENT.findall(client_text.lower())}
+    return {
+        _stem(w) for w in _CONTENT.findall(text.lower())
+        if w not in _COMMON and _stem(w) not in echoed
+    }
+
+
+def weakly_supported(text: str, cited: str, client_text: str) -> bool:
+    """An Answer whose claim words are mostly absent from the records it cites.
+    A simple keyword check, not a judgement of truth: it catches the "Yes, we
+    can start the renewal while..." shape, where the records hold the topic but
+    not the claim."""
+    claims = claim_words(text, client_text)
+    if not claims:
+        return False
+    if not cited.strip():
+        return True
+    present = {_stem(w) for w in _CONTENT.findall(cited.lower())}
+    return len(claims & present) / len(claims) < SUPPORT_THRESHOLD
+
+
+SUPPORT_THRESHOLD = 0.5
 
 
 # --- Result -----------------------------------------------------------------
@@ -271,6 +350,7 @@ def validate(
 
     by_ref = {ref_of(m): m for m in matches if ref_of(m)}
     conversation = "\n".join([state.get("history_text") or "", state.get("incoming_text") or ""])
+    client_text, ours = split_speakers(state.get("history_text") or "", state.get("incoming_text") or "")
     seen: set[str] = set()
 
     for item in items:
@@ -328,7 +408,13 @@ def validate(
             continue
         seen.add(key)
 
-        result.kept.append({**draft, "text": text})
+        flags: list[str] = []
+        if unverified_numbers(text, cited, ours):
+            flags.append(UNVERIFIED_FIGURES)
+        if draft["label"] == "Answer" and weakly_supported(text, cited, client_text):
+            flags.append(WEAK_SUPPORT)
+        confidence = "low" if flags else draft["confidence"]
+        result.kept.append({**draft, "text": text, "confidence": confidence, "flags": flags})
         if len(result.kept) == MAX_DRAFTS:
             break
     return result

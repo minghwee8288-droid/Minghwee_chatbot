@@ -19,6 +19,13 @@ Calls the real model, so each conversation costs one LLM call (about 9k
 prompt tokens). Testers' numbers (BOT_ALLOWED_NUMBERS) are skipped unless
 --include-testers.
 
+Only client conversations are drafted: an EMPLOYER or a HELPER/candidate. A
+group chat or one of our own numbers is left out (audience.skip_reason, as the
+endpoint does), and so is a supplier, partner or an unrecognised number. The
+conversation's contact_type decides when it says employer or helper; when it
+is empty (most portal threads) the number is matched against our records with
+contact.identify(), which only reads.
+
 Known limits: contact, ticket and case context is today's, not as it was at
 the anchor; the intent and service come from retrieval alone, since the saved
 state is not used.
@@ -42,8 +49,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import readonly  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.db.supabase import db  # noqa: E402
+from app.services import contact as contact_service  # noqa: E402
 from app.services import conversation as conversation_service  # noqa: E402
-from app.suggest import context  # noqa: E402
+from app.suggest import audience, context  # noqa: E402
 from app.suggest import llm as suggest_llm  # noqa: E402
 from app.suggest import settings as suggest_settings  # noqa: E402
 from app.suggest.router import run_suggest  # noqa: E402
@@ -62,6 +70,31 @@ on or our please so that the this to we will with you your yes no ok okay""".spl
 
 class WriteAttempted(RuntimeError):
     pass
+
+
+# contact_type values on wp_chat_conversations, as the bot and the portal write them.
+_EMPLOYER_TYPES = {"employer"}
+_CANDIDATE_TYPES = {"candidate", "helper", "domestic_helper"}
+_EXCLUDED_TYPES = {"supplier", "partner", "recruiter", "test"}
+
+
+async def audience_of(conversation: dict[str, Any]) -> str:
+    """"employer", "candidate", or why it is left out."""
+    skip = await audience.skip_reason(conversation)
+    if skip:
+        return skip
+    kind = str(conversation.get("contact_type") or "").strip().lower()
+    if kind in _EMPLOYER_TYPES:
+        return "employer"
+    if kind in _CANDIDATE_TYPES:
+        return "candidate"
+    if kind in _EXCLUDED_TYPES:
+        return kind
+    if conversation.get("matched_supplier_id"):
+        return "supplier"
+    identified = await contact_service.identify(normalize_phone(conversation.get("customer_number")))
+    found = identified.get("contact_type")
+    return found if found in ("employer", "candidate") else (found or "unknown")
 
 
 def mask(text: str) -> str:
@@ -136,6 +169,7 @@ async def find_cases(args: argparse.Namespace) -> list[dict[str, Any]]:
 
     cases: list[dict[str, Any]] = []
     seen: set[int] = set()
+    excluded: dict[str, int] = args.excluded
     for row in result.data or []:
         cid = row["conversation_id"]
         if cid in seen or not _staff_reply(row, args.min_reply_chars):
@@ -145,11 +179,18 @@ async def find_cases(args: argparse.Namespace) -> list[dict[str, Any]]:
             continue
         if normalize_phone(conversation.get("customer_number")) in testers:
             seen.add(cid)
+            excluded["tester"] = excluded.get("tester", 0) + 1
+            continue
+        who = await audience_of(conversation)
+        if who not in ("employer", "candidate"):
+            seen.add(cid)
+            excluded[who] = excluded.get(who, 0) + 1
             continue
         case = await _case_for(row, args.min_reply_chars)
         if case is None:
             continue
         seen.add(cid)
+        case["audience"] = who
         cases.append(case)
         if len(cases) >= args.limit:
             break
@@ -190,7 +231,8 @@ async def draft_case(case: dict[str, Any], model: str) -> dict[str, Any]:
     return body
 
 
-def _render(cases: list[dict[str, Any]], model: str, started: datetime) -> str:
+def _render(cases: list[dict[str, Any]], model: str, started: datetime,
+            excluded: dict[str, int]) -> str:
     done = [c for c in cases if "result" in c]
     results = [c["result"] for c in done]
     latencies = [r["latency_ms"] for r in results if r.get("latency_ms")]
@@ -212,12 +254,18 @@ def _render(cases: list[dict[str, Any]], model: str, started: datetime) -> str:
         "Drafted as of the client's message: later messages and the saved bot state are not used. "
         "Contact, ticket and case context is today's.",
         "",
+        "Employer and helper/candidate conversations only. Conversations left out while selecting: "
+        + (", ".join(f"{k} {v}" for k, v in sorted(excluded.items())) or "none") + ".",
+        "",
         "## Summary",
         "",
         "| Measure | Value |",
         "|---|---|",
         f"| Status | {', '.join(f'{k} {v}' for k, v in sorted(statuses.items())) or '-'} |",
-        f"| Drafts kept | {sum(len(r['suggestions']) for r in results)} |",
+        f"| Audience | {', '.join(f'{k} {v}' for k, v in sorted(_count(c['audience'] for c in done).items()))} |",
+        f"| Drafts kept | {sum(len(r['suggestions']) for r in results)} "
+        f"(low confidence {sum(s['confidence'] == 'low' for r in results for s in r['suggestions'])}) |",
+        f"| Flags | {', '.join(f'{k} {v}' for k, v in sorted(_count(f for r in results for s in r['suggestions'] for f in s.get('flags', [])).items())) or 'none'} |",
         f"| Drafts dropped | {len(drops)} (grounding: {len(grounding)}) |",
         f"| kb_gap | {sum(bool(r.get('kb_gap')) for r in results)} of {len(results)} |",
         f"| Sensitive | {sum(bool(r.get('sensitive')) for r in results)} of {len(results)} |",
@@ -239,7 +287,7 @@ def _render(cases: list[dict[str, Any]], model: str, started: datetime) -> str:
 
     for c in cases:
         r = c.get("result")
-        out += [f"## Conversation {c['conversation_id']} (anchor {c['anchor']})", ""]
+        out += [f"## Conversation {c['conversation_id']} - {c.get('audience', '?')} (anchor {c['anchor']})", ""]
         if r is None:
             out += [f"Not drafted: {c.get('error', 'unknown error')}", ""]
             continue
@@ -257,7 +305,8 @@ def _render(cases: list[dict[str, Any]], model: str, started: datetime) -> str:
             out += [f"Error: {r['error']}", ""]
         for i, s in enumerate(r["suggestions"], 1):
             figs = figures_in(s["text"])
-            out += [f"{i}. **{s['label']}** ({s['confidence']}, overlap {overlap(s['text'], c['staff_reply'])}"
+            flag_text = f", flags {'/'.join(s['flags'])}" if s.get("flags") else ""
+            out += [f"{i}. **{s['label']}** ({s['confidence']}{flag_text}, overlap {overlap(s['text'], c['staff_reply'])}"
                     f"{', figures ' + ', '.join(sorted(figs)) if figs else ''}"
                     f"{', refs ' + str(len(s['kb_refs'])) if s['kb_refs'] else ''}): {mask(s['text'])}"]
         for d in r.get("_dropped", []):
@@ -271,6 +320,13 @@ def _render(cases: list[dict[str, Any]], model: str, started: datetime) -> str:
                     f"in drafts: {', '.join(sorted(draft_figs)) or 'none'}"]
         out += [""]
     return "\n".join(out)
+
+
+def _count(items: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        counts[item] = counts.get(item, 0) + 1
+    return counts
 
 
 def _out_path(out_dir: Path, model: str, started: datetime) -> Path:
@@ -290,7 +346,7 @@ async def main() -> int:
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--min-reply-chars", type=int, default=15,
                         help="ignore staff replies shorter than this (\"Okay.\")")
-    parser.add_argument("--scan", type=int, default=500, help="recent staff messages to scan")
+    parser.add_argument("--scan", type=int, default=2000, help="recent staff messages to scan")
     parser.add_argument("--include-testers", action="store_true",
                         help="include BOT_ALLOWED_NUMBERS conversations")
     args = parser.parse_args()
@@ -298,6 +354,7 @@ async def main() -> int:
         parser.error("--limit must be at least 1")
     model = args.model or suggest_settings.model()
     started = datetime.now()
+    args.excluded = {}
 
     with readonly.read_only() as refused:
         cases = await find_cases(args)
@@ -306,7 +363,8 @@ async def main() -> int:
     if not cases:
         print("No conversation with a staff reply to a client message was found.")
         return 1
-    print(f"{len(cases)} conversation(s), model {model}")
+    print(f"{len(cases)} conversation(s), model {model}; left out: "
+          + (", ".join(f"{k} {v}" for k, v in sorted(args.excluded.items())) or "none"))
 
     for case in cases:
         try:
@@ -322,7 +380,7 @@ async def main() -> int:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     path = _out_path(args.out_dir, model, started)
-    path.write_text(_render(cases, model, started), encoding="utf-8")
+    path.write_text(_render(cases, model, started, args.excluded), encoding="utf-8")
     # The machine-readable copy, for comparing models: masked like the report.
     records = []
     for c in cases:

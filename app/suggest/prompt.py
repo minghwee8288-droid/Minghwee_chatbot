@@ -15,7 +15,7 @@ from typing import Any
 
 from app.graph.prompts.system import build_system_prompt
 
-SUGGEST_PROMPT_VERSION = "suggest-v1"
+SUGGEST_PROMPT_VERSION = "suggest-v2"
 
 SUGGEST_WRAPPER = """\
 YOU ARE NOT REPLYING TO THE CLIENT YOURSELF. You are drafting reply OPTIONS for \
@@ -35,6 +35,12 @@ them has already said.
 Every other rule above still applies, because a draft may be sent as it is:
 - Never invent a fact, fee, figure, date or duration. Use only "Our records" \
 and the conversation. If the records do not answer it, say we will confirm.
+- A yes/no question, or one asking "can we / can I / is it possible", gets a \
+yes or a no ONLY if "Our records" state that answer explicitly. Otherwise no \
+draft may say yes or no, or imply either: offer a "Clarify" draft and a \
+"Next step" draft saying we will check and confirm, and no "Answer".
+- A number the client wrote is theirs, not a fact we have checked. Do not \
+explain or confirm it unless "Our records" or our earlier messages give it.
 - Follow the fee rules exactly as they are written above (what may be quoted, \
 for which service and nationality, and what must be deferred).
 - Reply in the client's language (rule 12), with Western digits.
@@ -45,7 +51,7 @@ Write 2 or 3 drafts that take meaningfully DIFFERENT approaches, not \
 paraphrases. Pick from:
 - "Answer": answer from our records.
 - "Clarify": ask for the one missing detail needed to answer.
-- "Next step": say what happens next, or that we are checking and will \
+- "Next step": say what happens next, or hold: that we are checking and will \
 confirm.
 Only offer an approach that makes sense for this message.
 
