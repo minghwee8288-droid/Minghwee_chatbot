@@ -626,6 +626,79 @@ def checks_flags() -> None:
                                            "what is the renewal fee?"))
 
 
+def _set_body(world: "World", message_id: int, body: str) -> None:
+    for row in world.store.rows["wp_chat_messages"]:
+        if row["id"] == message_id:
+            row["body"] = body
+
+
+def checks_eval_round() -> None:
+    """The four fixes from the 2026-10-27 eval (conversations 4633, 4641, 4645, 194)."""
+    # 1. 4633: the handset's greeting, stored by the portal as a staff message
+    # 4 s after the client wrote, made the request stale.
+    with World() as world:
+        anchor_at = NOW - timedelta(minutes=1)
+        world.store.rows["wp_chat_messages"].insert(0, {
+            "id": 8, "direction": "outbound", "is_bot": False, "sent_by": "Ming Hwee Agency",
+            "body": "Thank you for contacting Ming Hwee Agency! Please let us know how we can help you.",
+            "created_at": (anchor_at + timedelta(seconds=4)).isoformat()})
+        out = _suggest(world)
+        system = world.llm.calls[0]["messages"][0]["content"] if world.llm.calls else ""
+        check("auto-reply: a WhatsApp Business greeting after the client's message is ignored "
+              "(not stale, not in the history)",
+              out["status"] == "ready" and "Please let us know how we can help" not in system
+              and "Please let us know how we can help" not in world.llm.calls[0]["messages"][1]["content"],
+              json.dumps(out)[:300])
+
+    # 2. 4641: staff had quoted "Agency Fee $1,388"; a draft repeating it was
+    # dropped as "figure not in the records".
+    repeat = {"label": "Next step", "kb_refs": [], "confidence": "high",
+              "text": "The agency fee we quoted is $1,388, and I can check with management about a discount."}
+    with World(model_output(repeat, CLARIFY)) as world:
+        _set_body(world, 5, "Hello Mr Tan, the Agency Fee is $1,388.")
+        out = _suggest(world)
+        check("grounding: a fee our staff already quoted in this conversation may be repeated",
+              any("$1,388" in s["text"] for s in out["suggestions"]),
+              json.dumps(out["_dropped"])[:300])
+
+    # 3. 194: the eval showed old backfilled messages (new ids) after newer ones.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("eval_suggest", Path(__file__).with_name("eval_suggest.py"))
+    eval_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(eval_module)
+    shuffled = [{"id": 30, "created_at": "2026-01-05T10:00:00+00:00"},
+                {"id": 10, "created_at": "2026-10-01T10:00:00+00:00"},
+                {"id": 20, "created_at": "2026-10-01T09:00:00.500+00:00"}]
+    check("eval: the transcript is in created_at order, not id order",
+          [r["id"] for r in eval_module._time_order(shuffled)] == [30, 20, 10])
+
+    # 4. 4645: staff said the helpers are in the Philippines / Myanmar; a draft
+    # quoted the Indonesian charges from an ID-labelled record.
+    indonesian = {"id": "kb-3", "similarity": 0.8, "chunk_type": "qa_pair",
+                  "question": "What third-party charges apply to an Indonesian new hire?",
+                  "answer": "For an Indonesian new hire: insurance $590, medical $70.",
+                  "content": None, "source_document": "Ming Hwee Service Notes",
+                  "service_type": "renewal", "contact_type": "all", "nationality": "ID",
+                  "metadata": {}}
+    quote = {"label": "Answer", "kb_refs": ["kb-3"], "confidence": "high",
+             "text": "Insurance is $590 and the medical is $70."}
+    hold = {"label": "Next step", "kb_refs": [], "confidence": "high",
+            "text": "I will check the charges for her and confirm."}
+    with World(model_output(quote, hold)) as world:
+        world.store.kb.append(indonesian)
+        _set_body(world, 5, "All is in the Philippines. Only Myanmar is available in SG.")
+        _set_body(world, 7, "How about all the admin fee, checkup, insurance fees charges??")
+        out = _suggest(world)
+        texts = " ".join(s["text"] for s in out["suggestions"])
+        clarify = [s for s in out["suggestions"] if s["label"] == "Clarify"]
+        check("nationality: another or unknown nationality's fee is not quoted, and a Clarify "
+              "flagged nationality_unconfirmed is offered",
+              "$590" not in texts and clarify
+              and "nationality_unconfirmed" in clarify[0]["flags"]
+              and any("nationality" in d["reason"] for d in out["_dropped"]),
+              json.dumps(out["suggestions"])[:400])
+
+
 def checks_stale_and_state() -> None:
     with World() as world:
         out = _suggest(world, anchor=4)
@@ -843,7 +916,8 @@ def main() -> int:
     with patch.object(httpx.HTTPTransport, "handle_request", _refuse_sync), \
             patch.object(httpx.AsyncHTTPTransport, "handle_async_request", _refuse_async):
         for group in (checks_labelling, checks_identity, checks_grounding_units, checks_drafting,
-                      checks_stale_and_state, checks_skipped, checks_flags, checks_tripwire,
+                      checks_stale_and_state, checks_skipped, checks_flags, checks_eval_round,
+                      checks_tripwire,
                       checks_readonly_scope, checks_http):
             try:
                 group()

@@ -77,6 +77,9 @@ Each suggestion:
 - `flags`: a list, possibly empty:
   - `unverified_figures`: the draft has a number that no cited record and none of our own messages (Claire's or staff's) states. That covers a number only the client wrote, and a count nobody wrote.
   - `weak_support`: an `Answer` whose key claim words are mostly absent from the records it cites (a keyword check, threshold 50%).
+  - `nationality_unconfirmed`: the draft cites a record labelled for one helper nationality (PH/ID/MM) while the conversation's nationality is unknown, ambiguous or another one. A draft that QUOTES such a fee is dropped instead, and if no Clarify survives a fixed one is added ("Which helper is this for, and what is her nationality?..."), carrying this flag.
+
+The nationality in play (`app/suggest/nationality.py`) is: the client's message naming exactly one; else the last 6 transcript lines naming exactly one (several named = unknown); else the saved state; else the helper records, if they agree.
 
 `kb_gap`: the model said our records do not answer it, or nothing was retrieved, or the best match is under `RAG_SOFT_FLOOR`. `sensitive`: the model's judgement (complaint, harm, dispute, legal, medical).
 
@@ -196,19 +199,29 @@ Contact, ticket and case context in the eval is today's, not as it was then.
 - The intent classifier is not run: retrieval uses the intent and service from
   the last saved turn (none in the eval).
 - An anchor answered by Claire or staff is `stale`. WhatsApp Business
-  auto-greetings stored by the portal under `sent_by = "Ming Hwee Agency"`
-  currently count as a staff reply (seen in the 2026-10-27 eval, conversation
-  4633); only `sent_by = "whatsapp_auto"` rows are recognised as auto-replies.
+  auto-replies are left out of the stale check and the history: the two known
+  texts (`context.KNOWN_AUTO_REPLIES`, plus `WHATSAPP_AUTO_REPLY_TEXTS`) and
+  any outbound text sent within 10 s of a client message that was also sent in
+  another conversation. A new greeting text sent more slowly is still read as
+  staff.
 - An invalid `kb_ref` drops the whole draft, not just the ref.
-- The bot's `ungrounded_figures` guard grounds on the records and the client's
-  message, not on staff messages, so a draft repeating a fee our staff already
-  quoted is dropped (2026-10-27 eval, conversation 4641).
+- The bot's `ungrounded_figures` guard also grounds on our own earlier
+  messages here (Claire's and staff's), so a fee staff already quoted may be
+  repeated.
+- The fixed nationality Clarify is in English whatever the client's language.
 - Word-numbers ("two weeks") are not grounding-checked.
 - `weak_support` is a keyword heuristic, not a truth check.
 
 ## Change log
 
 Newest first.
+
+- **2026-10-27** - From the 10-conversation eval: WhatsApp Business
+  auto-replies ignored (4633 was stale); our earlier messages ground the
+  figure guard (4641's $1,388 was dropped); a fee belonging to another or an
+  unconfirmed nationality is dropped, with a Clarify and the
+  `nationality_unconfirmed` flag (4645 quoted Indonesian charges); the eval
+  transcript is in `created_at` order. Self-check 82.
 
 - **2026-10-27** - `skipped` status (group, internal) with a `reason` field on
   every response; stale reasons became codes. Per-suggestion `flags`

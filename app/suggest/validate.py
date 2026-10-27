@@ -20,7 +20,11 @@ Kept drafts then carry "flags", and any flag sets confidence "low":
 - "unverified_figures": a number neither a cited record nor our own messages
   state (one only the client wrote, or one nobody wrote);
 - "weak_support": an Answer whose key claim words are mostly not in the
-  records it cites (a simple keyword check).
+  records it cites (a simple keyword check);
+- "nationality_unconfirmed": it cites a record labelled for one helper
+  nationality while the conversation's nationality is unknown or another one.
+  A draft QUOTING a fee that belongs to another (or an unconfirmed)
+  nationality is dropped instead, and a Clarify asking which helper is offered.
 
 At most three survive. Drops are returned with their reason and never logged
 with their text.
@@ -37,6 +41,7 @@ from app.graph import language
 from app.graph.prompts.system import IDENTITY
 from app.services import kb_rules
 from app.services.lead import nationality_code, nationality_for_fee
+from app.suggest import nationality as nat
 from app.suggest.retrieval import ref_of, text_of
 from app.utils import redact_nric
 
@@ -121,6 +126,10 @@ def numbers_in(text: str) -> set[str]:
     return {_norm(n) for n in _ANY_NUMBER.findall(text or "")}
 
 
+def money_in(text: str) -> set[str]:
+    return {_norm(m.group(1) or m.group(2)) for m in _MONEY.finditer(text or "")}
+
+
 def ungrounded(text: str, sources: str) -> set[str]:
     """Figures in the draft that no source states."""
     return figures_in(text) - numbers_in(sources)
@@ -198,6 +207,30 @@ def weakly_supported(text: str, cited: str, client_text: str) -> bool:
 
 SUPPORT_THRESHOLD = 0.5
 
+NATIONALITY_UNCONFIRMED = "nationality_unconfirmed"
+CLARIFY_NATIONALITY = (
+    "Which helper is this for, and what is her nationality? The fees differ by "
+    "nationality, so I'll confirm the right amount once I know."
+)
+
+
+def nationality_issue(text: str, cited: str, cited_matches: list[dict[str, Any]],
+                      in_play: str | None) -> str:
+    """"drop", "flag" or "". Drop: the draft quotes a fee the cited records give
+    to a nationality, and the conversation's nationality is unknown or not that
+    one. Flag: it cites a nationality-specific record under the same doubt but
+    quotes no fee from it."""
+    owners = {_norm(k): v for k, v in guards.fee_owners(cited, matches=cited_matches).items()}
+    quoted = [owners[f] for f in money_in(text) if f in owners]
+    if quoted and (in_play is None or any(in_play not in codes for codes in quoted)):
+        return "drop"
+    specific: set[str] = set()
+    for match in cited_matches:
+        specific |= nat.specific_codes(match)
+    if specific and (in_play is None or in_play not in specific):
+        return "flag"
+    return ""
+
 
 # --- Result -----------------------------------------------------------------
 
@@ -238,10 +271,17 @@ def _schema(item: Any) -> dict[str, Any] | None:
     }
 
 
-def _node_guards(text: str, state: dict[str, Any], rag_context: str) -> tuple[str, str]:
+def _node_guards(text: str, state: dict[str, Any], rag_context: str,
+                 ours: str = "") -> tuple[str, str]:
     """(text, drop reason). The checks response_generator runs on a reply
     (response_generator.py L194-L211 and L473-L612 at commit c138f91), with
-    "replace with a holding line" turned into "drop the draft"."""
+    "replace with a holding line" turned into "drop the draft".
+
+    One departure: the figure guard also grounds on `ours`, our own earlier
+    messages in this conversation. Live, 2026-10-27 (eval, conversation 4641):
+    staff had quoted "Agency Fee $1,388", and a draft repeating it was dropped
+    as "figure not in the records". A fee we have already told this client is
+    one the consultant may repeat."""
     text = guards.strip_meta_commentary(text)
     text = re.sub(r"\n{2,}", "\n", text).strip()
     text = guards.strip_handover_talk(text)
@@ -257,7 +297,7 @@ def _node_guards(text: str, state: dict[str, Any], rag_context: str) -> tuple[st
     if service in kb_rules.cost_withheld_services() and guards.quotes_hiring_package_cost(text):
         return "", "quotes a withheld hiring cost"
     incoming = state.get("incoming_text", "")
-    if guards.ungrounded_figures(text, rag_context, IDENTITY, incoming):
+    if guards.ungrounded_figures(text, rag_context, IDENTITY, incoming, ours):
         return "", "figure not in the records"
     text, _cut = guards.guard_nationality_fee(
         text,
@@ -351,6 +391,8 @@ def validate(
     by_ref = {ref_of(m): m for m in matches if ref_of(m)}
     conversation = "\n".join([state.get("history_text") or "", state.get("incoming_text") or ""])
     client_text, ours = split_speakers(state.get("history_text") or "", state.get("incoming_text") or "")
+    in_play = nat.in_play(state)
+    nationality_doubt = False
     seen: set[str] = set()
 
     for item in items:
@@ -367,7 +409,7 @@ def validate(
             continue
         text = redact_nric(draft["text"], context="suggest:draft")
 
-        text, reason = _node_guards(text, state, rag_context)
+        text, reason = _node_guards(text, state, rag_context, ours)
         if reason:
             result.dropped.append({"label": label, "reason": reason})
             continue
@@ -385,6 +427,14 @@ def validate(
                 "reason": "figure not in the cited records or the conversation: "
                 + ", ".join(sorted(missing)),
             })
+            continue
+
+        cited_matches = [by_ref[r] for r in draft["kb_refs"]]
+        issue = nationality_issue(text, cited, cited_matches, in_play)
+        if issue == "drop":
+            nationality_doubt = True
+            result.dropped.append({"label": label, "reason": "quotes a fee for another or an unconfirmed "
+                                   "helper nationality"})
             continue
 
         text = _post_guards(text, state, payload).strip()
@@ -413,8 +463,21 @@ def validate(
             flags.append(UNVERIFIED_FIGURES)
         if draft["label"] == "Answer" and weakly_supported(text, cited, client_text):
             flags.append(WEAK_SUPPORT)
+        if issue == "flag":
+            nationality_doubt = True
+            flags.append(NATIONALITY_UNCONFIRMED)
         confidence = "low" if flags else draft["confidence"]
         result.kept.append({**draft, "text": text, "confidence": confidence, "flags": flags})
         if len(result.kept) == MAX_DRAFTS:
             break
+
+    # Doubt about the nationality: make sure the consultant has the question
+    # that settles it. A fixed English line, so it needs no guard.
+    if nationality_doubt and not any(d["label"] == "Clarify" for d in result.kept):
+        clarify = {"label": "Clarify", "text": CLARIFY_NATIONALITY, "kb_refs": [],
+                   "confidence": "low", "flags": [NATIONALITY_UNCONFIRMED]}
+        if len(result.kept) == MAX_DRAFTS:
+            result.kept[-1] = clarify
+        else:
+            result.kept.append(clarify)
     return result

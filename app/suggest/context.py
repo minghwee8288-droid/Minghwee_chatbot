@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -60,13 +61,83 @@ class SuggestContext:
     reason: str = ""  # a code: see split_at_anchor and audience.skip_reason
 
 
+# --- WhatsApp Business auto-replies ------------------------------------------
+# The portal stores the handset's greeting and away messages as ordinary
+# outbound rows under sent_by "Ming Hwee Agency", not "whatsapp_auto". Live,
+# 2026-10-27 (eval, conversation 4633): both arrived 4 seconds after a new
+# client's first message, read as a staff reply, and the request came back
+# stale. Recognised here without message.is_auto_reply, which caches verdicts
+# the live bot relies on.
+
+KNOWN_AUTO_REPLIES = (
+    "Thank you for contacting Ming Hwee Agency! Please let us know how we can help you.",
+    "Thank You for your message.Our team will reply to you next following working day.",
+)
+AUTO_REPLY_WINDOW_SECONDS = 10
+_AUTO_FLAG = "_auto_reply"
+
+
+def _squash(text: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(text or "").lower())
+
+
+def is_known_auto_reply(body: Any) -> bool:
+    """One of the handset's fixed texts (ours, or WHATSAPP_AUTO_REPLY_TEXTS)."""
+    squashed = _squash(body)
+    if not squashed:
+        return False
+    known = {_squash(t) for t in KNOWN_AUTO_REPLIES}
+    known |= {_squash(t) for t in settings.whatsapp_auto_reply_texts.split("||") if t.strip()}
+    return squashed in known
+
+
+def quick_outbound(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Outbound non-Claire rows sent within AUTO_REPLY_WINDOW_SECONDS after an
+    inbound message (rows in time order) - the shape of an automatic reply."""
+    out: list[dict[str, Any]] = []
+    last_inbound = None
+    for row in rows:
+        at = _parse_time(row.get("created_at"))
+        if row.get("direction") == "inbound":
+            last_inbound = at
+            continue
+        if row.get("is_bot") or row.get("sent_by") in ("bot", AUTO_REPLY_SENDER):
+            continue
+        if at and last_inbound and 0 <= (at - last_inbound).total_seconds() <= AUTO_REPLY_WINDOW_SECONDS:
+            out.append(row)
+    return out
+
+
+async def _sent_elsewhere(body: str, conversation_id: Any) -> bool:
+    """The same outbound text in another conversation: a template, not a person
+    typing. A GET; compared in Python so it reads nothing it is not shown."""
+    result = await db.execute(
+        db.table(MESSAGES_TABLE).select("conversation_id")
+        .eq("direction", "outbound").eq("body", body).limit(5)
+    )
+    return any(r.get("conversation_id") not in (None, conversation_id) for r in result.data or [])
+
+
+async def mark_auto_replies(rows: list[dict[str, Any]], conversation_id: Any) -> None:
+    """Mark (in place) the rows that are WhatsApp Business auto-replies: a
+    known text anywhere, or an identical outbound text sent within ~10 s of an
+    inbound message that was also sent in another conversation."""
+    for row in rows:
+        if row.get("direction") == "outbound" and is_known_auto_reply(row.get("body")):
+            row[_AUTO_FLAG] = True
+    for row in quick_outbound(rows):
+        body = (row.get("body") or "").strip()
+        if not row.get(_AUTO_FLAG) and body and await _sent_elsewhere(body, conversation_id):
+            row[_AUTO_FLAG] = True
+
+
 def label_of(row: dict[str, Any]) -> str | None:
     """CUSTOMER / CLAIRE / STAFF, or None for a row left out of the history.
 
     `sent_by='bot'` counts as Claire even when `is_bot` is false, so a bot reply
     stored by another system with the wrong flag is still read as hers.
     """
-    if row.get("sent_by") == AUTO_REPLY_SENDER:
+    if row.get("sent_by") == AUTO_REPLY_SENDER or row.get(_AUTO_FLAG):
         return None
     if row.get("direction") == "inbound":
         return CUSTOMER
@@ -184,6 +255,7 @@ async def build(
         return SuggestContext("skipped", conversation, anchor_message_id, reason=skip)
 
     rows = await _recent_rows(conversation_id, anchor_message_id if as_of else None)
+    await mark_auto_replies(rows, conversation_id)
     reason, earlier, batch = split_at_anchor(rows, anchor_message_id)
     if reason:
         return SuggestContext("stale", conversation, anchor_message_id, reason=reason)

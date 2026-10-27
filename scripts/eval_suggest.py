@@ -40,7 +40,7 @@ import logging
 import re
 import statistics
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -117,25 +117,35 @@ def _staff_reply(row: dict[str, Any], min_chars: int) -> bool:
         and context.label_of(row) == context.STAFF
         and len(body) >= min_chars
         and not _FILENAME.search(body)
+        and not context.is_known_auto_reply(body)
     )
 
 
-async def _rows(conversation_id: int, *, up_to: int | None = None, after: int | None = None,
+def _time_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Oldest first by created_at, as the endpoint reads them. Ids are not time
+    order: the portal backfills old messages with new ids (conversation 194
+    showed January after October)."""
+    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    return sorted(rows, key=lambda r: (context._parse_time(r.get("created_at")) or epoch, r.get("id") or 0))
+
+
+async def _rows(conversation_id: int, *, up_to: dict[str, Any] | None = None, after: int | None = None,
                 limit: int = 30) -> list[dict[str, Any]]:
+    """With `up_to` (a row), the messages up to it in TIME; else those after id `after`."""
     query = db.table("wp_chat_messages").select(COLUMNS).eq("conversation_id", conversation_id)
     if up_to is not None:
-        query = query.lte("id", up_to).order("id", desc=True)
+        query = query.lte("created_at", up_to["created_at"]).order("created_at", desc=True)
     else:
         query = query.gt("id", after).order("id")
     result = await db.execute(query.limit(limit))
-    rows = result.data or []
-    return list(reversed(rows)) if up_to is not None else rows
+    return _time_order(result.data or [])
 
 
 async def _case_for(staff_row: dict[str, Any], min_chars: int) -> dict[str, Any] | None:
     """The client message a staff reply answered, and the full staff reply."""
     cid = staff_row["conversation_id"]
-    before = await _rows(cid, up_to=staff_row["id"])
+    before = await _rows(cid, up_to=staff_row)
+    await context.mark_auto_replies(before, cid)
     index = next((i for i, r in enumerate(before) if r["id"] == staff_row["id"]), None)
     if index is None:
         return None
