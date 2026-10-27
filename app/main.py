@@ -107,6 +107,12 @@ def create_app() -> FastAPI:
     # answered 422 and confirmed the route was there (§9.32).
     if settings.admin_preview_secret:
         application.include_router(admin_router)
+    # POST /internal/suggest (Smart Inbox reply drafts, read-only): registered
+    # only when SUGGEST_SECRET is set, like the preview route above.
+    import os
+    if os.environ.get("SUGGEST_SECRET"):
+        from app.suggest.router import router as suggest_router
+        application.include_router(suggest_router)
     application.add_api_route("/", root, methods=["GET"])
     return application
 
