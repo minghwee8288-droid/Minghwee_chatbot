@@ -109,14 +109,16 @@ def _empty(status: str, anchor: int, bot_status: str, model: str) -> dict[str, A
 
 
 async def run_suggest(
-    conversation_id: int, anchor_message_id: int, *, model: str | None = None
+    conversation_id: int, anchor_message_id: int, *, model: str | None = None,
+    as_of: bool = False,
 ) -> dict[str, Any]:
     """The drafting itself, without the HTTP layer. Returns the response body
     plus an internal "_dropped" list (reasons only) for scripts; the route
-    removes it. Must be called inside readonly.read_only()."""
+    removes it. Must be called inside readonly.read_only(). `as_of` is for
+    scripts/eval_suggest.py (see context.build); the route never sets it."""
     started = time.monotonic()
     model = model or suggest_settings.model()
-    ctx = await context.build(conversation_id, anchor_message_id)
+    ctx = await context.build(conversation_id, anchor_message_id, as_of=as_of)
     bot_status = str(ctx.conversation.get("bot_status") or "")
     if ctx.status == "stale":
         body = _empty("stale", anchor_message_id, bot_status, model)

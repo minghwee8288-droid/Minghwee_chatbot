@@ -92,14 +92,18 @@ def render(history: list[dict[str, Any]]) -> str:
     return "\n".join(f"{_PREFIX[item['role']]}: {item['body']}" for item in history)
 
 
-async def _recent_rows(conversation_id: int) -> list[dict[str, Any]]:
-    """Recent messages, oldest first, NRIC-redacted. A GET only."""
-    result = await db.execute(
+async def _recent_rows(conversation_id: int, up_to_id: int | None = None) -> list[dict[str, Any]]:
+    """Recent messages, oldest first, NRIC-redacted. A GET only. With
+    `up_to_id`, only the messages up to and including that one."""
+    query = (
         db.table(MESSAGES_TABLE)
         .select("id, direction, body, is_bot, sent_by, created_at")
         .eq("conversation_id", conversation_id)
-        .order("created_at", desc=True)
-        .limit(settings.history_limit + 50)
+    )
+    if up_to_id is not None:
+        query = query.lte("id", up_to_id)
+    result = await db.execute(
+        query.order("created_at", desc=True).limit(settings.history_limit + 50)
     )
     rows = list(reversed(result.data or []))
     for row in rows:
@@ -155,12 +159,19 @@ async def _saved_state(thread_id: str | None) -> tuple[dict[str, Any], Any]:
     return dict(snapshot.values or {}), snapshot.created_at
 
 
-async def build(conversation_id: int, anchor_message_id: int) -> SuggestContext:
+async def build(
+    conversation_id: int, anchor_message_id: int, *, as_of: bool = False
+) -> SuggestContext:
+    """With `as_of` (scripts/eval_suggest.py only, never the route), the
+    conversation is read as it stood at the anchor: later messages are ignored
+    and the saved LangGraph state is NOT used, because it holds what was
+    collected after the anchor. Contact, ticket and case context is still
+    today's - there is no history of it to read."""
     conversation = await conversation_service.get_by_id(conversation_id)
     if not conversation:
         raise ConversationNotFound(conversation_id)
 
-    rows = await _recent_rows(conversation_id)
+    rows = await _recent_rows(conversation_id, anchor_message_id if as_of else None)
     reason, earlier, batch = split_at_anchor(rows, anchor_message_id)
     if reason:
         return SuggestContext("stale", conversation, anchor_message_id, stale_reason=reason)
@@ -218,10 +229,11 @@ async def build(conversation_id: int, anchor_message_id: int) -> SuggestContext:
 
     hours_since_last_message = None
     last_at = _parse_time(earlier[-1].get("created_at")) if earlier else None
+    now = datetime.now(timezone.utc)
+    if as_of and batch:
+        now = _parse_time(batch[-1].get("created_at")) or now
     if last_at is not None:
-        hours_since_last_message = round(
-            (datetime.now(timezone.utc) - last_at).total_seconds() / 3600, 2
-        )
+        hours_since_last_message = round((now - last_at).total_seconds() / 3600, 2)
 
     staff_times = [_parse_time(item["created_at"]) for item in history if item["role"] == STAFF]
     staff_times = [t for t in staff_times if t is not None]
@@ -263,7 +275,9 @@ async def build(conversation_id: int, anchor_message_id: int) -> SuggestContext:
     # intake reset - exactly the order run_turn builds its input in.
     from app.graph.graph import _TURN_RESET, stale_intake_reset
 
-    values, created_at = await _saved_state(conversation.get("langgraph_thread_id"))
+    values, created_at = (
+        ({}, None) if as_of else await _saved_state(conversation.get("langgraph_thread_id"))
+    )
     state = {**values, **_TURN_RESET, **payload}
     if values:
         reset = stale_intake_reset(values, created_at, human_since=last_human_at)

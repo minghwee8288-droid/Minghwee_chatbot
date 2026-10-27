@@ -91,6 +91,7 @@ class FakeQuery:
         self.table = table
         self.http_method = "GET"
         self.path = f"/rest/v1/{table}"
+        self.max_id: Any = None
 
     def _write(self, method: str) -> "FakeQuery":
         self.http_method = method
@@ -111,13 +112,20 @@ class FakeQuery:
     def __getattr__(self, name: str) -> Any:  # select, eq, order, limit, ...
         return lambda *a, **k: self
 
+    def lte(self, column: str, value: Any) -> "FakeQuery":  # the eval's as-of read
+        self.max_id = value if column == "id" else None
+        return self
+
     def execute(self) -> Any:
         if self.http_method != "GET":
             self.store.writes.append((self.http_method, self.table))
             if self.store.raise_on_write:
                 raise AssertionError(f"WRITE reached the database: {self.http_method} {self.table}")
             return SimpleNamespace(data=[{"id": "written"}], count=None)
-        return SimpleNamespace(data=list(self.store.rows.get(self.table, [])), count=None)
+        rows = list(self.store.rows.get(self.table, []))
+        if self.max_id is not None:
+            rows = [r for r in rows if isinstance(r.get("id"), int) and r["id"] <= self.max_id]
+        return SimpleNamespace(data=rows, count=None)
 
 
 class FakeClient:
@@ -396,10 +404,11 @@ def checks_grounding_units() -> None:
           sg_validate.ungrounded("it takes 3 weeks", "fee is $695, takes about 1 week") == {"3"})
 
 
-def _suggest(world: World, conversation_id: int = CONVERSATION_ID, anchor: int = ANCHOR_ID) -> dict:
+def _suggest(world: World, conversation_id: int = CONVERSATION_ID, anchor: int = ANCHOR_ID,
+             as_of: bool = False) -> dict:
     async def go() -> dict:
         with readonly.read_only() as refused:
-            body = await sg_router.run_suggest(conversation_id, anchor)
+            body = await sg_router.run_suggest(conversation_id, anchor, as_of=as_of)
         body["_refused"] = list(refused)
         return body
     return run(go())
@@ -468,6 +477,36 @@ def checks_drafting() -> None:
         check("validate: an NRIC in a draft is redacted and the draft kept",
               texts == ["Thanks, I have noted [REDACTED-ID]. When does her permit expire?"], str(texts))
 
+    # The model cites records in the shape it is shown them ("[ref <id>]").
+    # Live, 2026-10-27: every cited draft was dropped for writing "ref <id>".
+    wrapped = dict(GOOD, kb_refs=["ref kb-1"])
+    bracketed = dict(GOOD, text="Renewal is $695 and takes about 1 week.", kb_refs=["[ref kb-1]"])
+    wrapped_bad = dict(GOOD, text="We will confirm the timing.", kb_refs=["ref kb-999"])
+    with World(model_output(wrapped, bracketed, wrapped_bad)) as world:
+        out = _suggest(world)
+        reasons = [d["reason"] for d in out["_dropped"]]
+        check("validate: a ref cited as 'ref <id>' or '[ref <id>]' is the retrieved id",
+              [s["kb_refs"] for s in out["suggestions"]] == [["kb-1"], ["kb-1"]],
+              json.dumps(out["suggestions"])[:300])
+        check("validate: 'ref <unknown id>' is still dropped",
+              reasons == ["cites a record that was not retrieved"], str(reasons))
+
+    # The consultant is the live agent. Live, 2026-10-27 (eval): a draft naming
+    # a colleague and a time was swapped by strip_handover_talk for Claire's
+    # "a live agent will connect with you shortly" line, and kept.
+    named_colleague = {"label": "Answer", "kb_refs": [], "confidence": "high",
+                       "text": "Sure, I'll check with Catherine whether she is available at 11:00am and confirm."}
+    handover = {"label": "Next step", "kb_refs": [], "confidence": "low",
+                "text": "I've passed this to our team and a live agent will connect with you shortly."}
+    with World(model_output(named_colleague, handover, CLARIFY)) as world:
+        out = _suggest(world)
+        reasons = [d["reason"] for d in out["_dropped"]]
+        texts = [s["text"] for s in out["suggestions"]]
+        check("validate: a draft the handover guard rewrites to Claire's line is dropped",
+              not any("live agent" in t for t in texts) and len(texts) == 1, str(texts))
+        check("validate: a draft announcing a handover to a live agent is dropped",
+              reasons.count("hands over to a live agent") == 2, str(reasons))
+
     with World(model_output(invented_money, bad_ref, claire)) as world:
         out = _suggest(world)
         check("validate: zero valid drafts -> status insufficient",
@@ -506,6 +545,26 @@ def checks_stale_and_state() -> None:
         out = _suggest(world, anchor=4)
         check("stale: an anchor that is not the newest inbound returns status stale",
               out["status"] == "stale" and out["suggestions"] == [] and not world.llm.calls)
+
+    # The eval's as-of mode: the same old anchor drafts from the conversation
+    # as it stood then, and never reads the saved state (it holds the future).
+    with World() as world:
+        saved_read: list[str] = []
+        real_saved = sg_context._saved_state
+
+        async def _spy_saved(thread_id: Any) -> Any:
+            saved_read.append(str(thread_id))
+            return await real_saved(thread_id)
+
+        with patch.object(sg_context, "_saved_state", _spy_saved):
+            out = _suggest(world, anchor=4, as_of=True)
+        user = world.llm.calls[0]["messages"][1]["content"] if world.llm.calls else ""
+        check("as_of: an earlier anchor drafts from the conversation as it stood",
+              out["status"] == "ready" and "Tan" in user, out["status"])
+        check("as_of: messages after the anchor are not in the prompt",
+              "Hello Mr Tan, noted." not in user and "S1234567D" not in user
+              and "[REDACTED-ID]" not in user, user[-300:])
+        check("as_of: the saved state is not read", saved_read == [], str(saved_read))
 
     with World() as world:
         world.store.rows["wp_chat_conversations"] = []

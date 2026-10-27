@@ -12,7 +12,8 @@ A draft is kept only if it passes all of these, in order:
    the cited records or the conversation;
 6. the bot's post-graph rewriting guards (run_turn), in the same order;
 7. the identity check again, on the final text - the drafts are sent by a
-   human consultant;
+   human consultant - and no handover to "a live agent" (the consultant is
+   one), including the line a bot guard swaps in for a reply it rejects;
 8. at most 700 characters, not a duplicate of another draft.
 
 At most three survive. Drops are returned with their reason and never logged
@@ -58,6 +59,23 @@ def identifies_as_claire_or_ai(text: str) -> bool:
     if _CLAIRE.search(text) or _AI_CAPS.search(text):
         return True
     return bool(_AI_SELF.search(text))
+
+
+# Claire's handover lines. The consultant sending the draft IS the live agent,
+# so "I've passed this to our team and a live agent will connect with you
+# shortly" is nonsense from them. Live, 2026-10-27 (eval, conversation 59): the
+# bot's strip_handover_talk replaced a draft naming a colleague and a time with
+# guards.NEUTRAL_FOLLOW_UP, and that line was kept as a draft.
+_HANDOVER = re.compile(
+    r"\blive agent\b"
+    r"|\bconnect with you shortly\b"
+    r"|\b(?:passed|handed)\s+(?:this|it|that)\s+(?:on\s+)?to\s+our\s+team\b",
+    re.IGNORECASE,
+)
+
+
+def announces_handover(text: str) -> bool:
+    return bool(_HANDOVER.search(text))
 
 
 # --- Grounding --------------------------------------------------------------
@@ -110,6 +128,18 @@ class Validation:
     dropped: list[dict[str, str]] = field(default_factory=list)  # {label, reason}
 
 
+# The records are shown to the model as "[ref <id>]", and it cites them in
+# that shape ("ref <id>", "[ref <id>]") as often as bare. Live, 2026-10-27:
+# every draft on two conversations cited "ref 6c143f15-..." and was dropped
+# as citing an unknown record.
+_REF_WRAPPER = re.compile(r"^\[?\s*(?:ref\s*[:#]?\s*)?(.*?)\s*\]?$", re.IGNORECASE)
+
+
+def _ref_id(ref: Any) -> str:
+    match = _REF_WRAPPER.match(str(ref).strip())
+    return match.group(1).strip() if match else ""
+
+
 def _schema(item: Any) -> dict[str, Any] | None:
     if not isinstance(item, dict):
         return None
@@ -124,7 +154,7 @@ def _schema(item: Any) -> dict[str, Any] | None:
     return {
         "label": label.strip() if label.strip() in LABELS else (label.strip() or "Draft"),
         "text": text.strip(),
-        "kb_refs": [str(r) for r in refs if str(r).strip()],
+        "kb_refs": [_ref_id(r) for r in refs if _ref_id(r)],
         "confidence": confidence if confidence in ("high", "low") else "low",
     }
 
@@ -285,6 +315,9 @@ def validate(
             continue
         if identifies_as_claire_or_ai(text):
             result.dropped.append({"label": label, "reason": "names Claire or claims to be an AI"})
+            continue
+        if announces_handover(text):
+            result.dropped.append({"label": label, "reason": "hands over to a live agent"})
             continue
         if len(text) > MAX_CHARS:
             result.dropped.append({"label": label, "reason": f"over {MAX_CHARS} characters"})
