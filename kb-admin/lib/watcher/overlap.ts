@@ -1,5 +1,6 @@
 import { extractFacts } from '../facts.ts';
 import { UPDATE_RULES, UPDATE_SHAPE } from './changeRules.ts';
+import { TAG_PROMPT } from './tags.ts';
 
 /**
  * The overlap check. PURE: the search itself (kb_admin_match_live, the bot's
@@ -173,6 +174,7 @@ export function buildMergePrompt(p: {
     'Each EXISTING entry below already answers the question of a NEW draft made from a watched public page. Instead of a second entry, say what the EXISTING entry needs from the page.',
     'Rules:',
     UPDATE_RULES,
+    TAG_PROMPT,
     '- Use ONLY what the page passage says. Never add facts, figures, dates or advice that are not in it.',
     '- If the existing entry already says everything the passage says, return no draft for it.',
     '- Never propose anything about agency fees or prices; leave money to the agency.',

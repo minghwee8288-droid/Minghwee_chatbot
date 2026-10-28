@@ -8,6 +8,7 @@ import type { PageResult } from './fetcher.ts';
 import { findSubPages, indexVerdict, looksLikeIndexText, type SubPage } from './indexPage.ts';
 import { detectLanguage, languageInstruction } from './language.ts';
 import { EDIT_INSTEAD_SIMILARITY, assessOverlap, buildMergePrompt, type LiveEntry, type Overlap } from './overlap.ts';
+import { proposeTags, type Tags } from './tags.ts';
 
 /**
  * The watcher's flows, with every outside call passed in. This module
@@ -36,7 +37,8 @@ import { EDIT_INSTEAD_SIMILARITY, assessOverlap, buildMergePrompt, type LiveEntr
  *   fact, not a pointer)  ->  OVERLAP CHECK (lib/watcher/overlap.ts): search
  *   each draft's text; a NEW draft that duplicates a live entry becomes a
  *   change to that entry (one more model call), and every draft carries its
- *   similar entries and any figure conflict  ->  propose each
+ *   similar entries and any figure conflict  ->  file each under the service /
+ *   audience / nationality lib/watcher/tags.ts proposes (019)  ->  propose each
  *   (kb_admin_watch_propose_checked with 016, else kb_admin_watch_propose;
  *   the database applies the fee lock and marks a draft 'blocked').
  *
@@ -65,13 +67,22 @@ export type DraftDeps = {
    * kb_admin_reader. kb_admin_match_live returns only a 300-character preview
    * (014), never question/answer - so without this every match is unusable.
    */
-  entryTexts: (ids: string[]) => Promise<{ id: string; question: string | null; answer: string | null }[]>;
+  entryTexts: (ids: string[]) => Promise<EntryText[]>;
   llm: (system: string, user: string) => Promise<string>;
   model: string;
   /** Migration 016 is installed: the overlap results and suggested pages can be recorded. */
   has016?: boolean;
   /** Migration 017 is installed: per-source render / unverified, and a failed draft is recorded and retried. */
   has017?: boolean;
+  /**
+   * Migration 019 is installed: every proposal is filed under the service /
+   * audience / nationality lib/watcher/tags.ts proposes (an edit included).
+   * Without it the propose call gets nulls, exactly as before: a new entry is
+   * general / all / all, an edit keeps the entry's own tags.
+   */
+  has019?: boolean;
+  /** The services the knowledge base uses now (the database refuses any other); absent = the static list in tags.ts. */
+  services?: readonly string[];
   log?: (line: string) => void;
 };
 
@@ -86,7 +97,10 @@ export type CheckDeps = DraftDeps & {
   draftFailed?: (snapshotId: string) => Promise<boolean>;
 };
 
-export type SourceRef = { id: string; url: string; label: string; render?: boolean; allow_unverified?: boolean };
+export type SourceRef = { id: string; url: string; label: string; category?: string; render?: boolean; allow_unverified?: boolean };
+
+/** A live entry's text (and, read alongside it, its tags) by id - lib/watchQueries.ts liveEntryTexts. */
+export type EntryText = { id: string; question: string | null; answer: string | null; service_type?: string | null; contact_type?: string | null; nationality?: string | null };
 
 /**
  * Switch (2026-10-16, needs 017): a page is read through the page renderer
@@ -108,7 +122,7 @@ export const RETRY_FAILED_DRAFTS = true;
 /** The start of the failure that suggests switching rendering on; the Watched pages screen offers the switch when it sees it. */
 export const RENDER_SUGGESTION = 'This page is built by JavaScript: switch on "Render with browser" for it';
 
-export type DraftOutcome = { id: string; status: string; blocked_reason: string | null; kind: 'new' | 'edit'; conflict: boolean; similar: number };
+export type DraftOutcome = { id: string; status: string; blocked_reason: string | null; kind: 'new' | 'edit'; conflict: boolean; similar: number; tags?: Tags | null };
 
 export type CheckResult = {
   outcome: 'failed' | 'unchanged' | 'changed' | 'first';
@@ -144,7 +158,7 @@ export class OverlapCheckError extends Error {
 const why = (e: unknown) => String((e as Error)?.message ?? e).slice(0, 160);
 
 /** The bot's live search, joined to each Q&A entry's live text. Throws OverlapCheckError on any failure. */
-async function liveSearch(deps: DraftDeps, vector: number[], count: number, threshold: number): Promise<LiveEntry[]> {
+async function liveSearch(deps: DraftDeps, vector: number[], count: number, threshold: number): Promise<(LiveEntry & { tags?: Tags })[]> {
   if (!deps.searcher) throw new OverlapCheckError('no editor account to run the live search with');
   let rows: MatchRow[];
   try {
@@ -155,7 +169,7 @@ async function liveSearch(deps: DraftDeps, vector: number[], count: number, thre
   if (!Array.isArray(rows)) throw new OverlapCheckError('the live search returned no result list');
   const qa = rows.filter((x) => x.chunk_type === 'qa_pair');
   if (!qa.length) return [];
-  let texts: { id: string; question: string | null; answer: string | null }[];
+  let texts: EntryText[];
   try {
     texts = await deps.entryTexts(qa.map((x) => x.id));
   } catch (e) {
@@ -165,7 +179,8 @@ async function liveSearch(deps: DraftDeps, vector: number[], count: number, thre
   return qa.map((x) => {
     const t = byId.get(x.id);
     if (!t?.question?.trim() || !t?.answer?.trim()) throw new OverlapCheckError(`entry ${x.id.slice(0, 8)} came back from the search without its question and answer`);
-    return { id: x.id, question: t.question, answer: t.answer, similarity: x.similarity };
+    const tags = t.service_type && t.contact_type && t.nationality ? { service: t.service_type, audience: t.contact_type, nationality: t.nationality } : undefined;
+    return { id: x.id, question: t.question, answer: t.answer, similarity: x.similarity, ...(tags ? { tags } : {}) };
   });
 }
 
@@ -360,7 +375,13 @@ export async function draftFromSnapshot(
   if (!passages.length) return { drafts: [], dropped: ['nothing new on the page to draft from'] };
 
   // Never draft without the existing-entry search: a failure stops here, before anything is proposed.
-  const search = (vector: number[], count: number, threshold: number) => liveSearch(deps, vector, count, threshold);
+  // Every entry the search returns also leaves its live tags here: an edit's proposal starts from them.
+  const liveTags = new Map<string, Tags>();
+  const search = async (vector: number[], count: number, threshold: number) => {
+    const rows = await liveSearch(deps, vector, count, threshold);
+    for (const r of rows) if (r.tags) liveTags.set(r.id, r.tags);
+    return rows;
+  };
   if (!deps.searcher) throw new OverlapCheckError('no editor account to run the live search with');
 
   let candidates: Candidate[] = [];
@@ -443,13 +464,22 @@ export async function draftFromSnapshot(
   const oldSource = change.removed.join('\n').slice(0, 20000) || null;
   const drafts: DraftOutcome[] = [];
   for (const { draft: d, overlap } of planned) {
+    // 019: the tags this proposal is filed under (lib/watcher/tags.ts). An edit
+    // whose live tags were not read is left to the database (the entry's own).
+    const live = d.target_entry_id ? liveTags.get(d.target_entry_id) ?? null : null;
+    const tags = deps.has019 && (!d.target_entry_id || live)
+      ? proposeTags({ sourceLabel: source.label, sourceUrl: source.url, sourceCategory: source.category ?? null, question: d.question, answer: d.answer,
+        sourcePassage: d.source_passage, modelTags: d.modelTags ?? null, live, services: deps.services })
+      : null;
+    if (tags) log(`tags source=${source.id.slice(0, 8)} ${d.target_entry_id ? 'edit' : 'new'}: ${tags.service}/${tags.audience}/${tags.nationality}`);
     const base = [who?.userId ?? null, who?.email ?? null, snap.snapshotId, d.target_entry_id, d.question, d.answer,
-      null, null, null, null, d.source_passage, oldSource, deps.model];
+      null, tags?.service ?? null, tags?.audience ?? null, tags?.nationality ?? null, d.source_passage, oldSource, deps.model];
     const r = deps.has016
       ? await deps.call<{ draft_id: string; status: string; blocked_reason: string | null }>('kb_admin_watch_propose_checked', [
         ...base, overlap.similar.length ? overlap.similar : null, overlap.conflict, overlap.note])
       : await deps.call<{ draft_id: string; status: string; blocked_reason: string | null }>('kb_admin_watch_propose', base);
-    drafts.push({ id: r.draft_id, status: r.status, blocked_reason: r.blocked_reason, kind: d.target_entry_id ? 'edit' : 'new', conflict: overlap.conflict, similar: overlap.similar.length });
+    drafts.push({ id: r.draft_id, status: r.status, blocked_reason: r.blocked_reason, kind: d.target_entry_id ? 'edit' : 'new', conflict: overlap.conflict, similar: overlap.similar.length,
+      tags: tags ? { service: tags.service, audience: tags.audience, nationality: tags.nationality } : null });
   }
   return { drafts, dropped };
 }

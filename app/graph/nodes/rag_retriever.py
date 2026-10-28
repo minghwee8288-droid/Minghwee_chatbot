@@ -9,6 +9,8 @@ from typing import Any
 from app.config import settings
 from app.graph.guards import (
     asks_about_price,
+    asks_for_documents,
+    asks_for_process,
     confirms_our_question,
     last_bot_line,
     last_client_line,
@@ -668,6 +670,61 @@ async def _with_overview_extras(
     return out
 
 
+# 2026-10-28, conversation 3766 (6:31 PM SGT). "What documents do I need to
+# hire a Filipino helper?" was answered with the MWO contract-verification row:
+# a watcher entry filed general/all/all, which outranked the new-hire rows
+# (0.729 / 0.738 against 0.704 / 0.723) because general rows are in every
+# service's search. On a SERVICE question - documents, fees, timeline, process
+# - the service's own rows come first; on a documents question with two or more
+# of them, they are the whole set. False = similarity order, as before.
+SERVICE_ROWS_FIRST = True
+_TIMING_QUESTION = re.compile(
+    r"\b(?:how\s+long|timeline|time\s*frame|how\s+many\s+(?:days|weeks|months))\b", re.IGNORECASE
+)
+
+# The three rows that together answer "what documents do I need to hire a
+# helper": from the client, from the helper, and what we prepare. Each is
+# fetched by its own search so all three reach the answer, in that order.
+HIRING_DOCUMENT_QUERIES = (
+    "What documents do I need to provide to hire a helper?",
+    "What documents are needed from the helper herself?",
+    "What documents does Ming Hwee prepare for me to sign?",
+)
+
+
+def service_question(text: str) -> bool:
+    """Documents, fees, timeline or process - asked of a service."""
+    return bool(asks_for_process(text) or asks_about_price(text) or _TIMING_QUESTION.search(text or ""))
+
+
+def service_rows_first(matches: list[dict], service: str | None, documents: bool) -> list[dict]:
+    """The service's own rows ahead of general ones (the order the model reads)."""
+    if not service:
+        return matches
+    own = [m for m in matches if (m.get("service_type") or "") == service]
+    if not own:
+        return matches
+    if documents and len(own) >= 2:
+        return own
+    return own + [m for m in matches if (m.get("service_type") or "") != service]
+
+
+async def _with_hiring_document_rows(
+    matches: list[dict], service: str, contact: str | None, nationality: str | None
+) -> list[dict]:
+    seen: set = set()
+    found_rows: list[dict] = []
+    for query in HIRING_DOCUMENT_QUERIES:
+        for row in (await rag.search(query, service_type=service, contact_type=contact,
+                                     nationality=nationality, match_count=1))[:1]:
+            key = row.get("id") or row.get("question")
+            if key not in seen and (row.get("service_type") or "") == service:
+                seen.add(key)
+                found_rows.append(row)
+    rest = [m for m in matches if (m.get("id") or m.get("question")) not in seen]
+    return found_rows + rest
+
+
 # The closing briefing's cost line needs the service's own fee row, and the
 # shared briefing query does not reliably reach it. Live, conversation 3766,
 # 2026-10-08: a work permit renewal's ten retrieved rows were all process,
@@ -914,6 +971,21 @@ async def rag_retriever(state: ConversationState) -> dict[str, Any]:
                     joined_best,
                 )
                 matches, best = joined, joined_best
+
+    # The service's own content ahead of general entries on a service question.
+    if SERVICE_ROWS_FIRST and not briefing and service and service_question(incoming):
+        documents = asks_for_documents(incoming)
+        if documents and service == "new_hiring":
+            matches = await _with_hiring_document_rows(matches, service, contact, nationality)
+        ordered = service_rows_first(matches, service, documents)
+        if ordered is not matches:
+            logger.info(
+                "Service question under %s: %d of %d rows are the service's own - those first%s",
+                service, sum(1 for m in ordered if m.get("service_type") == service),
+                len(matches), " (only those, a documents question)" if len(ordered) < len(matches) else "",
+            )
+        matches = ordered
+        best = max(best, rag.best_similarity(matches))
 
     return {
         "rag_matches": matches,

@@ -363,6 +363,15 @@ class ConversationState(TypedDict, total=False):
     # Step 6c: "offered", then "one" or "all" - how the client wants the
     # questions. Kept for the whole conversation, absent from _TURN_RESET.
     question_style: str
+    # 2026-10-28 (app/graph/clarify.py): the vague action request we asked a
+    # question about ({"kind", "request", "question", "asked_at"}), kept until
+    # the answer arrives; absent from _TURN_RESET. The three below are per turn.
+    pending_action: dict[str, Any] | None
+    clarify_action: str | None
+    action_answer: bool
+    action_summary: str | None
+    # A question that only needs answering - the next turn may collect.
+    answer_only: bool
     # Batch G G5/G6: the candidates row behind this number (name, country),
     # read per turn by the webhook. Confirmed with her before it is used.
     candidate_record: dict[str, Any] | None

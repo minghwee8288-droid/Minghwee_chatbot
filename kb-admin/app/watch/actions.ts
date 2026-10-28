@@ -12,7 +12,9 @@ import { watchFetcher } from '@/lib/watchFetcher';
 import { DraftingError, draftWithModel } from '@/lib/watcher/llm';
 import { touchesMoney } from '@/lib/watcher/feeLock';
 import { OverlapCheckError, approveAndPublish, checkSource, redraftSource, type WatchCall } from '@/lib/watcher/pipeline';
-import { draftFailed, lastGoodText, liveEntryTexts, modelDraftAnswer, snapshotText, sourceById, watchDraft, watcherSchema16, watcherSchema17 } from '@/lib/watchQueries';
+import { draftFailed, lastGoodText, liveEntryTexts, modelDraftAnswer, snapshotText, sourceById, watchDraft, watcherSchema16, watcherSchema17, watcherSchema19 } from '@/lib/watchQueries';
+import { editableServices } from '@/lib/queries';
+import { TAG_AUDIENCES, TAG_NATIONALITIES } from '@/lib/watcher/tags';
 import { callWrite } from '@/lib/write';
 
 /**
@@ -132,7 +134,8 @@ export async function fetchNow(_prev: ActionState, form: FormData): Promise<Acti
   const source = await sourceById(sourceId);
   if (!source || !source.active) return { error: 'That page is no longer watched.' };
   const { fetcher, renders } = watchFetcher();
-  const [has016, has017] = await Promise.all([watcherSchema16(), watcherSchema17()]);
+  const [has016, has017, has019] = await Promise.all([watcherSchema16(), watcherSchema17(), watcherSchema19()]);
+  const services = has019 ? await editableServices() : undefined;
   let result;
   try {
     result = await checkSource(source, {
@@ -149,6 +152,8 @@ export async function fetchNow(_prev: ActionState, form: FormData): Promise<Acti
       llm: draftWithModel,
       model: env().watcher!.llm.model,
       has016,
+      has019,
+      services,
       log: (line) => console.info(`[watcher] ${line}`),
     });
   } catch (error) {
@@ -178,6 +183,8 @@ export async function redraftSourceAction(_prev: ActionState, form: FormData): P
   if (!reason) return { error: 'Please say why the proposals should be drafted again.' };
   const source = await sourceById(sourceId);
   if (!source || !source.active) return { error: 'That page is no longer watched.' };
+  const has019 = await watcherSchema19();
+  const services = has019 ? await editableServices() : undefined;
   let result;
   try {
     result = await redraftSource({ ...source, suggested: source.suggested_pages ?? [] }, reason, {
@@ -190,6 +197,8 @@ export async function redraftSourceAction(_prev: ActionState, form: FormData): P
       model: env().watcher!.llm.model,
       has016: true,
       has017: await watcherSchema17(),
+      has019,
+      services,
       snapshotText,
       log: (line) => console.info(`[watcher] ${line}`),
     });
@@ -253,6 +262,43 @@ export async function editWatchDraft(_prev: ActionState, form: FormData): Promis
   }
   log('watch_edit', actor.userId, draftId, 'ok');
   redirect(`/watch/${draftId}?edited=1`);
+}
+
+/**
+ * Change a proposal's service / audience / nationality before approval
+ * (migration 019, editor). The database checks the role, the values and that
+ * the proposal is still open, and audit-logs it ('watch_tags', with the
+ * reason). An edit whose tags then differ from the live entry is published
+ * with them - only an approver approves, as for any change of routing.
+ */
+export async function setWatchDraftTags(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const auth = await actorForWrite();
+  if (!auth.ok) return { error: auth.message };
+  const { actor } = auth;
+  const off = watcherOff();
+  if (off) return off;
+  if (!(await watcherSchema19())) return { error: 'Changing the tags needs the watcher migration 019, which is not applied yet.' };
+  const draftId = id(form, 'draft_id');
+  if (!draftId) return { error: 'No draft was named.' };
+  const service = text(form, 'service', 60).trim();
+  const audience = text(form, 'audience', 20).trim();
+  const nationality = text(form, 'nationality', 5).trim();
+  const reason = text(form, 'reason', 500).trim();
+  if (!reason) return { error: 'Please say why you are changing the tags.' };
+  if (!(TAG_AUDIENCES as readonly string[]).includes(audience)) return { error: 'Choose an audience from the list.' };
+  if (!(TAG_NATIONALITIES as readonly string[]).includes(nationality)) return { error: 'Choose a nationality from the list.' };
+  const draft = await watchDraft(draftId);
+  if (!draft || (draft.status !== 'pending' && draft.status !== 'blocked')) return { error: 'This proposal is no longer open.' };
+  if (service !== draft.service && service !== draft.current_service && !(await editableServices()).includes(service)) {
+    return { error: 'Choose a service from the list.' };
+  }
+  try {
+    await callWrite('kb_admin_watch_set_tags', [actor.userId, actor.email, draftId, service, audience, nationality, reason]);
+  } catch (error) {
+    return failure('watch_tags', actor.userId, draftId, error);
+  }
+  log('watch_tags', actor.userId, draftId, `ok ${service}/${audience}/${nationality}`);
+  redirect(`/watch/${draftId}?tags=1`);
 }
 
 export async function rejectWatchDraft(_prev: ActionState, form: FormData): Promise<ActionState> {

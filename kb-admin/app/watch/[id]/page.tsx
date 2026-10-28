@@ -11,9 +11,13 @@ import { wordDiff, type DiffPart } from '@/lib/editing';
 import { removalsByOrigin, removedPoints, type RemovedPoint } from '@/lib/watcher/factDiff';
 import { reviewState } from '@/lib/watcher/feeLock';
 import { contradictingLine, entryDiff, type DiffSegment } from '@/lib/watcher/additive';
-import { modelDraftAnswer, watchDraft, type SimilarEntry } from '@/lib/watchQueries';
+import { modelDraftAnswer, watchDraft, watcherSchema19, type SimilarEntry, type WatchDraftRow } from '@/lib/watchQueries';
+import { editableServices } from '@/lib/queries';
+import { label } from '@/components/labels';
+import { changedTags, tagEvidence, type TagKey, type Tags } from '@/lib/watcher/tags';
 import { DRAFT_STATUS } from '../status';
 import { EditProposalForm } from './EditProposalForm';
+import { EditTagsForm } from './EditTagsForm';
 
 // Approving embeds the text and publishes it in the same server action.
 export const maxDuration = 120;
@@ -150,6 +154,69 @@ function EntryChanges({ question, segments, sourcePassage }: { question: string;
   );
 }
 
+const TAG_ROWS: { key: TagKey; name: string }[] = [
+  { key: 'service', name: 'Service' },
+  { key: 'audience', name: 'Audience' },
+  { key: 'nationality', name: 'Nationality' },
+];
+
+/**
+ * 2026-10-28: the service / audience / nationality the proposal is filed
+ * under (the bot filters its search on them), why, and - for an edit - the
+ * live entry's tags beside them, a change highlighted (an approver publishes
+ * it, as any change of routing). With migration 019 an editor can change them
+ * before approval; without it they are shown read-only.
+ */
+function TagsPanel({ draft, open, canEdit, has019, services }: { draft: WatchDraftRow; open: boolean; canEdit: boolean; has019: boolean; services: string[] }) {
+  const proposed: Tags = { service: draft.service, audience: draft.audience, nationality: draft.nationality };
+  const live: Tags | null = draft.kind === 'edit' && draft.current_service
+    ? { service: draft.current_service, audience: draft.current_audience ?? 'all', nationality: draft.current_nationality ?? 'all' }
+    : null;
+  const changed = changedTags(live, proposed);
+  const evidence = tagEvidence({
+    sourceLabel: draft.source_label, sourceUrl: draft.source_url, sourceCategory: draft.source_category,
+    question: draft.proposed_question, answer: draft.proposed_answer, sourcePassage: draft.source_passage,
+  });
+  return (
+    <section className="card card-pad space-y-2 text-[13px]" data-tags>
+      <h2 className="text-[15px] font-semibold">Who this answer is for</h2>
+      <p className="text-muted">The chatbot only finds an entry for questions with a matching service, audience and nationality, so a wrong tag answers somebody else&apos;s question.</p>
+      <table className="w-full">
+        <thead>
+          <tr className="text-left">
+            <th className="field-label py-1">Tag</th>
+            <th className="field-label py-1">Proposed</th>
+            {live ? <th className="field-label py-1">Live entry now</th> : null}
+            <th className="field-label py-1">Why</th>
+          </tr>
+        </thead>
+        <tbody>
+          {TAG_ROWS.map(({ key, name }) => {
+            const e = evidence[key];
+            const differs = changed.includes(key);
+            const why = e
+              ? e.value === proposed[key] ? e.why : `The rules suggest ${label(key, e.value)}: ${e.why}`
+              : live && !differs ? 'Kept from the live entry.' : draft.kind === 'new' && proposed[key] === (key === 'service' ? 'general' : 'all') ? 'No evidence for anything narrower.' : 'Proposed by the drafting model or set by a reviewer.';
+            return (
+              <tr key={key} data-tag={key} data-changed={differs ? 'yes' : 'no'} style={differs ? { background: 'var(--warn-bg)' } : undefined}>
+                <td className="py-1 pr-3 font-medium">{name}</td>
+                <td className="py-1 pr-3"><span className="mono">{label(key, proposed[key])}</span>{differs ? <> <Pill tone="warn">changes</Pill></> : null}</td>
+                {live ? <td className="py-1 pr-3 mono">{label(key, live[key])}</td> : null}
+                <td className="py-1 text-muted">{why}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {changed.length ? (
+        <p data-tags-changed style={{ color: 'var(--warn)' }}>Approving re-files the live entry under the proposed {changed.join(', ')}. Check it is right for every question the entry answers.</p>
+      ) : null}
+      {open && canEdit && has019 ? <EditTagsForm draftId={draft.id} tags={proposed} services={services} /> : null}
+      {open && canEdit && !has019 ? <p className="text-muted" data-tags-readonly>Tag editing needs migration 019; until it is applied a new entry is filed as shown and an edit keeps the live entry&apos;s tags.</p> : null}
+    </section>
+  );
+}
+
 /**
  * Stage 3: one proposal. The page that changed, what changed on it, and the
  * knowledge-base change it implies, side by side; then Approve / Edit / Reject.
@@ -162,6 +229,8 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
   const id = /^[0-9a-f-]{36}$/i.test(params.id) ? params.id : null;
   const [viewer, draft] = await requireViewerWith(() => (id ? watchDraft(id).catch(() => null) : Promise.resolve(null)));
   if (!viewer.watcherOn || !draft) notFound();
+  const has019 = await watcherSchema19().catch(() => false);
+  const services = has019 && viewer.canEdit ? await editableServices().catch(() => []) : [];
 
   const open = draft.status === 'pending' || draft.status === 'blocked';
   const review = reviewState({
@@ -277,6 +346,7 @@ export default async function WatchDraftPage({ params, searchParams }: { params:
         <Compare title="The knowledge-base change" leftLabel="No entry yet" rightLabel="Proposed" before={oldEntry} after={newEntry} />
       )}
       {drops || editDrops ? <PointsRemoved points={removed.filter((r) => !r.contradictedBy)} /> : null}
+      <TagsPanel draft={draft} open={draft.status === 'pending' || draft.status === 'blocked'} canEdit={viewer.canEdit} has019={has019} services={services} />
       <SimilarEntries entries={draft.similar_entries ?? []} />
 
       {draft.status === 'approved' && draft.version_id ? (

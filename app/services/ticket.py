@@ -3119,9 +3119,21 @@ def primary_service_type(row: dict[str, Any] | None) -> str | None:
     return values[0] if values else None
 
 
+# 2026-10-28: a ticket is described by its true topic (captured_info.topic_key)
+# where the stored service_type is a substitute. False = the stored value.
+TRUE_TOPIC_LABEL = True
+
+
 def service_types_label(row: dict[str, Any] | None) -> str:
     """Every service a ticket covers, in plain words — 'hiring a new helper and our fees'."""
-    values = (row or {}).get("service_type") or []
+    values = list((row or {}).get("service_type") or [])
+    # The stored value is a substitute when the true topic is not one of the
+    # eleven the column allows: a helper's registration is filed under
+    # new_hiring and was described to the model as "hiring a new helper", which
+    # it paraphrased to a helper as "your placement" (CB-2026-0125, 2026-10-28).
+    true_topic = ((row or {}).get("captured_info") or {}).get("topic_key")
+    if TRUE_TOPIC_LABEL and true_topic and true_topic not in TICKET_SERVICE_TYPES and values:
+        values[0] = true_topic
     labels = [service_label(v) for v in values]
     if not labels:
         return "their enquiry"
@@ -3298,6 +3310,9 @@ _DETAIL_LABELS = {
     "complaint_detail": "Complaint",
     "issue_duration": "Ongoing for",
     "client_message": "In their words",
+    # A vague action request and the answer to our question about it
+    # (app/graph/clarify.py, 2026-10-28).
+    "request_summary": "Request (clarified)",
     "lead_number": "Lead",
     "attachments": "Attachments",
 }

@@ -7,12 +7,15 @@ import logging
 import re
 from typing import Any
 
+from app.config import settings
+from app.graph import clarify
 from app.graph.closure import is_closing, is_pure_acknowledgement, needs_no_reply
 from app.graph.guards import (
     answering_our_question,
     asks_own_helper_rights,
     confirms_being_a_helper,
     greeting_only,
+    last_bot_line,
 )
 from app.graph.language import mainly_non_english
 from app.graph.llm import complete_json
@@ -127,6 +130,42 @@ _LEAVE_COMPLAINT = re.compile(
     r"cancel\s+(?:it|the\s+complaint|my\s+complaint)|no\s+need\s+to\s+log)\b",
     re.IGNORECASE,
 )
+
+# An explicit ask for a person (2026-10-28): "call me" is NOT one of these any
+# more while clarify.VAGUE_ACTION_CLARIFY is on - it is a vague action request,
+# asked about first (what about, and when). Talking to a person is immediate.
+_EXPLICIT_HUMAN = re.compile(
+    r"\b(speak|talk|chat)\s+(to|with)\s+(an?\s+)?(human|person|real person|someone|"
+    r"agent|consultant|manager|boss|thomas)\b|\b(?:live|real|human)\s+agent\b",
+    re.IGNORECASE,
+)
+
+# 2026-10-28, conversation 3766, 6:31 PM SGT. Mid transfer intake, "What
+# documents do I need to hire a Filipino helper?" stayed on transfer (the live
+# collection) and was answered with an MWO contract-verification list and the
+# transfer question again. "Hire a [nationality] helper" with no transfer,
+# release or return word in it is a NEW HIRE. A question about it is answered
+# (answer_only); the next turn may collect. False = the classifier's label.
+HIRE_IS_NEW_HIRE = True
+_HIRES_A_HELPER = re.compile(
+    r"\b(?:hire|hiring|employ|employing)\s+(?:a\s+|an\s+|one\s+|another\s+)?(?:new\s+)?"
+    r"(?:filipin[ao]|philippine|indonesian|myanmar|burmese)?\s*"
+    r"(?:helper|maid|fdw|mdw|domestic\s+(?:helper|worker))s?\b",
+    re.IGNORECASE,
+)
+_NOT_A_NEW_HIRE = re.compile(
+    r"\b(?:transfer\w*|releas\w*|return\w*|replac\w*|direct(?:ly)?\s+hir\w*)\b", re.IGNORECASE
+)
+# Services a hire question may be lifted out of: the transfer flows (the live
+# case), a bare money enquiry, or nothing at all. A direct hire or a
+# replacement in hand keeps its own reading of "hire a helper".
+_HIRE_LIFTS_FROM = {None, "transfer", "transfer_employer", "fee_enquiry", "salary_enquiry", "new_hiring"}
+
+
+def hires_a_new_helper(message: str) -> bool:
+    text = message or ""
+    return bool(_HIRES_A_HELPER.search(text) and not _NOT_A_NEW_HIRE.search(text))
+
 
 HUMAN_REQUEST_PATTERNS = re.compile(
     r"\b(speak|talk|chat)\s+(to|with)\s+(a\s+)?(human|person|real person|someone|"
@@ -1198,6 +1237,26 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
         if active_service in ALL_INTENTS:
             intent = active_service
 
+    # "Hire a Filipino helper" is a new hire, whatever was in flight (above).
+    answer_only = False
+    if (
+        HIRE_IS_NEW_HIRE
+        and hires_a_new_helper(message)
+        and intent not in {"dispute_assault", ticket_service.MISSING_HELPER, ticket_service.COMPLAINT}
+        and service_type in _HIRE_LIFTS_FROM
+        and active_service in _HIRE_LIFTS_FROM
+    ):
+        if service_type != "new_hiring":
+            logger.info(
+                "Conversation %s: %r hires a helper with no transfer word - new_hiring, not %r",
+                state.get("conversation_id"), message[:60], service_type,
+            )
+        service_type = "new_hiring"
+        if intent in KB_QUESTION_INTENTS or intent in {"fee_enquiry", "salary_enquiry"}:
+            answer_only = True
+        else:
+            intent = "new_hiring"
+
     try:
         confidence = float(result.get("confidence") or 0.0)
     except (TypeError, ValueError):
@@ -1247,10 +1306,19 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
                     detected,
                 )
 
+    if answer_only:
+        update["answer_only"] = True
+
     if HUMAN_REQUEST_PATTERNS.search(message):
         # Honour it silently: no announcement, the bot simply steps aside.
         update["needs_handover"] = True
         update["handover_reason"] = "client_requested"
+
+    # A vague request for something only a person can do: ask first, ticket
+    # after (app/graph/clarify.py). Never for a harm report, a missing helper,
+    # a complaint or an explicit ask for a person - those stay immediate.
+    if clarify.VAGUE_ACTION_CLARIFY:
+        update.update(_clarify_decision(state, message, intent))
 
     logger.info(
         "Conversation %s classified as intent=%s service=%s confidence=%.2f",
@@ -1259,4 +1327,33 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
         service_type,
         confidence,
     )
+    return update
+
+
+_IMMEDIATE_INTENTS = {"dispute_assault", "dispute_salary"}
+
+
+def _clarify_decision(state: ConversationState, message: str, intent: str) -> dict[str, Any]:
+    """Whether this turn asks a clarifying question, answers one, or neither."""
+    if intent in _IMMEDIATE_INTENTS or intent in {ticket_service.MISSING_HELPER, ticket_service.COMPLAINT}:
+        return {"pending_action": None} if state.get("pending_action") else {}
+    if _EXPLICIT_HUMAN.search(message):
+        return {"pending_action": None} if state.get("pending_action") else {}
+    pending = state.get("pending_action")
+    if pending and not clarify.dropped(message) and clarify.awaiting_answer(
+        pending, last_bot_line(state.get("history_text") or ""), settings.intake_stale_hours
+    ):
+        return {"action_answer": True, "needs_handover": False, "handover_reason": None}
+    update: dict[str, Any] = {"pending_action": None} if pending else {}
+    kind = clarify.vague_action(message)
+    # A status question with exactly one open ticket is about that ticket: the
+    # parked-topic chase answers it with its reference, no question needed.
+    if kind == "update" and clarify.single_open_ticket(state.get("blocked_topics")):
+        kind = None
+    if kind:
+        logger.info(
+            "Conversation %s: vague %s request - asking what it is about before raising a ticket",
+            state.get("conversation_id"), kind,
+        )
+        update.update({"clarify_action": kind, "needs_handover": False, "handover_reason": None})
     return update

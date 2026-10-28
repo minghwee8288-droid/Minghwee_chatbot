@@ -52,10 +52,10 @@ export function isSingleRead(query: string): boolean {
 
 /**
  * The ONLY database calls kb-admin makes as kb_admin_editor: one call to one of
- * these thirty-one functions. Each is SECURITY DEFINER in the database and checks
+ * these thirty-two functions. Each is SECURITY DEFINER in the database and checks
  * the caller's role itself; the editor login can call these and nothing else.
- * This list is the code-side twin of that grant: the same thirty-one signatures
- * that migrations 005, 008, 011, 014, 015, 016 and 017 grant to kb_admin_editor. The
+ * This list is the code-side twin of that grant: the same thirty-two signatures
+ * that migrations 005, 008, 011, 014, 015, 016, 017 and 019 grant to kb_admin_editor. The
  * eight of 015 exist only once that migration is applied; until then nothing
  * calls them, because the watcher pages are off unless KB_SOURCES_ENABLED=true.
  */
@@ -105,6 +105,10 @@ export const WRITE_FUNCTIONS = {
   kb_admin_source_set_unverified: ['uuid', 'text', 'uuid', 'boolean', 'text'],
   kb_admin_source_add_unverified: ['uuid', 'text', 'text', 'text', 'text', 'text'],
   kb_admin_source_record_draft: ['uuid', 'text', 'uuid', 'boolean', 'text'],
+  // Migration 019: change a proposal's service / audience / nationality before
+  // approval (editor). Called only once 019 is installed (lib/watchQueries.ts
+  // watcherSchema19); it changes only the proposal, never the knowledge base.
+  kb_admin_watch_set_tags: ['uuid', 'text', 'uuid', 'text', 'text', 'text', 'text'],
 } as const;
 export type WriteFunction = keyof typeof WRITE_FUNCTIONS;
 

@@ -19,6 +19,7 @@ from app.graph.nodes.blocked_topic_responder import (
     asks_general_info,
     blocked_topic_responder,
 )
+from app.graph.nodes.action_clarifier import action_clarifier
 from app.graph.nodes.handover_executor import handover_executor
 from app.graph.nodes.info_collector import (
     asks_for_service_again,
@@ -76,6 +77,13 @@ def route_after_intent(state: ConversationState) -> str:
     # another "still checking on that for you".
     if state.get("suppress_reply"):
         return END
+
+    # A vague action request, or the answer to our question about one
+    # (app/graph/clarify.py). Before the parked-topic check: "please send the
+    # video here" on a thread with an open ticket is not about that ticket
+    # until the client says so (conversation 4443, 2026-10-28).
+    if state.get("clarify_action") or state.get("action_answer"):
+        return "action_clarifier"
 
     # This turn's topic already has a human working it — acknowledge, do not
     # re-answer, re-collect or re-escalate. Checked first: whatever else the
@@ -141,6 +149,11 @@ def route_after_rag(state: ConversationState) -> str:
     # and the only one that will not re-escalate a topic a human already owns.
     if _blocked_topic(state):
         return "blocked_topic_responder"
+
+    # A question about hiring a helper asked in the middle of something else
+    # (HIRE_IS_NEW_HIRE in intent_classifier): answered, not collected.
+    if state.get("answer_only"):
+        return "response_generator"
 
     # "Any update on Yoyo's home leave?" about a request our team has already
     # completed is answered as completed - never re-collected into a duplicate
@@ -281,6 +294,7 @@ def build_graph(checkpointer: Any = None):
     builder.add_node("ticket_creator", ticket_creator)
     builder.add_node("handover_executor", handover_executor)
     builder.add_node("blocked_topic_responder", blocked_topic_responder)
+    builder.add_node("action_clarifier", action_clarifier)
 
     builder.add_edge(START, "intent_classifier")
     builder.add_conditional_edges(
@@ -290,6 +304,16 @@ def build_graph(checkpointer: Any = None):
             "rag_retriever": "rag_retriever",
             "handover_executor": "handover_executor",
             "blocked_topic_responder": "blocked_topic_responder",
+            "action_clarifier": "action_clarifier",
+            END: END,
+        },
+    )
+    builder.add_conditional_edges(
+        "action_clarifier",
+        route_after_response,
+        {
+            "handover_executor": "handover_executor",
+            "ticket_creator": "ticket_creator",
             END: END,
         },
     )
@@ -455,6 +479,10 @@ _TURN_RESET: dict[str, Any] = {
     "ticket_id": None,
     "ticket_number": None,
     "suppress_reply": False,
+    "clarify_action": None,
+    "action_answer": False,
+    "action_summary": None,
+    "answer_only": False,
 }
 
 
@@ -561,6 +589,9 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     # Step 2c: every node's reply passes here, so the tag is fixed once.
     if NO_TAG_BEFORE_POSSESSIVE and result.get("reply"):
         result["reply"] = without_tag_before_possessive(result["reply"])
+    # 2026-10-28: three or more numbered items, one per line (WhatsApp layout).
+    if guards.NUMBERED_ITEMS_ON_OWN_LINES and result.get("reply"):
+        result["reply"] = guards.numbered_items_on_own_lines(result["reply"])
     # Step 5 item 15: stray-script glitches are cut once, here, for the same
     # reason - every node's reply (and every fixed sentence added to it) has
     # been written by now.

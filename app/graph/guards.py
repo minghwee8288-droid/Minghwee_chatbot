@@ -2384,3 +2384,39 @@ def case_numbers_held(*states: Any) -> list[str]:
         if isinstance(summary, dict) and summary.get("case_number"):
             numbers.append(str(summary["case_number"]))
     return numbers
+
+
+# --- WhatsApp list layout (2026-10-28) -------------------------------------
+
+# Any answer with three or more numbered items puts each on its own line. The
+# model was told to (PROCESS_INSTRUCTION) and still ran "1. ... 2. ... 3. ..."
+# into one paragraph on some turns, which on a phone is a wall of text. Only
+# a run of three or more consecutive numbers, written inline, is broken up;
+# "2 to 3 weeks", "S$1,428." and a list already on its own lines are left
+# alone. False = the reply as the node wrote it.
+NUMBERED_ITEMS_ON_OWN_LINES = True
+_INLINE_ITEM = re.compile(r"(?<=[^\n])\s+(?=(\d{1,2})\.\s+[A-Z(])")
+
+
+def numbered_items_on_own_lines(reply: str) -> str:
+    """The reply with an inline numbered run of 3+ items split onto lines."""
+    out: list[str] = []
+    for paragraph in (reply or "").split("\n"):
+        starts = [m for m in _INLINE_ITEM.finditer(paragraph)]
+        numbers = [int(m.group(1)) for m in starts]
+        lead = re.match(r"\s*(\d{1,2})\.\s", paragraph)
+        if lead:
+            numbers = [int(lead.group(1))] + numbers
+        consecutive = len(numbers) >= 3 and all(
+            b == a + 1 for a, b in zip(numbers, numbers[1:])
+        )
+        if not consecutive:
+            out.append(paragraph)
+            continue
+        pieces, last = [], 0
+        for m in starts:
+            pieces.append(paragraph[last:m.start()].rstrip())
+            last = m.end()
+        pieces.append(paragraph[last:].strip())
+        out.extend(p for p in pieces if p)
+    return "\n".join(out)

@@ -1,5 +1,6 @@
 import 'server-only';
 import { select } from './db';
+import type { EntryText } from './watcher/pipeline';
 
 /**
  * Every read the KB watcher makes (migration 015's three tables, and the
@@ -42,6 +43,23 @@ export async function watcherSchema17(): Promise<boolean> {
          or (table_name = 'cb_kb_source_snapshots' and column_name = 'draft_failed'))`);
   schema17 = { ok: (row?.n ?? 0) === 3, at: Date.now() };
   return schema17.ok;
+}
+
+/**
+ * Is migration 019 installed (a proposal's tags proposed by the watcher, and
+ * kb_admin_watch_set_tags to change them before approval; an approved edit is
+ * published with the proposal's tags)? Same rule as 016/017: a yes is
+ * remembered, a no asked again after a minute. Until then the tags are shown
+ * read-only and the propose call gets nulls, exactly as before.
+ */
+let schema19: { ok: boolean; at: number } | null = null;
+export async function watcherSchema19(): Promise<boolean> {
+  if (schema19 && (schema19.ok || Date.now() - schema19.at < 60_000)) return schema19.ok;
+  const [row] = await select<{ n: number }>(`
+    select count(*)::int as n from pg_catalog.pg_proc p join pg_catalog.pg_namespace s on s.oid = p.pronamespace
+     where s.nspname = 'public' and p.proname = 'kb_admin_watch_set_tags'`);
+  schema19 = { ok: (row?.n ?? 0) === 1, at: Date.now() };
+  return schema19.ok;
 }
 
 export type SuggestedPage = { url: string; label: string };
@@ -153,6 +171,10 @@ export type WatchDraftRow = {
   service: string;
   audience: string;
   nationality: string;
+  /** An edit: the live entry's tags now (null for a new entry). */
+  current_service: string | null;
+  current_audience: string | null;
+  current_nationality: string | null;
   source_passage: string;
   old_source_text: string | null;
   new_source_text: string | null;
@@ -196,6 +218,7 @@ const DRAFT_COLUMNS = `
     d.id::text, d.source_id::text, s.label as source_label, s.category as source_category, d.source_url, d.source_fetched_at::text, d.kind,
     d.target_entry_id::text, d.old_question, d.old_answer, k.question as current_question, k.answer as current_answer,
     d.proposed_question, d.proposed_answer, d.section_heading, d.service, d.audience, d.nationality,
+    k.service_type as current_service, k.contact_type as current_audience, k.nationality as current_nationality,
     d.source_passage, d.old_source_text, d.new_source_text, d.status, d.blocked_reason, d.figure_check, d.figure_confirmed, d.created_at::text,
     d.created_by_email, d.edited_by_email, d.reviewed_by_email, d.review_reason, d.approved_by_email,
     d.approved_at::text, d.entry_id_after::text, d.version_id::text, d.published_at::text`;
@@ -235,10 +258,11 @@ export async function modelDraftAnswer(draftId: string): Promise<string | null> 
   return row?.answer ?? null;
 }
 
-export async function liveEntryTexts(ids: string[]): Promise<{ id: string; question: string | null; answer: string | null }[]> {
+export async function liveEntryTexts(ids: string[]): Promise<EntryText[]> {
   const wanted = ids.filter((x) => /^[0-9a-f-]{36}$/i.test(x));
   if (!wanted.length) return [];
-  return select<{ id: string; question: string | null; answer: string | null }>(`
-    select id::text as id, question, answer from public.cb_knowledge_base_updated
+  // The tags too: an edit's proposal starts from the entry's own (lib/watcher/tags.ts).
+  return select<EntryText>(`
+    select id::text as id, question, answer, service_type, contact_type, nationality from public.cb_knowledge_base_updated
      where id = any(string_to_array($1, ',')::uuid[])`, [wanted.join(',')]);
 }

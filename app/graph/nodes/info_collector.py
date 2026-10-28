@@ -2867,6 +2867,10 @@ def enquiry_overview_due(state: ConversationState) -> bool:
     See templates.ENQUIRY_OVERVIEW_NOTE for the conversation that made it.
     """
     message = state.get("incoming_text") or ""
+    # A specific question about hiring (intent_classifier.HIRE_IS_NEW_HIRE) is
+    # answered on its own, not with the whole overview (2026-10-28).
+    if state.get("answer_only"):
+        return False
     if not (asks_for_process(message) or _WANTS_TO_KNOW.search(message)):
         return False
     contact = effective_contact_type(state)
