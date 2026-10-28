@@ -117,8 +117,9 @@ const SIXTEEN = [
   'kb_admin_source_set_render', 'kb_admin_source_set_suggestions', 'kb_admin_source_set_unverified',
   'kb_admin_toggle',
   'kb_admin_watch_approve', 'kb_admin_watch_edit', 'kb_admin_watch_mark_published', 'kb_admin_watch_propose', 'kb_admin_watch_propose_checked', 'kb_admin_watch_reject',
+  'kb_admin_watch_set_tags',
 ];
-const SIX = SIXTEEN; // the name the checks below grew up with (now thirty-one: + 016's three, + 017's four)
+const SIX = SIXTEEN; // the name the checks below grew up with (now thirty-two: + 016's three, + 017's four, + 019's one)
 const ACTION_FILES = ['app/docs/actions.ts', 'app/editor/actions.ts', 'app/watch/actions.ts'];
 // The one module outside the action files that may write: the watcher's scheduled route.
 const SCHEDULED_WRITER = 'app/api/watcher/run/route.ts';
@@ -147,7 +148,7 @@ for (const file of ACTION_FILES) {
   check(`${file} is a 'use server' module`, /^'use server';/.test(text));
   const fns = [...text.matchAll(/export async function (\w+)\([^)]*\)[^{]*\{\s*\n\s*(.*)/g)];
   const unguarded = fns.filter((m) => m[2].trim() !== 'const auth = await actorForWrite();').map((m) => m[1]);
-  const expected = { 'app/editor/actions.ts': 6, 'app/docs/actions.ts': 9, 'app/watch/actions.ts': 10 }[file]; // watch: + 017's render and unverified
+  const expected = { 'app/editor/actions.ts': 6, 'app/docs/actions.ts': 9, 'app/watch/actions.ts': 11 }[file]; // watch: + 017's render and unverified, + 019's tags
   check(`every server action in ${file} checks the session and role first (actorForWrite)`, fns.length === expected && unguarded.length === 0,
     `${fns.length} action(s)${unguarded.length ? `; unguarded: ${unguarded.join(', ')}` : ''}`);
 }
@@ -347,8 +348,8 @@ check('token expiry read', secondsLeft(jwt({ exp: now + 300 }), now) === 300);
 check('garbage token reads as expired', secondsLeft('garbage', now) < 0);
 
 console.log('behaviour - writes:');
-check('exactly the thirty-one functions are allowed', Object.keys(WRITE_FUNCTIONS).sort().join(',') === SIX.join(','), Object.keys(WRITE_FUNCTIONS).sort().join(','));
-check('each of the thirty-one statements is allowed', SIX.every((fn) => isAllowedWrite(writeStatement(fn))));
+check('exactly the thirty-two functions are allowed', Object.keys(WRITE_FUNCTIONS).sort().join(',') === SIX.join(','), Object.keys(WRITE_FUNCTIONS).sort().join(','));
+check('each of the thirty-two statements is allowed', SIX.every((fn) => isAllowedWrite(writeStatement(fn))));
 const bound = (fn) => WRITE_FUNCTIONS[fn].map((t, i) => `$${i + 1}::${t}`).join(', ');
 check('every statement binds every value ($n) and splices nothing',
   SIX.every((fn) => writeStatement(fn) === (ROW_FUNCTIONS.includes(fn)
@@ -376,7 +377,7 @@ check('anything else is refused (internal helpers, a second statement, raw write
 // kb_admin_editor: five in 005, one in 008, nine in 011, one in 014 (014 also
 // grants kb_admin_doc_publish again, which it replaces).
 const sqlDir = resolve(ROOT, '..', 'scripts', 'sql');
-const grantFiles = ['kb_admin_005_editor_login.sql', 'kb_admin_008_create_entry.sql', 'kb_admin_011_doc_functions.sql', 'kb_admin_014_live_match_baseline.sql', 'kb_admin_015_watcher.sql', 'kb_admin_016_watcher_overlap.sql', 'kb_admin_017_watcher_sources.sql'];
+const grantFiles = ['kb_admin_005_editor_login.sql', 'kb_admin_008_create_entry.sql', 'kb_admin_011_doc_functions.sql', 'kb_admin_014_live_match_baseline.sql', 'kb_admin_015_watcher.sql', 'kb_admin_016_watcher_overlap.sql', 'kb_admin_017_watcher_sources.sql', 'kb_admin_019_watcher_tags.sql'];
 if (grantFiles.every((f) => existsSync(join(sqlDir, f)))) {
   const norm = (t) => t.replace(/\s+/g, '').replace(/float8\[\]/g, 'doubleprecision[]').replace(/doubleprecision/g, 'double precision');
   const sig = (m) => `${m[1]}(${norm(m[2])})`;
@@ -389,7 +390,7 @@ if (grantFiles.every((f) => existsSync(join(sqlDir, f)))) {
   }
   const ours = SIX.map((fn) => `${fn}(${norm(WRITE_FUNCTIONS[fn].join(','))})`).sort().join(' ');
   const theirs = [...granted].sort().join(' ');
-  check('the thirty-one signatures match the kb_admin_editor grants (005, 008, 011, 014, 015, 016, 017)', theirs === ours, theirs);
+  check('the thirty-two signatures match the kb_admin_editor grants (005, 008, 011, 014, 015, 016, 017, 019)', theirs === ours, theirs);
 } else {
   console.log('  (grant SQL files not found - grant comparison skipped)');
 }
@@ -1037,7 +1038,7 @@ console.log('KB watcher, stages 1-3 (2026-10-15; migration 015 not applied yet):
       /confirm=\{figure \|\| conflict \? \{\s*name: 'confirm_figure'/.test(page) && /category: draft\.source_category/.test(page));
     check('the tick box is required in the form', /type="checkbox" name=\{confirm\.name\} value="yes" required/.test(src('components/ReasonAction.tsx')));
   }
-  check('every watcher action refuses while the watcher is off', (watchActions.match(/const off = watcherOff\(\);/g) ?? []).length === 10);
+  check('every watcher action refuses while the watcher is off', (watchActions.match(/const off = watcherOff\(\);/g) ?? []).length === 11);
   const watcherPages = ['app/sources/page.tsx', 'app/watch/page.tsx', 'app/watch/[id]/page.tsx'];
   check('the watcher pages are 404 unless the watcher is on', watcherPages.every((p) => /if \(!viewer\.watcherOn[^)]*\) notFound\(\);/.test(src(p))));
   const route = src('app/api/watcher/run/route.ts');
@@ -1585,7 +1586,7 @@ console.log('KB watcher drafting: overlap check, low-value proposals, index page
       (actsSrc.match(/entryTexts: liveEntryTexts/g) ?? []).length === 2 && /entryTexts: liveEntryTexts/.test(routeSrc));
     const wq = readFileSync(join(ROOT, 'lib/watchQueries.ts'), 'utf8');
     check('overlap-fail: the entry reader reads question and answer of the live table, read-only (select)',
-      /export async function liveEntryTexts/.test(wq) && /select id::text as id, question, answer from public\.cb_knowledge_base_updated/.test(wq));
+      /export async function liveEntryTexts/.test(wq) && /select id::text as id, question, answer, service_type, contact_type, nationality from public\.cb_knowledge_base_updated/.test(wq));
     const plSrc = readFileSync(join(ROOT, 'lib/watcher/pipeline.ts'), 'utf8');
     check('overlap-fail: the pipeline never filters matches on question/answer the search does not return',
       !/x\.question && x\.answer/.test(plSrc) && !/if \(deps\.searcher\) \{/.test(plSrc) && !/deps\.searcher && planned/.test(plSrc));
@@ -2053,6 +2054,170 @@ console.log('watcher - five client sites (017):');
     check('017 SQL: http:// is allowed only on a row marked unverified; additive; 31 editor functions; a rollback that refuses once used',
       /and \(url ~ '\^https:\/\/' or allow_unverified\)\)/.test(s17) && !/alter table public\.cb_knowledge_base_updated/i.test(s17) && !/\bdelete from\b/i.test(s17) && /if n <> 31 then/.test(s17) &&
       /ROLLBACK 017 REFUSED: cb_kb_audit holds 017 actions/.test(readFileSync(resolve(ROOT, '..', 'scripts', 'sql', 'rollback', 'rollback_kb_admin_017_watcher_sources.sql'), 'utf8')));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 2026-10-28: the watcher proposes service / audience / nationality for every
+// draft (lib/watcher/tags.ts), the review page shows and edits them, and
+// migration 019 stores them (an edit too) and publishes an edit with them.
+// Before 019 nothing changes. Fakes only: no network, no database.
+// ---------------------------------------------------------------------------
+console.log('watcher - proposal tags (019):');
+{
+  const T = await import(pathToFileURL(join(ROOT, 'lib/watcher/tags.ts')).href);
+  const Dr = await import(pathToFileURL(join(ROOT, 'lib/watcher/drafting.ts')).href);
+  const Pl = await import(pathToFileURL(join(ROOT, 'lib/watcher/pipeline.ts')).href);
+  const MWO = 'https://services.mwosingapore.online/support/solutions/articles/';
+  const CASES = {
+    'MWO contract verification': [{ sourceLabel: 'MWO Singapore - Contract verification', sourceUrl: `${MWO}158000317536`, sourceCategory: 'embassy',
+      question: 'What documents are needed for contract verification at MWO Singapore?',
+      answer: "An OFW changing to a new employer brings the employment contract signed by the new employer, a copy of the employer's NRIC and her passport to MWO Singapore.",
+      sourcePassage: 'Contract verification is required for OFWs transferring to a new employer.' }, ['transfer', 'candidate', 'PH']],
+    'MWO OEC': [{ sourceLabel: 'MWO Singapore - OEC appointment', sourceUrl: `${MWO}158000406332`, sourceCategory: 'embassy',
+      question: 'How does an OFW get an OEC before going home on vacation?',
+      answer: 'An OFW going home on vacation needs an Overseas Employment Certificate (OEC). Book an appointment online and bring your passport and work permit.',
+      sourcePassage: 'OFWs going home for vacation must secure an OEC.' }, ['home_leave', 'candidate', 'PH']],
+    'MWO Balik-Manggagawa': [{ sourceLabel: 'MWO Singapore - Returning OFWs', sourceUrl: `${MWO}158000239914`, sourceCategory: 'embassy',
+      question: 'Who is a Balik-Manggagawa?', answer: 'A Balik-Manggagawa is a returning worker who goes back to the same employer after a vacation in the Philippines.',
+      sourcePassage: 'Balik-Manggagawa or returning workers are OFWs returning to the same employer.' }, ['home_leave', 'candidate', 'PH']],
+    ICA: [{ sourceLabel: 'ICA - Visa requirements', sourceUrl: 'https://www.ica.gov.sg/enter-transit-depart/entering-singapore/visa_requirements', sourceCategory: 'government_rule',
+      question: 'Who needs a visa to enter Singapore?', answer: 'Visitors holding a passport from a visa-required country must apply for a visa before travelling to Singapore.',
+      sourcePassage: 'Visitors from visa-required countries must obtain a visa.' }, ['general', 'all', 'all']],
+    'MOM levy': [{ sourceLabel: 'MOM - FDW levy - Paying levy', sourceUrl: 'https://www.mom.gov.sg/passes-and-permits/work-permit-for-foreign-domestic-worker/foreign-domestic-worker-levy/paying-levy', sourceCategory: 'government_rule',
+      question: 'When is the domestic helper levy due?', answer: 'Employers must pay the levy for each month by the 17th of the following month.',
+      sourcePassage: 'You must pay the levy for each month by the 17th of the following month.' }, ['general', 'employer', 'all']],
+    KBRI: [{ sourceLabel: 'KBRI Singapura - Layanan Paspor', sourceUrl: 'https://kemlu.go.id/singapore/layanan-imigrasi/layanan-paspor', sourceCategory: 'embassy',
+      question: 'How can an Indonesian helper renew her passport in Singapore?', answer: 'Indonesian citizens renew their passport at KBRI Singapore. Bring your passport and your work permit.',
+      sourcePassage: 'Permohonan paspor baru bagi WNI di Singapura.' }, ['passport_renewal', 'candidate', 'ID']],
+  };
+  for (const [name, [input, want]] of Object.entries(CASES)) {
+    const r = T.proposeTags(input);
+    check(`tags: ${name} -> ${want.join(' / ')}, each with a why line`,
+      r.service === want[0] && r.audience === want[1] && r.nationality === want[2] && r.why.length >= 3, `${r.service}/${r.audience}/${r.nationality}: ${r.why.join(' | ')}`);
+  }
+  {
+    const cv = CASES['MWO contract verification'][0];
+    const asNew = T.proposeTags({ ...cv, modelTags: { service: 'new_hiring', audience: 'employer', nationality: 'ID' } });
+    check('tags: unambiguous evidence overrides the model (MWO contract verification stays transfer / candidate / PH, the model\'s new_hiring/employer/ID is not used)',
+      asNew.service === 'transfer' && asNew.audience === 'candidate' && asNew.nationality === 'PH', JSON.stringify(asNew));
+    const ica = T.proposeTags({ ...CASES.ICA[0], modelTags: { service: 'renewal', audience: 'everyone', nationality: 'SG' } });
+    check('tags: with no evidence the model\'s valid tag is used for a NEW entry; an invalid one is ignored and said so',
+      ica.service === 'renewal' && ica.audience === 'all' && ica.nationality === 'all' && ica.why.some((w) => /"everyone" is not a value we use/.test(w)) && ica.why.some((w) => /"SG"/.test(w)), JSON.stringify(ica));
+    const live = { service: 'renewal', audience: 'employer', nationality: 'all' };
+    const edit = T.proposeTags({ ...CASES.ICA[0], live, modelTags: { service: 'general', audience: 'candidate' } });
+    check('tags: an EDIT keeps the live entry\'s specific tags against the model alone (renewal / employer kept), and says so',
+      edit.service === 'renewal' && edit.audience === 'employer' && edit.nationality === 'all' && edit.why.some((w) => /live entry's renewal is kept/.test(w)), JSON.stringify(edit));
+    const editCv = T.proposeTags({ ...cv, live: { service: 'general', audience: 'all', nationality: 'all' } });
+    check('tags: an EDIT of a generic entry is re-filed on clear evidence (MWO -> transfer / candidate / PH), the live value named in the why line',
+      editCv.service === 'transfer' && editCv.nationality === 'PH' && editCv.why.some((w) => /\(the live entry is general\)/.test(w)) &&
+      T.changedTags({ service: 'general', audience: 'all', nationality: 'all' }, editCv).join() === 'service,audience,nationality', JSON.stringify(editCv));
+    const svc = T.proposeTags({ ...CASES.ICA[0], modelTags: { service: 'salary_enquiry' }, services: ['general', 'renewal'] });
+    check('tags: a service the knowledge base does not use falls back (the database would refuse it)', svc.service === 'general', JSON.stringify(svc));
+    const both = T.tagEvidence({ ...CASES.ICA[0], answer: 'Filipino and Indonesian helpers both need it.' });
+    check('tags: two nationalities named is ambiguous - no override', both.nationality === undefined, JSON.stringify(both));
+  }
+  {
+    const p = Dr.buildPrompt({ label: 'l', url: 'https://x.gov.sg', added: ['a'], removed: [], candidates: [] });
+    check('drafting: the prompt asks for service, audience and nationality from the allowed lists', p.system.includes(T.TAG_PROMPT) && /"service":string,"audience":string,"nationality":string/.test(p.system));
+    const text = 'Contract verification is required for OFWs transferring to a new employer.';
+    const r = Dr.parseDrafts(JSON.stringify({ drafts: [{ target_entry_id: null, question: 'What is contract verification at MWO?', answer: 'An OFW moving to a new employer must have her contract verified at MWO before she starts.', source_passage: text, service: ' transfer ', audience: 'candidate', nationality: 'PH', why: '' }] }), { newText: text, candidateIds: [] });
+    check('drafting: parseDrafts keeps the model\'s tags (trimmed) on the draft for proposeTags', r.drafts[0]?.modelTags?.service === 'transfer' && r.drafts[0].modelTags.nationality === 'PH', JSON.stringify(r));
+  }
+  // --- the pipeline, on a fake database -------------------------------------
+  const ENTRY = { id: 'dddddddd-0000-0000-0000-000000000019', question: 'What documents are needed for contract verification?', answer: 'Bring the signed contract to MWO.' };
+  const SNAP = 'Contract verification is required for OFWs transferring to a new employer.\nBring the employment contract signed by the new employer.';
+  const run = async ({ has019, drafts, match = 0, entryTags = true }) => {
+    const calls = [];
+    const call = async (fn, params) => {
+      calls.push({ fn, params });
+      if (fn === 'kb_admin_match_live') return match ? [{ id: ENTRY.id, chunk_type: 'qa_pair', similarity: match, preview: '' }] : [];
+      if (/^kb_admin_watch_propose/.test(fn)) return { draft_id: `d-${calls.length}`, status: 'pending', blocked_reason: null };
+      throw new Error(`unexpected ${fn}`);
+    };
+    const answers = [JSON.stringify({ drafts })];
+    const r = await Pl.draftFromSnapshot({ id: 's19', url: `${MWO}158000317536`, label: 'MWO Singapore - Contract verification', category: 'embassy' },
+      { snapshotId: 'snap-19', text: SNAP, previousText: null }, {
+        call, embed: async (t) => ({ vectors: t.map(() => Array(1536).fill(0.01)), model: 'm' }), recorder: { userId: 'u', email: 'e@x' }, searcher: { userId: 'u', email: 'e@x' },
+        llm: async () => answers.shift() ?? '{"drafts":[]}', model: 'test-model', has016: true, has019, services: ['general', 'transfer', 'home_leave', 'new_hiring'],
+        entryTexts: async (ids) => (ids.includes(ENTRY.id) ? [{ ...ENTRY, ...(entryTags ? { service_type: 'general', contact_type: 'all', nationality: 'all' } : {}) }] : []),
+      });
+    return { r, propose: calls.find((c) => /^kb_admin_watch_propose/.test(c.fn)) };
+  };
+  const newD = { target_entry_id: null, question: 'What is contract verification at MWO Singapore?', answer: 'An OFW moving to a new employer must have her employment contract verified at MWO Singapore before she starts.',
+    source_passage: 'Contract verification is required for OFWs transferring to a new employer.', service: 'new_hiring', audience: 'employer', nationality: 'all', why: '' };
+  {
+    const { r, propose } = await run({ has019: true, drafts: [newD] });
+    check('pipeline (019): a NEW proposal is passed its proposed tags (transfer / candidate / PH), not general / all / all',
+      propose && propose.params[7] === 'transfer' && propose.params[8] === 'candidate' && propose.params[9] === 'PH' && r.drafts[0]?.tags?.service === 'transfer', JSON.stringify(propose?.params.slice(6, 10)));
+    const before = await run({ has019: false, drafts: [newD] });
+    check('pipeline (before 019): the propose call gets nulls for the tags, exactly as before',
+      before.propose && before.propose.params.slice(6, 10).every((x) => x === null) && before.r.drafts[0]?.tags === null, JSON.stringify(before.propose?.params.slice(6, 10)));
+    const edit = { target_entry_id: ENTRY.id, add: [{ sentence: 'An OFW moving to a new employer must have the contract verified first.', after: '', source_passage: 'Contract verification is required for OFWs transferring to a new employer.' }], replace: [], why: '' };
+    const e = await run({ has019: true, drafts: [edit], match: 0.6 });
+    check('pipeline (019): an EDIT of a generic live entry is passed the proposed tags (its live tags read with its text)',
+      e.propose?.params[3] === ENTRY.id && e.propose.params[7] === 'transfer' && e.propose.params[9] === 'PH', JSON.stringify(e.propose?.params.slice(3, 10)));
+    const e0 = await run({ has019: true, drafts: [edit], match: 0.6, entryTags: false });
+    check('pipeline (019): an edit whose live tags were not read gets nulls (the database keeps the entry\'s own)',
+      e0.propose?.params[3] === ENTRY.id && e0.propose.params.slice(6, 10).every((x) => x === null));
+  }
+  // --- the review page, the action, the queries --------------------------------
+  {
+    const page = src('app/watch/[id]/page.tsx');
+    const form = src('app/watch/[id]/EditTagsForm.tsx');
+    const acts = src('app/watch/actions.ts');
+    const wq = src('lib/watchQueries.ts');
+    check('review page: shows the three tags (proposed, and the live entry\'s for an edit) with the why lines, a change highlighted',
+      /<TagsPanel draft=\{draft\}/.test(page) && /tagEvidence\(\{/.test(page) && /const changed = changedTags\(live, proposed\);/.test(page) &&
+      /Live entry now/.test(page) && /data-changed=\{differs \? 'yes' : 'no'\}/.test(page) && /<Pill tone="warn">changes<\/Pill>/.test(page) && /data-tags-changed/.test(page));
+    check('review page: the tags can be changed only with 019, by an editor, on an open proposal; otherwise read-only with "Tag editing needs migration 019"',
+      /\{open && canEdit && has019 \? <EditTagsForm draftId=\{draft\.id\} tags=\{proposed\} services=\{services\} \/> : null\}/.test(page) &&
+      /\{open && canEdit && !has019 \? <p[^>]*data-tags-readonly>Tag editing needs migration 019/.test(page) && /const has019 = await watcherSchema19\(\)\.catch\(\(\) => false\);/.test(page));
+    check('review page: the tag form offers the services in use and the allowed audiences / nationalities, with a required reason',
+      /name="service"/.test(form) && /TAG_AUDIENCES\.map/.test(form) && /TAG_NATIONALITIES\.map/.test(form) && /name="reason"[^>]*required/.test(form) && /useFormState\(setWatchDraftTags/.test(form));
+    const fn = /export async function setWatchDraftTags[\s\S]*?\n\}\n/.exec(acts)?.[0] ?? '';
+    check('action: setWatchDraftTags checks the session, the watcher, 019, the reason and the values, then calls only kb_admin_watch_set_tags',
+      /const auth = await actorForWrite\(\);/.test(fn) && /watcherOff\(\)/.test(fn) && /if \(!\(await watcherSchema19\(\)\)\)/.test(fn) && /Please say why/.test(fn) &&
+      /TAG_AUDIENCES/.test(fn) && /TAG_NATIONALITIES/.test(fn) && /callWrite\('kb_admin_watch_set_tags', \[actor\.userId, actor\.email, draftId, service, audience, nationality, reason\]\)/.test(fn));
+    check('queries: the live entry\'s tags are read beside the proposal, and 019 is detected by its function (no redeploy needed)',
+      /k\.service_type as current_service, k\.contact_type as current_audience, k\.nationality as current_nationality/.test(wq) &&
+      /export async function watcherSchema19/.test(wq) && /p\.proname = 'kb_admin_watch_set_tags'/.test(wq));
+    check('every drafting caller passes has019 and the services in use (Fetch now, Re-draft, the schedule)',
+      (acts.match(/has019,\n\s*services,/g) ?? []).length === 2 && /has019,\n\s*services,/.test(src('app/api/watcher/run/route.ts')));
+    check('tags.ts imports no database, network or environment code',
+      !/from '(postgres|\.\.?\/(db|write|env|embed)|@\/lib\/(db|write|env|embed))'|process\.env|(?<![.\w])fetch\(/.test(src('lib/watcher/tags.ts')));
+  }
+  // --- the migration -----------------------------------------------------------
+  {
+    const sp = (f) => resolve(ROOT, '..', 'scripts', 'sql', f);
+    const s19 = existsSync(sp('kb_admin_019_watcher_tags.sql')) ? readFileSync(sp('kb_admin_019_watcher_tags.sql'), 'utf8') : '';
+    if (s19) {
+      const body = (t, n) => new RegExp(`create or replace function public\\.${n}\\([\\s\\S]*?\\n\\$\\$;\\n`).exec(t)?.[0] ?? '';
+      const s15 = readFileSync(sp('kb_admin_015_watcher.sql'), 'utf8');
+      const s16 = readFileSync(sp('kb_admin_016_watcher_overlap.sql'), 'utf8');
+      const a19 = body(s19, 'kb_admin_watch_approve');
+      check('019: kb_admin_watch_approve is 016\'s character for character, except that an edit is saved with the PROPOSAL\'s tags',
+        a19 !== body(s16, 'kb_admin_watch_approve') &&
+        a19.replace('v_d.service, v_d.audience,\n            v_d.nationality, null, v_note);', 'v_t.service_type, v_t.contact_type,\n            v_t.nationality, null, v_note);') === body(s16, 'kb_admin_watch_approve'));
+      const p19 = body(s19, 'kb_admin_watch_propose');
+      const unpatched = p19
+        .replace("    v_def_s   text := 'general';\n    v_def_a   text := 'all';\n    v_def_n   text := 'all';\n", '')
+        .replace(/        -- 019: the tags the watcher proposed[\s\S]*?v_nat := coalesce\(nullif\(btrim\(p_nationality\), ''\), v_t\.nationality\);\n/, '        v_service := v_t.service_type;\n        v_aud := v_t.contact_type;\n        v_nat := v_t.nationality;\n')
+        .replace(/    -- 019: a tag outside the allowed values[\s\S]*?        v_service := v_def_s;\n    end if;\n/, '');
+      check('019: kb_admin_watch_propose is 015\'s plus the stored tags on an edit and the fallback for an unknown tag', p19 !== body(s15, 'kb_admin_watch_propose') && unpatched === body(s15, 'kb_admin_watch_propose'));
+      const st = body(s19, 'kb_admin_watch_set_tags');
+      check('019: set_tags is an editor\'s, with a reason, on an open proposal only, checks the values (004\'s routing rule) and writes a watch_tags audit row',
+        /kb_admin__require_actor\(p_actor_id, 'editor'\)/.test(st) && /a reason is required/.test(st) && /status not in \('pending', 'blocked'\)/.test(st) &&
+        /kb_admin__check_routing\(/.test(st) && /'watch_tags'/.test(st) && /security definer/.test(st));
+      const rb = existsSync(sp('rollback/rollback_kb_admin_019_watcher_tags.sql')) ? readFileSync(sp('rollback/rollback_kb_admin_019_watcher_tags.sql'), 'utf8') : '';
+      check('019: additive; the audit CHECK keeps every 017 action and adds watch_tags; 32 editor functions; a rollback that restores 015\'s propose and 016\'s approve and refuses once used',
+        !/alter table public\.cb_knowledge_base_updated/i.test(s19) && !/\bdelete from\b/i.test(s19) && /if n <> 32 then/.test(s19) &&
+        /'source_options', 'source_unverified', 'source_draft_failed',\n        'watch_tags',/.test(s19) &&
+        rb.includes(body(s15, 'kb_admin_watch_propose')) && rb.includes(body(s16, 'kb_admin_watch_approve')) && /ROLLBACK 019 REFUSED/.test(rb));
+      check('012 follows what is installed: 32 once kb_admin_watch_set_tags exists', /kb_admin_watch_set_tags\(uuid,text,uuid,text,text,text,text\)/.test(readFileSync(sp('kb_admin_012_grants_checks.sql'), 'utf8')));
+    } else {
+      console.log('  (migration SQL not found - 019 checks skipped)');
+    }
   }
 }
 

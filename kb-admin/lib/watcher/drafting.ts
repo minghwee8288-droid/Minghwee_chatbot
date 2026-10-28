@@ -32,6 +32,7 @@ import { lowValueReason } from './quality.ts';
 import { parseUpdate, type Addition, type Replacement } from './additive.ts';
 import { sentenceCarried } from './factDiff.ts';
 import { NEW_SHAPE, UPDATE_RULES, UPDATE_SHAPE } from './changeRules.ts';
+import { TAG_PROMPT, modelTagsOf, type TagKey } from './tags.ts';
 
 export { locatePassage };
 
@@ -45,6 +46,8 @@ export type ProposedDraft = {
   why: string;
   /** A change to an existing entry: what was added and replaced (the answer is built from these, lib/watcher/additive.ts). */
   change?: { added: Addition[]; replaced: Replacement[]; conflicts?: string[] };
+  /** The service / audience / nationality the model gave, unchecked (lib/watcher/tags.ts proposeTags checks them). */
+  modelTags?: Partial<Record<TagKey, unknown>>;
 };
 
 export const MAX_DRAFTS_PER_CHANGE = 6;
@@ -69,6 +72,7 @@ export function buildPrompt(p: {
     '- For a fact no listed entry covers, set target_entry_id to null. If a listed entry already answers the same question, change THAT entry instead: never propose a second entry for a question the knowledge base already answers.',
     '- Every entry must state a fact a client can act on: an amount, a rule, a deadline, an eligibility condition or a step. Never draft an entry that only points elsewhere ("Where can I find information about...", "The MOM page provides information on...", "visit this page...").',
     '- If the page is mainly a list of links to other pages, return no drafts.',
+    TAG_PROMPT,
     '- Never propose anything about agency fees or prices; leave money to the agency.',
     '- Answers are plain sentences for a client on WhatsApp: no headings, bullets or markdown; question plus answer at most 1,000 characters.',
     '- source_passage must be copied word for word from the NEW page passages, and must support the answer: consecutive lines exactly as they appear, character for character, keeping odd spacing (such as "1 st helper") and line order; never tidy, join or reorder table cells.',
@@ -160,6 +164,7 @@ export function parseDrafts(
         source_passage: u.built.sourcePassage,
         why: typeof d.why === 'string' ? d.why.slice(0, 500) : '',
         change: { added: u.built.added, replaced: u.built.replaced, conflicts: u.built.conflicts },
+        modelTags: modelTagsOf(d),
       });
       if (drafts.length >= MAX_DRAFTS_PER_CHANGE) break;
       continue;
@@ -174,7 +179,7 @@ export function parseDrafts(
     if (NRIC.test(`${question} ${answer} ${passage}`)) { dropped.push('a draft containing what looks like an NRIC/FIN'); continue; }
     const low = lowValueReason(question, answer);
     if (low) { dropped.push(low); continue; }
-    drafts.push({ target_entry_id: null, question, answer, source_passage: passage, why: typeof d.why === 'string' ? d.why.slice(0, 500) : '' });
+    drafts.push({ target_entry_id: null, question, answer, source_passage: passage, why: typeof d.why === 'string' ? d.why.slice(0, 500) : '', modelTags: modelTagsOf(d) });
     if (drafts.length >= MAX_DRAFTS_PER_CHANGE) break;
   }
   return { drafts, dropped };

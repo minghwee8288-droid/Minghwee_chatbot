@@ -76,11 +76,14 @@ app/
                      to call, the ticket reference) - written here, not by the model
     reference.py     the ticket's CB-YYYY-NNNN, put into the handover sentence the
                      reply already has (handover_executor; parked-topic chases)
+    clarify.py       a vague action request ("send the video", "call me", "any
+                     update") is asked about first, then ticketed with the answer
+                     (2026-10-28); read by intent_classifier + action_clarifier
     llm.py           OpenRouter via langchain_openai; complete() / complete_json()
     checkpointer.py  rewrites LangGraph SQL to cb_-prefixed tables
     nodes/           intent_classifier, rag_retriever, response_generator,
                      info_collector, ticket_creator, handover_executor,
-                     blocked_topic_responder
+                     blocked_topic_responder, action_clarifier
     prompts/
       system.py      IDENTITY + RULES + clock + assembly (build_system_prompt)
       style.py       voice guide harvested from real agent transcripts
@@ -121,7 +124,10 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
                      sub-pages, approver re-draft, KB009; on PRODUCTION since 2026-10-16),
                      kb_admin_017_watcher_sources (per-source render, approver-only
                      unverified connection, failed drafts retried; on PRODUCTION since
-                     2026-10-16; 012 expects 31)
+                     2026-10-16; 012 expects 31), kb_admin_019_watcher_tags
+                     (watcher drafts carry editable service/audience/nationality;
+                     NOT APPLIED; 012 expects 32 with it), kb_watch_tags_001_audit
+                     (13 watcher entries re-tagged; NOT APPLIED)
                      — applied ONLY via apply_sql.py --expect-ref <project ref>
   gen_fee_locked.py  the watcher's fee lock: the 23 questions + 7 corrections the
                      fees document set, read from the loader, written into
@@ -216,6 +222,8 @@ breaks duplicate suppression, the debouncer and agent detection.
 ```
 START -> intent_classifier
   suppress_reply ................................. END
+  clarify_action / action_answer ................. action_clarifier
+                                                   (question -> END; answer -> ticket_creator)
   blocked topic + KB-answerable intent ........... rag_retriever
   blocked topic (anything else) .................. blocked_topic_responder
   dispute_assault ................................ handover_executor
@@ -223,6 +231,7 @@ START -> intent_classifier
 
 rag_retriever
   still parked ................................... blocked_topic_responder
+  answer_only (a question about hiring a helper) . response_generator
   enquiry_overview_due (asked about a service) ... info_collector
   service/enquiry/dispute/candidate intent ....... info_collector
   fields_for(service_type) non-empty .............. info_collector
@@ -631,6 +640,13 @@ because the lead is opened early and the ticket is created much later.
 | A draft that fails in a run is retried on the next run, never lost | `pipeline.RETRY_FAILED_DRAFTS` + `kb_admin_source_record_draft` (017) + `watchQueries.lastGoodText` / `sourcesDue` | Before: the changed snapshot became the baseline, the next run saw "unchanged", the change was never proposed. Now the snapshot is marked `draft_failed`, the page shows "Drafting failed", the page is due on the next scheduled run, and the diff is against the last snapshot that was drafted. A success clears the mark. |
 | ...searched for the whole service, with the filter kept whatever money words it contains | `rag_retriever.ENQUIRY_OVERVIEW_QUERY` / `_service_filter` | "costs" dropped the service filter, and the wider search returned a no-agency comparison that told the client the permit and bond were theirs to do. 12 rows, never widened - plus `ENQUIRY_OVERVIEW_EXTRA_QUERIES`, a separate search per service for a question the agency named that the shared query cannot reach (direct hire's failed medical ranks 21st under it). |
 
+| A vague request for something a person must do is asked about before it is ticketed | `clarify.vague_action` + `intent_classifier._clarify_decision` + `nodes/action_clarifier.py` (`VAGUE_ACTION_CLARIFY`) | Conversation 4443, 2026-10-28: "please send the video here" -> "A live agent is handling your placement ... CB-2026-0125". Send a video/photo/profile/document, call me, update me, check the status: one fixed question (which one, for whom / what about / which request), then the answer raises the ticket with the request, our question and the answer (`request_summary`), filed `case_enquiry` whatever collection is in flight. An answer quoting an open ticket's reference, or a status question with one open ticket, uses that ticket (follow-up) - never a duplicate. Before the parked-topic check. Still immediate: harm, missing helper, complaint, an explicit "talk to a person" (`_EXPLICIT_HUMAN`; "call me" is no longer one). |
+| An open ticket is named only by its true topic | `ticket.service_types_label` (`TRUE_TOPIC_LABEL`) + `BLOCKED_TOPIC_INSTRUCTION` (`NAME_TOPIC_AS_GIVEN`) | The helper's registration is stored as `new_hiring`, so the holding prompt said "hiring a new helper" and the model wrote "your placement". The label now comes from `captured_info.topic_key` where the stored type is a substitute, and the prompt may use only those words. |
+| "Hire a [nationality] helper" is a new hire, and a question about it is answered | `intent_classifier.hires_a_new_helper` (`HIRE_IS_NEW_HIRE`) + `answer_only` -> `route_after_rag` | Conversation 3766, 2026-10-28: mid transfer intake, "What documents do I need to hire a Filipino helper?" stayed `transfer` and got the MWO list plus the transfer question. No transfer/release/return/replace/direct-hire word -> `new_hiring`; lifted only out of nothing, a transfer flow or a money enquiry. Not an enquiry overview (`enquiry_overview_due` false). |
+| On a service question the service's own rows come first | `rag_retriever.service_rows_first` (`SERVICE_ROWS_FIRST`) + `_with_hiring_document_rows` | Documents, fees, timeline or process: own `service_type` rows before `general`; a documents question with two or more own rows uses only those. A new-hire documents question fetches the three rows (from you / from the helper / we prepare) by their own searches. |
+| A new-hire documents answer is three numbered groups | `templates.HIRING_DOCUMENTS_NOTE` (`response_generator.HIRING_DOCUMENTS_GROUPED`) | "From you:", "From the helper:", "We prepare for you to sign:", numbered straight through, no fee unless asked, no transfer question. Replayed: 4 of 4 on 3766's state, PH/ID/MM fresh. |
+| Three or more numbered items, one per line | `guards.numbered_items_on_own_lines` in `run_turn` (and the preview) (`NUMBERED_ITEMS_ON_OWN_LINES`) | Only an inline run of 3+ consecutive numbers is split. Prose lists elsewhere stay prose: every non-list path still bans a numbered list (`looks_like_document`). |
+
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
 own last line contained a question mark.
@@ -965,6 +981,11 @@ Easy to get wrong:
   (empty; owner/staff numbers, comma-separated, never in code).
   `parser.RECEIPT_LOG_CHAT_KIND` (2026-10-23): the receipt line also says
   chat=phone/lid/group/broadcast/other, never the id.
+  2026-10-28, each `False` for the earlier behaviour:
+  `clarify.VAGUE_ACTION_CLARIFY`, `ticket.TRUE_TOPIC_LABEL`,
+  `templates.NAME_TOPIC_AS_GIVEN`, `intent_classifier.HIRE_IS_NEW_HIRE`,
+  `rag_retriever.SERVICE_ROWS_FIRST`, `response_generator.HIRING_DOCUMENTS_GROUPED`,
+  `guards.NUMBERED_ITEMS_ON_OWN_LINES`.
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -1624,6 +1645,15 @@ Ordered by what will hurt first.
     Webhooks) unless someone owns them. No n8n URL is subscribed. The portal also
     has a second account, `PH` (account 4, 5 conversations), whose token is not
     in the database, so its webhooks cannot be read from here.
+47. **Watcher tags: two SQL files written, NOT applied (2026-10-28).**
+    `kb_watch_tags_001_audit.sql` re-tags 13 watcher entries published as
+    general/all/all (the 5 MWO pages -> PH, candidate, transfer/home_leave; 8 MOM
+    rules -> transfer or employer); guard checked read-only, 13 of 13 still match.
+    `kb_admin_019_watcher_tags.sql` lets an editor change a draft's tags and makes
+    an edit publish with them (PGlite 27/27). Until 019 is applied kb-admin shows
+    the proposed tags read-only. Until 001 is applied, `SERVICE_ROWS_FIRST` is what
+    keeps the MWO row out of a new-hire documents answer. "Prose lists stay prose"
+    (§5): the 3+-items rule is enforced only where a list is already allowed.
 45. **The KB watcher (2026-10-15) is built and switched off; four things to know before
     switching it on.** (a) Migration `kb_admin_015_watcher.sql` is applied on PRODUCTION
     (2026-10-15, its checks PASS, every existing row unchanged) and on no other database;
@@ -2072,6 +2102,34 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-28** - **A vague request is asked about before it is ticketed; a
+  new-hire documents question gets the new-hire list.** Both reproduced from the
+  production checkpoints (read-only replay) before any change.
+  (A) Conversation 4443, 12:51 PM SGT: "please send the video here" went to
+  `blocked_topic_responder` because her registration ticket CB-2026-0125 was
+  open (no new ticket: the message was logged on it). The prompt was told
+  "hiring a new helper" - the stored `service_type` of a helper's registration -
+  and wrote "your placement". Now: one fixed question first (`clarify.py`,
+  `action_clarifier`), the answer raises the ticket with the request and the
+  answer on it, or lands on the open ticket it names; the label is the true
+  topic. Replayed 2 of 2: question, then the summary added to CB-2026-0125 with
+  its reference. Fresh number: question, then a new `case_enquiry` ticket.
+  (B) Conversation 3766, 6:31 PM SGT: mid transfer intake the classifier kept
+  `service=transfer`, and the MWO contract-verification entry (a watcher entry
+  filed general/all/all) topped the search at 0.729 over the new-hire rows.
+  Now: "hire a [nationality] helper" with no transfer word is `new_hiring`,
+  answered not collected; service rows first; the three document rows fetched;
+  grouped numbered list. Replayed 4 of 4 on 3766's state and fresh for PH/ID/MM:
+  the grouped list, no transfer question, no MWO row. The first fix also made it
+  an enquiry overview (12 rows, handover) and the model handed over 3 of 3 on
+  "Filipino" with nationality-"all" rows; both fixed.
+  (C) Watcher: all 41 published drafts audited; `kb_watch_tags_001` (13 rows) and
+  kb-admin + `kb_admin_019` (proposed, shown and editable tags) - neither applied.
+  `selfcheck_golive.py` 62 checks (25 new); 11 faults injected, 11 red (one was
+  green first: the "talk to a human" check had no vague action in it). kb-admin
+  selfcheck ALL PASS (30 new, 8 faults red); smoke, flows, recognition (45/46),
+  reset_ui, suggest, kb_prep green.
 
 - **2026-10-23** - **The human pause follows the agreed handover rule, not a
   fixed 24 hours** (corrects a6e9559). It reuses the per-chat pause that

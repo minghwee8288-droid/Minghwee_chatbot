@@ -5,9 +5,9 @@ import { checkCronRequest } from '@/lib/watcher/cron';
 import { draftWithModel } from '@/lib/watcher/llm';
 import { checkSource, type WatchCall } from '@/lib/watcher/pipeline';
 import { watchFetcher } from '@/lib/watchFetcher';
-import { draftFailed, lastGoodText, liveEntryTexts, sourcesDue, watcherSchema16, watcherSchema17 } from '@/lib/watchQueries';
+import { draftFailed, lastGoodText, liveEntryTexts, sourcesDue, watcherSchema16, watcherSchema17, watcherSchema19 } from '@/lib/watchQueries';
 import { callWrite } from '@/lib/write';
-import { membership } from '@/lib/queries';
+import { editableServices, membership } from '@/lib/queries';
 
 /**
  * The scheduled watcher (stage 2). Vercel's cron calls GET with
@@ -48,7 +48,9 @@ export async function GET(req: NextRequest) {
   const started = Date.now();
   const due = await sourcesDue(schedule.intervalDays);
   const { fetcher, renders } = watchFetcher();
-  const [has016, has017] = await Promise.all([watcherSchema16(), watcherSchema17()]);
+  const [has016, has017, has019] = await Promise.all([watcherSchema16(), watcherSchema17(), watcherSchema19()]);
+  // 019: each proposal is filed under the tags lib/watcher/tags.ts proposes, from the services in use.
+  const services = has019 ? await editableServices() : undefined;
   const summary = { due: due.length, checked: 0, unchanged: 0, changed: 0, failed: 0, drafts: 0, left: 0 };
   for (const source of due) {
     if (Date.now() - started > TIME_BUDGET_MS) {
@@ -71,6 +73,8 @@ export async function GET(req: NextRequest) {
         llm: draftWithModel,
         model: cfg.watcher.llm.model,
         has016,
+        has019,
+        services,
         log: (line) => console.info(`[watcher] ${line}`),
       });
       summary.checked += 1;

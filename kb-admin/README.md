@@ -166,6 +166,21 @@ Migration `scripts/sql/kb_admin_015_watcher.sql` (on production since 2026-10-15
 
 Until 017 is applied none of this is called or read, and the watcher behaves as before.
 
+**Who each proposal is for (2026-10-28, migration 019, written, not applied):** the bot filters
+its search on service, audience and nationality, and until now every new proposal was filed as
+general / all / all (the MWO contract-verification page then answered a Filipino new-hire
+documents question). `lib/watcher/tags.ts` proposes the three tags for every draft: the drafting
+model's (checked against the allowed values), overridden by unambiguous evidence in the draft or
+the page's name (MWO / OFW / OEC / Philippine embassy -> PH and the worker; KBRI / kemlu.go.id ->
+ID; Balik-Manggagawa / the OEC -> home_leave; MWO contract verification for a new employer ->
+transfer; an embassy passport page -> passport_renewal). An edit keeps the live entry's tags
+unless the evidence says otherwise (the model alone may only narrow a generic entry). The review
+page shows **Who this answer is for**: the proposed tags, the live entry's beside them for an
+edit (a change highlighted), why each was chosen, and (019, editor, with a reason) **Change the
+tags** before approval. With 019 an approved edit is published with the proposal's tags; a routing
+change needs an approver, as in the Q&A editor. Without 019 the tags are shown read-only ("Tag
+editing needs migration 019") and the watcher behaves exactly as before.
+
 The extractor reads ASP.NET pages that wrap the whole page in one `<form>` (mom.gov.sg), and
 reads a listing page with several `<article>`s whole.
 

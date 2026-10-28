@@ -352,9 +352,170 @@ async def scenario_receipt_chat_kind() -> None:
     check("receipt log carries no digits of the chat id", "90000000000001" not in line)
 
 
+async def scenario_vague_action() -> None:
+    """2026-10-28, conversation 4443: "please send the video here" -> a ticket at once."""
+    from app.graph import clarify
+    from app.graph.nodes.action_clarifier import action_clarifier
+    from app.graph.prompts.templates import BLOCKED_TOPIC_INSTRUCTION
+    from app.services import ticket as ticket_service
+    _tc = importlib.import_module("app.graph.nodes.ticket_creator")
+
+    open_ticket = {"id": "t-125", "ticket_number": "CB-2026-0125", "service_type": ["new_hiring"],
+                   "captured_info": {"topic_key": "candidate_new_hiring"}}
+    llm = AsyncMock(return_value={"intent": "other", "service_type": None, "confidence": 0.5})
+
+    async def turn(text: str, history: str, extra: dict) -> dict:
+        state = {"conversation_id": 4443, "phone": CLIENT, "contact_type": "employer",
+                 "incoming_text": text, "history_text": history, "collected_info": {},
+                 "blocked_topics": {}, **extra}
+        with patch.object(_ic, "complete_json", new=llm):
+            state.update(await _ic.intent_classifier(state))
+        state["route"] = _graph.route_after_intent(state)
+        if state["route"] == "action_clarifier":
+            state.update(await action_clarifier(state))
+        return state
+
+    ask = await turn("please send the video here", "", {})
+    check("'please send the video here' -> a clarifying question, no ticket yet",
+          ask["route"] == "action_clarifier" and "Which video" in (ask.get("reply") or "")
+          and not ask.get("needs_handover") and (ask.get("pending_action") or {}).get("kind") == "video")
+    history = "Client: please send the video here\nYou: " + (ask.get("reply") or "")
+    answer = await turn("the interview video for Siti", history, {"pending_action": ask.get("pending_action")})
+    check("...the answer -> a ticket is raised", answer.get("needs_handover") is True
+          and _graph.route_after_response(answer) == "ticket_creator")
+    created: dict = {}
+
+    async def create(**kw):
+        created.update(kw)
+        return {"id": "t-new", "ticket_number": "CB-2026-0200"}
+
+    with patch.object(_tc.ticket_service, "create", new=create), \
+         patch.object(_tc.ticket_service, "pick_ticket_to_update", new=AsyncMock(return_value=None)), \
+         patch.object(_tc.assignment_service, "resolve_agent", new=AsyncMock(return_value=(None, "none"))), \
+         patch.object(_tc, "_maybe_create_lead", new=AsyncMock(return_value=None)), \
+         patch.object(_tc, "_finish_lead", new=AsyncMock(return_value=None)):
+        await _tc.ticket_creator({**answer, "service_type": "new_hiring", "intent": "other"})
+    flat = str(created.get("captured_info") or "") + str(created.get("description") or "")
+    check("...with the request and the answer in the ticket summary",
+          "please send the video here" in flat and "the interview video for Siti" in flat
+          and "Request (clarified)" in (created.get("description") or ""))
+    check("...filed as a request, not under the collection in flight",
+          created.get("service_type") == "case_enquiry")
+
+    follow_ups: list = []
+
+    async def add_follow_up(tid, text):
+        follow_ups.append((tid, text))
+
+    asked = clarify.question("video", "candidate")
+    with patch.object(ticket_service, "add_follow_up", new=add_follow_up):
+        on_open = await turn("my interview video, CB-2026-0125",
+                             "Client: please send the video here\nYou: " + asked,
+                             {"pending_action": clarify.pending("video", "please send the video here", asked),
+                              "blocked_topics": {"candidate_new_hiring": open_ticket},
+                              "contact_type": "candidate"})
+    check("...an answer quoting an open ticket -> that ticket, no duplicate",
+          not on_open.get("needs_handover") and bool(follow_ups) and follow_ups[0][0] == "t-125"
+          and "CB-2026-0125" in (on_open.get("reply") or ""))
+    parked = await turn("please send the video here", "Client: hi\nYou: Hi there.",
+                        {"blocked_topics": {"candidate_new_hiring": open_ticket}, "contact_type": "candidate"})
+    check("...a parked topic does not swallow it (asked first, not 'your placement')",
+          parked["route"] == "action_clarifier" and "placement" not in (parked.get("reply") or ""))
+
+    human = await turn("I want to talk to a human, send me the video", "", {})
+    check("'talk to a human' -> immediate handover, no question",
+          human.get("needs_handover") is True and human["route"] != "action_clarifier")
+    with patch.object(_ic, "confirm_harm", new=AsyncMock(return_value=True)):
+        hurt = await turn("my employer hit me, please send help here", "", {})
+    check("a harm report is never clarified", hurt.get("intent") == "dispute_assault"
+          and hurt["route"] != "action_clarifier")
+    complaint = await turn("I want to lodge a complaint, send me the form", "", {})
+    check("a complaint is never clarified", complaint["route"] != "action_clarifier")
+    status_one = await turn("any update?", "Client: hi\nYou: Hello.",
+                            {"blocked_topics": {"new_hiring": {"id": "t-1", "ticket_number": "CB-2026-0001"}}})
+    check("a status question with one open ticket uses that ticket (no question)",
+          status_one["route"] != "action_clarifier")
+    status_none = await turn("any update?", "Client: hi\nYou: Hello.", {})
+    check("a status question with no open ticket asks which request",
+          status_none["route"] == "action_clarifier" and "reference number" in (status_none.get("reply") or ""))
+    check("the holding line names the ticket's true topic",
+          ticket_service.service_types_label(open_ticket) == "finding work as a helper"
+          and "exactly these words" in BLOCKED_TOPIC_INSTRUCTION)
+
+
+async def scenario_hire_documents() -> None:
+    """2026-10-28, conversation 3766: a new-hire documents question mid transfer intake."""
+    from app.graph.prompts.templates import HIRING_DOCUMENTS_NOTE
+
+    rows = {
+        "mwo": {"id": "mwo", "similarity": 0.74, "service_type": "general", "chunk_type": "qa_pair",
+                "question": "What documents are needed for a Filipino helper's contract verification at MWO Singapore?",
+                "answer": "Original contract, passport copy, Work Permit copy.", "content": None},
+        "you": {"id": "you", "similarity": 0.72, "service_type": "new_hiring", "chunk_type": "qa_pair",
+                "question": "What documents do I need to provide to hire a helper?", "answer": "Your NRIC.",
+                "content": None},
+        "her": {"id": "her", "similarity": 0.70, "service_type": "new_hiring", "chunk_type": "qa_pair",
+                "question": "What documents are needed from the helper herself?", "answer": "Her passport.",
+                "content": None},
+        "we": {"id": "we", "similarity": 0.69, "service_type": "new_hiring", "chunk_type": "qa_pair",
+               "question": "What documents does Ming Hwee prepare for me to sign?", "answer": "Service Agreement.",
+               "content": None},
+    }
+
+    async def search(query, **kw):
+        q = (query or "").lower()
+        if "herself" in q:
+            return [rows["her"]]
+        if "prepare" in q:
+            return [rows["we"]]
+        if "provide to hire" in q:
+            return [rows["you"]]
+        return [rows["mwo"], rows["you"]]
+
+    for nat in ("Filipino", "Indonesian", "Myanmar"):
+        text = f"What documents do I need to hire a {nat} helper?"
+        state = {"conversation_id": 3766, "phone": CLIENT, "contact_type": "employer",
+                 "service_type": "transfer_employer", "collected_service": "transfer_employer",
+                 "intent": "transfer", "incoming_text": text, "collected_info": {"full_name": "vaidik"},
+                 "asked_field_counts": {"full_name": 1, "transfer_direction": 1}, "blocked_topics": {},
+                 "last_question": {"key": "transfer_direction", "text": "Are you taking on a transfer helper?"},
+                 "history_text": "Client: What is the transfer fee for a Filipino helper?\n"
+                                 "You: Are you taking on a transfer helper already in Singapore, releasing "
+                                 "your current helper, or returning her to us?"}
+        with patch.object(_ic, "complete_json", new=AsyncMock(return_value={
+                "intent": "document_question", "service_type": "transfer", "confidence": 0.9})):
+            state.update(await _ic.intent_classifier(state))
+        with patch.object(_rag_node.rag, "search", new=search):
+            state.update(await _rag_node.rag_retriever(state))
+        route = _graph.route_after_rag(state)
+        prompts: list = []
+
+        async def complete(system, user, **kw):
+            prompts.append(system)
+            return ("Here is what we need: From you: 1. Your NRIC. From the helper: 2. Her passport. "
+                    "We prepare for you to sign: 3. The Service Agreement. We will guide you.")
+
+        with patch.object(_rg, "complete", new=complete):
+            out = await _rg.response_generator(state)
+        reply = guards.numbered_items_on_own_lines(out.get("reply") or "")
+        ids = [m.get("id") for m in state.get("rag_matches") or []]
+        check(f"{nat} new-hire documents: read as new_hiring, answered not collected",
+              state.get("service_type") == "new_hiring" and route == "response_generator")
+        check(f"{nat} new-hire documents: the three new-hire rows, no MWO row",
+              ids[:3] == ["you", "her", "we"] and "mwo" not in ids)
+        check(f"{nat} new-hire documents: grouped list asked for, no transfer question",
+              bool(prompts) and HIRING_DOCUMENTS_NOTE.strip()[:40] in prompts[0]
+              and "taking on a transfer" not in reply)
+        check(f"{nat} new-hire documents: numbered items on their own lines",
+              "\n2. Her passport" in reply and "\n3. The Service Agreement" in reply)
+    check("'hire a transfer helper' is still a transfer",
+          not _ic.hires_a_new_helper("I want to hire a transfer helper"))
+
+
 async def main() -> int:
     for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
-                     scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights):
+                     scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights,
+                     scenario_vague_action, scenario_hire_documents):
         try:
             await scenario()
         except Exception as exc:  # noqa: BLE001 - a crash is a failure, by name

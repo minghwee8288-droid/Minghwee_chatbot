@@ -459,6 +459,29 @@ if NO_DEPENDS_ON_THE_CASE:
     )
 
 
+# 2026-10-28, conversation 3766: "What documents do I need to hire a Filipino
+# helper?" Appended to PROCESS_INSTRUCTION on a new-hire documents question.
+# The fees document lists them in three groups; so does the answer.
+HIRING_DOCUMENTS_NOTE = """
+
+THIS IS A NEW-HIRE DOCUMENTS QUESTION, and our records above DO answer it: the new-hire document \
+lists are the same whatever her nationality, so answer from them and do not hand it over. The \
+client is asking about a NEW hire - not a transfer - whatever the earlier conversation was about.
+Lay the list out in exactly three groups, each a short \
+label on its own line followed by its numbered items, one per line:
+From you:
+From the helper:
+We prepare for you to sign:
+Number the items straight through all three groups (1, 2, 3...), and every group - "We prepare \
+for you to sign:" too - is the label line followed by numbered items, never a sentence. Then one \
+short closing sentence. Take each item only from the \
+records about hiring a new helper; leave out documents for any other procedure (contract \
+verification at an embassy or MWO, OEC, home leave, passport renewal, a transfer). Include the \
+foreign-employer and additional-helper items as conditional lines ("If you are a foreigner \
+working here: ..."). Do not mention any fee or cost unless they asked about one. Do not ask \
+whether this is a transfer."""
+
+
 # A helper asking for her rights as a whole (2026-10-12, conversation 4443).
 # The agency asked for all ten as a list; squeezed into the two-sentence answer
 # she got seven in one long sentence.
@@ -577,6 +600,18 @@ Do not ask them any question about it: our agent will take the details from here
 
 Never name the agent handling it and never mention tickets or systems. You may offer to help \
 with anything else in the meantime. Maximum two short sentences."""
+
+# 2026-10-28 (CB-2026-0125): told "hiring a new helper" about a helper's own
+# registration, the model wrote "A live agent is handling your placement".
+# The topic is named only in the words given, or not at all. False = as before.
+NAME_TOPIC_AS_GIVEN = True
+if NAME_TOPIC_AS_GIVEN:
+    BLOCKED_TOPIC_INSTRUCTION += (
+        "\n\nIf you name what the agent is handling, use exactly these words: "
+        "{service_label}. Never call it anything else - not a placement, an application, "
+        "a case or a booking - and never name a topic for something they have just asked "
+        "about that is not that one. When unsure, say \"a live agent has your request\"."
+    )
 
 
 BLOCKED_TOPIC_ANSWER_INSTRUCTION = """The client has just asked a general question while \

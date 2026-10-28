@@ -10,5 +10,5 @@ export const UPDATE_RULES = [
   '  "replace": only where the page DIRECTLY CONTRADICTS a sentence of the entry (a different figure, date or rule for the same thing): "old" is that whole sentence copied exactly from the entry, "new" its corrected version, and source_passage the page words that contradict it, including what the figure is for.',
   '  Everything else in the entry stays exactly as it is. Never replace a sentence to reword, shorten or tidy it, and never add a fact the entry already states. If there is nothing to add and nothing contradicted, return no draft for that entry.',
 ].join('\n');
-export const NEW_SHAPE = '{"target_entry_id":null,"question":string,"answer":string,"source_passage":string,"why":string}';
-export const UPDATE_SHAPE = '{"target_entry_id":string,"add":[{"sentence":string,"after":string,"source_passage":string}],"replace":[{"old":string,"new":string,"source_passage":string}],"why":string}';
+export const NEW_SHAPE = '{"target_entry_id":null,"question":string,"answer":string,"source_passage":string,"service":string,"audience":string,"nationality":string,"why":string}';
+export const UPDATE_SHAPE = '{"target_entry_id":string,"add":[{"sentence":string,"after":string,"source_passage":string}],"replace":[{"old":string,"new":string,"source_passage":string}],"service":string,"audience":string,"nationality":string,"why":string}';

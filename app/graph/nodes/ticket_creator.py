@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from app.graph.complaint import complaint_closing
+from app.graph.nodes.action_clarifier import ACTION_TOPIC
 from app.graph.state import (
     AGENCY_INFO_INTENT,
     LEAD_CONTACT_TYPES,
@@ -195,6 +196,12 @@ async def _maybe_create_lead(
 
 async def ticket_creator(state: ConversationState) -> dict[str, Any]:
     service_type = state.get("service_type")
+    # A clarified action request (app/graph/clarify.py) is its own work item,
+    # whatever collection happens to be in flight - filing it under that
+    # service would hand the agent the collection's fields and not the request.
+    action_summary = state.get("action_summary")
+    if action_summary:
+        service_type = ACTION_TOPIC
     if not service_type and state.get("needs_handover"):
         # response_generator can decide a question needs a human (weak
         # retrieval, a malformed reply) without ever resolving a service_type
@@ -237,6 +244,8 @@ async def ticket_creator(state: ConversationState) -> dict[str, Any]:
     )
     if merge_target:
         await ticket_service.merge_into(merge_target["id"], service_type=service_type)
+        if action_summary:
+            await ticket_service.add_follow_up(merge_target["id"], action_summary)
         logger.info(
             "Conversation %s: %s message folded into existing ticket %s instead of a new one",
             state.get("conversation_id"),
@@ -294,6 +303,8 @@ async def ticket_creator(state: ConversationState) -> dict[str, Any]:
     # client's own words are the whole ticket.
     if not allowed:
         captured.setdefault("client_message", (state.get("incoming_text") or "")[:2000])
+    if action_summary:
+        captured["request_summary"] = action_summary
 
     # The bot qualifies the enquiry; it never collects the application
     # paperwork. Rule 4/4a keep it from asking, and redact_nric() would strip an

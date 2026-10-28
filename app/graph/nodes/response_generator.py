@@ -9,6 +9,7 @@ from typing import Any
 from app.config import settings
 from app.graph import guards
 from app.graph.guards import (
+    asks_for_documents,
     COST_DEFERRAL_REPLY,
     _NO_REQUEST_MAX_WORDS,
     asks_about_price,
@@ -53,6 +54,7 @@ from app.graph.prompts.templates import (
     FEE_NEEDS_NATIONALITY_NOTE,
     FEE_NOT_HELD_FOR_NATIONALITY_NOTE,
     HANDOVER_TOKEN,
+    HIRING_DOCUMENTS_NOTE,
     PROCESS_INSTRUCTION,
     RESPONDER_INSTRUCTION,
     RIGHTS_INSTRUCTION,
@@ -247,6 +249,11 @@ def completed_request(state: ConversationState) -> dict[str, Any] | None:
     return {**done, "topic": key} if isinstance(done, dict) else None
 
 
+# 2026-10-28: a new-hire documents answer is grouped "From you / From the
+# helper / We prepare for you to sign". False = PROCESS_INSTRUCTION alone.
+HIRING_DOCUMENTS_GROUPED = True
+
+
 async def response_generator(state: ConversationState) -> dict[str, Any]:
     intent = state.get("intent") or "other"
     # Varied, so the four separate ways this turn can end up saying "I'll check"
@@ -338,6 +345,14 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         return {"reply": greeting_back(state.get("record_name")), "needs_handover": False}
 
     instruction = instruction_template.format(handover_token=HANDOVER_TOKEN)
+    # A new-hire documents question: three groups, numbered, no fee (2026-10-28).
+    if (
+        HIRING_DOCUMENTS_GROUPED
+        and process_question
+        and state.get("service_type") == "new_hiring"
+        and asks_for_documents(incoming_text)
+    ):
+        instruction += HIRING_DOCUMENTS_NOTE
     finished = completed_request(state)
     if finished:
         instruction = COMPLETED_REQUEST_INSTRUCTION.format(

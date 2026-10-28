@@ -3296,3 +3296,53 @@ Each switch is True for the new wording; False restores the old one. The
 The helper's pets question is unchanged. A bare "no" to a "Which of these ...
 or none?" question counts as "none"; a bare "yes" is asked again.
 
+
+
+---
+
+## 71. Asking First, and New-Hire Documents (28 October)
+
+### What is this prompt used for?
+
+Two things went wrong on 28 October. A helper wrote "please send the video here" and a ticket was raised at once, with no idea which video; and "What documents do I need to hire a Filipino helper?" was answered with an embassy contract-verification list and a transfer question.
+
+### What does it make the chatbot do?
+
+- **A vague request for something a person must do** (send a video, photo, profile or document; call me; update me; check the status): Claire asks one short question first (fixed text below). The next message is taken as the answer, and the ticket is raised with the request, the question and the answer on it. If the answer quotes an open ticket's reference, or a status question has exactly one open ticket, that ticket is used instead of a new one.
+- **Still immediate:** a harm report, a missing helper, a complaint, and an explicit "let me talk to a person". "Call me" is now asked about first.
+- **The holding line on an open ticket** names the request only in our own words (below).
+- **"Hire a [nationality] helper"** with no transfer, release or return word is a new hire. A question about it is answered, not turned into an intake, and the transfer question is not asked.
+- **A new-hire documents question** is answered as a list in three groups (below). Any reply with three or more numbered items puts each on its own line.
+
+### Fixed text - the questions (employer / helper)
+
+- **video**: "Which video do you need: a helper's profile or interview video, or something else? And which helper is it for (her name or reference number)?" / helper: "Which video do you mean: your interview video, or something else? And what do you need it for?"
+- **photo**: "Which photo do you need: a helper's profile photo, or something else? And which helper is it for (her name or reference number)?" / helper: "Which photo do you mean, and what do you need it for?"
+- **profile**: "Which helper's profile would you like (her name or reference number)? And do you need her biodata, her video, or both?" / helper: "Which profile do you mean: your own biodata, or an employer's details? And what do you need it for?"
+- **document**: "Which document do you need, and what is it for (for example a contract, a receipt or a form for MOM)?" / helper: "Which document do you need, and what is it for (for example your contract or a copy of your Work Permit)?"
+- **call**: "Sure. What would you like our agent to call you about, and when is a good time to call?"
+- **update**: "Which request would you like an update on? If you have a reference number (it starts with CB-), please send it."
+
+### Fixed text - after the answer
+
+```
+Thank you. I've passed this to our team, and a live agent will connect with you shortly. In the meantime, is there anything else I can help you with?
+Thank you. I've added this to your request for our team, and a live agent will connect with you shortly.
+```
+
+### Prompt - added to the open-ticket holding line
+
+```
+If you name what the agent is handling, use exactly these words: {service_label}. Never call it anything else - not a placement, an application, a case or a booking - and never name a topic for something they have just asked about that is not that one. When unsure, say "a live agent has your request".
+```
+
+### Prompt - added to a new-hire documents answer
+
+```
+THIS IS A NEW-HIRE DOCUMENTS QUESTION, and our records above DO answer it: the new-hire document lists are the same whatever her nationality, so answer from them and do not hand it over. The client is asking about a NEW hire - not a transfer - whatever the earlier conversation was about.
+Lay the list out in exactly three groups, each a short label on its own line followed by its numbered items, one per line:
+From you:
+From the helper:
+We prepare for you to sign:
+Number the items straight through all three groups (1, 2, 3...), and every group - "We prepare for you to sign:" too - is the label line followed by numbered items, never a sentence. Then one short closing sentence. Take each item only from the records about hiring a new helper; leave out documents for any other procedure (contract verification at an embassy or MWO, OEC, home leave, passport renewal, a transfer). Include the foreign-employer and additional-helper items as conditional lines ("If you are a foreigner working here: ..."). Do not mention any fee or cost unless they asked about one. Do not ask whether this is a transfer.
+```

@@ -224,6 +224,8 @@ async def run_preview(body: PreviewRequest) -> dict[str, Any]:
             reply = "" if result.get("suppress_reply") else (result.get("reply") or "")
             if graph_module.NO_TAG_BEFORE_POSSESSIVE:  # as run_turn does
                 reply = without_tag_before_possessive(reply)
+            if guards.NUMBERED_ITEMS_ON_OWN_LINES and reply:  # as run_turn does
+                reply = guards.numbered_items_on_own_lines(reply)
             if guards.STRAY_SCRIPT_GUARD and reply:  # as run_turn does
                 reply = guards.without_stray_script(
                     reply, *graph_module.stray_script_context(payload)
