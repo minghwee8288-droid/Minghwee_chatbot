@@ -179,8 +179,11 @@ async def _recent_rows(conversation_id: int, up_to_id: int | None = None) -> lis
     )
     if up_to_id is not None:
         query = query.lte("id", up_to_id)
+    # id breaks a tie: two messages stored in the same second came back in
+    # either order, so the anchor was sometimes not the "newest" inbound and the
+    # same request read as stale on one run and ready on the next (eval, 4615).
     result = await db.execute(
-        query.order("created_at", desc=True).limit(settings.history_limit + 50)
+        query.order("created_at", desc=True).order("id", desc=True).limit(settings.history_limit + 50)
     )
     rows = list(reversed(result.data or []))
     for row in rows:

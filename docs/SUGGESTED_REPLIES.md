@@ -54,7 +54,7 @@ Header: `X-Suggest-Secret: <SUGGEST_SECRET>`. Body (at most 4,000 bytes):
   "model": "openai/gpt-5.6-luna",
   "usage": {"prompt_tokens": 8594, "completion_tokens": 194},
   "latency_ms": 8188,
-  "prompt_version": "suggest-v2"
+  "prompt_version": "suggest-v3"
 }
 ```
 
@@ -79,7 +79,7 @@ Each suggestion:
   - `weak_support`: an `Answer` whose key claim words are mostly absent from the records it cites (a keyword check, threshold 50%).
   - `nationality_unconfirmed`: the draft cites a record labelled for one helper nationality (PH/ID/MM) while the conversation's nationality is unknown, ambiguous or another one. A draft that QUOTES such a fee is dropped instead, and if no Clarify survives a fixed one is added ("Which helper is this for, and what is her nationality?..."), carrying this flag.
 
-The nationality in play (`app/suggest/nationality.py`) is: the client's message naming exactly one; else the last 6 transcript lines naming exactly one (several named = unknown); else the saved state; else the helper records, if they agree.
+The nationality in play (`app/suggest/nationality.py`) is: the client's message naming exactly one; else the last 6 transcript lines naming exactly one (several named = unknown); else the saved state; else the helper records, if they agree; else our own earlier messages (staff or Claire) naming exactly one. The fixed Clarify is not added when our own messages already identified the helper: a name tagged "(MDW)", a helper we hold on record, or exactly one nationality.
 
 `kb_gap`: the model said our records do not answer it, or nothing was retrieved, or the best match is under `RAG_SOFT_FLOOR`. `sensitive`: the model's judgement (complaint, harm, dispute, legal, medical).
 
@@ -107,9 +107,9 @@ Docker, `env_file` puts every `.env` line into the environment. Locally,
 | Variable | Default | |
 |---|---|---|
 | `SUGGEST_SECRET` | unset | Unset: the route is not registered (404) |
-| `SUGGEST_MODEL` | the bot's `OPENROUTER_MODEL` | |
+| `SUGGEST_MODEL` | `openai/gpt-6-luna` | Chosen on the 2026-10-28 comparison; not the bot's model |
 | `SUGGEST_MAX_CONCURRENCY` | 2 | Minimum 1 |
-| `SUGGEST_TIMEOUT_SECONDS` | 20 | Whole request |
+| `SUGGEST_TIMEOUT_SECONDS` | 25 | Whole request |
 
 Also read, unchanged, from the bot's settings: `TENANT_ID`,
 `OPENROUTER_API_KEY` / base URL, `HISTORY_LIMIT`, `RAG_SOFT_FLOOR`,
@@ -216,6 +216,12 @@ Contact, ticket and case context in the eval is today's, not as it was then.
 
 Newest first.
 
+- **2026-10-28** - Model default `openai/gpt-6-luna` (`SUGGEST_MODEL` still
+  overrides), timeout 25 s. Every draft must respond to the client's latest
+  message (4641 offered an unrelated GST draft; `suggest-v3`). A helper our own
+  messages already named counts as identified, so no fixed "which helper?"
+  Clarify (4641). Messages stored in the same second are ordered by id: 4615
+  read as stale on some runs and ready on others. Self-check 88.
 - **2026-10-27** - A draft the guards shorten by more than 40%, or leave
   ending mid-thought, is dropped ("cut short by the guards") instead of
   offered in its cut form (4633). Self-check 83.

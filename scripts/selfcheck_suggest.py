@@ -49,6 +49,7 @@ from app.suggest import llm as sg_llm  # noqa: E402
 from app.suggest import prompt as sg_prompt  # noqa: E402
 from app.suggest import retrieval as sg_retrieval  # noqa: E402
 from app.suggest import router as sg_router  # noqa: E402
+from app.suggest import settings as sg_settings  # noqa: E402
 from app.suggest import validate as sg_validate  # noqa: E402
 from app.whapi import debouncer as _debouncer  # noqa: E402
 from app.whapi import typing as _typing  # noqa: E402
@@ -92,6 +93,7 @@ class FakeQuery:
         self.http_method = "GET"
         self.path = f"/rest/v1/{table}"
         self.max_id: Any = None
+        self.orders: list[tuple[str, bool]] = []
 
     def _write(self, method: str) -> "FakeQuery":
         self.http_method = method
@@ -112,6 +114,10 @@ class FakeQuery:
     def __getattr__(self, name: str) -> Any:  # select, eq, order, limit, ...
         return lambda *a, **k: self
 
+    def order(self, column: str, desc: bool = False, **_: Any) -> "FakeQuery":
+        self.orders.append((column, desc))
+        return self
+
     def lte(self, column: str, value: Any) -> "FakeQuery":  # the eval's as-of read
         self.max_id = value if column == "id" else None
         return self
@@ -125,6 +131,12 @@ class FakeQuery:
         rows = list(self.store.rows.get(self.table, []))
         if self.max_id is not None:
             rows = [r for r in rows if isinstance(r.get("id"), int) and r["id"] <= self.max_id]
+        # As PostgREST: the requested keys in turn; a full tie keeps the
+        # stored order, which stands in for the database's arbitrary one.
+        for column, desc in reversed(self.orders):
+            if rows and all(column in r for r in rows):
+                rows.sort(key=lambda r: r[column] if isinstance(r[column], int) else str(r[column]),
+                          reverse=desc)
         return SimpleNamespace(data=rows, count=None)
 
 
@@ -710,6 +722,60 @@ def checks_eval_round() -> None:
               json.dumps(out["suggestions"])[:400])
 
 
+def checks_model_choice() -> None:
+    """2026-10-28: gpt-6-luna chosen; the 4641 and 4615 fixes."""
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("SUGGEST_MODEL", None)
+        os.environ.pop("SUGGEST_TIMEOUT_SECONDS", None)
+        default_model, default_timeout = sg_settings.model(), sg_settings.timeout_seconds()
+        os.environ["SUGGEST_MODEL"] = "some/other-model"
+        overridden = sg_settings.model()
+    check("settings: the model defaults to openai/gpt-6-luna (SUGGEST_MODEL overrides) and the "
+          "timeout to 25 s",
+          default_model == "openai/gpt-6-luna" and overridden == "some/other-model"
+          and default_timeout == 25.0, f"{default_model} {overridden} {default_timeout}")
+
+    # 4615: two client messages stored in the same second came back in either
+    # order, so the anchor read as stale on one run and ready on the next.
+    with World() as world:
+        rows = world.store.rows["wp_chat_messages"]   # newest first
+        seven = next(r for r in rows if r["id"] == 7)
+        rows.insert(1, {"id": 8, "direction": "inbound", "is_bot": False, "sent_by": None,
+                        "body": "and the medical?", "created_at": seven["created_at"]})
+        out = _suggest(world, anchor=8)
+        check("stale: two client messages in the same second are ordered by id, so the later one "
+              "is the newest inbound (4615)", out["status"] == "ready", json.dumps(out)[:200])
+
+    # 4641: staff had already named the helper; the drafts still got the fixed
+    # "which helper is this for?" Clarify.
+    labelled = {"id": "kb-4", "similarity": 0.8, "chunk_type": "qa_pair",
+                "question": "Is GST charged on agency fees for a Myanmar helper?",
+                "answer": "No GST is charged.", "content": None,
+                "source_document": "Ming Hwee Service Notes", "service_type": "renewal",
+                "contact_type": "all", "nationality": "MM", "metadata": {}}
+    cite = {"label": "Next step", "kb_refs": ["kb-4"], "confidence": "high",
+            "text": "I understand. I will check with management whether a discount is possible."}
+    hold = {"label": "Answer", "kb_refs": [], "confidence": "high",
+            "text": "I understand the fee feels high, and I will see what we can do."}
+    for staff, expect_clarify, name in (
+            ("Cost Breakdown for Eaint Thawtar Khin (MDW): Agency Fee $1,388.", False, "a helper staff named"),
+            ("Here are the fees for the helpers we discussed.", True, "no helper named (control)")):
+        with World(model_output(cite, hold)) as world:
+            world.store.kb.append(labelled)
+            _set_body(world, 5, staff)
+            _set_body(world, 7, "It's okay, agency fee too expensive")
+            out = _suggest(world)
+            fixed = [s for s in out["suggestions"] if s["text"] == sg_validate.CLARIFY_NATIONALITY]
+            check(f"nationality: {name} -> fixed Clarify {'added' if expect_clarify else 'not added'} (4641)",
+                  bool(fixed) == expect_clarify, json.dumps(out["suggestions"])[:300])
+
+    with World() as world:
+        _suggest(world)
+        system = world.llm.calls[0]["messages"][0]["content"] if world.llm.calls else ""
+        check("prompt: every draft answers the client's latest message, no unrelated topic (4641)",
+              "Never bring up a topic they did not raise" in system)
+
+
 def checks_stale_and_state() -> None:
     with World() as world:
         out = _suggest(world, anchor=4)
@@ -928,6 +994,7 @@ def main() -> int:
             patch.object(httpx.AsyncHTTPTransport, "handle_async_request", _refuse_async):
         for group in (checks_labelling, checks_identity, checks_grounding_units, checks_drafting,
                       checks_stale_and_state, checks_skipped, checks_flags, checks_eval_round,
+                      checks_model_choice,
                       checks_tripwire,
                       checks_readonly_scope, checks_http):
             try:

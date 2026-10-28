@@ -15,7 +15,7 @@ from typing import Any
 
 from app.graph.prompts.system import build_system_prompt
 
-SUGGEST_PROMPT_VERSION = "suggest-v2"
+SUGGEST_PROMPT_VERSION = "suggest-v3"
 
 SUGGEST_WRAPPER = """\
 YOU ARE NOT REPLYING TO THE CLIENT YOURSELF. You are drafting reply OPTIONS for \
@@ -46,6 +46,10 @@ for which service and nationality, and what must be deferred).
 - Reply in the client's language (rule 12), with Western digits.
 - Plain text, WhatsApp length: two or three short sentences, no headings, no \
 bold, no bullet points. A numbered list only if they asked for steps.
+
+Every draft responds to the client's latest message(s): what they asked, or \
+what they said. Never bring up a topic they did not raise, even one the \
+records cover; a fact from the records goes in only if it answers them.
 
 Write 2 or 3 drafts that take meaningfully DIFFERENT approaches, not \
 paraphrases. Pick from:

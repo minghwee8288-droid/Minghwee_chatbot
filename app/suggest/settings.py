@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import os
 
-from app.config import settings
 
 DEFAULT_MAX_CONCURRENCY = 2
-DEFAULT_TIMEOUT_SECONDS = 20.0
+DEFAULT_TIMEOUT_SECONDS = 25.0
+# Chosen on the 2026-10-28 model comparison (half the current cost, same
+# provider, same quality); SUGGEST_MODEL still overrides it.
+DEFAULT_MODEL = "openai/gpt-6-luna"
 
 
 def secret() -> str:
@@ -24,7 +26,7 @@ def secret() -> str:
 
 
 def model() -> str:
-    return os.environ.get("SUGGEST_MODEL", "").strip() or settings.openrouter_model
+    return os.environ.get("SUGGEST_MODEL", "").strip() or DEFAULT_MODEL
 
 
 def max_concurrency() -> int:

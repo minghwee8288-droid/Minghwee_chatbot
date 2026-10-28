@@ -10,6 +10,7 @@ conversation is about that nationality.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.services.lead import _NATIONALITY_NAMED, nationality_code, nationality_named_in
@@ -41,12 +42,13 @@ def _from_records(state: dict[str, Any]) -> str | None:
     return codes.pop() if len(codes) == 1 else None
 
 
-def in_play(state: dict[str, Any]) -> str | None:
+def in_play(state: dict[str, Any], ours: str = "") -> str | None:
     """The PH/ID/MM code the conversation is about, or None when unknown or
     ambiguous. In order: the client's message naming exactly one; the recent
     messages (any speaker) naming exactly one - several named means ambiguous,
     and nothing older overrides that; the saved state; the helper records, when
-    they all agree."""
+    they all agree; and last, our own earlier messages (staff or Claire)
+    naming exactly one."""
     incoming = state.get("incoming_text") or ""
     code = nationality_named_in(incoming)
     if code:
@@ -57,7 +59,38 @@ def in_play(state: dict[str, Any]) -> str | None:
         return mentioned.pop()
     if len(mentioned) > 1:
         return None
-    return _from_state(state) or _from_records(state)
+    return _from_state(state) or _from_records(state) or _single(named(ours))
+
+
+def _single(codes: set[str]) -> str | None:
+    return next(iter(codes)) if len(codes) == 1 else None
+
+
+# Staff write a helper as "Eaint Thawtar Khin (MDW)".
+_TAGGED_NAME = re.compile(r"[A-Z][\w'.-]*(?:\s+[A-Z][\w'.-]*){0,4}\s*\((?:MDW|FDW)\)")
+
+
+def _record_names(state: dict[str, Any]) -> list[str]:
+    helpers = list(state.get("known_helpers") or [])
+    if isinstance(state.get("placed_helper"), dict):
+        helpers.append(state["placed_helper"])
+    names = [str(h.get("name") or h.get("full_name") or "") for h in helpers if isinstance(h, dict)]
+    names.append(str((state.get("collected_info") or {}).get("helper_name") or ""))
+    return [n.strip() for n in names if len(n.strip()) >= 3]
+
+
+def identified_by_us(state: dict[str, Any], ours: str) -> bool:
+    """True when our own earlier messages (staff or Claire) already name the
+    helper - tagged "(MDW)", or a helper we hold on record - or exactly one
+    nationality. Then the fixed "which helper?" Clarify is not added: live,
+    2026-10-28 (eval, 4641), staff had sent "Cost Breakdown for Eaint Thawtar
+    Khin (MDW)" and the drafts still asked which helper it was for."""
+    if not ours:
+        return False
+    if _single(named(ours)) or _TAGGED_NAME.search(ours):
+        return True
+    lowered = ours.lower()
+    return any(name.lower() in lowered for name in _record_names(state))
 
 
 def specific_codes(match: dict[str, Any]) -> set[str]:

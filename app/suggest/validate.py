@@ -413,7 +413,8 @@ def validate(
     by_ref = {ref_of(m): m for m in matches if ref_of(m)}
     conversation = "\n".join([state.get("history_text") or "", state.get("incoming_text") or ""])
     client_text, ours = split_speakers(state.get("history_text") or "", state.get("incoming_text") or "")
-    in_play = nat.in_play(state)
+    in_play = nat.in_play(state, ours)
+    known_by_us = nat.identified_by_us(state, ours)
     nationality_doubt = False
     seen: set[str] = set()
 
@@ -499,7 +500,8 @@ def validate(
 
     # Doubt about the nationality: make sure the consultant has the question
     # that settles it. A fixed English line, so it needs no guard.
-    if nationality_doubt and not any(d["label"] == "Clarify" for d in result.kept):
+    # Not when our own messages already identified the helper (4641).
+    if nationality_doubt and not known_by_us and not any(d["label"] == "Clarify" for d in result.kept):
         clarify = {"label": "Clarify", "text": CLARIFY_NATIONALITY, "kb_refs": [],
                    "confidence": "low", "flags": [NATIONALITY_UNCONFIRMED]}
         if len(result.kept) == MAX_DRAFTS:
