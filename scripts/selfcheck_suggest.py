@@ -776,6 +776,113 @@ def checks_model_choice() -> None:
               "Never bring up a topic they did not raise" in system)
 
 
+def checks_review_round() -> None:
+    """Patterns from Thomas's review of thomas_review.csv, 2026-10-28."""
+    def run(*drafts: dict[str, Any], staff: str | None = None, client: str | None = None,
+            earlier: str | None = None, last_ours: str | None = None) -> dict:
+        with World(model_output(*drafts)) as world:
+            if staff is not None:
+                _set_body(world, 5, staff)
+            if last_ours is not None:
+                _set_body(world, 6, last_ours)
+            if earlier is not None:
+                _set_body(world, 4, earlier)
+            if client is not None:
+                _set_body(world, 7, client)
+            return _suggest(world)
+
+    def draft(label: str, text: str) -> dict[str, Any]:
+        return {"label": label, "text": text, "kb_refs": [], "confidence": "high"}
+
+    def texts(out: dict) -> str:
+        return " | ".join(s["text"] for s in out["suggestions"])
+
+    hold = draft("Next step", "I will check this for you and confirm.")
+
+    # 739: a status the client asked about, stated as done.
+    out = run(draft("Answer", "We received the documents and they are in order."), hold,
+              client="Please confirm the documents are in order")
+    ok = run(draft("Answer", "We have received the documents for Jolyn."), hold,
+             staff="Received with thanks", client="How is the application going?")
+    check("status: 'received ... in order' only the client wrote is dropped; 'received' our staff "
+          "said is kept (739)",
+          "in order" not in texts(out) and any("status" in d["reason"] for d in out["_dropped"])
+          and "We have received the documents" in texts(ok), texts(out) + " || " + texts(ok))
+
+    # 194: staff said "tomorrow" the day before; the draft repeated it.
+    out = run(draft("Next step", "Shirley will call your wife tomorrow."), hold,
+              staff="I will ask Shirley to contact you tomorrow.", client="Can Shirley call my wife")
+    same_day = run(draft("Next step", "Yes, Shirley can call tomorrow."), hold,
+                   client="Can Shirley call tomorrow?")
+    flagged = [s for s in out["suggestions"] if "unverified_commitment" in s["flags"]]
+    check("commitment: a relative day not in the client's latest message is flagged "
+          "unverified_commitment and low; one they asked for is not (194)",
+          flagged and flagged[0]["confidence"] == "low"
+          and not any("unverified_commitment" in s["flags"] for s in same_day["suggestions"]),
+          json.dumps(out["suggestions"])[:300])
+    # A numeric span nobody gave is already dropped by the figure guard; a
+    # weekday is not a figure, so it is this check that catches it.
+    out = run(draft("Next step", "We will confirm by Friday."), hold)
+    check("commitment: a weekday deadline nobody gave is flagged unverified_commitment",
+          any("unverified_commitment" in s["flags"] for s in out["suggestions"]),
+          json.dumps(out)[:400])
+
+    # 4615: a language nobody mentioned.
+    out = run(draft("Next step", "We will let you know if we have a helper who speaks Tamil."), hold)
+    asked = run(draft("Next step", "Sorry, we do not have a Tamil-speaking helper at the moment."), hold,
+                client="Do you have anyone who can speak Tamil")
+    check("attributes: a language, religion or nationality nobody mentioned is dropped; one the "
+          "client asked about is kept (4615)",
+          "Tamil" not in texts(out) and "Tamil" in texts(asked)
+          and any("Tamil".lower() in d["reason"] for d in out["_dropped"]),
+          json.dumps(out["_dropped"])[:200])
+
+    # 4615 as it happened: staff said no, the draft promised to look anyway.
+    out = run(draft("Next step", "I'll check if we have any helpers who speak Tamil and confirm."), hold,
+              last_ours="Sorry , we do nit have .", earlier="Do you have anyone who can speak Tamil")
+    fine = run(draft("Next step", "I'll check if we have any helpers who speak Tamil and confirm."), hold,
+               last_ours="Noted, thank you.", earlier="Do you have anyone who can speak Tamil")
+    check("promise: 'I'll check if we have' after our last message said we do not have is dropped; "
+          "the same draft after a neutral reply is kept (4615)",
+          "Tamil" not in texts(out) and "Tamil" in texts(fine), texts(out) + " || " + texts(fine))
+
+    # 4645: a Clarify guessing the nationality.
+    out = run(draft("Clarify", "Is this for the Indonesian new hire or the transfer helper?"), hold,
+              client="How about all the admin fee, checkup, insurance fees charges??")
+    check("clarify: a Clarify assuming a nationality is replaced by 'Which helper are you "
+          "referring to?' (4645)",
+          "Indonesian" not in texts(out)
+          and any(s["text"] == sg_validate.CLARIFY_WHICH_HELPER for s in out["suggestions"]),
+          texts(out))
+
+    # 4553: a phone number, and "contact Ming Hwee".
+    # The number is in our own earlier message, so the figure guard passes it
+    # and only this check stands in the way.
+    out = run(draft("Answer", "Please WhatsApp us on +65 6534 2277 and tell us why."),
+              draft("Next step", "Please contact Ming Hwee and tell us what happened."), hold,
+              staff="Our new WhatsApp number is +65 6534 2277.")
+    check("contact: a draft with a phone number or telling the client to contact Ming Hwee is "
+          "dropped (4553)",
+          "6534" not in texts(out) and "contact Ming Hwee" not in texts(out)
+          and sum("phone number" in d["reason"] for d in out["_dropped"]) == 2,
+          json.dumps(out["_dropped"]))
+
+    # 194: the client gave his wife's number; dropping every draft that
+    # repeated it left nothing. It becomes "on that number".
+    out = run(draft("Next step", "I'll ask Shirley to call your wife at 91234567."), hold,
+              client="Can Shirley call my wife number 91234567")
+    check("phone: a number the client just gave becomes 'on that number', not a dropped draft (194)",
+          any(s["text"] == "I'll ask Shirley to call your wife on that number." for s in out["suggestions"])
+          and "4567" not in texts(out), texts(out) + json.dumps(out["_dropped"]))
+
+    # 4614: "Cannot play" - unclear; one Clarify, not a guess.
+    with World() as world:
+        _suggest(world)
+        system = world.llm.calls[0]["messages"][0]["content"] if world.llm.calls else ""
+    check("prompt: an unclear message gets ONE Clarify asking what they mean (4614)",
+          "unclear and could mean more than one thing" in system and "ONE \"Clarify\"" in system)
+
+
 def checks_stale_and_state() -> None:
     with World() as world:
         out = _suggest(world, anchor=4)
@@ -994,7 +1101,7 @@ def main() -> int:
             patch.object(httpx.AsyncHTTPTransport, "handle_async_request", _refuse_async):
         for group in (checks_labelling, checks_identity, checks_grounding_units, checks_drafting,
                       checks_stale_and_state, checks_skipped, checks_flags, checks_eval_round,
-                      checks_model_choice,
+                      checks_model_choice, checks_review_round,
                       checks_tripwire,
                       checks_readonly_scope, checks_http):
             try:

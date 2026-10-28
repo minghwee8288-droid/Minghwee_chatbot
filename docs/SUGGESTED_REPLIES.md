@@ -54,7 +54,7 @@ Header: `X-Suggest-Secret: <SUGGEST_SECRET>`. Body (at most 4,000 bytes):
   "model": "openai/gpt-5.6-luna",
   "usage": {"prompt_tokens": 8594, "completion_tokens": 194},
   "latency_ms": 8188,
-  "prompt_version": "suggest-v3"
+  "prompt_version": "suggest-v4"
 }
 ```
 
@@ -78,6 +78,10 @@ Each suggestion:
   - `unverified_figures`: the draft has a number that no cited record and none of our own messages (Claire's or staff's) states. That covers a number only the client wrote, and a count nobody wrote.
   - `weak_support`: an `Answer` whose key claim words are mostly absent from the records it cites (a keyword check, threshold 50%).
   - `nationality_unconfirmed`: the draft cites a record labelled for one helper nationality (PH/ID/MM) while the conversation's nationality is unknown, ambiguous or another one. A draft that QUOTES such a fee is dropped instead, and if no Clarify survives a fixed one is added ("Which helper is this for, and what is her nationality?..."), carrying this flag.
+
+  - `unverified_commitment`: a day or deadline ("tomorrow", "by Friday", "within 3 days") that nothing gives. A relative day counts only if the client's latest message says it (one in an earlier message may have passed); a deadline only if our messages or the cited records state it.
+
+Dropped as well (Thomas's review, 2026-10-28): a phone number in the draft (a number the client has just given becomes "on that number"); telling the client to contact Ming Hwee; a nationality, language, religion, age or skill nobody in the conversation mentioned; a case status or completed action ("received", "approved", "in order") that our messages or the cited records do not state, since the client's own words do not count; a promise to look again right after our last message said we do not have it. A Clarify that guesses a nationality is replaced by "Which helper are you referring to?". An unclear message gets one Clarify (prompt rule).
 
 The nationality in play (`app/suggest/nationality.py`) is: the client's message naming exactly one; else the last 6 transcript lines naming exactly one (several named = unknown); else the saved state; else the helper records, if they agree; else our own earlier messages (staff or Claire) naming exactly one. The fixed Clarify is not added when our own messages already identified the helper: a name tagged "(MDW)", a helper we hold on record, or exactly one nationality.
 
@@ -216,6 +220,12 @@ Contact, ticket and case context in the eval is today's, not as it was then.
 
 Newest first.
 
+- **2026-10-28** - From Thomas's review: no invented status (739), no
+  unconfirmed day or deadline (194, flag `unverified_commitment`), no detail
+  nobody mentioned, no promise to look again after staff said no (4615), no
+  nationality guessed in a Clarify (4645), no phone number or "contact Ming
+  Hwee" (4553), one Clarify for an unclear message (4614). `suggest-v4`.
+  Self-check 97. The review file is now `thomas_review.xlsx`.
 - **2026-10-28** - Model default `openai/gpt-6-luna` (`SUGGEST_MODEL` still
   overrides), timeout 25 s. Every draft must respond to the client's latest
   message (4641 offered an unrelated GST draft; `suggest-v3`). A helper our own

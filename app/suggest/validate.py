@@ -10,6 +10,12 @@ A draft is kept only if it passes all of these, in order:
 4. every kb_ref is the id of a row actually retrieved for this request;
 5. grounding: every S$ amount and every day/week/month/year count appears in
    the cited records or the conversation;
+5b. no phone number and no "contact Ming Hwee" (they are talking to us); no
+   nationality, language, religion, age or skill nobody in the conversation
+   mentioned (a Clarify that guesses a nationality is replaced by a neutral
+   "Which helper are you referring to?"); no case status or completed action
+   ("we received", "approved", "in order") that our messages or the cited
+   records do not state - the client's own words do not count;
 6. the bot's post-graph rewriting guards (run_turn), in the same order;
 7. the identity check again, on the final text - the drafts are sent by a
    human consultant - and no handover to "a live agent" (the consultant is
@@ -25,7 +31,10 @@ Kept drafts then carry "flags", and any flag sets confidence "low":
 - "nationality_unconfirmed": it cites a record labelled for one helper
   nationality while the conversation's nationality is unknown or another one.
   A draft QUOTING a fee that belongs to another (or an unconfirmed)
-  nationality is dropped instead, and a Clarify asking which helper is offered.
+  nationality is dropped instead, and a Clarify asking which helper is offered;
+- "unverified_commitment": a day or deadline ("tomorrow", "by Friday", "within
+  3 days") that the client's latest message (for a relative day) or our
+  messages and the cited records (for a deadline) do not give.
 
 At most three survive. Drops are returned with their reason and never logged
 with their text.
@@ -254,6 +263,154 @@ def nationality_issue(text: str, cited: str, cited_matches: list[dict[str, Any]]
     return ""
 
 
+# --- Invented specifics (Thomas's review, 2026-10-28) ------------------------
+# A draft a consultant may send unchanged must not claim what nobody said.
+# The client's own words do not count as evidence for a status or a deadline
+# (the same rule as a number only the client wrote): "Please confirm the
+# documents are in order" is a question, not a fact (739).
+
+UNVERIFIED_COMMITMENT = "unverified_commitment"
+CLARIFY_WHICH_HELPER = "Which helper are you referring to?"
+
+_STATUS_CLAIM = re.compile(
+    r"\b(?:(?:we|i)(?:'ve|\s+have)?\s+(?:already\s+)?(?P<a>received|approved|processed|submitted|"
+    r"completed|sent)"
+    r"|(?:has|have|had|was|were|is|are)\s+(?:already\s+|now\s+)?(?:been\s+)?(?P<b>received|approved|"
+    r"processed|submitted|completed|issued|endorsed)"
+    r"|(?:documents?|papers?|forms?|everything)\s+(?:are\s+|is\s+)?(?:all\s+)?(?P<c>in\s+order))\b",
+    re.IGNORECASE,
+)
+
+# A day relative to "now" is only safe when the client's latest message says
+# it: an earlier one may already have passed (194: staff wrote "tomorrow" the
+# day before, and a draft repeated it).
+_RELATIVE_DAY = re.compile(r"\b(?:today|tonight|tomorrow|this\s+(?:morning|afternoon|evening|week))\b",
+                           re.IGNORECASE)
+_DAYS = r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
+_COUNT = r"(?:\d+|a|an|one|two|three|four|five|six|seven|ten|a\s+few|few)"
+_DEADLINE = re.compile(
+    rf"\b(?:(?:by|before|on|this|next)\s+{_DAYS}|by\s+(?:the\s+)?end\s+of\s+(?:the\s+)?(?:day|week|month)"
+    rf"|next\s+week|(?:within|in)\s+(?:about\s+|around\s+|approximately\s+)?(?P<n>{_COUNT}\s+"
+    rf"(?:working\s+|business\s+)?(?:days?|hours?|weeks?)))\b",
+    re.IGNORECASE,
+)
+
+_LANGUAGES = ("tamil", "mandarin", "chinese", "cantonese", "hokkien", "teochew", "malay", "hindi",
+              "tagalog", "bahasa", "burmese", "bengali", "punjabi")
+_RELIGIONS = ("christian", "muslim", "islam", "catholic", "hindu", "buddhist")
+_SKILLS = ("cooking", "baking", "infant care", "newborn", "elderly care", "eldercare", "childcare",
+           "pet care", "driving")
+_AGE = re.compile(r"\b(?:\d{2}\s*(?:years?|yrs?)\s*old|aged\s+\d{2})\b", re.IGNORECASE)
+
+_PHONE = re.compile(r"\[phone|\+?\d[\d\s().-]{6,}\d")
+_CONTACT_US = re.compile(
+    r"\b(?:contact|call|whatsapp|message|text|reach(?:\s+out\s+to)?|get\s+in\s+touch\s+with|"
+    r"speak\s+(?:to|with))\s+(?:ming\s+hwee|the\s+agency|our\s+(?:office|hotline|agency)|"
+    r"us\s+(?:at|on|via))\b",
+    re.IGNORECASE,
+)
+
+
+def _has(word: str, text: str) -> bool:
+    return re.search(rf"\b{re.escape(word)}", text, re.IGNORECASE) is not None
+
+
+def invented_status(text: str, ours: str, cited: str) -> list[str]:
+    """Status or completed-action claims that neither our own messages nor the
+    cited records make."""
+    sources = f"{ours}\n{cited}".lower()
+    missing = []
+    for match in _STATUS_CLAIM.finditer(text):
+        key = " ".join((match.group("a") or match.group("b") or match.group("c")).lower().split())
+        stem = key[:-2] if key.endswith("ed") else key
+        if stem not in " ".join(sources.split()):
+            missing.append(match.group(0))
+    return missing
+
+
+def unverified_commitments(text: str, incoming: str, ours: str, cited: str) -> list[str]:
+    """Days and deadlines the draft commits to that nothing gives: a relative
+    day the client's latest message does not say, or a deadline our messages
+    and the records do not state."""
+    found = [m.group(0) for m in _RELATIVE_DAY.finditer(text) if not _has(m.group(0), incoming)]
+    sources = " ".join(f"{incoming}\n{ours}\n{cited}".lower().split())
+    for match in _DEADLINE.finditer(text):
+        core = match.group("n") or match.group(0)
+        if " ".join(core.lower().split()) not in sources:
+            found.append(match.group(0))
+    return found
+
+
+def added_attributes(text: str, conversation: str) -> list[str]:
+    """Nationality, language, religion, age or skill words in the draft that
+    nobody in the conversation used."""
+    added = [code for code in sorted(nat.named(text) - nat.named(conversation))]
+    for word in _LANGUAGES + _RELIGIONS + _SKILLS:
+        if _has(word, text) and not _has(word, conversation):
+            added.append(word)
+    added += [m.group(0) for m in _AGE.finditer(text) if m.group(0).lower() not in conversation.lower()]
+    return added
+
+
+# 4615: staff answered "Sorry, we do nit have" (a Tamil speaker), and the
+# draft promised to check and come back anyway.
+_WE_HAVE_NONE = re.compile(r"\b(?:do\s+n\w*t|don'?t|doesn'?t)\s+have\b|\bnot\s+available\b|"
+                           r"\bnone\s+available\b|\bno\s+(?:such\s+|suitable\s+)?helpers?\b",
+                           re.IGNORECASE)
+_WILL_LOOK = re.compile(r"\b(?:check|see|look)\s+(?:if|whether)\s+(?:we|there)\b|"
+                        r"\blet\s+you\s+know\s+(?:if|when|once)\b|\blook\s+out\s+for\b|"
+                        r"\bkeep\s+(?:this|it|you)\s+in\s+mind\b",
+                        re.IGNORECASE)
+
+
+def last_message_of_ours(history_text: str) -> str:
+    """Our most recent message (staff or Claire) in the rendered transcript."""
+    block: list[str] = []
+    for line in reversed((history_text or "").splitlines()):
+        match = _SPEAKER.match(line)
+        if not match:
+            block.insert(0, line)
+            continue
+        if match.group(1) in ("Agent", "You"):
+            return "\n".join([line[match.end():]] + block)
+        block = []
+    return ""
+
+
+def promises_after_we_said_no(text: str, history_text: str) -> bool:
+    return bool(_WE_HAVE_NONE.search(last_message_of_ours(history_text)) and _WILL_LOOK.search(text))
+
+
+def _digits(text: str) -> str:
+    return "".join(ch for ch in text if ch.isdigit())
+
+
+_AT_PHONE = re.compile(r"\s+(?:at|on)\s+(\+?\d[\d\s().-]{6,}\d)")
+
+
+def phone_to_reference(text: str, client_text: str) -> str:
+    """A number the client just gave us, written back as "at/on <number>",
+    becomes "on that number" (194: "call my wife number ..."). Dropping such a
+    draft left the consultant with nothing; any other number still drops it."""
+    client_digits = _digits(client_text)
+
+    def swap(match: re.Match[str]) -> str:
+        digits = _digits(match.group(1))
+        return " on that number" if len(digits) >= 8 and digits in client_digits else match.group(0)
+
+    return _AT_PHONE.sub(swap, text)
+
+
+def has_phone_number(text: str) -> bool:
+    return any(sum(ch.isdigit() for ch in m.group(0)) >= 8 or m.group(0).startswith("[phone")
+               for m in _PHONE.finditer(text)
+               if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", m.group(0).strip()))
+
+
+def tells_client_to_contact_us(text: str) -> bool:
+    return _CONTACT_US.search(text) is not None
+
+
 # --- Result -----------------------------------------------------------------
 
 @dataclass
@@ -416,6 +573,7 @@ def validate(
     in_play = nat.in_play(state, ours)
     known_by_us = nat.identified_by_us(state, ours)
     nationality_doubt = False
+    neutral_clarify = False
     seen: set[str] = set()
 
     for item in items:
@@ -451,6 +609,34 @@ def validate(
                 "reason": "figure not in the cited records or the conversation: "
                 + ", ".join(sorted(missing)),
             })
+            continue
+
+        text = phone_to_reference(text, state.get("incoming_text") or "")
+        if has_phone_number(text) or tells_client_to_contact_us(text):
+            result.dropped.append({"label": label, "reason": "gives a phone number or tells the client "
+                                   "to contact us"})
+            continue
+        # A Clarify that guesses the nationality (4645: "the Indonesian new
+        # hire or transfer?" in a chat about Filipino and Myanmar helpers).
+        if label == "Clarify" and in_play is None and nat.named(text):
+            neutral_clarify = True
+            result.dropped.append({"label": label, "reason": "Clarify assumes a nationality"})
+            continue
+        added = added_attributes(text, conversation)
+        if added:
+            if label == "Clarify":
+                neutral_clarify = True
+            result.dropped.append({"label": label, "reason": "adds a detail nobody mentioned: "
+                                   + ", ".join(added)})
+            continue
+        if promises_after_we_said_no(text, state.get("history_text") or ""):
+            result.dropped.append({"label": label, "reason": "promises to look again after our last "
+                                   "message said we do not have it"})
+            continue
+        claimed = invented_status(text, ours, cited)
+        if claimed:
+            result.dropped.append({"label": label, "reason": "states a status nobody gave: "
+                                   + "; ".join(claimed)})
             continue
 
         cited_matches = [by_ref[r] for r in draft["kb_refs"]]
@@ -493,6 +679,8 @@ def validate(
         if issue == "flag":
             nationality_doubt = True
             flags.append(NATIONALITY_UNCONFIRMED)
+        if unverified_commitments(text, state.get("incoming_text") or "", ours, cited):
+            flags.append(UNVERIFIED_COMMITMENT)
         confidence = "low" if flags else draft["confidence"]
         result.kept.append({**draft, "text": text, "confidence": confidence, "flags": flags})
         if len(result.kept) == MAX_DRAFTS:
@@ -500,6 +688,14 @@ def validate(
 
     # Doubt about the nationality: make sure the consultant has the question
     # that settles it. A fixed English line, so it needs no guard.
+    # A Clarify was dropped for guessing a nationality: ask neutrally instead.
+    if neutral_clarify and not any(d["label"] == "Clarify" for d in result.kept):
+        clarify = {"label": "Clarify", "text": CLARIFY_WHICH_HELPER, "kb_refs": [],
+                   "confidence": "high", "flags": []}
+        if len(result.kept) == MAX_DRAFTS:
+            result.kept[-1] = clarify
+        else:
+            result.kept.append(clarify)
     # Not when our own messages already identified the helper (4641).
     if nationality_doubt and not known_by_us and not any(d["label"] == "Clarify" for d in result.kept):
         clarify = {"label": "Clarify", "text": CLARIFY_NATIONALITY, "kb_refs": [],
