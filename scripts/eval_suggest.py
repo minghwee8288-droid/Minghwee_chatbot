@@ -8,6 +8,8 @@ Markdown report comparing the drafts with the real staff reply.
     python scripts/eval_suggest.py                       # 5 conversations, SUGGEST_MODEL / the bot's model
     python scripts/eval_suggest.py --model openai/gpt-5.6-luna --limit 3
     python scripts/eval_suggest.py --conversations 1381 2409
+    python scripts/eval_suggest.py --cases-from <an earlier report .json> --model X
+                                       # the SAME conversations and anchors, another model
 
 The report goes OUTSIDE the repo (default: Desktop\\suggest_eval\\
 eval_suggest_<model>_<date>.md) because it holds client conversation text.
@@ -175,12 +177,19 @@ async def find_cases(args: argparse.Namespace) -> list[dict[str, Any]]:
              .eq("direction", "outbound").eq("is_bot", False))
     if args.conversations:
         query = query.in_("conversation_id", args.conversations)
-    result = await db.execute(query.order("id", desc=True).limit(args.scan))
+    query = query.order("id", desc=True)
+    # PostgREST returns at most 1,000 rows a request, so --scan is read in pages.
+    rows: list[dict[str, Any]] = []
+    while len(rows) < args.scan:
+        page = (await db.execute(query.range(len(rows), min(len(rows) + 999, args.scan - 1)))).data or []
+        rows += page
+        if len(page) < 1000:
+            break
 
     cases: list[dict[str, Any]] = []
     seen: set[int] = set()
     excluded: dict[str, int] = args.excluded
-    for row in result.data or []:
+    for row in rows:
         cid = row["conversation_id"]
         if cid in seen or not _staff_reply(row, args.min_reply_chars):
             continue
@@ -207,9 +216,27 @@ async def find_cases(args: argparse.Namespace) -> list[dict[str, Any]]:
     return cases
 
 
+class _ProviderSpy:
+    """Wraps the suggestion client to record which OpenRouter provider served
+    each call (the response's "provider" field). Eval only; the endpoint's
+    client is not changed."""
+
+    def __init__(self, client: Any, seen: dict[str, Any]) -> None:
+        self._client = client
+        self._seen = seen
+        self.chat = type("Chat", (), {"completions": type("C", (), {"create": self._create})()})()
+
+    async def _create(self, **kwargs: Any) -> Any:
+        response = await self._client.chat.completions.create(**kwargs)
+        extra = getattr(response, "model_extra", None) or {}
+        self._seen["provider"] = extra.get("provider") or ""
+        return response
+
+
 async def draft_case(case: dict[str, Any], model: str) -> dict[str, Any]:
     captured: dict[str, Any] = {}
     real_draft = suggest_llm.draft
+    real_client = suggest_llm._client
 
     async def spy(*a: Any, **k: Any) -> Any:
         raw, usage = await real_draft(*a, **k)
@@ -217,15 +244,25 @@ async def draft_case(case: dict[str, Any], model: str) -> dict[str, Any]:
         return raw, usage
 
     suggest_llm.draft = spy
+    suggest_llm._client = lambda: _ProviderSpy(real_client(), captured)
+    empty = {"suggestions": [], "_dropped": [], "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+             "latency_ms": 0}
     try:
         with readonly.read_only() as refused:
-            body = await run_suggest(case["conversation_id"], case["anchor"], model=model, as_of=True)
+            # The route's own whole-request limit, so a slow model shows as a timeout.
+            body = await asyncio.wait_for(
+                run_suggest(case["conversation_id"], case["anchor"], model=model, as_of=True),
+                timeout=suggest_settings.timeout_seconds(),
+            )
             writes = list(refused)
+    except asyncio.TimeoutError:
+        return {**empty, "status": "timeout", "error": "timeout", "provider": captured.get("provider", "")}
     except suggest_llm.SuggestLLMError as exc:
-        return {"status": "llm_error", "error": str(exc), "suggestions": [], "_dropped": [],
-                "usage": {"prompt_tokens": 0, "completion_tokens": 0}, "latency_ms": 0}
+        kind = "json_error" if "not JSON" in str(exc) else "llm_error"
+        return {**empty, "status": kind, "error": str(exc), "provider": captured.get("provider", "")}
     finally:
         suggest_llm.draft = real_draft
+        suggest_llm._client = real_client
     if writes:
         raise WriteAttempted(f"conversation {case['conversation_id']}: {[w.get('target') for w in writes]}")
 
@@ -238,6 +275,7 @@ async def draft_case(case: dict[str, Any], model: str) -> dict[str, Any]:
         if match is not None:
             leftovers.remove(match)
             drop["text"] = redact_nric(str(match.get("text") or ""), context="eval")
+    body["provider"] = captured.get("provider", "")
     return body
 
 
@@ -359,6 +397,8 @@ async def main() -> int:
     parser.add_argument("--scan", type=int, default=2000, help="recent staff messages to scan")
     parser.add_argument("--include-testers", action="store_true",
                         help="include BOT_ALLOWED_NUMBERS conversations")
+    parser.add_argument("--cases-from", type=Path, default=None,
+                        help="reuse the conversations and anchors of an earlier report's .json")
     args = parser.parse_args()
     if args.limit < 1:
         parser.error("--limit must be at least 1")
@@ -366,10 +406,15 @@ async def main() -> int:
     started = datetime.now()
     args.excluded = {}
 
-    with readonly.read_only() as refused:
-        cases = await find_cases(args)
-        if list(refused):
-            raise WriteAttempted("while selecting conversations")
+    if args.cases_from:
+        keep = ("conversation_id", "anchor", "staff_reply", "staff_at", "audience", "transcript")
+        cases = [{k: c[k] for k in keep if k in c}
+                 for c in json.loads(args.cases_from.read_text(encoding="utf-8"))]
+    else:
+        with readonly.read_only() as refused:
+            cases = await find_cases(args)
+            if list(refused):
+                raise WriteAttempted("while selecting conversations")
     if not cases:
         print("No conversation with a staff reply to a client message was found.")
         return 1
@@ -394,7 +439,8 @@ async def main() -> int:
     # The machine-readable copy, for comparing models: masked like the report.
     records = []
     for c in cases:
-        record = {k: v for k, v in c.items() if k != "transcript"}
+        record = dict(c)
+        record["transcript"] = [{**t, "body": mask(t["body"])} for t in c.get("transcript", [])]
         record["staff_reply"] = mask(c["staff_reply"])
         if "result" in c:
             result = json.loads(json.dumps(c["result"], default=str))
