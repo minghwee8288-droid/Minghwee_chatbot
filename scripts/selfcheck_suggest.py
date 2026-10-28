@@ -1234,7 +1234,7 @@ def checks_more_drafts() -> None:
               "taken TOGETHER" in sg_prompt.SUGGEST_WRAPPER)
     check("multi: one message is shown as it is, unnumbered",
           sg_prompt.unanswered_block({"suggest_unanswered": ["How much?"]}) == "How much?")
-    check("llm: room for five candidates", sg_llm.MAX_TOKENS >= 1400)
+    check("llm: output capped for five short drafts", 600 <= sg_llm.MAX_TOKENS <= 900)
 
     # Same meaning in other words (embedding pass), 4641's shape.
     empathise = dict(EMPATHISE, text="I understand the fee feels high. I'll check with our team for options.")

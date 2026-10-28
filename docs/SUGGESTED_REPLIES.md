@@ -247,8 +247,13 @@ Newest first.
   and, by embedding, by meaning (4641's three "I'll check with the team"
   drafts). Multi-message turns: all the
   client's unanswered messages are searched and shown together, numbered, and
-  an outbound row with no text no longer ends the run. `suggest-v5`, max
-  tokens 1400. Self-check 127.
+  an outbound row with no text no longer ends the run. `suggest-v5`.
+  Self-check 127.
+- **2026-10-28** - Latency: model output capped at 800 tokens (five drafts
+  measured 106-293). The log line carries per-phase `timings_ms` (db_reads,
+  kb_search, model, checks, meaning); the HTTP response is unchanged. On 15
+  conversations: median 7.7 s, slowest 9.3 s; the model is ~45% of the time,
+  DB reads, KB search and the meaning check ~1-2 s each.
 - **2026-10-28** - From Thomas's review: no invented status (739), no
   unconfirmed day or deadline (194, flag `unverified_commitment`), no detail
   nobody mentioned, no promise to look again after staff said no (4615), no

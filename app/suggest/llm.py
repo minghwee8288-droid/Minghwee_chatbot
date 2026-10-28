@@ -24,7 +24,9 @@ from app.graph.llm import try_parse_json  # pure parser
 logger = logging.getLogger(__name__)
 
 TEMPERATURE = 0.3
-MAX_TOKENS = 1400  # five candidates of up to 700 characters
+# Five short WhatsApp drafts with their refs and the JSON around them:
+# measured ~100 tokens a draft (eval 2026-10-28, at most 509 for five).
+MAX_TOKENS = 800
 
 
 class SuggestLLMError(RuntimeError):

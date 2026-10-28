@@ -119,7 +119,17 @@ async def run_suggest(
     scripts/eval_suggest.py (see context.build); the route never sets it."""
     started = time.monotonic()
     model = model or suggest_settings.model()
+    timings: dict[str, int] = {}
+    mark = started
+
+    def lap(name: str) -> None:
+        nonlocal mark
+        now = time.monotonic()
+        timings[name] = int((now - mark) * 1000)
+        mark = now
+
     ctx = await context.build(conversation_id, anchor_message_id, as_of=as_of)
+    lap("db_reads")
     bot_status = str(ctx.conversation.get("bot_status") or "")
     if ctx.status in ("stale", "skipped"):
         # No retrieval and no model call: there is nothing to draft (stale) or
@@ -136,6 +146,7 @@ async def run_suggest(
     # leave the live rules half replaced.
 
     found = await retrieval.retrieve(ctx.state)
+    lap("kb_search")
     state = {
         **ctx.state,
         "rag_matches": found["matches"],
@@ -147,13 +158,16 @@ async def run_suggest(
     raw, usage = await suggest_llm.draft(
         system_prompt, user_prompt, model=model, timeout=suggest_settings.timeout_seconds()
     )
+    lap("model")
     checked = validate.validate(
         raw, state=state, payload=ctx.payload,
         matches=found["matches"], rag_context=found["rag_context"], finish_now=False,
     )
     # Same meaning in other words (an embedding), then the best 4.
+    lap("checks")
     checked.kept = await meaning.drop_same_meaning(checked.kept, checked.dropped)
     checked = validate.finish(checked)
+    lap("meaning")
     kb_gap = (
         bool(raw.get("kb_gap"))
         or not found["matches"]
@@ -172,6 +186,7 @@ async def run_suggest(
         "model": model,
         "usage": usage,
         "latency_ms": int((time.monotonic() - started) * 1000),
+        "timings_ms": timings,
         "prompt_version": SUGGEST_PROMPT_VERSION,
         "_dropped": checked.dropped,
     }
@@ -226,10 +241,11 @@ async def suggest(request: Request) -> Any:
             return _error(500, "read_only_violation")
 
         dropped = result.pop("_dropped", [])
+        timings = result.pop("timings_ms", {})  # logged, not part of the response
         logger.info(
-            "suggest: conversation %s status=%s kept=%d dropped=%d tokens=%s/%s %dms",
+            "suggest: conversation %s status=%s kept=%d dropped=%d tokens=%s/%s %dms %s",
             body.conversation_id, result["status"], len(result["suggestions"]), len(dropped),
             result["usage"]["prompt_tokens"], result["usage"]["completion_tokens"],
-            int((time.monotonic() - started) * 1000),
+            int((time.monotonic() - started) * 1000), timings,
         )
         return result

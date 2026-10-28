@@ -431,7 +431,8 @@ async def main() -> int:
         case["best_overlap"] = max((overlap(s["text"], case["staff_reply"]) for s in result["suggestions"]),
                                    default=0.0)
         print(f"  {case['conversation_id']}: {result['status']}, kept {len(result['suggestions'])}, "
-              f"dropped {len(result['_dropped'])}, {result['latency_ms']} ms")
+              f"dropped {len(result['_dropped'])}, {result['latency_ms']} ms "
+              f"{result.get('timings_ms') or ''} out {result['usage']['completion_tokens']} tok")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     path = _out_path(args.out_dir, model, started)
