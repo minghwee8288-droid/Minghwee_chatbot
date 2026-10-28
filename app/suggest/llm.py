@@ -24,7 +24,7 @@ from app.graph.llm import try_parse_json  # pure parser
 logger = logging.getLogger(__name__)
 
 TEMPERATURE = 0.3
-MAX_TOKENS = 900
+MAX_TOKENS = 1400  # five candidates of up to 700 characters
 
 
 class SuggestLLMError(RuntimeError):

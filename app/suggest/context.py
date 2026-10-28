@@ -196,9 +196,13 @@ def split_at_anchor(
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
     """(stale reason code, earlier history, the client's unanswered messages).
 
-    The incoming batch is the run of inbound messages ending at the anchor, as
-    the debouncer would have batched them. Stale when the anchor is not the
-    newest inbound message, or a human or Claire has replied after it.
+    The incoming batch is every inbound message since our last outbound
+    message (staff or Claire), ending at the anchor: "Hi" / "What is the
+    transfer fee?" / "For a Filipino helper" is one batch, answered together.
+    An auto-reply, or an outbound row with no text (a reaction, a delete
+    notice), is not a reply and does not end the batch. Stale when the anchor
+    is not the newest inbound message, or a human or Claire has replied after
+    it.
     """
     inbound = [r for r in rows if r.get("direction") == "inbound"]
     if not inbound or inbound[-1].get("id") != anchor_message_id:
@@ -211,6 +215,7 @@ def split_at_anchor(
     while start > 0 and (
         rows[start - 1].get("direction") == "inbound"
         or label_of(rows[start - 1]) is None
+        or not (rows[start - 1].get("body") or "").strip()
     ):
         start -= 1
     batch = [r for r in rows[start:index + 1] if r.get("direction") == "inbound"]
@@ -264,7 +269,12 @@ async def build(
         return SuggestContext("stale", conversation, anchor_message_id, reason=reason)
 
     history = labelled(earlier)[-settings.history_limit:]
-    combined = "\n".join((r.get("body") or "").strip() for r in batch if (r.get("body") or "").strip())
+    # All of the client's unanswered messages, not only the newest: this one
+    # string is what the knowledge-base search runs on (rag_retriever
+    # _search_query reads incoming_text) and what the prompt answers.
+    # (The rows are NRIC-redacted already, in _recent_rows.)
+    unanswered = [(r.get("body") or "").strip() for r in batch if (r.get("body") or "").strip()]
+    combined = "\n".join(unanswered)
     phone = normalize_phone(conversation.get("customer_number"))
 
     # ------------------------------------------------------------------
@@ -375,6 +385,9 @@ async def build(
 
         for key, value in reset.items():
             state[key] = {} if isinstance(value, dict) and RESET_KEY in value else value
+    # One entry per message, for the prompt (prompt.unanswered_block). Not a
+    # graph field: nothing in the bot reads it.
+    state["suggest_unanswered"] = unanswered
 
     return SuggestContext(
         "ok", conversation, anchor_message_id, state=state, payload=payload, history=history

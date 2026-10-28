@@ -15,7 +15,7 @@ from typing import Any
 
 from app.graph.prompts.system import build_system_prompt
 
-SUGGEST_PROMPT_VERSION = "suggest-v4"
+SUGGEST_PROMPT_VERSION = "suggest-v5"
 
 SUGGEST_WRAPPER = """\
 YOU ARE NOT REPLYING TO THE CLIENT YOURSELF. You are drafting reply OPTIONS for \
@@ -59,29 +59,36 @@ for which service and nationality, and what must be deferred).
 - Plain text, WhatsApp length: two or three short sentences, no headings, no \
 bold, no bullet points. A numbered list only if they asked for steps.
 
-Every draft responds to the client's latest message(s): what they asked, or \
-what they said. Never bring up a topic they did not raise, even one the \
+Every draft responds to the client's unanswered messages (everything they \
+sent since our last reply), taken TOGETHER: "Hi" / "What is the transfer \
+fee?" / "For a Filipino helper" is one question about a Filipino helper's \
+transfer fee. Never bring up a topic they did not raise, even one the \
 records cover; a fact from the records goes in only if it answers them.
 
-If the client's latest message is unclear and could mean more than one thing, \
+If the client's unanswered messages are unclear and could mean more than one thing, \
 write ONE "Clarify" draft asking what they mean, and nothing else. A message \
 that is short, informal or misspelt but whose meaning is plain from the \
 conversation is NOT unclear: answer it. A Clarify \
 never assumes the helper's nationality: if the conversation has not settled \
 it, ask which helper they mean.
 
-Otherwise write 2 or 3 drafts that take meaningfully DIFFERENT approaches, not \
-paraphrases. Pick from:
+Otherwise write 5 candidate drafts, one for each approach below, each a \
+genuinely DIFFERENT approach, never a paraphrase of another. Leave an \
+approach out only if it truly does not fit these messages, and always write \
+at least 3: the consultant is shown only the best of them, so do not hold \
+back a reasonable option. The approaches:
 - "Answer": answer from our records.
 - "Clarify": ask for the one missing detail needed to answer.
-- "Next step": say what happens next, or hold: that we are checking and will \
-confirm.
-Only offer an approach that makes sense for this message.
+- "Next step": say what happens next.
+- "Hold": acknowledge and say we are checking and will confirm.
+- "Empathise": acknowledge how they feel or what they are dealing with, then \
+move it forward.
+Use each approach at most once.
 
 Return ONLY a JSON object, nothing else:
 {
   "suggestions": [
-    {"label": "Answer" | "Clarify" | "Next step",
+    {"label": "Answer" | "Clarify" | "Next step" | "Hold" | "Empathise",
      "text": "the draft message",
      "kb_refs": ["ref of each record the draft relies on, as shown in [ref ...]"],
      "confidence": "high" | "low"}
@@ -95,14 +102,27 @@ legal or medical matter, or anything a consultant should handle with care,
 records or the conversation."""
 
 
+def unanswered_block(state: dict[str, Any]) -> str:
+    """One numbered line per unanswered message, so a run of short messages
+    reads as one turn to answer and not as the newest line alone. From
+    context.build's per-message list; else incoming_text, split by line."""
+    lines = [str(m).strip() for m in (state.get("suggest_unanswered") or []) if str(m).strip()]
+    if not lines:
+        lines = [line.strip() for line in (state.get("incoming_text") or "").splitlines() if line.strip()]
+    if len(lines) <= 1:
+        return lines[0] if lines else ""
+    return "\n".join(f"{i}. {line}" for i, line in enumerate(lines, start=1))
+
+
 def build_prompts(state: dict[str, Any], records: str) -> tuple[str, str]:
     """(system prompt, user prompt) for one drafting call."""
     system = build_system_prompt(state, rag_context=records, extra_instructions=SUGGEST_WRAPPER)
     user = (
         "Conversation so far:\n"
         f"{state.get('history_text') or '(this is the first message)'}\n\n"
-        "Client's latest message(s):\n"
-        f"{state.get('incoming_text', '')}\n\n"
+        "The client's unanswered messages (sent since our last reply, oldest "
+        "first - answer them together):\n"
+        f"{unanswered_block(state)}\n\n"
         "The JSON with the drafts:"
     )
     return system, user

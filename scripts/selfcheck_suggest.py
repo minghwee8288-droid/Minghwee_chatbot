@@ -46,6 +46,7 @@ from app.services import rag  # noqa: E402
 from app.services import ticket as _ticket  # noqa: E402
 from app.suggest import context as sg_context  # noqa: E402
 from app.suggest import llm as sg_llm  # noqa: E402
+from app.suggest import meaning as sg_meaning  # noqa: E402
 from app.suggest import prompt as sg_prompt  # noqa: E402
 from app.suggest import retrieval as sg_retrieval  # noqa: E402
 from app.suggest import router as sg_router  # noqa: E402
@@ -260,6 +261,8 @@ class World:
         self.store.rows["wp_chat_messages"] = list(reversed(message_rows()))
         self.store.kb = [dict(r) for r in KB_ROWS]
         self.llm = FakeLLM(output if output is not None else model_output(GOOD, CLARIFY), delay)
+        self.vectors: dict[str, list[float]] = {}
+        self.embedded: list[list[str]] = []
         self.stack = ExitStack()
 
     def __enter__(self) -> "World":
@@ -272,6 +275,13 @@ class World:
             return [0.0] * 8
 
         s.enter_context(patch.object(rag, "embed_query", _embed))
+
+        async def _meaning(texts: list[str]) -> list[list[float]]:
+            self.embedded.append(list(texts))
+            return [self.vectors.get(t) or [1.0 if i == n else 0.0 for i in range(len(texts))]
+                    for n, t in enumerate(texts)]
+
+        s.enter_context(patch.object(sg_meaning, "_embed", _meaning))
         s.enter_context(patch.object(rag, "_vocabularies", {}))
         s.enter_context(patch.object(settings, "tenant_id", TENANT))
         return self
@@ -471,7 +481,9 @@ def checks_drafting() -> None:
     ai = {"label": "Next step", "text": "As an AI assistant I will pass this on.",
           "kb_refs": [], "confidence": "low"}
 
-    with World(model_output(invented_money, invented_time, uncited_time, bad_ref, nric, claire, ai)) as world:
+    with World(model_output(claire, ai)) as world:
+        identity_reasons = [d["reason"] for d in _suggest(world)["_dropped"]]
+    with World(model_output(invented_money, invented_time, uncited_time, bad_ref, nric)) as world:
         out = _suggest(world)
         reasons = [d["reason"] for d in out["_dropped"]]
         texts = [s["text"] for s in out["suggestions"]]
@@ -485,14 +497,15 @@ def checks_drafting() -> None:
         check("validate: a draft citing a record that was not retrieved is dropped",
               "cites a record that was not retrieved" in reasons, str(reasons))
         check("validate: drafts naming Claire or claiming to be an AI are dropped",
-              reasons.count("names Claire or claims to be an AI") == 2, str(reasons))
+              identity_reasons.count("names Claire or claims to be an AI") == 2, str(identity_reasons))
         check("validate: an NRIC in a draft is redacted and the draft kept",
               texts == ["Thanks, I have noted [REDACTED-ID]. When does her permit expire?"], str(texts))
 
     # The model cites records in the shape it is shown them ("[ref <id>]").
     # Live, 2026-10-27: every cited draft was dropped for writing "ref <id>".
     wrapped = dict(GOOD, kb_refs=["ref kb-1"])
-    bracketed = dict(GOOD, text="Renewal is $695 and takes about 1 week.", kb_refs=["[ref kb-1]"])
+    bracketed = dict(GOOD, label="Next step", text="For a renewal we charge $695; allow about 1 week.",
+                     kb_refs=["[ref kb-1]"])
     wrapped_bad = dict(GOOD, text="We will confirm the timing.", kb_refs=["ref kb-999"])
     with World(model_output(wrapped, bracketed, wrapped_bad)) as world:
         out = _suggest(world)
@@ -540,8 +553,8 @@ def checks_drafting() -> None:
     with World(model_output(CLARIFY, dup, long, *many)) as world:
         out = _suggest(world)
         reasons = [d["reason"] for d in out["_dropped"]]
-        check("validate: duplicates and over-700-character drafts are dropped, at most 3 kept",
-              len(out["suggestions"]) == 3 and "duplicate" in reasons
+        check("validate: duplicates and over-700-character drafts are dropped, at most 4 kept",
+              len(out["suggestions"]) <= sg_validate.MAX_DRAFTS and "duplicate" in reasons
               and "over 700 characters" in reasons, str(reasons))
 
     with World("this is not json") as world:
@@ -619,7 +632,7 @@ def checks_flags() -> None:
     overreach = {"label": "Answer", "kb_refs": ["kb-1"], "confidence": "high",
                  "text": "Yes, we can kickstart the application while she attends the medical examination."}
     clarify_overreach = dict(overreach, label="Clarify",
-                             text="Shall we kickstart the application while she attends the medical examination?")
+                             text="Could you tell me when her medical examination is booked?")
     with World(model_output(overreach, clarify_overreach)) as world:
         out = _suggest(world)
         by_label = {s["label"]: s for s in out["suggestions"]}
@@ -797,7 +810,7 @@ def checks_review_round() -> None:
     def texts(out: dict) -> str:
         return " | ".join(s["text"] for s in out["suggestions"])
 
-    hold = draft("Next step", "I will check this for you and confirm.")
+    hold = draft("Hold", "I will check this for you and confirm.")
 
     # 739: a status the client asked about, stated as done.
     out = run(draft("Answer", "We received the documents and they are in order."), hold,
@@ -1095,13 +1108,169 @@ def checks_http() -> None:
         else:
             os.environ["SUGGEST_SECRET"] = saved
 
+# --- More drafts and multi-message turns (2026-10-28) -------------------------
+
+NEXT_STEP = {"label": "Next step", "text": "Once you confirm, I will prepare the renewal forms for your signature.",
+             "kb_refs": [], "confidence": "high"}
+HOLD = {"label": "Hold", "text": "Let me check the details of her renewal and get back to you on this.",
+        "kb_refs": [], "confidence": "high"}
+EMPATHISE = {"label": "Empathise", "text": "I understand you want the renewal settled without any gap for her.",
+             "kb_refs": [], "confidence": "high"}
+
+MULTI = ["Hi", "What is the transfer fee?", "For a Filipino helper"]
+
+
+def _multi_rows() -> list[dict[str, Any]]:
+    """The client sends three messages in a row after our last reply (id 6);
+    a reaction (an outbound row with no text) sits between two of them."""
+    rows = message_rows()[:6]
+    rows += [
+        {"id": 7, "direction": "inbound", "is_bot": False, "sent_by": None, "body": MULTI[0],
+         "created_at": _at(5)},
+        {"id": 8, "direction": "outbound", "is_bot": False, "sent_by": "agent", "body": "",
+         "created_at": _at(4)},
+        {"id": 9, "direction": "inbound", "is_bot": False, "sent_by": None, "body": MULTI[1],
+         "created_at": _at(3)},
+        {"id": 10, "direction": "inbound", "is_bot": False, "sent_by": None, "body": MULTI[2],
+         "created_at": _at(2)},
+    ]
+    return rows
+
+
+def checks_more_drafts() -> None:
+    # 5 candidates in, at most 4 out.
+    five = (GOOD, CLARIFY, NEXT_STEP, HOLD, EMPATHISE)
+    with World(model_output(*five)) as world:
+        out = _suggest(world)
+        labels = [d["label"] for d in out["suggestions"]]
+        check("more: 5 valid candidates in -> 4 out, all different labels",
+              len(labels) == 4 and len(set(labels)) == 4, f"{labels} {out['_dropped']}")
+        check("more: the 5th candidate is not returned (selection, not a drop for a fault)",
+              "Empathise" not in labels, str(labels))
+    # Five candidates that all fail, then a valid sixth: the sixth is never read.
+    broken = [dict(CLARIFY, text=f"Draft {n} relies on a record we never retrieved.", kb_refs=["kb-999"])
+              for n in "ABCDE"]
+    with World(model_output(*broken, GOOD)) as world:
+        out = _suggest(world)
+        check("more: only the first 5 candidates are read", out["suggestions"] == []
+              and len(out["_dropped"]) == 5, json.dumps(out["suggestions"])[:200])
+
+    # Selection: high first, diverse labels, never padding.
+    low = lambda d, **k: dict(d, confidence="low", **k)  # noqa: E731
+    picked = sg_validate.select([low(CLARIFY), GOOD, low(HOLD), dict(NEXT_STEP), low(
+        CLARIFY, text="Which month does her permit end?")])
+    check("select: high-confidence drafts come first",
+          [d["confidence"] for d in picked] == sorted([d["confidence"] for d in picked],
+                                                      key=lambda c: c != "high"), str(picked))
+    check("select: a low draft with a new label is kept; a second low draft of a covered label is not",
+          [d["label"] for d in picked].count("Clarify") == 1 and "Hold" in [d["label"] for d in picked]
+          and len(picked) == 4, str([d["label"] for d in picked]))
+    check("select: a low draft is not added as a second draft of a label already covered",
+          len(sg_validate.select([GOOD, CLARIFY, low(CLARIFY, text="Which month does it end?")])) == 2)
+    check("select: never pads - two candidates give two drafts",
+          len(sg_validate.select([GOOD, CLARIFY])) == 2)
+    check("select: two high drafts of one label may both be kept when there is room",
+          len(sg_validate.select([GOOD, dict(GOOD, text="Another answer, worded on its own.")])) == 2)
+    with World(model_output(GOOD, CLARIFY)) as world:
+        out = _suggest(world)
+        check("more: only 2 survive -> 2 returned, nothing padded", len(out["suggestions"]) == 2,
+              str(out["suggestions"]))
+
+    # Near-duplicates dropped, the better one kept.
+    paraphrase = dict(GOOD, text="The work permit renewal fee is $695 and it usually takes around 1 week.",
+                      confidence="high")
+    same_meaning = dict(HOLD, text="Let me check her renewal details and get back to you on this one.")
+    check("near-dup: very similar wording is a near-duplicate",
+          sg_validate.near_duplicates(GOOD["text"], paraphrase["text"]))
+    check("near-dup: same content words reordered is a near-duplicate",
+          sg_validate.near_duplicates(HOLD["text"], same_meaning["text"]))
+    check("near-dup: different approaches are not near-duplicates",
+          not any(sg_validate.near_duplicates(a["text"], b["text"])
+                  for i, a in enumerate(five) for b in five[i + 1:]))
+    with World(model_output(low(GOOD, flags=[]), paraphrase, CLARIFY, HOLD, same_meaning)) as world:
+        out = _suggest(world)
+        texts = [d["text"] for d in out["suggestions"]]
+        reasons = [d["reason"] for d in out["_dropped"]]
+        check("near-dup: dropped with its reason, the high-confidence one kept",
+              reasons.count("near-duplicate of another draft") == 2 and paraphrase["text"] in texts
+              and GOOD["text"] not in texts and same_meaning["text"] not in texts,
+              f"{texts} {reasons}")
+        check("near-dup: what is left is distinct drafts only", len(texts) == 3, str(texts))
+
+    check("prompt: asks for 5 candidates (at least 3) with the five approaches",
+          "write 5 candidate drafts" in sg_prompt.SUGGEST_WRAPPER and "at least 3" in sg_prompt.SUGGEST_WRAPPER
+          and all(f'"{x}"' in sg_prompt.SUGGEST_WRAPPER
+                  for x in ("Answer", "Clarify", "Next step", "Hold", "Empathise")))
+    check("prompt: the JSON schema lists the five labels",
+          '"Answer" | "Clarify" | "Next step" | "Hold" | "Empathise"' in sg_prompt.SUGGEST_WRAPPER)
+    check("validate: the new labels are kept as labels", {"Hold", "Empathise"} <= sg_validate.LABELS
+          and sg_validate.MAX_DRAFTS == 4 and sg_validate.MAX_CANDIDATES == 5)
+
+    # Multi-message: "Hi" / "What is the transfer fee?" / "For a Filipino helper".
+    rows = _multi_rows()
+    reason, earlier, batch = sg_context.split_at_anchor(rows, 10)
+    check("multi: every client message since our last reply is one batch (a reaction does not end it)",
+          reason == "" and [r["id"] for r in batch] == [7, 9, 10] and earlier[-1]["id"] == 6,
+          f"{reason} {[r['id'] for r in batch]}")
+    searched: list[str] = []
+
+    async def _embed(text: str) -> list[float]:
+        searched.append(text)
+        return [0.0] * 8
+
+    with World(model_output(GOOD, CLARIFY)) as world, patch.object(rag, "embed_query", _embed):
+        world.store.rows["wp_chat_messages"] = list(reversed(rows))
+        out = _suggest(world, anchor=10)
+        user = world.llm.calls[0]["messages"][1]["content"] if world.llm.calls else ""
+        check("multi: drafts are made for the 3-message turn", out["status"] == "ready", out["status"])
+        check("multi: the knowledge-base search uses all 3 messages",
+              bool(searched) and all(m in searched[0] for m in MULTI), str(searched))
+        check("multi: the search does not use an earlier, answered message",
+              bool(searched) and "Tan" not in searched[0].split(), str(searched))
+        check("multi: the prompt marks them as the client's unanswered messages, one per line",
+              "The client's unanswered messages" in user
+              and "1. Hi\n2. What is the transfer fee?\n3. For a Filipino helper" in user, user[-400:])
+        check("multi: the wrapper says to answer the unanswered messages together",
+              "taken TOGETHER" in sg_prompt.SUGGEST_WRAPPER)
+    check("multi: one message is shown as it is, unnumbered",
+          sg_prompt.unanswered_block({"suggest_unanswered": ["How much?"]}) == "How much?")
+    check("llm: room for five candidates", sg_llm.MAX_TOKENS >= 1400)
+
+    # Same meaning in other words (embedding pass), 4641's shape.
+    empathise = dict(EMPATHISE, text="I understand the fee feels high. I'll check with our team for options.")
+    hold_same = dict(HOLD, text="I understand. I'll ask our team about the fee and confirm what is possible.")
+    with World(model_output(GOOD, empathise, hold_same, CLARIFY)) as world:
+        world.vectors = {empathise["text"]: [1.0, 0.0, 0.0], hold_same["text"]: [0.9, 0.3, 0.0],
+                         GOOD["text"]: [0.0, 1.0, 0.0], CLARIFY["text"]: [0.0, 0.0, 1.0]}
+        out = _suggest(world)
+        texts = [d["text"] for d in out["suggestions"]]
+        reasons = [d["reason"] for d in out["_dropped"]]
+        check("meaning: a draft saying the same in other words (cosine >= 0.85) is dropped, the first kept",
+              "says the same as another draft" in reasons and empathise["text"] in texts
+              and hold_same["text"] not in texts and len(texts) == 3, f"{texts} {reasons}")
+        check("meaning: one batched embedding request for the surviving drafts",
+              len(world.embedded) == 1 and len(world.embedded[0]) == 4, str(world.embedded))
+    check("meaning: drafts below the threshold are both kept",
+          sg_meaning.cosine([1.0, 0.0], [0.8, 0.6]) < sg_meaning.SAME_MEANING_COSINE)
+
+    async def _fails(texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("embedding down")
+
+    with World(model_output(GOOD, empathise, hold_same, CLARIFY)) as world, \
+            patch.object(sg_meaning, "_embed", _fails):
+        out = _suggest(world)
+        check("meaning: an embedding failure keeps the drafts (never fails the request)",
+              out["status"] == "ready" and len(out["suggestions"]) == 4, str(out["suggestions"]))
+    check("meaning: never the live bot's query cache (rag.embed_query)",
+          "embed_query(" not in inspect.getsource(sg_meaning))
+
 
 def main() -> int:
     with patch.object(httpx.HTTPTransport, "handle_request", _refuse_sync), \
             patch.object(httpx.AsyncHTTPTransport, "handle_async_request", _refuse_async):
         for group in (checks_labelling, checks_identity, checks_grounding_units, checks_drafting,
                       checks_stale_and_state, checks_skipped, checks_flags, checks_eval_round,
-                      checks_model_choice, checks_review_round,
+                      checks_model_choice, checks_review_round, checks_more_drafts,
                       checks_tripwire,
                       checks_readonly_scope, checks_http):
             try:

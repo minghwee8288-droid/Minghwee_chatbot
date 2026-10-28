@@ -1,4 +1,4 @@
-"""POST /internal/suggest - 2-3 reply drafts for a consultant. Writes nothing.
+"""POST /internal/suggest - up to 4 reply drafts for a consultant. Writes nothing.
 
 Called server to server by the Smart Inbox. Protected the way POST
 /admin/preview is (app/api/admin.py):
@@ -37,7 +37,7 @@ from pydantic import BaseModel, ValidationError
 from app import readonly
 from app.config import settings
 from app.graph import language
-from app.suggest import context, retrieval, validate
+from app.suggest import context, meaning, retrieval, validate
 from app.suggest import llm as suggest_llm
 from app.suggest import settings as suggest_settings
 from app.suggest.prompt import SUGGEST_PROMPT_VERSION, build_prompts
@@ -149,8 +149,11 @@ async def run_suggest(
     )
     checked = validate.validate(
         raw, state=state, payload=ctx.payload,
-        matches=found["matches"], rag_context=found["rag_context"],
+        matches=found["matches"], rag_context=found["rag_context"], finish_now=False,
     )
+    # Same meaning in other words (an embedding), then the best 4.
+    checked.kept = await meaning.drop_same_meaning(checked.kept, checked.dropped)
+    checked = validate.finish(checked)
     kb_gap = (
         bool(raw.get("kb_gap"))
         or not found["matches"]

@@ -21,7 +21,10 @@ A draft is kept only if it passes all of these, in order:
    human consultant - and no handover to "a live agent" (the consultant is
    one), including the line a bot guard swaps in for a reply it rejects;
 8. not cut by the guards: shortened by more than 40%, or ending mid-thought;
-9. at most 700 characters, not a duplicate of another draft.
+9. at most 700 characters, not a duplicate of another draft;
+10. not a near-duplicate of a better draft: the same wording (ratio 0.75) or
+    mostly the same content words (Jaccard 0.6). The better one is the
+    high-confidence one, then the one the model wrote first.
 
 Kept drafts then carry "flags", and any flag sets confidence "low":
 - "unverified_figures": a number neither a cited record nor our own messages
@@ -36,8 +39,11 @@ Kept drafts then carry "flags", and any flag sets confidence "low":
   3 days") that the client's latest message (for a relative day) or our
   messages and the cited records (for a deadline) do not give.
 
-At most three survive. Drops are returned with their reason and never logged
-with their text.
+The model writes up to five candidates; at most four are returned (`select`):
+high confidence first, one per label before a second of any label, and a
+low-confidence draft only when it brings a label no kept draft has. Nothing is
+padded: two survivors means two drafts. Drops are returned with their reason
+and never logged with their text.
 """
 
 from __future__ import annotations
@@ -56,8 +62,9 @@ from app.suggest.retrieval import ref_of, text_of
 from app.utils import redact_nric
 
 MAX_CHARS = 700
-MAX_DRAFTS = 3
-LABELS = {"Answer", "Clarify", "Next step"}
+MAX_CANDIDATES = 5
+MAX_DRAFTS = 4
+LABELS = {"Answer", "Clarify", "Next step", "Hold", "Empathise"}
 
 # --- Identity ---------------------------------------------------------------
 
@@ -413,10 +420,76 @@ def tells_client_to_contact_us(text: str) -> bool:
 
 # --- Result -----------------------------------------------------------------
 
+# --- Near-duplicates and selection ---------------------------------------------
+
+NEAR_DUPLICATE_RATIO = 0.75
+SAME_CONTENT_JACCARD = 0.6
+_FILLER = {
+    "a", "an", "the", "and", "or", "but", "to", "of", "for", "in", "on", "at", "is",
+    "are", "be", "will", "we", "i", "you", "your", "our", "it", "this", "that",
+    "can", "with", "so", "please", "let", "me", "us", "know", "if", "as", "do",
+}
+
+
+def _content_words(text: str) -> set[str]:
+    return {_stem(w) for w in re.findall(r"[a-z0-9$]+", text.lower()) if w not in _FILLER}
+
+
+def near_duplicates(a: str, b: str) -> bool:
+    """Very similar wording, or mostly the same content words (same meaning)."""
+    if guards.near_duplicate(a, b, threshold=NEAR_DUPLICATE_RATIO):
+        return True
+    wa, wb = _content_words(a), _content_words(b)
+    if not wa or not wb:
+        return False
+    return len(wa & wb) / len(wa | wb) >= SAME_CONTENT_JACCARD
+
+
+def _rank(drafts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """High confidence first; the model's own order within each."""
+    return sorted(drafts, key=lambda d: d["confidence"] != "high")
+
+
+def drop_near_duplicates(
+    drafts: list[dict[str, Any]], dropped: list[dict[str, str]]
+) -> list[dict[str, Any]]:
+    """Keep the better of each near-duplicate pair; the model's order is kept."""
+    kept: list[dict[str, Any]] = []
+    for draft in _rank(drafts):
+        if any(near_duplicates(draft["text"], other["text"]) for other in kept):
+            dropped.append({"label": draft["label"], "reason": "near-duplicate of another draft"})
+            continue
+        kept.append(draft)
+    return [d for d in drafts if any(d is k for k in kept)]
+
+
+def select(drafts: list[dict[str, Any]], limit: int = MAX_DRAFTS) -> list[dict[str, Any]]:
+    """Up to `limit`: high confidence first, diverse labels, never padding.
+
+    Pass 1 takes one draft per label (a high one before a low one). Pass 2
+    fills with further HIGH-confidence drafts. A low-confidence draft whose
+    label is already covered is never taken: it would be padding."""
+    chosen: list[dict[str, Any]] = []
+    labels: set[str] = set()
+    ranked = _rank(drafts)
+    for draft in ranked:
+        if len(chosen) < limit and draft["label"] not in labels:
+            chosen.append(draft)
+            labels.add(draft["label"])
+    for draft in ranked:
+        if len(chosen) < limit and draft["confidence"] == "high" and not any(draft is c for c in chosen):
+            chosen.append(draft)
+    return _rank(chosen)
+
+
 @dataclass
 class Validation:
     kept: list[dict[str, Any]] = field(default_factory=list)
     dropped: list[dict[str, str]] = field(default_factory=list)  # {label, reason}
+    # What finish() needs to add a fixed Clarify after the selection.
+    neutral_clarify: bool = False
+    nationality_doubt: bool = False
+    known_by_us: bool = False
 
 
 # The records are shown to the model as "[ref <id>]", and it cites them in
@@ -559,9 +632,12 @@ def validate(
     payload: dict[str, Any],
     matches: list[dict[str, Any]],
     rag_context: str,
+    finish_now: bool = True,
 ) -> Validation:
     """Check every draft the model returned. `state` must already carry
-    rag_matches / rag_context for this request."""
+    rag_matches / rag_context for this request. With `finish_now=False` the
+    survivors are returned unselected, for the router's same-meaning pass
+    (meaning.py); the caller then calls finish()."""
     result = Validation()
     items = raw.get("suggestions") if isinstance(raw, dict) else None
     if not isinstance(items, list):
@@ -576,7 +652,7 @@ def validate(
     neutral_clarify = False
     seen: set[str] = set()
 
-    for item in items:
+    for item in items[:MAX_CANDIDATES]:
         draft = _schema(item)
         if draft is None:
             result.dropped.append({"label": "", "reason": "invalid schema"})
@@ -683,8 +759,20 @@ def validate(
             flags.append(UNVERIFIED_COMMITMENT)
         confidence = "low" if flags else draft["confidence"]
         result.kept.append({**draft, "text": text, "confidence": confidence, "flags": flags})
-        if len(result.kept) == MAX_DRAFTS:
-            break
+
+    result.kept = drop_near_duplicates(result.kept, result.dropped)
+    result.neutral_clarify = neutral_clarify
+    result.nationality_doubt = nationality_doubt
+    result.known_by_us = known_by_us
+    return finish(result) if finish_now else result
+
+
+def finish(result: Validation) -> Validation:
+    """The best MAX_DRAFTS, then the fixed Clarify a dropped draft called for."""
+    result.kept = select(result.kept)
+    neutral_clarify = result.neutral_clarify
+    nationality_doubt = result.nationality_doubt
+    known_by_us = result.known_by_us
 
     # Doubt about the nationality: make sure the consultant has the question
     # that settles it. A fixed English line, so it needs no guard.

@@ -1,8 +1,8 @@
 # Suggested replies (`POST /internal/suggest`)
 
 Reply drafts for a human consultant in the Smart Inbox. Given a client's
-message, the endpoint returns 2 or 3 short drafts written in the consultant's
-voice, from Claire's own prompt, knowledge-base retrieval and guards. A
+message, the endpoint returns up to 4 suggestions, short drafts written in the
+consultant's voice, from Claire's own prompt, knowledge-base retrieval and guards. A
 consultant reads them and may send one; the endpoint itself sends nothing and
 writes nothing.
 
@@ -18,6 +18,7 @@ The Sprint 0 safety check that preceded this is `docs/SPRINT0_CHATBOT_REPORT.md`
 | `router.py` | The route, secret, tenant check, concurrency gate, timeout, error mapping; `run_suggest()` |
 | `context.py` | Builds the input: conversation, messages up to the anchor, contact/ticket/case context, saved LangGraph state |
 | `audience.py` | Group chats and internal numbers are skipped |
+| `meaning.py` | Drops a draft that says the same as another in other words (embedding) |
 | `retrieval.py` | Runs the bot's `rag_retriever` node; renders records with `[ref <id>]` |
 | `prompt.py` | Claire's system prompt plus the consultant wrapper (`SUGGEST_PROMPT_VERSION`) |
 | `llm.py` | Its own OpenRouter client: JSON mode, temperature 0.3, no retries, returns token usage |
@@ -54,7 +55,7 @@ Header: `X-Suggest-Secret: <SUGGEST_SECRET>`. Body (at most 4,000 bytes):
   "model": "openai/gpt-5.6-luna",
   "usage": {"prompt_tokens": 8594, "completion_tokens": 194},
   "latency_ms": 8188,
-  "prompt_version": "suggest-v4"
+  "prompt_version": "suggest-v5"
 }
 ```
 
@@ -71,7 +72,27 @@ Header: `X-Suggest-Secret: <SUGGEST_SECRET>`. Body (at most 4,000 bytes):
 
 Each suggestion:
 
-- `label`: `Answer`, `Clarify` or `Next step` ("Next step" also carries "we will check and confirm").
+- `label`: `Answer`, `Clarify`, `Next step`, `Hold` (we are checking and will confirm) or `Empathise` (acknowledges how they feel, then moves it forward).
+
+How many: the model writes up to 5 candidates in one call, each a different
+approach. Every candidate goes through the checks below; then near-duplicates
+are dropped in two passes, keeping the high-confidence one, then the earlier
+one: very similar wording (SequenceMatcher 0.75, or mostly the same content
+words, Jaccard 0.6; `validate.py`), then the same meaning in other words
+(embedding cosine 0.85, one batched request to the bot's embedding model that
+bypasses its query cache; `meaning.py`; skipped if the request fails). The
+threshold is measured: same-meaning pairs scored 0.85-0.95, different
+approaches 0.30-0.83. Then up to 4 are returned: high confidence first, one per label before a
+second draft of any label, and a low-confidence draft only when it brings a
+label no other draft has. Nothing is padded: if 2 survive, 2 are returned.
+
+Several messages in a row: the request answers every client message since our
+last outbound message (staff or Claire), not only the newest. "Hi" / "What is
+the transfer fee?" / "For a Filipino helper" is one turn: the knowledge-base
+search runs on all three joined (`incoming_text`, read by the bot's
+`rag_retriever`), and the prompt shows them numbered under "The client's
+unanswered messages". A WhatsApp auto-reply, or an outbound row with no text (a
+reaction, a delete notice), does not end the run.
 - `kb_refs`: ids of the knowledge-base rows the draft relies on; every one was retrieved for this request.
 - `confidence`: `high` or `low`. Any flag forces `low`.
 - `flags`: a list, possibly empty:
@@ -220,6 +241,14 @@ Contact, ticket and case context in the eval is today's, not as it was then.
 
 Newest first.
 
+- **2026-10-28** - Up to 4 suggestions: 5 candidates in one model call
+  (labels `Hold` and `Empathise` added), near-duplicates dropped, then the best
+  4 by confidence and label variety, never padded. Near-duplicates by wording
+  and, by embedding, by meaning (4641's three "I'll check with the team"
+  drafts). Multi-message turns: all the
+  client's unanswered messages are searched and shown together, numbered, and
+  an outbound row with no text no longer ends the run. `suggest-v5`, max
+  tokens 1400. Self-check 127.
 - **2026-10-28** - From Thomas's review: no invented status (739), no
   unconfirmed day or deadline (194, flag `unverified_commitment`), no detail
   nobody mentioned, no promise to look again after staff said no (4615), no
