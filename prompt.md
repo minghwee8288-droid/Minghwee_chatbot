@@ -3228,14 +3228,19 @@ Sure, here are the questions. You can answer them all in one reply:
 1. <question> (for example: <options>)
 2. <question> <its paired question>
 ...
-If something does not apply, just say so.
+Take your time, and feel free to skip anything that doesn't apply to you.
 ```
 
-and when details are still missing, the first line is instead:
+and when details are still missing (2026-10-29, `guards.FRIENDLIER_LIST_WORDING`),
+the message is just the opening line and the list, with no closing line:
 
 ```
-Thank you. A few details are still missing or unclear:
+Just these few more and we're all set. Skip any that don't apply.
+1. <question>
 ```
+
+A helper's options are read to her in the second person ("working on your rest
+day for extra pay"; `ticket.HELPER_OPTIONS_SECOND_PERSON`).
 
 ---
 
@@ -3345,4 +3350,18 @@ From you:
 From the helper:
 We prepare for you to sign:
 Number the items straight through all three groups (1, 2, 3...), and every group - "We prepare for you to sign:" too - is the label line followed by numbered items, never a sentence. Then one short closing sentence. Take each item only from the records about hiring a new helper; leave out documents for any other procedure (contract verification at an embassy or MWO, OEC, home leave, passport renewal, a transfer). Include the foreign-employer and additional-helper items as conditional lines ("If you are a foreigner working here: ..."). Do not mention any fee or cost unless they asked about one. Do not ask whether this is a transfer.
+```
+
+---
+
+## Call requests (29 October)
+
+`clarify.CALL_REQUEST_DIRECT`. "Please call me", "talk to you on call", "can you
+call", "phone call" and the like are never asked about and never written by the
+model. With an open ticket the request is added to the newest one; with none, a
+ticket is raised. The reply is always this fixed text, with that ticket's
+reference, and names no topic:
+
+```
+Sure – I'll ask our team to arrange a call with you, and they'll get back to you soon. Your reference is `CB-YYYY-NNNN`.
 ```

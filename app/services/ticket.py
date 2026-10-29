@@ -2095,8 +2095,28 @@ def _matched_options(key: str) -> tuple[str, ...]:
     exists: a duplicated constant that then diverges is a live problem here
     (§9.8), and the agency has already had `languages` and `household`
     reworded once each.
+
+    The words are the employer's, but they are READ to the helper, so "her" is
+    "your" (HELPER_OPTIONS_SECOND_PERSON, 2026-10-29: question 9 of her list read
+    "working on her rest day for extra pay"). Only pronouns change, so the
+    pairing still matches word for word otherwise.
     """
-    return next(f for f in SERVICE_FIELDS["new_hiring"] if f.key == key).options
+    options = next(f for f in SERVICE_FIELDS["new_hiring"] if f.key == key).options
+    return in_second_person(options) if HELPER_OPTIONS_SECOND_PERSON else options
+
+
+# 2026-10-29. False = the employer's options read to her unchanged.
+HELPER_OPTIONS_SECOND_PERSON = True
+_THIRD_PERSON = {"she": "you", "her": "your", "hers": "yours", "herself": "yourself"}
+_THIRD_PERSON_WORD = re.compile(r"\b(she|her|hers|herself)\b", re.IGNORECASE)
+
+
+def in_second_person(options: tuple[str, ...]) -> tuple[str, ...]:
+    """The options with the helper's she/her written as you/your."""
+    def swap(m: re.Match[str]) -> str:
+        word = _THIRD_PERSON[m.group(1).lower()]
+        return word.capitalize() if m.group(1)[0].isupper() else word
+    return tuple(_THIRD_PERSON_WORD.sub(swap, option) for option in options)
 
 
 # The candidate half of the matching form. Agency, 2026-09-10, after testing

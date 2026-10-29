@@ -126,6 +126,72 @@ for _kind, _pair in _QUESTIONS.items():
 assert not mentions_handover(PASSED_ON_REPLY) and not mentions_handover(ADDED_TO_TICKET_REPLY)
 
 
+# A request for a phone call, 2026-10-29. The same message got two different
+# replies on the same evening: an employer's "i want to talk to you on call,
+# when available please call" (conversation 4443) matched no pattern, kept the
+# parked hiring topic and got "A live agent has your request and will contact
+# you shortly regarding hiring a new helper" - a topic name nobody used - while
+# a job seeker's (3766) resolved to no service, missed her parked registration,
+# went down response_generator's handover and got "I will check with our team
+# about arranging a call" with no reference, because that sentence has no
+# handover phrase for the reference to sit after. "please call" and "on call"
+# were in neither the "call" vague-action pattern nor _EXPLICIT_HUMAN.
+#
+# Now a call request is never asked about and never answered by the model: it
+# goes on the open ticket (the latest one, which keeps its reference) or, with
+# none open, raises one, and the reply is CALL_REPLY with that reference.
+# CALL_REQUEST_DIRECT = False: the "call" vague action above, asked about first.
+CALL_REQUEST_DIRECT = True
+_CALL_REQUEST = re.compile(
+    r"\b(?:call|ring|phone)\s+(?:me|us|back)\b|\bgive\s+(?:me|us)\s+a\s+(?:call|ring)\b"
+    r"|\b(?:please|pls|plz|pl|kindly|can\s+you|could\s+you|can\s+someone|can\s+anyone)\s+"
+    r"(?:\w+\s+){0,2}call\b"
+    r"|\b(?:on|by|via|over|through)\s+(?:a\s+|the\s+)?(?:phone|voice|video\s+)?call\b"
+    r"|\b(?:talk|speak|discuss|chat)\b[^.?!]{0,30}\b(?:on|by|over)\s+(?:the\s+)?phone\b"
+    r"|\b(?:arrange|schedule|set\s+up|book|want|need|like|request|have)\s+(?:a\s+)?"
+    r"(?:phone\s+|quick\s+)?call\b"
+    r"|\bphone\s+call\b",
+    re.IGNORECASE,
+)
+# "what is a call" / "who called me" are questions about a call, not a request.
+_ABOUT_A_CALL = re.compile(
+    r"^\s*(?:what|why|who|which|when\s+did)\b|\bcalled\b|\bmissed\s+call\b", re.IGNORECASE
+)
+CALL_REPLY = "Sure – I'll ask our team to arrange a call with you, and they'll get back to you soon."
+assert not is_degenerate(CALL_REPLY) and not re.search(r"\d", CALL_REPLY)
+
+
+def asks_for_call(message: str) -> bool:
+    """Whether the client is asking for a phone call (CALL_REQUEST_DIRECT)."""
+    text = (message or "").strip()
+    if not CALL_REQUEST_DIRECT or not text or len(text.split()) > 30:
+        return False
+    return bool(_CALL_REQUEST.search(text)) and not _ABOUT_A_CALL.search(text)
+
+
+def call_reply(ticket_number: str | None) -> str:
+    """The one reply a call request gets, with the ticket's reference."""
+    from app.graph.reference import shown
+
+    if not ticket_number:
+        return CALL_REPLY
+    return f"{CALL_REPLY} Your reference is {shown(ticket_number)}."
+
+
+def call_summary(message: str) -> str:
+    return f"Client asked for a phone call: {(message or '').strip()[:300]}"
+
+
+def latest_open_ticket(open_tickets: dict[str, dict[str, Any]] | None) -> dict[str, Any] | None:
+    """The open ticket a call request belongs on: the newest one."""
+    tickets = {t.get("id"): t for t in (open_tickets or {}).values()
+               if t.get("id") and str(t.get("status") or "open") in ("open", "in_progress")}
+    if not tickets:
+        return None
+    return max(tickets.values(),
+               key=lambda t: (str(t.get("created_at") or ""), str(t.get("ticket_number") or "")))
+
+
 def vague_action(message: str) -> str | None:
     """The kind of action asked for when the request does not say what it is about."""
     text = (message or "").strip()

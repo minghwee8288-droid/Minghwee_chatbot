@@ -217,6 +217,19 @@ _JOBSEEKER_SELF_ID = re.compile(
     re.IGNORECASE,
 )
 
+# 2026-10-29, conversation 3766, 6:45 PM IST: "hey i need a job" raised
+# CB-2026-0130 on the spot, with no question asked. The number still carried
+# the 28 Oct employer testing - contact_type 'employer' on the row and an OPEN
+# employer lead, which effective_contact_type() keeps over one message's
+# reading - so resolve_service() treated her as an employer relaying a helper
+# (THIRD_PARTY_EMPLOYER_RELAY) and kept the bare candidate_registration, which
+# has no fields: "complete" on turn one, ticket. A reset cleared the lead and
+# the same message at 6:48 PM started the intake. Asking for work in her own
+# words, with no one else's helper named and no employer master record, is
+# her registration: the classifier resolves it to candidate_new_hiring itself.
+# False = resolve_service decides from the contact type, as before.
+JOBSEEKER_SPEAKS_FOR_HERSELF = True
+
 _JOBSEEKER_PATTERN = re.compile(
     _JOBSEEKER_ASKS_FOR_WORK.pattern + "|" + _JOBSEEKER_SELF_ID.pattern,
     re.IGNORECASE,
@@ -929,6 +942,18 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
         )
         intent, service_type = CANDIDATE_INTENT, None
 
+    # A helper asking for work in her own words is HER registration, whatever
+    # an earlier enquiry left on the number (JOBSEEKER_SPEAKS_FOR_HERSELF).
+    speaks_for_herself = (
+        JOBSEEKER_SPEAKS_FOR_HERSELF
+        and intent == CANDIDATE_INTENT
+        and bool(_JOBSEEKER_PATTERN.search(message))
+        and not relays_another_helper(message)
+        and not state.get("matched_employer_id")
+    )
+    if speaks_for_herself:
+        service_type = ticket_service.CANDIDATE_HIRING
+
     # These are their own ticket rather than something to collect against. The
     # classifier is told to return service_type null for them, so set it here
     # rather than trusting the model to name the ticket type.
@@ -1288,6 +1313,8 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
             state.get("incoming_text") or "", state.get("history_text") or ""
         ):
             detected = "candidate"
+        if speaks_for_herself:
+            detected = "candidate"
         if detected:
             update["detected_contact_type"] = detected
             stored = (state.get("contact_type") or "unknown").strip()
@@ -1337,6 +1364,13 @@ def _clarify_decision(state: ConversationState, message: str, intent: str) -> di
     """Whether this turn asks a clarifying question, answers one, or neither."""
     if intent in _IMMEDIATE_INTENTS or intent in {ticket_service.MISSING_HELPER, ticket_service.COMPLAINT}:
         return {"pending_action": None} if state.get("pending_action") else {}
+    # A phone call request: always the same reply, on the open ticket or a new
+    # one (clarify.CALL_REQUEST_DIRECT, 2026-10-29). Ahead of _EXPLICIT_HUMAN,
+    # so "talk to an agent on the phone" is a call request too.
+    if clarify.asks_for_call(message):
+        logger.info("Conversation %s: call request", state.get("conversation_id"))
+        return {"clarify_action": "call", "pending_action": None,
+                "needs_handover": False, "handover_reason": None}
     if _EXPLICIT_HUMAN.search(message):
         return {"pending_action": None} if state.get("pending_action") else {}
     pending = state.get("pending_action")

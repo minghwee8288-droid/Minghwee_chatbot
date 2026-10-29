@@ -2017,16 +2017,26 @@ def asks_again(text: str) -> bool:
 # weeks) - before and after that day's question removals alike. One definition,
 # read by info_collector when it writes the list. False = the old test.
 LIST_ANSWER_IS_AN_ANSWER = True
+# 2026-10-29, agency: friendlier wording. The "still missing" message opens
+# "Just these few more and we're all set. Skip any that don't apply." and the
+# full list closes "Take your time, and feel free to skip anything that
+# doesn't apply to you." False = the old wording (info_collector._STYLE_LIST_END).
+FRIENDLIER_LIST_WORDING = True
+_OLD_MISSING_HEAD = "Thank you. A few details are still missing or unclear:"
 QUESTION_LIST_HEADS = (
     "Sure, here are the questions. You can answer them all in one reply:",
-    "Thank you. A few details are still missing or unclear:",
+    "Just these few more and we're all set. Skip any that don't apply."
+    if FRIENDLIER_LIST_WORDING else _OLD_MISSING_HEAD,
 )
+# Every head a list we sent may open with, old wording included, so a list
+# sent before a deploy is still read as our question.
+_ANY_LIST_HEAD = QUESTION_LIST_HEADS + (_OLD_MISSING_HEAD,)
 
 
 def answering_our_question(history_text: str, message: str) -> bool:
     """Whether this message is an answer to a question we just asked."""
     previous = last_bot_line(history_text or "")
-    asked_a_list = LIST_ANSWER_IS_AN_ANSWER and (previous or "").startswith(QUESTION_LIST_HEADS)
+    asked_a_list = LIST_ANSWER_IS_AN_ANSWER and (previous or "").startswith(_ANY_LIST_HEAD)
     if "?" not in (previous or "") and not asked_a_list:
         return False
     body = (message or "").strip()

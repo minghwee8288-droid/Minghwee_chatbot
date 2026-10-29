@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.graph import clarify
 from app.graph.guards import without_names_addressed
 from app.graph.llm import complete
 from app.graph.prompts.system import build_system_prompt
@@ -162,7 +163,12 @@ async def handover_executor(state: ConversationState) -> dict[str, Any]:
     # the number - new, or the ticket this message was folded into - is here.
     reply = update.get("reply") or state.get("reply") or ""
     number = update.get("ticket_number") or state.get("ticket_number")
-    if reply and number and (intent != "dispute_assault" or SAFETY_REPLY_SHOWS_REFERENCE):
+    if (reply and number and state.get("clarify_action") == "call"
+            and clarify.CALL_REQUEST_DIRECT and not update.get("reply")):
+        # A call request's reply has no handover sentence to sit after, so
+        # the reference is written into it (app/graph/clarify.py).
+        update["reply"] = reply.replace(clarify.CALL_REPLY, clarify.call_reply(number), 1)
+    elif reply and number and (intent != "dispute_assault" or SAFETY_REPLY_SHOWS_REFERENCE):
         referenced = add_reference(reply, number, state.get("history_text") or "")
         if referenced != reply:
             update["reply"] = referenced

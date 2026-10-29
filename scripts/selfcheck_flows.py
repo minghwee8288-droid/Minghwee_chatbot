@@ -3469,7 +3469,8 @@ rows = [
   sorted(emp for emp, cand in _MATCHED_PAIRS.items()
          if emp not in ("preferred_nationality", "helper_religion")
          and _options_of("new_hiring", emp)
-         and not set(_options_of("new_hiring", emp))
+         # Read to her in the second person since 2026-10-29 ("your rest day").
+         and not set(t.in_second_person(_options_of("new_hiring", emp)))
                  <= set(_options_of("candidate_new_hiring", cand))),
   []),
  # `helper_religion` is the SECOND pairing whose halves cannot share one list,

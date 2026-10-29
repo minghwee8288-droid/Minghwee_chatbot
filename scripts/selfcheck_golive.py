@@ -512,10 +512,117 @@ async def scenario_hire_documents() -> None:
           not _ic.hires_a_new_helper("I want to hire a transfer helper"))
 
 
+async def scenario_call_and_wording() -> None:
+    """2026-10-29: call requests answered two ways; list wording; 'hey i need a job' ticketed."""
+    from app.graph import clarify, guards
+    from app.graph.nodes.action_clarifier import action_clarifier
+    from app.graph.state import effective_contact_type
+    from app.services import ticket as ticket_service
+    _tc = importlib.import_module("app.graph.nodes.ticket_creator")
+    _hx = importlib.import_module("app.graph.nodes.handover_executor")
+    ico = importlib.import_module("app.graph.nodes.info_collector")
+
+    follow_ups: list = []
+
+    async def add_follow_up(tid, text):
+        follow_ups.append((tid, text))
+
+    async def turn(text: str, history: str, extra: dict, verdict: dict) -> dict:
+        state = {"conversation_id": 1, "phone": CLIENT, "contact_type": "employer",
+                 "incoming_text": text, "history_text": history, "collected_info": {},
+                 "blocked_topics": {}, **extra}
+        with patch.object(_ic, "complete_json", new=AsyncMock(return_value=verdict)), \
+             patch.object(ticket_service, "add_follow_up", new=add_follow_up):
+            state.update(await _ic.intent_classifier(state))
+            state["route"] = _graph.route_after_intent(state)
+            if state["route"] == "action_clarifier":
+                state.update(await action_clarifier(state))
+        return state
+
+    said = "You: Here is everything for your new helper enquiry. Your reference number is `CB-2026-0131`."
+    employer_ticket = {"id": "t-131", "ticket_number": "CB-2026-0131", "service_type": ["new_hiring"],
+                       "status": "open", "captured_info": {"topic_key": "new_hiring"}}
+    helper_ticket = {"id": "t-132", "ticket_number": "CB-2026-0132", "service_type": ["new_hiring"],
+                     "status": "open", "captured_info": {"topic_key": "candidate_new_hiring"}}
+    # The two live chats, as the classifier read them: the employer kept the
+    # parked hiring topic, the job seeker resolved to no service.
+    employer = await turn("i want to talk to you on call, when available please call", said,
+                          {"blocked_topics": {"new_hiring": employer_ticket}, "service_type": "new_hiring"},
+                          {"intent": "case_enquiry", "service_type": "new_hiring", "confidence": 0.8})
+    helper = await turn("i want to talk to you on call when available please call",
+                        "You: Your registration is complete.",
+                        {"blocked_topics": {"candidate_new_hiring": helper_ticket}, "contact_type": "candidate"},
+                        {"intent": "case_enquiry", "service_type": None, "confidence": 0.8})
+    check("call request with an open ticket -> the call reply with THAT ticket's reference",
+          employer.get("reply") == clarify.call_reply("CB-2026-0131") and not employer.get("needs_handover"))
+    check("...the job seeker's identical request gets the identical reply (her own reference)",
+          helper.get("reply") == clarify.call_reply("CB-2026-0132") and not helper.get("needs_handover"))
+    check("...added to the open ticket, no new one",
+          [t for t, _ in follow_ups] == ["t-131", "t-132"] and "call" in follow_ups[0][1])
+    check("...and the reply names no topic",
+          not any(w in (employer.get("reply") or "").lower() for w in ("hiring", "helper", "placement", "regarding")))
+
+    none = await turn("please call me", said.replace(" Your reference number is `CB-2026-0131`.", ""), {},
+                      {"intent": "other", "service_type": None, "confidence": 0.5})
+    check("call request with no open ticket -> a ticket is raised",
+          none.get("needs_handover") is True and _graph.route_after_response(none) == "ticket_creator")
+    created: list = []
+
+    async def create(**kw):
+        created.append(kw)
+        return {"id": "t-new", "ticket_number": "CB-2026-0201"}
+
+    with patch.object(_tc.ticket_service, "create", new=create), \
+         patch.object(_tc.ticket_service, "pick_ticket_to_update", new=AsyncMock(return_value=None)), \
+         patch.object(_tc.assignment_service, "resolve_agent", new=AsyncMock(return_value=(None, "none"))), \
+         patch.object(_tc, "_maybe_create_lead", new=AsyncMock(return_value=None)), \
+         patch.object(_tc, "_finish_lead", new=AsyncMock(return_value=None)):
+        none.update(await _tc.ticket_creator(none))
+    with patch.object(_hx.handover_service, "log_escalation", new=AsyncMock(return_value={})):
+        none.update(await _hx.handover_executor(none))
+    check("...exactly one ticket, and the same reply with its new reference",
+          len(created) == 1 and none.get("reply") == clarify.call_reply("CB-2026-0201"))
+    check("'what is a call back?' is not a call request", not clarify.asks_for_call("what is a call back?"))
+
+    cand = ticket_service.missing_fields(ticket_service.CANDIDATE_HIRING, {"full_name": "Siti"})
+    full, _ = ico.all_questions_message(cand, {"full_name": "Siti"}, True)
+    again, _ = ico.all_questions_message(cand[:1], {"full_name": "Siti"}, False)
+    check("the question list ends with the new closing line",
+          full.endswith("Take your time, and feel free to skip anything that doesn't apply to you."))
+    check("the missing-details message opens with the new line, no old closing",
+          again.startswith("Just these few more and we're all set. Skip any that don't apply.")
+          and "does not apply" not in again and "still missing" not in again)
+    check("...a list sent in the old wording is still read as our question",
+          guards.answering_our_question("You: Thank you. A few details are still missing or unclear:", "36"))
+    check("helper Q9 says 'your rest day'", "working on your rest day for extra pay" in full
+          and "her rest day" not in full)
+    import re as _re
+    check("no helper-facing question or option says her/she",
+          not [f.key for svc in ticket_service.CANDIDATE_SERVICES
+               for f in ticket_service.SERVICE_FIELDS.get(svc, [])
+               for text in [f.question or "", *(f.options or ())]
+               if _re.search(r"\b(?:her|she|hers|herself)\b", text, _re.I)])
+
+    # 6:45 PM: an open employer lead from earlier testing on the number.
+    stale = {"lead_kind": "employer", "created_lead_id": "lead-1", "created_lead_kind": "employer",
+             "matched_lead_id": "lead-1"}
+    seeker = await turn("hey i need a job", "", stale,
+                        {"intent": "candidate_registration", "service_type": None,
+                         "contact_type": "candidate", "confidence": 0.9})
+    resolved = ticket_service.resolve_service(seeker.get("service_type"), effective_contact_type(seeker))
+    check("first 'hey i need a job' (old employer lead on the number) -> the intake, no ticket",
+          resolved == ticket_service.CANDIDATE_HIRING and bool(ticket_service.missing_fields(resolved, {}))
+          and not seeker.get("needs_handover"))
+    relay = await turn("my friend's maid is looking for a new employer", "", {},
+                       {"intent": "candidate_registration", "service_type": None, "confidence": 0.9})
+    check("...somebody else's helper is still a third party",
+          relay.get("service_type") != ticket_service.CANDIDATE_HIRING)
+
+
 async def main() -> int:
     for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
                      scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights,
-                     scenario_vague_action, scenario_hire_documents):
+                     scenario_vague_action, scenario_hire_documents, scenario_call_and_wording):
         try:
             await scenario()
         except Exception as exc:  # noqa: BLE001 - a crash is a failure, by name

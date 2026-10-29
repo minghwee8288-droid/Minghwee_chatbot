@@ -640,12 +640,15 @@ because the lead is opened early and the ticket is created much later.
 | A draft that fails in a run is retried on the next run, never lost | `pipeline.RETRY_FAILED_DRAFTS` + `kb_admin_source_record_draft` (017) + `watchQueries.lastGoodText` / `sourcesDue` | Before: the changed snapshot became the baseline, the next run saw "unchanged", the change was never proposed. Now the snapshot is marked `draft_failed`, the page shows "Drafting failed", the page is due on the next scheduled run, and the diff is against the last snapshot that was drafted. A success clears the mark. |
 | ...searched for the whole service, with the filter kept whatever money words it contains | `rag_retriever.ENQUIRY_OVERVIEW_QUERY` / `_service_filter` | "costs" dropped the service filter, and the wider search returned a no-agency comparison that told the client the permit and bond were theirs to do. 12 rows, never widened - plus `ENQUIRY_OVERVIEW_EXTRA_QUERIES`, a separate search per service for a question the agency named that the shared query cannot reach (direct hire's failed medical ranks 21st under it). |
 
-| A vague request for something a person must do is asked about before it is ticketed | `clarify.vague_action` + `intent_classifier._clarify_decision` + `nodes/action_clarifier.py` (`VAGUE_ACTION_CLARIFY`) | Conversation 4443, 2026-10-28: "please send the video here" -> "A live agent is handling your placement ... CB-2026-0125". Send a video/photo/profile/document, call me, update me, check the status: one fixed question (which one, for whom / what about / which request), then the answer raises the ticket with the request, our question and the answer (`request_summary`), filed `case_enquiry` whatever collection is in flight. An answer quoting an open ticket's reference, or a status question with one open ticket, uses that ticket (follow-up) - never a duplicate. Before the parked-topic check. Still immediate: harm, missing helper, complaint, an explicit "talk to a person" (`_EXPLICIT_HUMAN`; "call me" is no longer one). |
+| A vague request for something a person must do is asked about before it is ticketed | `clarify.vague_action` + `intent_classifier._clarify_decision` + `nodes/action_clarifier.py` (`VAGUE_ACTION_CLARIFY`) | Conversation 4443, 2026-10-28: "please send the video here" -> "A live agent is handling your placement ... CB-2026-0125". Send a video/photo/profile/document, update me, check the status (a call request no longer: `CALL_REQUEST_DIRECT`, 2026-10-29): one fixed question (which one, for whom / what about / which request), then the answer raises the ticket with the request, our question and the answer (`request_summary`), filed `case_enquiry` whatever collection is in flight. An answer quoting an open ticket's reference, or a status question with one open ticket, uses that ticket (follow-up) - never a duplicate. Before the parked-topic check. Still immediate: harm, missing helper, complaint, an explicit "talk to a person" (`_EXPLICIT_HUMAN`; "call me" is no longer one). |
 | An open ticket is named only by its true topic | `ticket.service_types_label` (`TRUE_TOPIC_LABEL`) + `BLOCKED_TOPIC_INSTRUCTION` (`NAME_TOPIC_AS_GIVEN`) | The helper's registration is stored as `new_hiring`, so the holding prompt said "hiring a new helper" and the model wrote "your placement". The label now comes from `captured_info.topic_key` where the stored type is a substitute, and the prompt may use only those words. |
 | "Hire a [nationality] helper" is a new hire, and a question about it is answered | `intent_classifier.hires_a_new_helper` (`HIRE_IS_NEW_HIRE`) + `answer_only` -> `route_after_rag` | Conversation 3766, 2026-10-28: mid transfer intake, "What documents do I need to hire a Filipino helper?" stayed `transfer` and got the MWO list plus the transfer question. No transfer/release/return/replace/direct-hire word -> `new_hiring`; lifted only out of nothing, a transfer flow or a money enquiry. Not an enquiry overview (`enquiry_overview_due` false). |
 | On a service question the service's own rows come first | `rag_retriever.service_rows_first` (`SERVICE_ROWS_FIRST`) + `_with_hiring_document_rows` | Documents, fees, timeline or process: own `service_type` rows before `general`; a documents question with two or more own rows uses only those. A new-hire documents question fetches the three rows (from you / from the helper / we prepare) by their own searches. |
 | A new-hire documents answer is three numbered groups | `templates.HIRING_DOCUMENTS_NOTE` (`response_generator.HIRING_DOCUMENTS_GROUPED`) | "From you:", "From the helper:", "We prepare for you to sign:", numbered straight through, no fee unless asked, no transfer question. Replayed: 4 of 4 on 3766's state, PH/ID/MM fresh. |
 | Three or more numbered items, one per line | `guards.numbered_items_on_own_lines` in `run_turn` (and the preview) (`NUMBERED_ITEMS_ON_OWN_LINES`) | Only an inline run of 3+ consecutive numbers is split. Prose lists elsewhere stay prose: every non-list path still bans a numbered list (`looks_like_document`). |
+| A call request always gets the same reply and one ticket | `clarify.asks_for_call` + `CALL_REPLY` / `call_reply` in `action_clarifier` and `handover_executor` (`CALL_REQUEST_DIRECT`) | 2026-10-29: the same "please call" got a topic-named holding line on 4443 and a reference-less model line on 3766. Now: never asked about, never model-written, no topic named. On the newest open ticket (follow-up, its reference); with none open, one `case_enquiry` ticket and its new reference. Ahead of `_EXPLICIT_HUMAN`; harm, missing helper and complaint still first. |
+| A first-person "I need a job" is her intake, whatever the number carried | `intent_classifier` (`JOBSEEKER_SPEAKS_FOR_HERSELF`) | 3766, 29 Oct: an open employer lead from earlier testing kept `effective_contact_type` at employer, so the F3 relay rule kept a bare `candidate_registration` (no fields) and ticketed turn one. Resolved to `candidate_new_hiring` in the classifier unless someone else's helper is named or an employer master record exists. |
+| The list is worded kindly, and a helper is "you" | `guards.FRIENDLIER_LIST_WORDING`, `ticket.HELPER_OPTIONS_SECOND_PERSON` | Full list closes "Take your time, and feel free to skip anything that doesn't apply to you."; the missing-details message opens "Just these few more and we're all set. Skip any that don't apply." (old head still read as our question). Employer options copied to her side say your/you. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -986,6 +989,10 @@ Easy to get wrong:
   `templates.NAME_TOPIC_AS_GIVEN`, `intent_classifier.HIRE_IS_NEW_HIRE`,
   `rag_retriever.SERVICE_ROWS_FIRST`, `response_generator.HIRING_DOCUMENTS_GROUPED`,
   `guards.NUMBERED_ITEMS_ON_OWN_LINES`.
+  2026-10-29, each `False` for the earlier behaviour:
+  `clarify.CALL_REQUEST_DIRECT`, `guards.FRIENDLIER_LIST_WORDING`,
+  `ticket.HELPER_OPTIONS_SECOND_PERSON`,
+  `intent_classifier.JOBSEEKER_SPEAKS_FOR_HERSELF`.
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2102,6 +2109,28 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-29** - **Call requests answered one way; friendlier list wording;
+  "hey i need a job" never ticketed on turn one.** Read from production (times
+  in the report were IST). (1) Employer 4443, 13:18 UTC: "i want to talk to you
+  on call, when available please call" kept `service_type=new_hiring`, hit the
+  parked topic and got "...regarding hiring a new helper ... CB-2026-0131" (no
+  new ticket: 0131 was the closing's). Job seeker 3766, 13:31 UTC: same words,
+  `service_type=None`, so no parked topic matched; response_generator handed
+  over (`bot_confused`), it folded into CB-2026-0132, and the model's "I will
+  check with our team about arranging a call" had no handover sentence for the
+  reference. Neither matched the "call" vague-action pattern. Now
+  `CALL_REQUEST_DIRECT`: one fixed reply, the newest open ticket or one new one.
+  (2) List closing and missing-details opening reworded. (3) Helper Q9 "her rest
+  day" came from the employer's options copied to her side; `_matched_options`
+  writes them in the second person (the only her/she on any helper field).
+  (4) CB-2026-0130 and its thread were deleted by a reset, so it was rebuilt:
+  the number still had an open employer lead from the 28 Oct testing, which
+  `effective_contact_type` keeps, and the F3 relay rule then kept a fieldless
+  `candidate_registration`. Replayed 2 of 2 ticketed before, 3 of 3 intake after.
+  Replays read-only through the real graph and model (4443's checkpoint was
+  reset at 13:50 UTC mid-session and rebuilt from what had been read).
+  `selfcheck_golive.py` 76 checks (14 new); 4 faults, 4 red.
 
 - **2026-10-28** - **A vague request is asked about before it is ticketed; a
   new-hire documents question gets the new-hire list.** Both reproduced from the

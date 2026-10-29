@@ -2160,7 +2160,10 @@ QUESTION_STYLE_OFFER_TEXT = (
     "can answer in one reply. Which would you prefer?"
 )
 _STYLE_LIST_FIRST, _STYLE_LIST_AGAIN = guards.QUESTION_LIST_HEADS
-_STYLE_LIST_END = "If something does not apply, just say so."
+_STYLE_LIST_END = (
+    "Take your time, and feel free to skip anything that doesn't apply to you."
+    if guards.FRIENDLIER_LIST_WORDING else "If something does not apply, just say so."
+)
 _STYLE_ALL = re.compile(
     r"\bat\s+once\b|\ball\s+(?:together|in\s+one|of\s+them|the\s+questions|questions)\b"
     r"|\bsend\s+(?:me\s+)?(?:them\s+)?all\b|\bin\s+one\s+(?:go|message|reply)\b"
@@ -2277,7 +2280,10 @@ def all_questions_message(missing: list[ticket_service.Field], collected: dict[s
         text = " ".join(_question_with_options(by_key[key]) for key in group)
         lines.append(f"{len(lines) + 1}. {text}")
     head = _STYLE_LIST_FIRST if first else _STYLE_LIST_AGAIN
-    return "\n".join([head, *lines, _STYLE_LIST_END]), keys
+    # The "still missing" head already says they may skip (2026-10-29), so
+    # only the full list carries the closing line.
+    end = [_STYLE_LIST_END] if first or not guards.FRIENDLIER_LIST_WORDING else []
+    return "\n".join([head, *lines, *end]), keys
 
 
 # Phone test 2026-10-16, home leave all at once: the reply "pingpong / she is

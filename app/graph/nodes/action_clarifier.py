@@ -68,6 +68,23 @@ async def action_clarifier(state: ConversationState) -> dict[str, Any]:
         }
 
     kind = state.get("clarify_action") or "document"
+    if kind == "call" and clarify.CALL_REQUEST_DIRECT:
+        # A call request (clarify.CALL_REQUEST_DIRECT, 2026-10-29): never a
+        # question first, never a topic name. On the open ticket when there is
+        # one, else a ticket of its own - handover_executor then writes
+        # call_reply with the new number.
+        intro = "" if claire_has_spoken(history) else _INTRO
+        existing = clarify.latest_open_ticket(state.get("blocked_topics"))
+        if existing:
+            await ticket_service.add_follow_up(existing["id"], clarify.call_summary(message))
+            logger.info("Conversation %s: call request added to open ticket %s",
+                        state.get("conversation_id"), existing.get("ticket_number"))
+            return {"pending_action": None, "needs_handover": False,
+                    "reply": intro + clarify.call_reply(existing.get("ticket_number"))}
+        logger.info("Conversation %s: call request - raising a ticket", state.get("conversation_id"))
+        return {"pending_action": None, "action_summary": clarify.call_summary(message),
+                "needs_handover": True, "handover_reason": "client_requested",
+                "reply": intro + clarify.call_reply(None)}
     question = clarify.question(kind, effective_contact_type(state))
     reply = question if claire_has_spoken(history) else _INTRO + question
     return {
