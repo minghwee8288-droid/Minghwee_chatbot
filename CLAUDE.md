@@ -649,6 +649,10 @@ because the lead is opened early and the ticket is created much later.
 | A call request always gets the same reply and one ticket | `clarify.asks_for_call` + `CALL_REPLY` / `call_reply` in `action_clarifier` and `handover_executor` (`CALL_REQUEST_DIRECT`) | 2026-10-29: the same "please call" got a topic-named holding line on 4443 and a reference-less model line on 3766. Now: never asked about, never model-written, no topic named. On the newest open ticket (follow-up, its reference); with none open, one `case_enquiry` ticket and its new reference. Ahead of `_EXPLICIT_HUMAN`; harm, missing helper and complaint still first. |
 | A first-person "I need a job" is her intake, whatever the number carried | `intent_classifier` (`JOBSEEKER_SPEAKS_FOR_HERSELF`) | 3766, 29 Oct: an open employer lead from earlier testing kept `effective_contact_type` at employer, so the F3 relay rule kept a bare `candidate_registration` (no fields) and ticketed turn one. Resolved to `candidate_new_hiring` in the classifier unless someone else's helper is named or an employer master record exists. |
 | The list is worded kindly, and a helper is "you" | `guards.FRIENDLIER_LIST_WORDING`, `ticket.HELPER_OPTIONS_SECOND_PERSON` | Full list closes "Take your time, and feel free to skip anything that doesn't apply to you."; the missing-details message opens "Just these few more and we're all set. Skip any that don't apply." (old head still read as our question). Employer options copied to her side say your/you. |
+| "In one time", "one shot", "no time" mean all at once, and a correction switches mid-flow | `info_collector._STYLE_ALL` + `switches_to_all` (`STYLE_SWITCH_ANY_TIME`) | 2026-10-29 (4443): the style was read only while the offer was open, so "i mean all question in one time" after one-by-one still got one question. A clear request for every question switches at any point and sends the full list; a bare "all"/"all of them" answering a question does not. |
+| Every completed intake gets its closing summary | `info_collector.closing_due_now` (`CLOSING_SUMMARY_ALWAYS`) | CB-2026-0133: the new-hire briefing is keyed on `start_timeline`, which ended "not provided", so the intake closed on the bare ticket line. Now due whenever the collection completes, however the key field ended. |
+| A household partly described is asked only for the rest | `info_collector.household_follow_up` (`PARTIAL_ANSWER_FOLLOW_UP`) | "I want someone to handle my parents" was met with the full household question again. Members the client named -> "Besides your parents, who else lives with you, and how many people are there in total?" (list and one-by-one). |
+| A workload concern is one gentle sentence, never a second helper | `info_collector.GENTLE_WORKLOAD_INSTRUCTION` / `WORKLOAD_LINE` (`GENTLE_WORKLOAD_NOTE`) | "would you prefer to focus her duties or consider more than one helper" questioned the client's choice and stopped the list. Now once, one sentence, the intake carries on in the same message; in the all-at-once flow the fixed line leads the list (`guards.answering_our_question` finds the list head anywhere in that line). Replaces the 2026-09-17 note. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -993,6 +997,9 @@ Easy to get wrong:
   `clarify.CALL_REQUEST_DIRECT`, `guards.FRIENDLIER_LIST_WORDING`,
   `ticket.HELPER_OPTIONS_SECOND_PERSON`,
   `intent_classifier.JOBSEEKER_SPEAKS_FOR_HERSELF`.
+  2026-10-29 (Xing Chain), each `False` for the earlier behaviour:
+  `info_collector.STYLE_SWITCH_ANY_TIME`, `info_collector.CLOSING_SUMMARY_ALWAYS`,
+  `info_collector.PARTIAL_ANSWER_FOLLOW_UP`, `info_collector.GENTLE_WORKLOAD_NOTE`.
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2109,6 +2116,22 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-29** - **Xing Chain (4443, 13:54-14:09 UTC; the report's times
+  were IST): style, closing summary, household, workload.** (1) The style
+  answer was read only while the offer was open, so a correction after one by
+  one was never read; "in one time" / "no time" were not in the pattern. That
+  exchange was not stored (the thread was reset at 13:50), so it was replayed
+  from the report. (2) CB-2026-0133 closed on the bare ticket line: the
+  briefing's key `start_timeline` ended "not provided", which `briefing_due`
+  treats as unfilled. (3) The missing-details list re-asked the household in
+  full after "handle my parents". (4) The workload note asked them to choose
+  "focus her duties or more than one helper" and stopped the list. Replayed
+  read-only through the real graph and model: list on "in one time" and on the
+  correction, the summary ($1,428, 4-6 weeks, documents, steps) before the
+  handover line, "Besides your parents, who else lives with you...", and one
+  gentle sentence. `selfcheck_golive.py` 90 checks (14 new); 4 switches off,
+  each red. E2E not run (fast fix).
 
 - **2026-10-29** - **Call requests answered one way; friendlier list wording;
   "hey i need a job" never ticketed on turn one.** Read from production (times

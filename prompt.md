@@ -1358,18 +1358,18 @@ The agency asked that Claire "highlight that one helper cannot manage all the
 duties". Saying it early is better than a placement failing later.
 
 ### What does it make the chatbot do?
-It gently advises that one helper may not cover everything well, and asks
-whether they would rather focus her duties or consider more than one helper. It
-does not refuse, and it does not quote any figure.
+At most one gentle sentence about the workload, and the intake carries on in the
+same message. It never questions the client's choice and never suggests more than
+one helper unless they ask (2026-10-29). In the all-at-once flow the sentence is
+fixed and leads the list: "Noted - that is a full set of duties, so we'll look for
+an experienced helper who can manage it well."
 
 ### Prompt
 ```text
-THEY HAVE DESCRIBED MORE WORK THAN ONE HELPER CAN REALISTICALLY CARRY WELL - a large household together with more than one kind of work. Say so, plainly and kindly, in a clause or two BEFORE your next question, and then ask it.
-- Say the honest thing: one helper covering all of it well is unlikely, and it is better said now than after she has started.
-- Ask which way they would rather go: focus her scope on what matters most to them, or look at more than one helper.
-- Do NOT refuse them, do not stop collecting, and do not tell them we cannot help. This is advice, not a rejection.
-- Quote NO figure of any kind - no salary, no fee, no number of hours, nothing about what a second helper would cost. A figure here gets the whole reply thrown away and they lose the advice with it.
-- Say it once. Do not raise it again later in this conversation.
+The household and duties they describe are a full workload for one helper. You may mention that ONCE, in ONE gentle sentence (for example that we will look for an experienced helper who can manage it), and then ask your next question in the same message.
+- Do NOT question their choice and do NOT ask them to choose between options about it.
+- NEVER suggest more than one helper unless they have asked about it.
+- Quote no figure of any kind. Do not raise it again in this conversation.
 ```
 
 ---

@@ -1618,6 +1618,64 @@ LEAVE_REASON_ASKED = True
 # False = the old behaviour on both.
 SIDE_QUESTION_KEEPS_PENDING = True
 
+# 2026-10-29 (4443, CB-2026-0133): the intake closed on the bare ticket line
+# because the briefing's key field ended "not provided". True = the closing
+# summary goes out whenever the collection completes. See closing_due_now.
+CLOSING_SUMMARY_ALWAYS = True
+
+# 2026-10-29 (4443): "one helper covering elderly care, cooking and a large
+# household may be difficult to do well; would you prefer to focus her duties
+# or consider more than one helper" questioned the client's choice and stopped
+# the list. Now: one gentle sentence at most, the intake carries on in the same
+# message, and more than one helper is never suggested unless they ask. In the
+# all-at-once flow the sentence is fixed (WORKLOAD_LINE) and leads the list.
+# False = the 2026-09-17 note (asks them to choose; can offer a second helper).
+GENTLE_WORKLOAD_NOTE = True
+WORKLOAD_LINE = "Noted - that is a full set of duties, so we'll look for an experienced helper who can manage it well."
+GENTLE_WORKLOAD_INSTRUCTION = (
+    "\n\nThe household and duties they describe are a full workload for one "
+    "helper. You may mention that ONCE, in ONE gentle sentence (for example "
+    "that we will look for an experienced helper who can manage it), and then "
+    "ask your next question in the same message.\n"
+    "- Do NOT question their choice and do NOT ask them to choose between "
+    "options about it.\n"
+    "- NEVER suggest more than one helper unless they have asked about it.\n"
+    "- Quote no figure of any kind. Do not raise it again in this conversation."
+)
+
+# 2026-10-29 (4443): the all-at-once reply said "I want someone to handle my
+# parents because they are very old", and the missing-details message asked
+# the whole household question again. When the client's own lines already name
+# who lives at home but give no total, the household line asks only for the
+# rest. False = the field's full question.
+PARTIAL_ANSWER_FOLLOW_UP = True
+_HOUSEHOLD_MEMBER = re.compile(
+    r"\b(my\s+)?(parents|mother|father|mum|mom|dad|grandparents?|grandmother|grandfather"
+    r"|children|kids|son|sons|daughters?|wife|husband|sister|brother|in-laws)\b",
+    re.IGNORECASE,
+)
+
+
+def household_follow_up(state: dict, missing: list) -> str | None:
+    """'Besides your parents, who else lives with you...' when the client named
+    some of the household but the household field is still empty."""
+    if not PARTIAL_ANSWER_FOLLOW_UP or not any(f.key == "household" for f in missing):
+        return None
+    since = _history_since(state.get("history_text") or "", state.get("collected_since"))
+    lines = [l[len("Client:"):] for l in since.splitlines() if l.startswith("Client:")]
+    lines.append(str(state.get("incoming_text") or ""))
+    named: list[str] = []
+    for m in _HOUSEHOLD_MEMBER.finditer("\n".join(lines)):
+        word = m.group(2).lower()
+        if word not in named:
+            named.append(word)
+    if "parents" in named:
+        named = [w for w in named if w not in ("mother", "father", "mum", "mom", "dad")]
+    if not named:
+        return None
+    who = named[0] if len(named) == 1 else ", ".join(named[:-1]) + " and " + named[-1]
+    return f"Besides your {who}, who else lives with you, and how many people are there in total?"
+
 # Phone test 2026-10-16: the second half of a combined question that got a
 # partial answer is asked once more on its own instead of being filed
 # unanswered (last_question["partner"]). False: both halves count as asked.
@@ -2176,9 +2234,34 @@ _STYLE_ALL = re.compile(
     # Phone test 2026-10-16, 4:05 PM: "all question" (singular) got one by one.
     r"|\ball\s+(?:the\s+|your\s+)?(?:quest\w*|ques\w*|qs?)\b|\bevery\s+question"
     r"|\b(?:ask|send|give)\s+(?:me\s+)?(?:them\s+)?all\b"
-    r"|^\s*(?:all|second|2|the\s+second(?:\s+one)?)\s*[.!]*\s*$",
+    r"|^\s*(?:all|second|2|the\s+second(?:\s+one)?)\s*[.!]*\s*$"
+    # Phone test 2026-10-29 (4443): "in one time, i don't have much time" got
+    # one by one. In/at one time, one shot, quickly, no time to spare.
+    r"|\b(?:in|at)\s+(?:one|1)\s+time\b|\bone\s*shot\b|\bquick(?:ly)?\b"
+    r"|\b(?:don'?t|do\s+not)\s+have\s+(?:much\s+|a\s+lot\s+of\s+|enough\s+)?time\b"
+    r"|\bno\s+time\b|\bin\s+a\s+hurry\b",
     re.IGNORECASE,
 )
+
+# 2026-10-29: once one by one was chosen the style was never read again, so
+# "i mean all question in one time" still got one question. A clear request for
+# every question switches to all at once at any point - narrower than the offer
+# answer (no bare "all", "all of them", "second" or "quickly", which answer
+# ordinary questions). False = the first choice stands for the conversation.
+STYLE_SWITCH_ANY_TIME = True
+_STYLE_SWITCH = re.compile(
+    r"\bat\s+once\b|\b(?:in|at)\s+(?:one|1)\s+(?:time|go|shot|message|reply)\b|\bone\s*shot\b"
+    r"|\ball\s+(?:the\s+|your\s+)?quest\w*|\bevery\s+question"
+    r"|\b(?:send|ask|give)\s+(?:me\s+)?(?:them\s+)?all\b|\ball\s+(?:together|in\s+one)\b"
+    r"|\b(?:don'?t|do\s+not)\s+have\s+(?:much\s+|a\s+lot\s+of\s+|enough\s+)?time\b",
+    re.IGNORECASE,
+)
+
+
+def switches_to_all(style: str, message: str) -> bool:
+    """A client on one-by-one (or not yet offered) asking for every question now."""
+    return (STYLE_SWITCH_ANY_TIME and style in ("", "one")
+            and bool(_STYLE_SWITCH.search(message or "")))
 
 
 def style_offer_services() -> frozenset[str]:
@@ -2270,19 +2353,25 @@ def list_line_keys(missing: list[ticket_service.Field],
 
 
 def all_questions_message(missing: list[ticket_service.Field], collected: dict[str, Any],
-                          first: bool) -> tuple[str, list[str]]:
+                          first: bool, overrides: dict[str, str] | None = None,
+                          lead: str = "") -> tuple[str, list[str]]:
     """The numbered message for 'all at once': every remaining question, a
-    pair on one line. Returns (message, keys asked)."""
+    pair on one line. Returns (message, keys asked). `overrides` replaces a
+    field's question (the part of it still unanswered); `lead` goes first."""
     by_key = {field.key: field for field in missing}
+    overrides = overrides or {}
     lines, keys = [], []
     for group in list_line_keys(missing, collected):
         keys.extend(group)
-        text = " ".join(_question_with_options(by_key[key]) for key in group)
+        text = " ".join(overrides.get(key) or _question_with_options(by_key[key]) for key in group)
         lines.append(f"{len(lines) + 1}. {text}")
     head = _STYLE_LIST_FIRST if first else _STYLE_LIST_AGAIN
     # The "still missing" head already says they may skip (2026-10-29), so
     # only the full list carries the closing line.
     end = [_STYLE_LIST_END] if first or not guards.FRIENDLIER_LIST_WORDING else []
+    if lead:
+        # Same line as the head: the list is recognised by its first line.
+        head = f"{lead} {head}"
     return "\n".join([head, *lines, *end]), keys
 
 
@@ -4244,6 +4333,10 @@ async def _info_collector(state: ConversationState) -> dict[str, Any]:
     # this turn took (a question, a completed collection, the next field).
     if state.get("question_style") == "offered" and "question_style" not in result:
         result = {**result, "question_style": chosen_style(state.get("incoming_text") or "")}
+    elif "question_style" not in result and switches_to_all(
+        state.get("question_style") or "", state.get("incoming_text") or ""
+    ):
+        result = {**result, "question_style": "all"}
     if switched and result.get("collected_service") == service_type:
         result = {**result, "collected_since": _first_line(state.get("incoming_text"))}
     if restart_key:
@@ -4929,6 +5022,17 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     # briefing (the ticket is raised on this turn, so there is no later one).
     completing_now = not ticket_service.missing_fields(service_type, collected)
     briefing_waits = client_asked and not (SIDE_QUESTION_KEEPS_PENDING and completing_now)
+    # 2026-10-29 (4443, CB-2026-0133): the new-hire briefing is keyed on
+    # start_timeline, which ended "not provided", and briefing_due treats that
+    # as unfilled - so the intake closed on the bare ticket line. The closing
+    # summary is now due whenever the collection completes, however its key
+    # field ended (unanswered, or gated out). False = keyed on the field alone.
+    closing_due_now = (
+        CLOSING_SUMMARY_ALWAYS
+        and completing_now
+        and service_type in ticket_service.BRIEFING_AFTER
+        and service_type not in (state.get("briefed_services") or [])
+    )
 
     # The push-name suppression that used to live here moved into
     # `system._contact_block` on 2026-09-17, because it was scoped to this node
@@ -4944,9 +5048,9 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     if (
         BRIEFING_FETCHES_ITS_OWN_RECORDS
         and not briefing_waits
-        and ticket_service.briefing_due(
+        and (ticket_service.briefing_due(
             service_type, collected, state.get("briefed_services")
-        )
+        ) or closing_due_now)
         and not ticket_service.briefing_due(
             service_type, state.get("collected_info"), state.get("briefed_services")
         )
@@ -4982,9 +5086,9 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     # this the two instructions would both be in the prompt, pulling opposite
     # ways on the same reply.
     briefing_due = (
-        ticket_service.briefing_due(
+        (ticket_service.briefing_due(
             service_type, collected, state.get("briefed_services")
-        )
+        ) or closing_due_now)
         and bool(state.get("rag_matches"))
         and not briefing_waits
     )
@@ -5139,6 +5243,8 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             "with it.\n"
             "- Say it once. Do not raise it again later in this conversation."
         )
+        if GENTLE_WORKLOAD_NOTE:
+            workload_note = GENTLE_WORKLOAD_INSTRUCTION
 
     missing_note = (
         MISSING_HELPER_NOTE
@@ -5475,7 +5581,14 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         style_update = {"question_style": style}
         logger.info("Conversation %s: question style chosen - %s",
                     state.get("conversation_id"), style)
-    plain_turn = not (answer_first or overview or workload_note or follow_up_notes)
+    elif switches_to_all(style, state.get("incoming_text") or ""):
+        style = "all"
+        style_update = {"question_style": "all"}
+        logger.info("Conversation %s: client switched to all questions at once",
+                    state.get("conversation_id"))
+    # A gentle workload line no longer stops the list (it leads it instead).
+    workload_blocks = bool(workload_note) and not (GENTLE_WORKLOAD_NOTE and style == "all")
+    plain_turn = not (answer_first or overview or workload_blocks or follow_up_notes)
     client_name = str(collected.get("full_name") or "").strip()
     # The reply that thanks them for their name: the name became known on this
     # turn (record_name_note) - or, for a name from our records, which is known
@@ -5531,7 +5644,13 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             "needs_handover": bool(state.get("needs_handover")),
         }
     if missing and style == "all" and plain_turn and service_type in style_offer_services():
-        reply, keys = all_questions_message(missing, collected, first=bool(style_update))
+        first_list = bool(style_update)
+        follow = None if first_list else household_follow_up(state, missing)
+        lead = WORKLOAD_LINE if workload_note else ""
+        reply, keys = all_questions_message(
+            missing, collected, first=first_list,
+            overrides={"household": follow} if follow else None, lead=lead,
+        )
         for key in keys:
             counts[key] = 1
         logger.info("Conversation %s: asking %d question(s) at once for %s",
@@ -5548,11 +5667,18 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             "last_question": {"key": keys[0], "text": reply,
                               "lines": list_line_keys(missing, collected)},
             "needs_handover": bool(state.get("needs_handover")),
+            "flagged_once": ["workload"] if lead else [],
             **style_update,
         }
 
     if missing:
         next_field = missing[0]
+        # 2026-10-29: the household half they already told us is not asked again.
+        if next_field.key == "household":
+            follow = household_follow_up(state, missing)
+            if follow:
+                import dataclasses
+                next_field = dataclasses.replace(next_field, question=follow)
         # Step 6 part 1: a second, closely related field asked in the same
         # sentence - only the next one, only the one next_field names, only
         # when both gates are decided. None while no Field sets ask_with.

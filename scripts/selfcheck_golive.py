@@ -619,10 +619,104 @@ async def scenario_call_and_wording() -> None:
           relay.get("service_type") != ticket_service.CANDIDATE_HIRING)
 
 
+async def scenario_xing_chain() -> None:
+    """2026-10-29 (4443, Xing Chain): style misread, no closing summary,
+    household re-asked in full, the workload pushback."""
+    ico = importlib.import_module("app.graph.nodes.info_collector")
+    from app.services import ticket as ticket_service
+    prompts: list[str] = []
+
+    async def run(state: dict, extraction: dict | None = None, reply: str = "Got it.") -> dict:
+        async def capture(system_prompt, *a, **kw):
+            prompts.append(system_prompt or "")
+            return reply
+        with patch.object(ico, "complete", new=capture, create=True), \
+             patch.object(ico, "complete_json", new=AsyncMock(return_value=dict(extraction or {})),
+                          create=True), \
+             patch.object(_rag_node, "briefing_records",
+                          new=AsyncMock(return_value={"rag_matches": [{"id": "r", "similarity": 0.6}],
+                                                      "rag_context": "New hire: 4 to 6 weeks."})), \
+             patch.object(ico, "_open_lead_early", new=AsyncMock(return_value={})):
+            return await ico.info_collector(state)
+
+    # 1. Question style.
+    check("'in one time, i don't have much time' answers the offer as all at once",
+          ico.chosen_style("in one time, i don't have much time") == "all")
+    for phrase in ("at one time", "all in one time", "one shot", "quickly please", "send all"):
+        check(f"offer answer '{phrase}' = all at once", ico.chosen_style(phrase) == "all")
+    check("'i mean all question in one time' switches from one by one",
+          ico.switches_to_all("one", "i mean all question in one time"))
+    check("...but 'all of them' answering a question does not switch",
+          not ico.switches_to_all("one", "all of them"))
+    base = {"conversation_id": 1, "phone": CLIENT, "contact_type": "employer", "intent": "new_hiring",
+            "service_type": "new_hiring", "collected_service": "new_hiring",
+            "collected_info": {"full_name": "Xing Chain"}, "asked_field_counts": {"full_name": 1, "household": 1},
+            "question_style": "one", "rag_matches": [], "history_text":
+            "Client: Xing Chain\nYou: How many people live in your household, and who are they?",
+            "incoming_text": "i mean all question in one time"}
+    out = await run(base)
+    check("the correction sends the full list at once",
+          out.get("question_style") == "all" and (out.get("reply") or "").startswith(guards.QUESTION_LIST_HEADS[0]))
+
+    # 2. The closing summary, when the briefing's key ended "not provided".
+    # CB-2026-0133's own details, as the live intake closed.
+    collected = {"pets": "yes", "budget": "$600-700", "rest_day": "1 day off on weekends",
+                 "full_name": "Xing Chain", "home_size": "5 bedrooms, 3 bathrooms", "household": "6",
+                 "home_type": "landed", "pet_detail": "1 dog, 2 parrots", "helper_room": "own room",
+                 "hire_source": "worked in Singapore before (to be hired from overseas)",
+                 "requirement": "eldercare, cooking", "elderly_detail": "70 and 80; diabetes; cannot walk",
+                 "helper_profile": "at least 4 years", "preferred_nationality": "Filipino",
+                 "first_time_hire": "first time with us - no placement on record",
+                 **{k: ticket_service.UNANSWERED for k in
+                    ("special_duties", "start_timeline", "update_channel", "referral_source")}}
+    left = ticket_service.missing_fields("new_hiring", collected)
+    prompts.clear()
+    done = await run({**base, "collected_info": collected, "question_style": "all",
+                      "asked_field_counts": {k: 1 for k in collected},
+                      "rag_matches": [{"id": "r", "similarity": 0.6}], "rag_context": "x",
+                      "incoming_text": "as I said, later"},
+                     reply="Here is everything for your new helper enquiry: 4 to 6 weeks.")
+    check(f"a completed intake with start_timeline 'not provided' gets the closing summary (left={[f.key for f in left]})",
+          not left and done.get("info_complete") and "new_hiring" in (done.get("briefed_services") or [])
+          and any("THIS message is the one" in p for p in prompts))
+
+    # 3. A partly answered household question asks only for the rest.
+    hist = ("You: Sure, here are the questions.\nClient: In my household I want someone to handle my "
+            "parents because they are very old.")
+    follow = ico.household_follow_up({"history_text": hist, "incoming_text": "my father cannot walk"},
+                                     [ticket_service.Field(key="household", label="household", question="q")])
+    check("household named in the answer -> 'Besides your parents...' only", follow ==
+          "Besides your parents, who else lives with you, and how many people are there in total?")
+    out = await run({**base, "question_style": "all", "history_text": hist,
+                     "collected_info": {"full_name": "Xing Chain", "elderly_detail": "70 and 80"},
+                     "asked_field_counts": {"household": 1, "full_name": 1},
+                     "incoming_text": "my father cannot walk"})
+    reply = out.get("reply") or ""
+    check("the missing-details list asks only the missing part of the household",
+          "Besides your parents" in reply and "How many people live in your household" not in reply)
+
+    # 4. The workload concern: one gentle line, the list goes on, no second helper.
+    heavy = {"full_name": "Xing Chain", "requirement": "eldercare, cooking", "household": "6",
+             "home_size": "5 bedrooms, 3 bathrooms", "home_type": "landed"}
+    out = await run({**base, "question_style": "all", "collected_info": heavy,
+                     "asked_field_counts": {k: 1 for k in heavy}, "incoming_text": "landed, 5 bedrooms"})
+    reply = out.get("reply") or ""
+    check("all at once: the concern is one gentle line and the list follows in the same message",
+          reply.startswith(ico.WORKLOAD_LINE) and "\n1. " in reply and "workload" in (out.get("flagged_once") or []))
+    prompts.clear()
+    await run({**base, "collected_info": heavy, "asked_field_counts": {k: 1 for k in heavy},
+               "incoming_text": "landed, 5 bedrooms"}, reply="Noted. Will she have her own room?")
+    prompt = prompts[-1] if prompts else ""
+    check("one by one: never suggest more than one helper, never question the choice",
+          "NEVER suggest more than one helper" in prompt and "look at more than one helper" not in prompt
+          and "or more than one" not in (ico.WORKLOAD_LINE + ico.GENTLE_WORKLOAD_INSTRUCTION).replace("NEVER suggest more than one helper", ""))
+
+
 async def main() -> int:
     for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
                      scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights,
-                     scenario_vague_action, scenario_hire_documents, scenario_call_and_wording):
+                     scenario_vague_action, scenario_hire_documents, scenario_call_and_wording,
+                     scenario_xing_chain):
         try:
             await scenario()
         except Exception as exc:  # noqa: BLE001 - a crash is a failure, by name

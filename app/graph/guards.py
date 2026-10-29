@@ -2036,7 +2036,9 @@ _ANY_LIST_HEAD = QUESTION_LIST_HEADS + (_OLD_MISSING_HEAD,)
 def answering_our_question(history_text: str, message: str) -> bool:
     """Whether this message is an answer to a question we just asked."""
     previous = last_bot_line(history_text or "")
-    asked_a_list = LIST_ANSWER_IS_AN_ANSWER and (previous or "").startswith(_ANY_LIST_HEAD)
+    # `in`, not startswith: a list may open with one sentence before its head
+    # (info_collector.WORKLOAD_LINE, 2026-10-29).
+    asked_a_list = LIST_ANSWER_IS_AN_ANSWER and any(h in (previous or "") for h in _ANY_LIST_HEAD)
     if "?" not in (previous or "") and not asked_a_list:
         return False
     body = (message or "").strip()

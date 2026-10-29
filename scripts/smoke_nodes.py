@@ -1182,7 +1182,8 @@ CASES = [
                          "household": "6", "home_size": "12 bedrooms and 10 toilets"},
       "asked_field_counts": {"household": 1, "home_size": 1},
       "_expect_state": {"flagged_once": ["workload"]},
-      "_expect_prompt": "MORE WORK THAN ONE HELPER"}),
+      # 2026-10-29: one gentle sentence, never a second helper (GENTLE_WORKLOAD_NOTE).
+      "_expect_prompt": "NEVER suggest more than one helper"}),
     # ...and never twice. Telling a client their job is too big a second time
     # reads as an argument rather than as advice.
     ("info_collector", "...and never raised a second time",
