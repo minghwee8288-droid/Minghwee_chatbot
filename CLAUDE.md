@@ -660,6 +660,9 @@ because the lead is opened early and the ticket is created much later.
 | A bare yes/no to an either/or question means its option | `info_collector._EITHER_OR_MEANING` (`EITHER_OR_YES_NO`) | "yes" to "own room, or sharing?" = own room, "no" = sharing. |
 | Stated experience answers "first-timer or experienced" | `info_collector` (`EXPERIENCE_ANSWERS_HIRE_SOURCE`) | `hire_source` filled from a `helper_profile` that states experience; replaces the narrowed question. |
 | The direct-hire closing summary is built from the fees document | `info_collector.direct_hire_summary` (`DIRECT_HIRE_FIXED_SUMMARY`) + `guards.with_after_mom_approval` (`CLIENT_DATE_KEPT`) | 2026-10-30: "She cannot start in 5 to 6 weeks because ... 5 to 6 weeks" - the guard swapped the client's "2 weeks" for the span. Heading with her first name; the client's date against her route's timeline (a sentence only when too soon); documents "From you" / "From the helper"; steps per nationality and in-Singapore. English only. |
+| "skip" answers an optional question | `info_collector._SKIPS_IT` (`SKIP_IS_AN_ANSWER`) | 2026-10-30: "skip" to the helper's number got "could you share another number?". skip / don't have / not sure / no idea to the optional field we last asked files it "not provided". |
+| A nationality the client named is not asked; the name question asks the name only | `info_collector` (`NATIONALITY_FROM_WORDS`, `NO_NATIONALITY_WITH_NAME`) | 2026-10-30: "may I know the helper's full name and nationality?", then the nationality again. `helper_nationality` is filled from the one nationality named in the client's lines for this request; a helper-name reply that asks a nationality becomes the written name question. |
+| Each group of a closing summary is numbered from 1 | `guards.numbered_from_one_per_group` (`NUMBER_EACH_GROUP`), on every briefing turn in `info_collector` | "From you" 1-2, "From the helper" 1-3; a label line ending ":" restarts the count. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -1013,6 +1016,9 @@ Easy to get wrong:
   `info_collector.EITHER_OR_YES_NO`, `info_collector.EXPERIENCE_ANSWERS_HIRE_SOURCE`.
   2026-10-30 (direct-hire summary), each `False` for the earlier behaviour:
   `info_collector.DIRECT_HIRE_FIXED_SUMMARY`, `guards.CLIENT_DATE_KEPT`.
+  2026-10-30 (direct-hire intake), each `False` for the earlier behaviour:
+  `info_collector.SKIP_IS_AN_ANSWER`, `info_collector.NATIONALITY_FROM_WORDS`,
+  `info_collector.NO_NATIONALITY_WITH_NAME`, `guards.NUMBER_EACH_GROUP`.
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2129,6 +2135,17 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-30** - **Direct-hire intake, from the 983b006 replay.** "skip" to
+  the helper's number was asked again (optional, max_asks 2): a skip / don't
+  have / not sure to the optional field we last asked is now its answer. The
+  helper's nationality named in the client's own words for this request fills
+  `helper_nationality`, and a helper-name reply that also asks her nationality
+  is replaced with the written name question. Every closing summary numbers
+  each group from 1 (a label line ending ":" restarts the count). Replayed
+  read-only on the real model (PH overseas, in Singapore, "I found a Filipino
+  helper"): no nationality question, "skip" taken, groups numbered from 1.
+  `selfcheck_golive.py` 117 (3 new); 4 switches off, each red. E2E not run.
 
 - **2026-10-30** - **Direct-hire closing summary (test 6:41-6:46 PM IST,
   Filipino helper overseas, "available in 2 weeks").** The broken sentence

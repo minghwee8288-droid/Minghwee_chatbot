@@ -344,6 +344,29 @@ _OVERSEAS_WORDS = re.compile(
 )
 
 
+# 2026-10-30: in a closing summary each group is numbered from 1 - "From
+# you" 1-2, "From the helper" 1-3 - not straight through. A label line (text
+# ending with ":" that is not itself a numbered item) restarts the count.
+# False = numbering left as written.
+NUMBER_EACH_GROUP = True
+_ITEM_LINE = re.compile(r"^(\s*)\d+\.(\s+)")
+
+
+def numbered_from_one_per_group(reply: str) -> str:
+    if not NUMBER_EACH_GROUP or not reply:
+        return reply
+    out, n = [], 0
+    for line in reply.split("\n"):
+        item = _ITEM_LINE.match(line)
+        if item:
+            n += 1
+            line = f"{item.group(1)}{n}.{item.group(2)}" + line[item.end():]
+        elif line.strip().endswith(":"):
+            n = 0
+        out.append(line)
+    return "\n".join(out)
+
+
 def with_after_mom_approval(reply: str, nationality: str | None = None) -> str:
     """'...approximately 5 to 6 weeks for a Filipino helper.' -> '...approximately
     5 to 6 weeks after MOM approval for a Filipino helper.' With her nationality

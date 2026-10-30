@@ -2530,6 +2530,25 @@ def overseas_start_too_soon(collected: dict) -> bool:
 # only; a conversation in another language keeps the model-written summary.
 # False = the model-written summary, as before.
 DIRECT_HIRE_FIXED_SUMMARY = True
+
+# 2026-10-30 (983b006 replay), each False for the earlier behaviour:
+# SKIP_IS_AN_ANSWER - "skip" / "don't have" / "not sure" answers an optional
+# field we last asked; NATIONALITY_FROM_WORDS - the helper's nationality named
+# in the client's own words for this request fills helper_nationality;
+# NO_NATIONALITY_WITH_NAME - the helper-name question never asks her
+# nationality too.
+SKIP_IS_AN_ANSWER = True
+NATIONALITY_FROM_WORDS = True
+NO_NATIONALITY_WITH_NAME = True
+_SKIPS_IT = re.compile(
+    r"^(?:skip|pass|nope|no|none|nil|n/?a|na|-|later|not now|not sure|unsure|no idea"
+    r"|(?:i\s+)?(?:do\s*n[o']?t|dont)\s+(?:have|know)(?:\s+(?:it|one|her\s+number|any))?"
+    r"|(?:i\s+)?(?:have\s+)?no\s+(?:number|idea)|not\s+available|prefer\s+not(?:\s+to\s+say)?)"
+    r"[\s.!]*$",
+    re.IGNORECASE,
+)
+_ASKS_NATIONALITY = re.compile(r"\bnationalit|\bwhich\s+country\b|\bwhere\s+is\s+she\s+from\b",
+                               re.IGNORECASE)
 _DH_SPAN = {  # (text, fewest days) from the fees document
     "PH": ("5 to 6 weeks after MOM approval", 35),
     "ID": ("4 weeks after MOM approval", 28),
@@ -2607,12 +2626,12 @@ def direct_hire_summary(collected: dict) -> str:
         "1. A copy of your NRIC or ID",
         "2. Proof of income (your Income Tax Assessment or a declaration of monthly income)",
         "From the helper:",
-        "3. A copy of her passport",
-        "4. Her medical report",
-        "5. Her school certificate",
+        "1. A copy of her passport",
+        "2. Her medical report",
+        "3. Her school certificate",
     ]
     if in_singapore:
-        lines.append("6. Her current Work Permit details")
+        lines.append("4. Her current Work Permit details")
     if in_singapore:
         steps = [
             "You authorise us through Singpass to deal with MOM for you, and we prepare "
@@ -4723,6 +4742,32 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         extracted = {**extracted, "hire_source": stated}
         collected = {**collected, "hire_source": stated}
 
+    # 2026-10-30 (direct hire replay): "skip" to the helper's number was asked
+    # again ("could you share another number?"). A skip / don't have / not sure
+    # to an optional field we last asked is its answer (SKIP_IS_AN_ANSWER).
+    last_key = (state.get("last_question") or {}).get("key") if isinstance(
+        state.get("last_question"), dict) else None
+    if (SKIP_IS_AN_ANSWER and last_key and last_key in allowed_keys
+            and not str(extracted.get(last_key) or "").strip()
+            and _SKIPS_IT.match(str(state.get("incoming_text") or "").strip())
+            and any(f.key == last_key and f.optional
+                    for f in ticket_service.fields_for(service_type))):
+        extracted = {**extracted, last_key: UNANSWERED}
+        collected = {**collected, last_key: UNANSWERED}
+
+    # ...and the helper's nationality named anywhere in the client's own words
+    # for this request is not asked again (NATIONALITY_FROM_WORDS).
+    if (NATIONALITY_FROM_WORDS and "helper_nationality" in allowed_keys
+            and not str(collected.get("helper_nationality") or "").strip()):
+        since = _history_since(state.get("history_text") or "", state.get("collected_since"))
+        words = " ".join([l[len("Client:"):] for l in since.splitlines()
+                          if l.startswith("Client:")] + [str(state.get("incoming_text") or "")])
+        code = lead_service.nationality_named_in(words)
+        if code:
+            named = {"PH": "Filipino", "ID": "Indonesian", "MM": "Myanmar"}[code]
+            extracted = {**extracted, "helper_nationality": named}
+            collected = {**collected, "helper_nationality": named}
+
     # Step 5 Batch B2 item 4: "DEVI" or "devi" is filed, and read back, as
     # "Devi". A mixed-case name ("McDonald", "de Silva") is left as typed.
     if guards.TIDY_HELPER_NAME_CASE and extracted.get("helper_name"):
@@ -6018,6 +6063,11 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         # back to asking only the first field.
         if not overview:
             reply = one_question_mark(reply, next_field.question)
+        # "may I know the helper's full name and nationality" - then the
+        # nationality asked again. The name question asks the name only.
+        if (NO_NATIONALITY_WITH_NAME and next_field.key == "helper_name"
+                and _ASKS_NATIONALITY.search(reply or "")):
+            reply = next_field.question
         reply = without_perfect_lead_in(reply)
         if overview and (reply or "").strip() == (next_field.question or "").strip():
             logger.error(
@@ -6179,6 +6229,9 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     # about the price and nothing about the process, the documents or the
     # timing. Marked given, it would never be tried again - which is the
     # 2026-09-08 defect, in the branch added the same day the guard was.
+    # Each group of a closing summary is numbered from 1 (NUMBER_EACH_GROUP).
+    if briefing_due:
+        reply = guards.numbered_from_one_per_group(reply)
     briefing_lost = briefing_due and reply.strip() in (
         fallback.strip(), COST_DEFERRAL_REPLY.strip()
     )

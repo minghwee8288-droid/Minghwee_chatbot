@@ -843,9 +843,9 @@ async def scenario_direct_hire_summary() -> None:
     for k, t in text.items():
         check(f"{k}: documents grouped 'From you' (NRIC/ID, income) / 'From the helper'",
               "From you:\n1. A copy of your NRIC or ID\n2. Proof of income" in t
-              and "From the helper:\n3. A copy of her passport\n4. Her medical report\n5. Her school certificate" in t)
+              and "From the helper:\n1. A copy of her passport\n2. Her medical report\n3. Her school certificate" in t)
     check("in Singapore: her current Work Permit details are asked for",
-          "6. Her current Work Permit details" in text["in Singapore"]
+          "4. Her current Work Permit details" in text["in Singapore"]
           and "Work Permit details" not in text["PH overseas"])
 
     # 3. Process for her nationality and location.
@@ -883,11 +883,80 @@ async def scenario_direct_hire_summary() -> None:
           and "won't be able to start in 2 weeks" in str(out.get("reply") or ""))
 
 
+async def scenario_direct_hire_intake() -> None:
+    """2026-10-30 (983b006 replay): "skip" re-asked, nationality asked with the
+    name and again, closing summary numbered straight through."""
+    ico = importlib.import_module("app.graph.nodes.info_collector")
+
+    async def collect(state: dict, extraction: dict, model_reply: str = "Got it.") -> tuple[dict, list]:
+        prompts: list[str] = []
+
+        async def capture(system_prompt, *a, **kw):
+            prompts.append(system_prompt or "")
+            return model_reply
+        with patch.object(ico, "complete", new=capture, create=True), \
+             patch.object(ico, "complete_json", new=AsyncMock(return_value=dict(extraction)),
+                          create=True), \
+             patch.object(_rag_node, "briefing_records", new=AsyncMock(return_value={})), \
+             patch.object(ico, "_open_lead_early", new=AsyncMock(return_value={})):
+            return await ico.info_collector(state), prompts
+
+    dh = {"conversation_id": 1, "phone": CLIENT, "contact_type": "employer",
+          "intent": "direct_hiring", "service_type": "direct_hiring",
+          "collected_service": "direct_hiring", "question_style": "one", "rag_matches": []}
+    asked = {"full_name": "VD", "helper_name": "Maria Santos Cruz", "helper_nationality": "Filipino",
+             "helper_transfer_case": "no", "helper_availability": "in 2 weeks"}
+
+    # 1. "skip" to the helper's number is its answer.
+    out, _ = await collect({**dh, "collected_info": dict(asked),
+                            "asked_field_counts": {k: 1 for k in asked} | {"helper_contact": 1},
+                            "last_question": {"key": "helper_contact",
+                                              "text": "What is the best number to reach Maria on?"},
+                            "history_text": "You: What is the best number to reach Maria on?",
+                            "incoming_text": "skip"}, {})
+    check("'skip' to the helper's number is filed as answered and not asked again",
+          (out.get("collected_info") or {}).get("helper_contact") == "not provided"
+          and "number" not in str(out.get("reply") or "").lower())
+
+    # 2. The nationality in the first message is not asked; the name question asks the name only.
+    out, prompts = await collect({**dh, "collected_info": {"full_name": "VD"},
+                                  "asked_field_counts": {"full_name": 1},
+                                  "collected_since": "I found a Filipino helper and want a direct hire",
+                                  "history_text": "Client: I found a Filipino helper and want a direct hire\n"
+                                                  "You: May I know your name?",
+                                  "incoming_text": "VD"}, {},
+                                 "Thanks, VD. May I know the helper's full name and nationality?")
+    check("a nationality in the first message fills helper_nationality, and the name "
+          "question does not ask it",
+          (out.get("collected_info") or {}).get("helper_nationality") == "Filipino"
+          and "nationalit" not in str(out.get("reply") or "").lower())
+
+    # 3. Every flow's summary numbers each group from 1.
+    pr = {"full_name": "VD", "helper_name": "Siti", "nationality": "Indonesian",
+          "passport_expiry": "next year"}
+    out, _ = await collect({"conversation_id": 1, "phone": CLIENT, "contact_type": "employer",
+                            "intent": "passport_renewal", "service_type": "passport_renewal",
+                            "collected_service": "passport_renewal", "collected_info": dict(pr),
+                            "asked_field_counts": {k: 1 for k in pr}, "question_style": "one",
+                            "rag_matches": [{"question": "x", "answer": "y", "similarity": 0.6}],
+                            "history_text": "You: When does her passport expire?",
+                            "incoming_text": "next year"}, {},
+                           "Here is everything for Siti's passport renewal:\n\n"
+                           "Here is what we will need:\nFrom you:\n1. A copy of your NRIC\n"
+                           "From the helper:\n2. A copy of her passport\n3. A copy of her Work Permit\n\n"
+                           "Here is the process from here:\n1. Send the documents.\n\n"
+                           "I've passed everything to our team, and a live agent will connect with you shortly.")
+    reply = str(out.get("reply") or "")
+    check("a closing summary numbers each group from 1 ('From the helper' starts at 1)",
+          "From the helper:\n1. A copy of her passport\n2. A copy of her Work Permit" in reply)
+
+
 async def main() -> int:
     for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
                      scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights,
                      scenario_vague_action, scenario_hire_documents, scenario_call_and_wording,
-                     scenario_xing_chain, scenario_vd_transfer, scenario_direct_hire_summary):
+                     scenario_xing_chain, scenario_vd_transfer, scenario_direct_hire_summary,
+                     scenario_direct_hire_intake):
         try:
             await scenario()
         except Exception as exc:  # noqa: BLE001 - a crash is a failure, by name

@@ -3393,10 +3393,10 @@ From you:
 1. A copy of your NRIC or ID
 2. Proof of income (your Income Tax Assessment or a declaration of monthly income)
 From the helper:
-3. A copy of her passport
-4. Her medical report
-5. Her school certificate
-(6. Her current Work Permit details - only if she is in Singapore)
+1. A copy of her passport
+2. Her medical report
+3. Her school certificate
+(4. Her current Work Permit details - only if she is in Singapore)
 
 Here is the process from here:
 1. You authorise us through Singpass to deal with MOM for you, and we prepare your documents for you to sign.
@@ -3414,3 +3414,6 @@ three signed contract copies with the IPA form, taken by our runner. For
 Myanmar: the IPA form signed by her through our partner, her travel date, and
 MOM's security bond form. In Singapore: her release from her current employer,
 then no embassy step and no travel.
+
+Every closing summary (every flow) numbers each group from 1: "From you" 1-2,
+"From the helper" 1-3 (`guards.NUMBER_EACH_GROUP`).
