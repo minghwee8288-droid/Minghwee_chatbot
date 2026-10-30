@@ -554,10 +554,59 @@ HARM_SIGNALS = re.compile(
 )
 
 
+# 2026-10-30: more crisis phrases force the safety reply, like ASSAULT_PATTERNS
+# (no verification; the model harm check stays the second layer for anything
+# they miss). Written in the first person where an employer would use the
+# same words about a helper ("she cannot go out alone"), and "no food" only
+# as being given none ("no food allergies" is an intake answer). English plus
+# a few unambiguous Bahasa Indonesia and Tagalog phrases. Self-harm has no
+# flow of its own, so it takes the same safety reply.
+# False = ASSAULT_PATTERNS alone, as before.
+CRISIS_KEYWORDS = True
+CRISIS_PATTERNS = re.compile(
+    # locked in / not allowed out
+    r"\blocked\s+(?:me\s+)?(?:in|inside|up)\b|\b(?:i|we)\s+(?:am\s+|'m\s+|are\s+)?"
+    r"(?:cannot|can'?t|cant|not\s+allowed\s+to|never\s+allowed\s+to)\s+go\s+out\b"
+    r"|\b(?:i\s+am|i'?m|we\s+are)\s+not\s+allowed\s+(?:to\s+go\s+)?out\b"
+    r"|\b(?:not|never|won'?t|don'?t)\s+let(?:ting)?\s+me\s+(?:go\s+)?out\b"
+    r"|\bdikurung\b|\bikinulong\b|\bnakakulong\b"
+    # no food
+    r"|\bno\s+food\s+(?:for|since|to\s+eat|given)\b|\bnot\s+(?:been\s+)?given\s+(?:any\s+)?food\b"
+    r"|\b(?:not|don'?t|do\s+not|never|doesn'?t|does\s+not)\s+give\s+(?:me|us)\s+(?:any\s+|enough\s+)?food\b"
+    r"|\bstarv(?:e|ed|ing)\b|\bhungry\s+for\s+(?:days|\d+\s+days|two\s+days|three\s+days)\b"
+    r"|\btidak\s+(?:dikasih|diberi)\s+makan\b|\bhindi\s+(?:ako\s+)?pinapakain\b"
+    # passport taken
+    r"|\b(?:took|taken|takes|kept|keeps|keeping|holds|holding|confiscat\w*)\s+(?:away\s+)?my\s+passport\b"
+    r"|\bmy\s+passport\s+(?:was\s+|is\s+)?(?:taken|kept|confiscated)\b|\bpaspor\s+(?:saya\s+)?(?:diambil|ditahan)\b"
+    # not paid for months
+    r"|\b(?:not|never|haven'?t|have\s+not|hasn'?t|has\s+not)\s+(?:been\s+)?paid\s+(?:me\s+)?(?:for|in)\s+"
+    r"(?:\d+|two|three|four|five|six|many|several)?\s*months\b"
+    r"|\bno\s+salary\s+(?:for|in)\s+(?:\d+|two|three|four|five|six|many|several)?\s*months\b"
+    r"|\bgaji\s+(?:saya\s+)?(?:belum|tidak)\s+dibayar\b"
+    # sexual / touched / harassed
+    r"|\btouch(?:ed|es|ing)\s+me\b|\bsexual(?:ly)?\b|\bharass\w*\b|\bpelecehan\b"
+    # threatened
+    r"|\bthreat(?:en|ened|ening|ens)?\b"
+    # hit / slapped / beaten / hurt me
+    r"|\bhit\s+me\b|\bslapp?(?:ed|ing|s)?\s+me\b|\bbeat(?:en|s|ing)?\s+(?:me\s+)?up\b|\bbeaten\b"
+    r"|\bhurt(?:s|ing)?\s+me\b|\bdipukul\b|\bsinaktan\b|\bbinugbog\b"
+    # self-harm
+    r"|\bsuicid\w*\b|\bwant(?:s)?\s+to\s+die\b|\bkill\s+(?:my|her|him)self\b|\bend\s+my\s+life\b"
+    r"|\bbunuh\s+diri\b|\bmagpakamatay\b",
+    re.IGNORECASE,
+)
+
+
+def crisis_keyword(text: str) -> bool:
+    """The safety override: ASSAULT_PATTERNS, plus CRISIS_PATTERNS when on."""
+    text = text or ""
+    return bool(ASSAULT_PATTERNS.search(text) or (CRISIS_KEYWORDS and CRISIS_PATTERNS.search(text)))
+
+
 def matches_assault_keywords(text: str) -> bool:
     """Cheap first pass for the safety net outside the graph."""
     text = text or ""
-    return bool(ASSAULT_PATTERNS.search(text) or HARM_SIGNALS.search(text))
+    return bool(crisis_keyword(text) or HARM_SIGNALS.search(text))
 
 
 # Phase 3 Step 3 (2026-10-13). The keyword nets above are English-only
@@ -762,7 +811,7 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
     active_service = state.get("service_type")
 
     # Hard override — an assault signal is never left to model confidence.
-    if ASSAULT_PATTERNS.search(message):
+    if crisis_keyword(message):
         logger.warning(
             "Assault keyword matched on conversation %s — forcing escalation",
             state.get("conversation_id"),

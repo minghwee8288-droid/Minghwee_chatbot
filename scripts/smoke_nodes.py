@@ -3902,7 +3902,8 @@ async def _harm_checks() -> list[tuple[str, bool]]:
         r, seen = await classify(m, missed, harm=True)
         out.append((f"escalates although the model missed it: {gloss}",
                     r.get("intent") == "dispute_assault" and r.get("service_type") == "dispute_assault"
-                    and seen["harm_calls"] == 1))
+                    # 2026-10-30: a phrase the crisis keywords now catch escalates first.
+                    and seen["harm_calls"] == (0 if ic.crisis_keyword(m) else 1)))
     r, seen = await classify(_HARM_NON_ENGLISH[0][0], missed, harm=True)
     out.append(("the harm check runs beside the classifier, not after it",
                 seen["harm_started_before_classify_returned"]))

@@ -665,6 +665,7 @@ because the lead is opened early and the ticket is created much later.
 | Each group of a closing summary is numbered from 1 | `guards.numbered_from_one_per_group` (`NUMBER_EACH_GROUP`), on every briefing turn in `info_collector` | "From you" 1-2, "From the helper" 1-3; a label line ending ":" restarts the count. |
 | The replacement closing summary is built from the fees document | `info_collector.replacement_summary` (`REPLACEMENT_FIXED_SUMMARY`) | 2026-10-30: a 2-year helper being sent home got "our agent will confirm the exact fee" with no rule and none of her exit steps. Heading with her first name; the package rule (2 replacements within 6 months: $288 inside it, no figure after 6 months, not placed by us, or tenure unknown); a transfer-helper line on ASAP/urgent; "From you" / "About your current helper"; her Work Permit cancelled, flight home, bond discharged, then the new helper's steps. English only. |
 | The safety reply carries the reference, 995 and the MOM helpline, and no introduction | `handover_executor.complete_crisis_reply` (`CRISIS_REPLY_COMPLETE`) | 2026-10-30: "hey i was beaten up by my employer please help me" raised CB-2026-0143 (high) but the reply had no reference and nothing for someone injured. Every dispute_assault reply: 999 sentence, then "If you are injured, please call an ambulance on 995." and the MOM helpline 1800-339-5505 (English: fixed text; other languages: the model is told), the reference after the handover sentence, any "I'm Claire" opening removed, still no "anything else?". Supersedes `SAFETY_REPLY_SHOWS_REFERENCE` while on. |
+| More crisis phrases force the safety reply without the model | `intent_classifier.CRISIS_PATTERNS` / `crisis_keyword` (`CRISIS_KEYWORDS`), in the classifier override and `matches_assault_keywords` | 2026-10-30: locked in / not allowed out, not given food / starving, passport taken, not paid for months, touched / sexual / harassed, threatened, hit / slapped / beaten / hurt me, suicide / want to die (no self-harm flow exists, so it takes the same safety reply). First person where an employer uses the same words about a helper; "no food" only as none given. English plus a few Bahasa/Tagalog phrases. The model harm check is still the second layer. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -1025,6 +1026,8 @@ Easy to get wrong:
   `info_collector.REPLACEMENT_FIXED_SUMMARY`.
   2026-10-30 (crisis reply), `False` for the earlier safety reply:
   `handover_executor.CRISIS_REPLY_COMPLETE`.
+  2026-10-30 (crisis keywords), `False` for ASSAULT_PATTERNS alone:
+  `intent_classifier.CRISIS_KEYWORDS`.
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2142,6 +2145,15 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-30** - **Crisis keyword list widened** (`CRISIS_KEYWORDS`): eight
+  groups now force the safety reply with no model call - locked in, no food,
+  passport taken, not paid for months, touched/sexual/harassed, threatened,
+  hit/beaten/hurt me, suicide (no self-harm flow exists; same safety reply).
+  Intake phrasing with the same words ("no food allergies", "she cannot go out
+  alone", "should i keep her passport", "not paid the levy") does not match.
+  `selfcheck_golive.py` 8 new, all red with the switch off; one `smoke_nodes.py`
+  check now accepts a keyword escalation for its Tagalog phrase. E2E not run.
 
 - **2026-10-30** - **Crisis reply (test 7:45 PM IST, "hey i was beaten up by
   my employer please help me").** The ticket was right: CB-2026-0143,

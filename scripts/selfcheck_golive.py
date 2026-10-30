@@ -1030,6 +1030,46 @@ async def scenario_crisis_reply() -> None:
           and "anything else" not in reply)
 
 
+async def scenario_crisis_keywords() -> None:
+    """2026-10-30: crisis phrases force the safety reply without the model;
+    intake phrasing with the same words does not."""
+    ic = importlib.import_module("app.graph.nodes.intent_classifier")
+
+    async def routed(text: str) -> str:
+        with patch.object(ic, "complete_json", new=AsyncMock(side_effect=AssertionError("model called"))):
+            try:
+                out = await ic.intent_classifier({"conversation_id": 1, "incoming_text": text,
+                                                  "history_text": ""})
+            except AssertionError:
+                return "model"
+        return out.get("intent") or ""
+
+    groups = {
+        "locked in / not allowed out": (["i am locked inside the house", "i cannot go out",
+                                         "they are not letting me out", "saya dikurung"],
+                                        ["she cannot go out alone at night"]),
+        "no food": (["they do not give me food", "i am starving", "hungry for days",
+                     "tidak diberi makan"], ["no food allergies"]),
+        "passport taken": (["my employer took my passport", "employer kept my passport",
+                            "paspor saya ditahan"], ["should i keep her passport"]),
+        "not paid for months": (["i have not been paid for 3 months", "no salary for months",
+                                 "gaji saya belum dibayar"], ["i have not paid the levy for 2 months"]),
+        "touched / sexual / harassed": (["sir touched me", "he says sexual things to me",
+                                         "his son harassed me"], ["home leave for my helper"]),
+        "threatened": (["my employer threatened me", "ma'am threatens to send me home"],
+                       ["how much is a transfer helper"]),
+        "hit / slapped / beaten / hurt me": (["she slapped me", "i was beaten up", "he hurt me",
+                                             "binugbog ako"], ["she will hit the market on sunday"]),
+        "suicide / want to die": (["i want to die", "i will kill myself", "bunuh diri"],
+                                  ["renew my helper passport"]),
+    }
+    for name, (pos, neg) in groups.items():
+        hits = [await routed(t) for t in pos]
+        misses = [bool(ic.CRISIS_PATTERNS.search(t)) for t in neg]
+        check(f"crisis keywords ({name}): forced to the safety reply, intake phrasing not",
+              all(h == "dispute_assault" for h in hits) and not any(misses))
+
+
 async def main() -> int:
     for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
                      scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights,
@@ -1037,7 +1077,8 @@ async def main() -> int:
                      scenario_xing_chain, scenario_vd_transfer, scenario_direct_hire_summary,
                      scenario_direct_hire_intake,
                      scenario_replacement_summary,
-                     scenario_crisis_reply):
+                     scenario_crisis_reply,
+                     scenario_crisis_keywords):
         try:
             await scenario()
         except Exception as exc:  # noqa: BLE001 - a crash is a failure, by name
