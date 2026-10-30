@@ -2517,6 +2517,130 @@ def overseas_start_too_soon(collected: dict) -> bool:
     return days is not None and days < _TIMELINE_MISMATCH_DAYS
 
 
+# 2026-10-30 (direct hire, Filipino helper overseas, "available in 2 weeks"):
+# the closing summary said "She cannot start in 5 to 6 weeks because the
+# overseas process takes approximately 5 to 6 weeks after MOM approval" (the
+# after-MOM-approval guard had swapped the client's "2 weeks" for the span),
+# listed the generic documents ungrouped, gave four generic steps, and was
+# headed with her full name. The summary is now built here, from the fees
+# document: the client's date compared with the real timeline for her route
+# (a sentence only when it is too soon), the documents grouped "From you" /
+# "From the helper", the steps for her nationality and location, and the
+# heading "Here is everything for hiring <first name> directly:". English
+# only; a conversation in another language keeps the model-written summary.
+# False = the model-written summary, as before.
+DIRECT_HIRE_FIXED_SUMMARY = True
+_DH_SPAN = {  # (text, fewest days) from the fees document
+    "PH": ("5 to 6 weeks after MOM approval", 35),
+    "ID": ("4 weeks after MOM approval", 28),
+    "MM": ("2 to 4 weeks after MOM approval", 14),
+    "": ("4 to 6 weeks after MOM approval", 28),
+    "SG": ("1 to 2 weeks", 7),
+}
+_DH_FROM = {"PH": "the Philippines", "ID": "Indonesia", "MM": "Myanmar"}
+_DH_EMBASSY = {
+    "PH": [
+        "Her contract is submitted to the Philippine embassy for verification, and her "
+        "Overseas Employment Certificate (OEC) is processed.",
+        "She takes her fit-to-fly medical at a Philippine Department of Health "
+        "accredited clinic.",
+    ],
+    "ID": [
+        "A job order goes through the Indonesian embassy portal; once it is approved, you "
+        "sign three original copies of the contract with the IPA form, and our runner "
+        "takes them to the embassy.",
+    ],
+    "MM": [
+        "You sign the IPA form; our partner in Myanmar has her sign it and confirm her "
+        "earliest travel date, and we send MOM's security bond form for her immigration "
+        "clearance.",
+    ],
+    "": [
+        "She completes the embassy stage for her nationality.",
+    ],
+}
+_DH_WHEN_LEAD = re.compile(
+    r"^(?:she\s+(?:is|will\s+be|can\s+(?:start|join)|could\s+start)\s+)?(?:available\s+)?"
+    r"(?:to\s+start\s+)?(?:from\s+)?",
+    re.IGNORECASE,
+)
+
+
+def _dh_when(value: str) -> str:
+    when = _DH_WHEN_LEAD.sub("", value.strip()).strip().rstrip(".")
+    return f"in {when}" if re.match(r"\d", when) else when
+
+
+def direct_hire_summary(collected: dict) -> str:
+    """The direct-hire closing summary, from the fees document."""
+    in_singapore = ticket_service._STILL_EMPLOYED.state(collected) == "open"
+    nat = lead_service.nationality_code(str(collected.get("helper_nationality") or "")) or ""
+    nat = nat if nat in _DH_FROM else ""
+    span, fewest = _DH_SPAN["SG" if in_singapore else nat]
+    where = ("as she is already in Singapore" if in_singapore else
+             f"for a helper coming from {_DH_FROM[nat]}" if nat else
+             "for a helper coming from overseas")
+    name = str(collected.get("helper_name") or "").strip()
+    first = name.split()[0] if name and name.lower() != UNANSWERED else ""
+    first = guards.tidy_name_case(first) if first else ""
+    lines = [f"Here is everything for hiring {first} directly:" if first
+             else "Here is everything for your direct hire:", ""]
+
+    value = str(collected.get("helper_availability") or "").strip()
+    days = None if value.lower() in ("", UNANSWERED) else (
+        0 if _ASAP.search(value) or re.search(r"\b(?:now|today)\b", value, re.IGNORECASE)
+        else _expiry_in_days(value))
+    if days is not None and days < fewest:
+        lines.append(f"She won't be able to start {_dh_when(value)} – {where} it takes "
+                     f"about {span}.")
+    else:
+        lines.append(f"{where[0].upper()}{where[1:]}, it takes about {span}.")
+    lines += [
+        "",
+        "A direct hire costs less than a full recruitment, as there is no sourcing or "
+        "matching; our agent will confirm the exact fee based on your requirements. "
+        "Government costs are separate: the monthly levy to MOM is $300, or $60 at the "
+        "concessionary rate, and a $5,000 security bond is arranged as an insured bond.",
+        "",
+        "Here is what we will need:",
+        "From you:",
+        "1. A copy of your NRIC or ID",
+        "2. Proof of income (your Income Tax Assessment or a declaration of monthly income)",
+        "From the helper:",
+        "3. A copy of her passport",
+        "4. Her medical report",
+        "5. Her school certificate",
+    ]
+    if in_singapore:
+        lines.append("6. Her current Work Permit details")
+    if in_singapore:
+        steps = [
+            "You authorise us through Singpass to deal with MOM for you, and we prepare "
+            "your documents for you to sign.",
+            "Her release is arranged with her current employer.",
+            "We file the work permit application with MOM and arrange the security bond "
+            "and insurance.",
+            "Once MOM approves, she has her medical examination and we complete her work "
+            "permit - there is no embassy step and no travel.",
+            "She starts work with you.",
+        ]
+    else:
+        steps = [
+            "You authorise us through Singpass to deal with MOM for you, and we prepare "
+            "your documents for you to sign.",
+            "We file the work permit application with MOM and arrange the security bond "
+            "and insurance.",
+            "MOM issues the In-Principle Approval (IPA).",
+            *_DH_EMBASSY[nat],
+            "She travels to Singapore, has her medical examination on arrival, and we "
+            "complete her work permit.",
+        ]
+    lines += ["", "Here is the process from here:"]
+    lines += [f"{i}. {s}" for i, s in enumerate(steps, 1)]
+    lines += ["", BRIEFING_CLOSING_LINE]
+    return "\n".join(lines)
+
+
 def states_a_time(text: str) -> bool:
     """A date, a span, or 'immediately' / ASAP."""
     return states_a_date(text) or bool(_ASAP.search(text or ""))
@@ -5967,7 +6091,22 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     # ticket_creator fills in once the ticket exists; this is what goes out if
     # that ticket cannot be created. See app/graph/complaint.py.
     complaint_name = str(collected.get("full_name") or "").strip()
-    reply = complaint_closing(
+    # Direct hire: the summary is built from the fees document, not written by
+    # the model (DIRECT_HIRE_FIXED_SUMMARY, 2026-10-30), in English only.
+    fixed_summary = (
+        direct_hire_summary(collected)
+        if DIRECT_HIRE_FIXED_SUMMARY and service_type == "direct_hiring"
+        and (ticket_service.briefing_due(service_type, collected, state.get("briefed_services"))
+             or closing_due_now) and not briefing_waits
+        and not mainly_non_english(" ".join(
+            [state.get("incoming_text") or ""]
+            + [line[len("Client:"):] for line in (state.get("history_text") or "").splitlines()
+               if line.startswith("Client:")]))
+        else ""
+    )
+    # It needs no retrieved records, so it is a briefing even when none came back.
+    briefing_due = briefing_due or bool(fixed_summary)
+    reply = fixed_summary if fixed_summary else complaint_closing(
         "" if complaint_name.lower() == UNANSWERED else complaint_name, None
     ) if service_type == ticket_service.COMPLAINT else await _write(
         state,

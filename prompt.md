@@ -3365,3 +3365,52 @@ reference, and names no topic:
 ```
 Sure – I'll ask our team to arrange a call with you, and they'll get back to you soon. Your reference is `CB-YYYY-NNNN`.
 ```
+
+---
+
+## Direct-hire closing summary (30 October)
+
+`info_collector.DIRECT_HIRE_FIXED_SUMMARY`. When a direct hire's questions are
+done, the closing summary is fixed text built from the fees document, not
+written by the model (in English; another language keeps the model's version,
+and the "Overseas direct hire wanted sooner" prompt above). The heading uses
+the helper's first name. The timing line compares the client's start date with
+the timeline for her route (Philippines 5 to 6 weeks, Indonesia 4 weeks,
+Myanmar 2 to 4 weeks after MOM approval; in Singapore 1 to 2 weeks), and only
+says she cannot start that soon when the date is too soon. The documents are
+grouped, and the steps follow her nationality and whether she is in Singapore.
+Example (Filipino helper overseas, "available in 2 weeks"):
+
+```
+Here is everything for hiring Maria directly:
+
+She won't be able to start in 2 weeks – for a helper coming from the Philippines it takes about 5 to 6 weeks after MOM approval.
+
+A direct hire costs less than a full recruitment, as there is no sourcing or matching; our agent will confirm the exact fee based on your requirements. Government costs are separate: the monthly levy to MOM is $300, or $60 at the concessionary rate, and a $5,000 security bond is arranged as an insured bond.
+
+Here is what we will need:
+From you:
+1. A copy of your NRIC or ID
+2. Proof of income (your Income Tax Assessment or a declaration of monthly income)
+From the helper:
+3. A copy of her passport
+4. Her medical report
+5. Her school certificate
+(6. Her current Work Permit details - only if she is in Singapore)
+
+Here is the process from here:
+1. You authorise us through Singpass to deal with MOM for you, and we prepare your documents for you to sign.
+2. We file the work permit application with MOM and arrange the security bond and insurance.
+3. MOM issues the In-Principle Approval (IPA).
+4. Her contract is submitted to the Philippine embassy for verification, and her Overseas Employment Certificate (OEC) is processed.
+5. She takes her fit-to-fly medical at a Philippine Department of Health accredited clinic.
+6. She travels to Singapore, has her medical examination on arrival, and we complete her work permit.
+
+I've passed everything to our team, and a live agent will connect with you shortly. In the meantime, is there anything else I can help you with?
+```
+
+Step 4 for Indonesia: the job order through the Indonesian embassy portal, the
+three signed contract copies with the IPA form, taken by our runner. For
+Myanmar: the IPA form signed by her through our partner, her travel date, and
+MOM's security bond form. In Singapore: her release from her current employer,
+then no embassy step and no travel.

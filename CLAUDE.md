@@ -659,6 +659,7 @@ because the lead is opened early and the ticket is created much later.
 | "What did you mean?" re-asks the same question | `info_collector.CLARIFY_NOTE` (`CLARIFY_REASKS_PENDING`) | The pending question (`last_question`) goes first, explained in one sentence and asked with its subject; no other question. |
 | A bare yes/no to an either/or question means its option | `info_collector._EITHER_OR_MEANING` (`EITHER_OR_YES_NO`) | "yes" to "own room, or sharing?" = own room, "no" = sharing. |
 | Stated experience answers "first-timer or experienced" | `info_collector` (`EXPERIENCE_ANSWERS_HIRE_SOURCE`) | `hire_source` filled from a `helper_profile` that states experience; replaces the narrowed question. |
+| The direct-hire closing summary is built from the fees document | `info_collector.direct_hire_summary` (`DIRECT_HIRE_FIXED_SUMMARY`) + `guards.with_after_mom_approval` (`CLIENT_DATE_KEPT`) | 2026-10-30: "She cannot start in 5 to 6 weeks because ... 5 to 6 weeks" - the guard swapped the client's "2 weeks" for the span. Heading with her first name; the client's date against her route's timeline (a sentence only when too soon); documents "From you" / "From the helper"; steps per nationality and in-Singapore. English only. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -1010,6 +1011,8 @@ Easy to get wrong:
   `ticket.FOLLOW_UP_WITH_CONTEXT`, `intent_classifier.LIVE_COLLECTION_HOLDS`,
   `info_collector.SIBLING_SWITCH_KEEPS_ANSWERS`, `info_collector.CLARIFY_REASKS_PENDING`,
   `info_collector.EITHER_OR_YES_NO`, `info_collector.EXPERIENCE_ANSWERS_HIRE_SOURCE`.
+  2026-10-30 (direct-hire summary), each `False` for the earlier behaviour:
+  `info_collector.DIRECT_HIRE_FIXED_SUMMARY`, `guards.CLIENT_DATE_KEPT`.
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2126,6 +2129,21 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-30** - **Direct-hire closing summary (test 6:41-6:46 PM IST,
+  Filipino helper overseas, "available in 2 weeks").** The broken sentence
+  "She cannot start in 5 to 6 weeks because ... 5 to 6 weeks after MOM
+  approval" was `with_after_mom_approval` replacing the FIRST weeks span (the
+  client's date) with her span; it now leaves a sentence that already has her
+  span alone and otherwise corrects the last one. The summary itself is now
+  built in code from the fees document: heading "Here is everything for hiring
+  <first name> directly:", the client's date compared with her route's
+  timeline (PH 5-6 / ID 4 / MM 2-4 weeks after MOM approval, in Singapore 1-2;
+  no sentence when realistic), documents grouped "From you" / "From the
+  helper", and the steps for her nationality and location. Replayed read-only
+  on the real model (PH overseas, in Singapore): both summaries as built.
+  `selfcheck_golive.py` 114 (16 new); both switches off, each red. Four
+  `smoke_nodes.py` direct-hire states now read the built reply. E2E not run.
 
 - **2026-10-30** - **VD transfer, all at once (3766, 12:38-12:54 UTC; the
   first run was deleted by a reset, so it was rebuilt from the screenshots).**

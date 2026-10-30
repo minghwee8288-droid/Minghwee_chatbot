@@ -334,6 +334,9 @@ _COUNTED_FROM = re.compile(r"MOM\s+approv|from\s+(?:the\s+)?(?:interview|signing
 # helper "approximately 2 weeks after MOM approval" (the record says 2 to 4):
 # with her nationality known, a weeks span in an overseas sentence is put back
 # to the document's own.
+# 2026-10-30: the client's own date is never the span rewritten. False = the
+# first weeks span in the sentence, as before.
+CLIENT_DATE_KEPT = True
 DIRECT_HIRE_OVERSEAS_SPAN = {"PH": "5 to 6 weeks", "ID": "4 weeks", "MM": "2 to 4 weeks"}
 _ANY_WEEKS_SPAN = re.compile(r"\b\d+(?:\s*(?:to|-|–)\s*\d+)?\s+weeks?\b", re.IGNORECASE)
 _OVERSEAS_WORDS = re.compile(
@@ -354,7 +357,14 @@ def with_after_mom_approval(reply: str, nationality: str | None = None) -> str:
         sentence = reply[start:end]
         local = re.search(r"in\s+Singapore|already\s+here", sentence, re.IGNORECASE)
         if span and not local and _OVERSEAS_WORDS.search(sentence):
-            sentence = _ANY_WEEKS_SPAN.sub(span, sentence, count=1)
+            # 2026-10-30: "She cannot start in 2 weeks because it takes 5 to 6
+            # weeks" became "She cannot start in 5 to 6 weeks..." - the first
+            # span is often the CLIENT's date. Leave a sentence that already
+            # carries her span alone; otherwise correct the last span only.
+            spans = list(_ANY_WEEKS_SPAN.finditer(sentence))
+            if spans and (not CLIENT_DATE_KEPT or span not in sentence):
+                hit = spans[-1] if CLIENT_DATE_KEPT else spans[0]
+                sentence = sentence[:hit.start()] + span + sentence[hit.end():]
         found = _OVERSEAS_SPAN.search(sentence)
         if found and not _COUNTED_FROM.search(sentence) and not re.search(
                 r"in\s+Singapore|already\s+here", sentence, re.IGNORECASE):

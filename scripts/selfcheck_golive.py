@@ -805,11 +805,89 @@ async def scenario_vd_transfer() -> None:
           str((out.get("collected_info") or {}).get("hire_source") or "").startswith("experienced"))
 
 
+async def scenario_direct_hire_summary() -> None:
+    """2026-10-30 (direct hire, Filipino helper overseas, "available in 2 weeks"):
+    broken timeline sentence, ungrouped documents, generic steps, full-name heading."""
+    ico = importlib.import_module("app.graph.nodes.info_collector")
+    base = {"full_name": "VD", "helper_name": "Maria Santos Cruz",
+            "helper_transfer_case": "no - she is in the Philippines, not in Singapore",
+            "helper_availability": "available in 2 weeks", "helper_contact": "not provided",
+            "update_channel": "WhatsApp"}
+    routes = {
+        "PH overseas": {"helper_nationality": "Filipino"},
+        "ID overseas": {"helper_nationality": "Indonesian"},
+        "MM overseas": {"helper_nationality": "Myanmar"},
+        "in Singapore": {"helper_nationality": "Filipino",
+                         "helper_transfer_case": "yes, she works for another employer here",
+                         "notice_clearance": "her employer agrees"},
+    }
+    text = {k: ico.direct_hire_summary({**base, **v}) for k, v in routes.items()}
+
+    # 1. The client's date against the real timeline; nothing when it is realistic.
+    check("PH overseas, 2 weeks: 'She won't be able to start in 2 weeks - ... 5 to 6 weeks after MOM approval'",
+          "She won't be able to start in 2 weeks – for a helper coming from the Philippines it "
+          "takes about 5 to 6 weeks after MOM approval." in text["PH overseas"])
+    check("ID overseas, 2 weeks: too soon against about 4 weeks",
+          "start in 2 weeks" in text["ID overseas"] and "4 weeks after MOM approval" in text["ID overseas"])
+    check("MM overseas, 2 weeks: realistic (2 to 4 weeks) - no 'won't be able' sentence",
+          "won't be able" not in text["MM overseas"]
+          and "it takes about 2 to 4 weeks after MOM approval" in text["MM overseas"])
+    check("in Singapore, 2 weeks: realistic (1 to 2 weeks) - no 'won't be able' sentence",
+          "won't be able" not in text["in Singapore"] and "1 to 2 weeks" in text["in Singapore"])
+    check("the after-MOM guard keeps the client's date in a sentence that has the span",
+          "start in 2 weeks" in guards.with_after_mom_approval(
+              "She cannot start in 2 weeks because a Filipino helper takes about 5 to 6 weeks "
+              "after MOM approval.", "PH"))
+
+    # 2. Documents grouped, from the fees document.
+    for k, t in text.items():
+        check(f"{k}: documents grouped 'From you' (NRIC/ID, income) / 'From the helper'",
+              "From you:\n1. A copy of your NRIC or ID\n2. Proof of income" in t
+              and "From the helper:\n3. A copy of her passport\n4. Her medical report\n5. Her school certificate" in t)
+    check("in Singapore: her current Work Permit details are asked for",
+          "6. Her current Work Permit details" in text["in Singapore"]
+          and "Work Permit details" not in text["PH overseas"])
+
+    # 3. Process for her nationality and location.
+    check("PH overseas: MOM application, IPA, Philippine embassy contract and OEC, medical, travel",
+          all(w in text["PH overseas"] for w in ("work permit application with MOM", "(IPA)",
+              "Philippine embassy", "(OEC)", "fit-to-fly medical", "travels to Singapore")))
+    check("ID overseas: Indonesian embassy portal job order and runner",
+          "Indonesian embassy portal" in text["ID overseas"] and "OEC" not in text["ID overseas"])
+    check("MM overseas: partner in Myanmar and the security bond form",
+          "partner in Myanmar" in text["MM overseas"] and "OEC" not in text["MM overseas"])
+    check("in Singapore: no embassy step and no travel",
+          "no embassy step and no travel" in text["in Singapore"]
+          and "travels to Singapore" not in text["in Singapore"])
+
+    # 4. Heading with her first name.
+    check("heading 'Here is everything for hiring Maria directly:'",
+          all(t.startswith("Here is everything for hiring Maria directly:") for t in text.values())
+          and "Santos" not in text["PH overseas"])
+
+    # Wired: the completing turn sends it, without asking the model.
+    model = AsyncMock(return_value="Here is everything for Maria Santos Cruz: 4 generic steps.")
+    with patch.object(ico, "complete", new=model, create=True), patch.object(ico, "complete_json", new=AsyncMock(return_value={"update_channel": "WhatsApp"}),
+                      create=True), patch.object(_rag_node, "briefing_records", new=AsyncMock(return_value={})), patch.object(ico, "_open_lead_early", new=AsyncMock(return_value={})):
+        collected = {**base, "helper_nationality": "Filipino"}
+        collected.pop("update_channel")
+        out = await ico.info_collector({
+            "conversation_id": 1, "phone": CLIENT, "contact_type": "employer",
+            "intent": "direct_hiring", "service_type": "direct_hiring",
+            "collected_service": "direct_hiring", "collected_info": collected,
+            "asked_field_counts": {k: 1 for k in collected} | {"update_channel": 1},
+            "history_text": "You: Would you prefer updates by email, here on WhatsApp, or both?",
+            "incoming_text": "whatsapp", "rag_matches": []})
+    check("the completing direct-hire turn sends the built summary",
+          str(out.get("reply") or "").startswith("Here is everything for hiring Maria directly:")
+          and "won't be able to start in 2 weeks" in str(out.get("reply") or ""))
+
+
 async def main() -> int:
     for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
                      scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights,
                      scenario_vague_action, scenario_hire_documents, scenario_call_and_wording,
-                     scenario_xing_chain, scenario_vd_transfer):
+                     scenario_xing_chain, scenario_vd_transfer, scenario_direct_hire_summary):
         try:
             await scenario()
         except Exception as exc:  # noqa: BLE001 - a crash is a failure, by name

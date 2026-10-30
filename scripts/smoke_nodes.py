@@ -409,7 +409,8 @@ CASES = [
       "rag_context": "We process the MOM application.", "rag_best_score": 0.6,
       "_stub_extraction": {"update_channel": "WhatsApp"},
       "_expect_state": {"info_complete": True},
-      "_expect_prompt": "THIS message is the one that"}),
+      # 2026-10-30: the direct-hire summary is built (DIRECT_HIRE_FIXED_SUMMARY).
+      "_expect_reply": "Here is the process from here:"}),
     # Step 5 Batch E item 6: a new service in the same chat does not ask a
     # name the client gave three minutes ago on another path.
     ("info_collector", "E6: a name given earlier in the chat is not asked again",
@@ -437,7 +438,8 @@ CASES = [
                        "chunk_type": "qa_pair"}],
       "rag_context": "About 4 to 6 weeks for a helper overseas.", "rag_best_score": 0.6,
       "_stub_extraction": {"update_channel": "WhatsApp"},
-      "_expect_prompt": "but she is overseas and this is the overseas route"}),
+      # 2026-10-30: built summary, the client's date against her timeline.
+      "_expect_reply": "won't be able to start"}),
     ("info_collector", "E5: ...a helper already here on a permit is not",
      {"service_type": "direct_hiring", "intent": "direct_hiring", "contact_type": "employer",
       "incoming_text": "WhatsApp",
@@ -1046,7 +1048,8 @@ CASES = [
                              "helper_availability": 1, "helper_contact": 1,
                              "update_channel": 1, "email": 1},
       "_stub_extraction": {"email": "John@gmail.com"},
-      "_expect_prompt": "WHAT IT COSTS",
+      # 2026-10-30: the built summary carries the cost section.
+      "_expect_reply": "our agent will confirm the exact fee",
       "_expect_state": {"briefed_services": ["direct_hiring"]}}),
 
     # --- the direction an employer means by "transfer", 2026-09-18 ---------
@@ -2336,7 +2339,8 @@ CASES = [
       "history_text": "You: When would she be available to start?",
       "_stub_extraction": {},
       "_stub_reply": "The total package is approximately $4,225.",
-      "_expect_reply": "rather one of our agents"}),
+      # 2026-10-30: the built direct-hire summary never quotes a package.
+      "_expect_reply": "our agent will confirm the exact fee"}),
 
     # --- 2026-09-19: the care type an answer to another question rewrote ---
     # "In my family there are 8 peoples ... and 1 is elderly care" is an answer
