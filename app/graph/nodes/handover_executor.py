@@ -13,11 +13,13 @@ import logging
 from typing import Any
 
 from app.graph import clarify
+from app.graph import guards
 from app.graph.guards import without_names_addressed
+from app.graph.language import mainly_non_english, reply_language
 from app.graph.llm import complete
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import ASSAULT_INSTRUCTION
-from app.graph.reference import add_reference
+from app.graph.reference import _SENTENCE_END, add_reference, reference_sentence
 from app.graph.state import ConversationState, conversation_ref
 from app.services import assignment as assignment_service
 from app.services import handover as handover_service
@@ -38,6 +40,50 @@ ASSAULT_FALLBACK_REPLY = (
 # Off until the agency decides (2026-10-12): it is the one message that goes to
 # someone reporting harm, and what it should say is theirs to settle.
 SAFETY_REPLY_SHOWS_REFERENCE = False
+
+# 2026-10-30 (test 7:45 PM IST, "hey i was beaten up by my employer please
+# help me"): ticket CB-2026-0143 was raised high priority, but the reply
+# carried no reference and nothing for someone who is hurt. With this on, the
+# safety reply (every dispute_assault turn: abuse, assault, harassment, locked
+# in, no food) carries the reference as the other handovers do, plus the
+# ambulance line after the 999 one and the MOM helpline (both in the KB
+# rows), and never opens with an introduction. In English the two lines are
+# fixed text; in another language the model is told to include both numbers.
+# False = the reply as before (and SAFETY_REPLY_SHOWS_REFERENCE decides).
+CRISIS_REPLY_COMPLETE = True
+AMBULANCE_LINE = "If you are injured, please call an ambulance on 995."
+MOM_HELPLINE_LINE = "You can also call the MOM helpline on 1800-339-5505."
+_CRISIS_NO_INTRO_LINE = (
+    "\n\nDo NOT introduce yourself or say who you are - go straight to their safety."
+)
+_CRISIS_NUMBERS_LINE = (
+    "\n\nAlso say that if they are injured they should call an ambulance on 995, and "
+    "that the MOM helpline is 1800-339-5505."
+)
+
+
+def complete_crisis_reply(reply: str, number: str | None, history_text: str = "") -> str:
+    """The safety reply with the ambulance and MOM lines after the 999 sentence
+    (English only) and the ticket reference after the handover sentence."""
+    if not reply:
+        return reply
+    stripped = guards._ANY_INTRODUCTION.sub("", reply, count=1).strip()
+    if stripped and stripped != reply.strip():
+        reply = stripped[0].upper() + stripped[1:]
+    if reply_language(reply) == "en" and "995" not in reply:
+        lines = f"{AMBULANCE_LINE} {MOM_HELPLINE_LINE}"
+        at = reply.find("999")
+        end = _SENTENCE_END.search(reply, at) if at >= 0 else None
+        if end:
+            reply = f"{reply[:end.end()].rstrip()} {lines} {reply[end.end():].lstrip()}".rstrip()
+        else:
+            reply = f"{lines} {reply}"
+    if number and number not in reply:
+        referenced = add_reference(reply, number, history_text)
+        if referenced == reply:
+            referenced = f"{reply.rstrip()} {reference_sentence(reply, number, history_text)}"
+        reply = referenced
+    return reply
 
 REASON_BY_INTENT = {
     "dispute_assault": handover_service.REASON_DISPUTE,
@@ -80,6 +126,10 @@ async def _assault_reply(state: ConversationState) -> str:
             k: v for k, v in (state.get("collected_info") or {}).items() if k != "full_name"
         }
         instruction = ASSAULT_INSTRUCTION + _NO_NAME_LINE
+    if CRISIS_REPLY_COMPLETE:
+        instruction += _CRISIS_NO_INTRO_LINE
+        if mainly_non_english(state.get("incoming_text") or ""):
+            instruction += _CRISIS_NUMBERS_LINE
     system_prompt = build_system_prompt(prompt_state, extra_instructions=instruction)
     user_prompt = (
         f"Client's message(s):\n{state.get('incoming_text', '')}\n\nYour reply:"
@@ -140,6 +190,11 @@ async def handover_executor(state: ConversationState) -> dict[str, Any]:
             update["reply"] = await _assault_reply(state)
         if not state.get("ticket_id"):
             update.update(await _assault_ticket(state))
+        if CRISIS_REPLY_COMPLETE:
+            update["reply"] = complete_crisis_reply(
+                update.get("reply") or state.get("reply") or "",
+                update.get("ticket_number") or state.get("ticket_number"),
+                state.get("history_text") or "")
 
     reason = (
         state.get("handover_reason")

@@ -36,6 +36,7 @@ from app.graph.state import RESET_KEY  # noqa: E402
 from app.services import conversation as _conv  # noqa: E402
 from app.services import internal_contacts  # noqa: E402
 from app.services import message as _msg  # noqa: E402
+from app.services import ticket as ticket_service  # noqa: E402
 from app.whapi.parser import IncomingMessage  # noqa: E402
 
 import importlib  # noqa: E402
@@ -999,13 +1000,44 @@ async def scenario_replacement_summary() -> None:
           and str(out.get("reply") or "").startswith("Here is everything for replacing Pogo:"))
 
 
+async def scenario_crisis_reply() -> None:
+    """2026-10-30 7:45 PM IST: "hey i was beaten up by my employer please help me"."""
+    he = importlib.import_module("app.graph.nodes.handover_executor")
+    created = []
+
+    async def fake_create(**kw):
+        created.append(ticket_service.priority_for(kw.get("service_type")))
+        return {"id": "t1", "ticket_number": "CB-2026-0143"}
+    model = ("Hi, I'm Claire, Ming Hwee's AI assistant. I'm so sorry this happened to you. "
+             "Please make sure you are safe now, and call the police at 999 if you are in "
+             "immediate danger. I've alerted our team, and a live agent will connect with "
+             "you shortly.")
+    with patch.object(he, "complete", new=AsyncMock(return_value=model)), \
+         patch.object(ticket_service, "create", new=fake_create), \
+         patch.object(he.assignment_service, "resolve_agent",
+                      new=AsyncMock(return_value=(None, "admin"))), \
+         patch.object(he.handover_service, "log_escalation", new=AsyncMock(return_value={})):
+        out = await he.handover_executor({
+            "conversation_id": 1, "phone": CLIENT, "intent": "dispute_assault",
+            "incoming_text": "hey i was beaten up by my employer please help me",
+            "history_text": ""})
+    reply = str(out.get("reply") or "")
+    check("crisis reply: high-priority ticket, no intro, 999 then the 995 and MOM lines, "
+          "and the reference",
+          created == ["high"] and "Claire" not in reply
+          and reply.index("999") < reply.index("If you are injured, please call an ambulance on 995.")
+          and "1800-339-5505" in reply and "`CB-2026-0143`" in reply
+          and "anything else" not in reply)
+
+
 async def main() -> int:
     for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
                      scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights,
                      scenario_vague_action, scenario_hire_documents, scenario_call_and_wording,
                      scenario_xing_chain, scenario_vd_transfer, scenario_direct_hire_summary,
                      scenario_direct_hire_intake,
-                     scenario_replacement_summary):
+                     scenario_replacement_summary,
+                     scenario_crisis_reply):
         try:
             await scenario()
         except Exception as exc:  # noqa: BLE001 - a crash is a failure, by name

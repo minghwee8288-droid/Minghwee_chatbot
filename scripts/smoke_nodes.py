@@ -3533,8 +3533,11 @@ async def _reference_checks() -> list[tuple[str, bool]]:
                    ticket_number="CB-2026-0009")
     with patch.object(hx.handover_service, "log_escalation", new=AsyncMock(return_value={})):
         out = await hx.handover_executor(assault)
-    results.append(("reference: the safety reply shows none (SAFETY_REPLY_SHOWS_REFERENCE)",
-                    "CB-2026" not in (out.get("reply") or assault["reply"])))
+    # 2026-10-30: the agency asked for the reference on the safety reply too
+    # (CRISIS_REPLY_COMPLETE); with that off it still shows none.
+    results.append(("reference: the safety reply shows its reference (CRISIS_REPLY_COMPLETE)",
+                    ("CB-2026-0009" in (out.get("reply") or assault["reply"]))
+                    == (hx.CRISIS_REPLY_COMPLETE or hx.SAFETY_REPLY_SHOWS_REFERENCE)))
 
     # Step 5 Batch F item 4: the safety reply addresses nobody by a record
     # name - a helper may be writing on her employer's thread (Step 3, Burmese).

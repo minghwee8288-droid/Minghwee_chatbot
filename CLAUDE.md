@@ -664,6 +664,7 @@ because the lead is opened early and the ticket is created much later.
 | A nationality the client named is not asked; the name question asks the name only | `info_collector` (`NATIONALITY_FROM_WORDS`, `NO_NATIONALITY_WITH_NAME`) | 2026-10-30: "may I know the helper's full name and nationality?", then the nationality again. `helper_nationality` is filled from the one nationality named in the client's lines for this request; a helper-name reply that asks a nationality becomes the written name question. |
 | Each group of a closing summary is numbered from 1 | `guards.numbered_from_one_per_group` (`NUMBER_EACH_GROUP`), on every briefing turn in `info_collector` | "From you" 1-2, "From the helper" 1-3; a label line ending ":" restarts the count. |
 | The replacement closing summary is built from the fees document | `info_collector.replacement_summary` (`REPLACEMENT_FIXED_SUMMARY`) | 2026-10-30: a 2-year helper being sent home got "our agent will confirm the exact fee" with no rule and none of her exit steps. Heading with her first name; the package rule (2 replacements within 6 months: $288 inside it, no figure after 6 months, not placed by us, or tenure unknown); a transfer-helper line on ASAP/urgent; "From you" / "About your current helper"; her Work Permit cancelled, flight home, bond discharged, then the new helper's steps. English only. |
+| The safety reply carries the reference, 995 and the MOM helpline, and no introduction | `handover_executor.complete_crisis_reply` (`CRISIS_REPLY_COMPLETE`) | 2026-10-30: "hey i was beaten up by my employer please help me" raised CB-2026-0143 (high) but the reply had no reference and nothing for someone injured. Every dispute_assault reply: 999 sentence, then "If you are injured, please call an ambulance on 995." and the MOM helpline 1800-339-5505 (English: fixed text; other languages: the model is told), the reference after the handover sentence, any "I'm Claire" opening removed, still no "anything else?". Supersedes `SAFETY_REPLY_SHOWS_REFERENCE` while on. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -1022,6 +1023,8 @@ Easy to get wrong:
   `info_collector.NO_NATIONALITY_WITH_NAME`, `guards.NUMBER_EACH_GROUP`.
   2026-10-30 (replacement summary), `False` for the model-written summary:
   `info_collector.REPLACEMENT_FIXED_SUMMARY`.
+  2026-10-30 (crisis reply), `False` for the earlier safety reply:
+  `handover_executor.CRISIS_REPLY_COMPLETE`.
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -1825,7 +1828,8 @@ at a time.
 - **Payment.** Their stated end state is a payment link in the flow, then forms, then
   processing. **Nothing in this bot takes money**; the knowledge base only says who will
   raise it and when.
-- **Should the safety reply to a harm report carry the ticket reference?** Every
+- ~~**Should the safety reply to a harm report carry the ticket reference?**~~
+  **ANSWERED 2026-10-30: yes** (`CRISIS_REPLY_COMPLETE`). Every
   other handover does since 2026-10-12. It is one constant,
   `handover_executor.SAFETY_REPLY_SHOWS_REFERENCE`, and off until they say.
 - **Whether "a live agent will reach out within 24 hours" is a commitment they want to
@@ -2138,6 +2142,19 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-30** - **Crisis reply (test 7:45 PM IST, "hey i was beaten up by
+  my employer please help me").** The ticket was right: CB-2026-0143,
+  dispute_assault, priority high, on conversation 3766 (read-only check). The
+  reply carried no reference (`SAFETY_REPLY_SHOWS_REFERENCE` was off, waiting
+  on the agency) and nothing for someone hurt. Now every dispute_assault reply
+  adds "If you are injured, please call an ambulance on 995." and the MOM
+  helpline (1800-339-5505, already in the KB) after the 999 sentence, the
+  reference after the handover sentence, and drops any introduction.
+  Replayed read-only on the real model: beaten, touched/harassed, locked in,
+  no food - all dispute_assault, high, the full reply. `selfcheck_golive.py`
+  1 new, red with the switch off; one `smoke_nodes.py` check now expects the
+  reference. E2E not run.
 
 - **2026-10-30** - **Replacement closing summary (test 6:57-7:01 PM IST: helper
   with the client 2 years, sent home, ASAP, wants a Filipino with 3 years).**

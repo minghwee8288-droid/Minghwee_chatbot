@@ -3426,3 +3426,10 @@ need someone sooner, a transfer helper already in Singapore can usually start in
 of a placement by us; otherwise "our agent will confirm the fee"), "From you"
 1-2 and "About your current helper" 1-2, then her Work Permit cancelled, her
 flight home, her security bond discharged, and the new helper's six steps.
+
+Crisis reply (30 October, `CRISIS_REPLY_COMPLETE`): after the model's safety
+message, the code adds "If you are injured, please call an ambulance on 995."
+and "You can also call the MOM helpline on 1800-339-5505." after the 999
+sentence, then the ticket reference after the handover sentence; any
+introduction is removed. In another language the model is told to give both
+numbers itself.
