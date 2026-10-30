@@ -712,11 +712,104 @@ async def scenario_xing_chain() -> None:
           and "or more than one" not in (ico.WORKLOAD_LINE + ico.GENTLE_WORKLOAD_INSTRUCTION).replace("NEVER suggest more than one helper", ""))
 
 
+async def scenario_vd_transfer() -> None:
+    """2026-10-30 (3766, VD, transfer all at once): bare follow-up, wrong
+    clarification, lost answers on a switch, "yes" to either/or, experience."""
+    ico = importlib.import_module("app.graph.nodes.info_collector")
+    from app.services import ticket as ticket_service
+    prompts: list[str] = []
+
+    async def collect(state: dict, extraction: dict | None = None) -> dict:
+        async def capture(system_prompt, *a, **kw):
+            prompts.append(system_prompt or "")
+            return "Got it."
+        with patch.object(ico, "complete", new=capture, create=True), \
+             patch.object(ico, "complete_json", new=AsyncMock(return_value=dict(extraction or {})),
+                          create=True), \
+             patch.object(_rag_node, "briefing_records", new=AsyncMock(return_value={})), \
+             patch.object(ico, "_open_lead_early", new=AsyncMock(return_value={})):
+            return await ico.info_collector(state)
+
+    async def classify(text: str, history: str, extra: dict, verdict: dict) -> dict:
+        state = {"conversation_id": 1, "phone": CLIENT, "contact_type": "employer",
+                 "incoming_text": text, "history_text": history, "blocked_topics": {}, **extra}
+        with patch.object(_ic, "complete_json", new=AsyncMock(return_value=verdict)):
+            return await _ic.intent_classifier(state)
+
+    answers = {"full_name": "VD growwstacks", "transfer_direction": "taking on a transfer helper",
+               "requirement": "general housework", "household": "8", "home_type": "HDB",
+               "home_size": "5 bedrooms, 5 bathrooms", "helper_room": "own room", "pets": "yes",
+               "preferred_nationality": "Indonesian",
+               "helper_profile": "above 30, at least 4 years experience",
+               "special_duties": "everything", "budget": "500-600", "rest_day": "weekly day off",
+               "referral_source": "google", "update_channel": "both", "email": "vd@example.com"}
+    live = {"conversation_id": 1, "phone": CLIENT, "contact_type": "employer",
+            "intent": "transfer", "service_type": "transfer_employer",
+            "collected_service": "transfer_employer", "collected_info": dict(answers),
+            "asked_field_counts": {k: 1 for k in answers}, "question_style": "all",
+            "rag_matches": []}
+
+    # 1. A follow-up names its subject, in the list and as the field's question.
+    q = next(f.question for f in ticket_service.fields_for("new_hiring") if f.key == "pet_detail")
+    check("the pet follow-up names its subject", q.startswith("You mentioned you have pets"))
+    out = await collect({**live, "history_text": "You: Sure, here are the questions.",
+                         "incoming_text": "4. yes\n5. yes"})
+    check("the missing-details list asks 'You mentioned you have pets - what kind...'",
+          "You mentioned you have pets" in (out.get("reply") or ""))
+
+    # 2. "what is this for?" stays on the collection and re-asks the SAME question.
+    hist = "You: Just these few more and we're all set.\n1. You mentioned you have pets – what kind, and how many?"
+    c = await classify("i did not understand what is this for ?", hist,
+                       {"service_type": "transfer_employer", "intent": "transfer",
+                        "collected_service": "transfer_employer", "collected_info": dict(answers)},
+                       {"intent": "new_hiring", "service_type": "new_hiring", "confidence": 0.8})
+    check("a question about our question does not switch the live transfer to new hiring",
+          c.get("service_type") == "transfer_employer")
+    prompts.clear()
+    await collect({**live, "question_style": "one", "history_text": hist,
+                   "incoming_text": "i did not understand what is this for ?",
+                   "last_question": {"key": "pet_detail", "text": "pets"}})
+    p = prompts[-1] if prompts else ""
+    check("the clarification re-asks the pending pets question, not another one",
+          "DID NOT UNDERSTAND YOUR LAST QUESTION" in p and "You mentioned you have pets" in p)
+
+    # 3. A sibling switch never drops answers, in the classifier and in the collector.
+    c = await classify("yes she should have there own room and yes i have 1 pet", hist,
+                       {"service_type": "transfer_employer", "intent": "transfer",
+                        "collected_service": "transfer_employer", "collected_info": dict(answers)},
+                       {"intent": "new_hiring", "service_type": "new_hiring", "confidence": 0.8})
+    check("the model's new_hiring does not replace a live transfer on a plain answer",
+          c.get("service_type") == "transfer_employer")
+    out = await collect({**live, "service_type": "new_hiring", "intent": "new_hiring",
+                         "question_style": "one", "history_text": hist,
+                         "incoming_text": "yes i have 1 pet"}, {"pet_detail": "1 pet"})
+    kept = out.get("collected_info") or {}
+    check("a forced switch to new hiring keeps every answer the client gave",
+          all(kept.get(k) == v for k, v in answers.items()
+              if k in {f.key for f in ticket_service.fields_for("new_hiring")}))
+
+    # 4. "yes" to "own room, or sharing?" is own room.
+    out = await collect({**live, "collected_info": {k: v for k, v in answers.items() if k != "helper_room"},
+                         "history_text": "You: Will she have her own room, or would she be sharing?",
+                         "incoming_text": "yes"}, {"helper_room": "yes"})
+    check("a bare yes to 'own room, or sharing?' is filed as own room",
+          (out.get("collected_info") or {}).get("helper_room") == "own room")
+
+    # 5. Experience stated answers the first-timer question.
+    hire = {k: v for k, v in answers.items() if k not in ("transfer_direction",)}
+    out = await collect({**live, "service_type": "new_hiring", "intent": "new_hiring",
+                         "collected_service": "new_hiring", "collected_info": hire,
+                         "history_text": "You: Any preference on her age, or how much experience?",
+                         "incoming_text": "above 30, at least 4 years experience"})
+    check("'at least 4 years experience' answers 'first-timer or experienced'",
+          str((out.get("collected_info") or {}).get("hire_source") or "").startswith("experienced"))
+
+
 async def main() -> int:
     for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
                      scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights,
                      scenario_vague_action, scenario_hire_documents, scenario_call_and_wording,
-                     scenario_xing_chain):
+                     scenario_xing_chain, scenario_vd_transfer):
         try:
             await scenario()
         except Exception as exc:  # noqa: BLE001 - a crash is a failure, by name

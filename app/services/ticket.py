@@ -2799,6 +2799,24 @@ for _service in SERVICE_FIELDS:
         f for f in SERVICE_FIELDS[_service] if f.key not in _REMOVED_QUESTION_KEYS
     ]
 
+# 2026-10-30 (3766, all at once): "yes" to the pets question was followed by a
+# bare "What kind, and how many?" in the missing-details list, with nothing to
+# say what it was about. A follow-up question names its subject. False = the
+# old questions.
+FOLLOW_UP_WITH_CONTEXT = True
+_CONTEXT_QUESTIONS = {
+    "pet_detail": "You mentioned you have pets – what kind, and how many?",
+    "children_detail": "You mentioned childcare – how many children, and how old are they?",
+    "elderly_detail": ("You mentioned eldercare – could you tell me a bit about them: their age, "
+                       "how mobile they are, and any medical conditions?"),
+}
+if FOLLOW_UP_WITH_CONTEXT:
+    for _service in SERVICE_FIELDS:
+        SERVICE_FIELDS[_service] = [
+            replace(f, question=_CONTEXT_QUESTIONS[f.key]) if f.key in _CONTEXT_QUESTIONS else f
+            for f in SERVICE_FIELDS[_service]
+        ]
+
 
 def missing_fields(service_type: str | None, collected: dict[str, Any]) -> list[Field]:
     """What still has to be asked — gated fields that do not apply are not missing."""

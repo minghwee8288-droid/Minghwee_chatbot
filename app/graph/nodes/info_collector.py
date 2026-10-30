@@ -50,7 +50,7 @@ from app import timing
 from app.graph.llm import complete, complete_json
 from app.config import settings
 from app.services import kb_rules
-from app.graph.nodes.intent_classifier import _WANTS_SERVICE, _named_service
+from app.graph.nodes.intent_classifier import _WANTS_SERVICE, _named_service, asks_what_we_meant
 from app.graph.prompts.system import build_system_prompt
 from app.graph.prompts.templates import (
     CANDIDATE_PROCESS_COMES_LAST_NOTE,
@@ -1622,6 +1622,33 @@ SIDE_QUESTION_KEEPS_PENDING = True
 # because the briefing's key field ended "not provided". True = the closing
 # summary goes out whenever the collection completes. See closing_due_now.
 CLOSING_SUMMARY_ALWAYS = True
+
+# 2026-10-30 (3766): see sibling_switch. False = only the portable keys carry.
+SIBLING_SWITCH_KEEPS_ANSWERS = True
+_HIRING_SIBLINGS = frozenset({"new_hiring", "transfer", ticket_service.TRANSFER_EMPLOYER})
+
+# 2026-10-30 (3766): "i did not understand what is this for ?" about the pets
+# follow-up got "Sorry, I meant to ask about your pets... Will she have her own
+# room...?" - a different question. A client asking what we meant gets the
+# SAME pending question again, with its subject. False = the next field.
+CLARIFY_REASKS_PENDING = True
+CLARIFY_NOTE = (
+    "\n\nTHE CLIENT DID NOT UNDERSTAND YOUR LAST QUESTION. In one short sentence say "
+    "what it is about and why we ask, then ask THAT SAME question again, naming its "
+    "subject: \"{question}\". Do not ask any other question in this message."
+)
+
+# 2026-10-30 (3766): "yes" to "Will she have her own room, or would she be
+# sharing?" - an either/or question - filled helper_room with "yes". A bare
+# yes or no to such a question is mapped to the option it plainly means.
+# False = the value as extracted.
+EITHER_OR_YES_NO = True
+_EITHER_OR_MEANING = {"helper_room": ("own room", "sharing")}
+
+# 2026-10-30 (3766): "at least 4 year experience" was followed by "Are you open
+# to a first-timer, or would you rather someone with experience...?". Experience
+# stated in helper_profile answers hire_source. False = still asked (narrowed).
+EXPERIENCE_ANSWERS_HIRE_SOURCE = True
 
 # 2026-10-29 (4443): "one helper covering elderly care, cooking and a large
 # household may be difficult to do well; would you prefer to focus her duties
@@ -4408,8 +4435,26 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         if switched
         else {}
     )
+    # 2026-10-30 (3766): a switch between new hiring and an employer transfer
+    # cleared six answers the client had just given in the all-at-once list.
+    # The two flows ask the same questions (ticket._hiring_field), so every
+    # answer the new flow also asks is kept, with its ask count. Answers are
+    # only ever added or updated. False = only the portable keys carry.
+    sibling_switch = (
+        SIBLING_SWITCH_KEEPS_ANSWERS and switched and not restart
+        and {state.get("collected_service"), service_type} <= _HIRING_SIBLINGS
+    )
+    kept_counts: dict[str, int] = {}
+    if sibling_switch:
+        shared = {f.key for f in ticket_service.fields_for(service_type)}
+        old_counts = dict(state.get("asked_field_counts") or {})
+        for key, value in everything.items():
+            if key in shared and str(value or "").strip():
+                carried_over[key] = value
+                if key in old_counts:
+                    kept_counts[key] = old_counts[key]
     previous = carried_over if switched else everything
-    asked = {} if switched else dict(state.get("asked_field_counts") or {})
+    asked = dict(kept_counts) if switched else dict(state.get("asked_field_counts") or {})
     if switched:
         logger.info(
             "Conversation %s switched from %s to %s — cleared the old service's "
@@ -4534,6 +4579,25 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         )
         extracted = {**extracted, "transfer_direction": direction}
         collected = {**collected, "transfer_direction": direction}
+
+    # 2026-10-30: a bare yes/no to an either/or question means its first or
+    # second option (EITHER_OR_YES_NO).
+    if EITHER_OR_YES_NO:
+        for key, (on_yes, on_no) in _EITHER_OR_MEANING.items():
+            value = str(extracted.get(key) or "").strip()
+            if value and _BARE_YES_NO.match(value):
+                meant = on_no if _BARE_NO.match(value) else on_yes
+                extracted = {**extracted, key: meant}
+                collected = {**collected, key: meant}
+
+    # 2026-10-30: experience stated answers where it was got from
+    # (EXPERIENCE_ANSWERS_HIRE_SOURCE).
+    if (EXPERIENCE_ANSWERS_HIRE_SOURCE and "hire_source" in allowed_keys
+            and not str(collected.get("hire_source") or "").strip()
+            and _already_wants_experience(collected)):
+        stated = f"experienced helper ({collected.get('helper_profile')})"[:300]
+        extracted = {**extracted, "hire_source": stated}
+        collected = {**collected, "hire_source": stated}
 
     # Step 5 Batch B2 item 4: "DEVI" or "devi" is filed, and read back, as
     # "Devi". A mixed-case name ("McDonald", "de Silva") is left as typed.
@@ -5588,6 +5652,16 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
                     state.get("conversation_id"))
     # A gentle workload line no longer stops the list (it leads it instead).
     workload_blocks = bool(workload_note) and not (GENTLE_WORKLOAD_NOTE and style == "all")
+    # 2026-10-30: the client asked what our last question meant - that same
+    # question goes first again, with its subject (CLARIFY_REASKS_PENDING).
+    pending_key = (state.get("last_question") or {}).get("key") if isinstance(
+        state.get("last_question"), dict) else None
+    if (CLARIFY_REASKS_PENDING and missing and asks_what_we_meant(state.get("incoming_text") or "")):
+        by_key = {f.key: f for f in missing}
+        pending = by_key.get(pending_key) or missing[0]
+        missing = [pending] + [f for f in missing if f.key != pending.key]
+        answer_first = (answer_first or ANSWER_THEN_ASK_INSTRUCTION) + CLARIFY_NOTE.format(
+            question=pending.question or pending.label)
     plain_turn = not (answer_first or overview or workload_blocks or follow_up_notes)
     client_name = str(collected.get("full_name") or "").strip()
     # The reply that thanks them for their name: the name became known on this

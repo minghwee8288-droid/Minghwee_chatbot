@@ -653,6 +653,12 @@ because the lead is opened early and the ticket is created much later.
 | Every completed intake gets its closing summary | `info_collector.closing_due_now` (`CLOSING_SUMMARY_ALWAYS`) | CB-2026-0133: the new-hire briefing is keyed on `start_timeline`, which ended "not provided", so the intake closed on the bare ticket line. Now due whenever the collection completes, however the key field ended. |
 | A household partly described is asked only for the rest | `info_collector.household_follow_up` (`PARTIAL_ANSWER_FOLLOW_UP`) | "I want someone to handle my parents" was met with the full household question again. Members the client named -> "Besides your parents, who else lives with you, and how many people are there in total?" (list and one-by-one). |
 | A workload concern is one gentle sentence, never a second helper | `info_collector.GENTLE_WORKLOAD_INSTRUCTION` / `WORKLOAD_LINE` (`GENTLE_WORKLOAD_NOTE`) | "would you prefer to focus her duties or consider more than one helper" questioned the client's choice and stopped the list. Now once, one sentence, the intake carries on in the same message; in the all-at-once flow the fixed line leads the list (`guards.answering_our_question` finds the list head anywhere in that line). Replaces the 2026-09-17 note. |
+| A follow-up question names its subject | `ticket._CONTEXT_QUESTIONS` (`FOLLOW_UP_WITH_CONTEXT`) | 2026-10-30 (3766): "yes" to pets was followed by a bare "What kind, and how many?". pet_detail, children_detail and elderly_detail now open "You mentioned...". |
+| A live collection survives a question about our question, and a sibling swap | `intent_classifier.asks_what_we_meant` + `LIVE_COLLECTION_HOLDS` | "i did not understand what is this for ?" carries a "?", so the answer rule let the model's new_hiring replace a live transfer and its answers were cleared. Such a question, or a turn naming no service while the model swaps new_hiring / transfer / transfer_employer, keeps the live flow (a named service or "hire a helper" still switches). |
+| Answers are never dropped on a switch between hiring flows | `info_collector.sibling_switch` (`SIBLING_SWITCH_KEEPS_ANSWERS`) | Every answer the new flow also asks is carried with its ask count. |
+| "What did you mean?" re-asks the same question | `info_collector.CLARIFY_NOTE` (`CLARIFY_REASKS_PENDING`) | The pending question (`last_question`) goes first, explained in one sentence and asked with its subject; no other question. |
+| A bare yes/no to an either/or question means its option | `info_collector._EITHER_OR_MEANING` (`EITHER_OR_YES_NO`) | "yes" to "own room, or sharing?" = own room, "no" = sharing. |
+| Stated experience answers "first-timer or experienced" | `info_collector` (`EXPERIENCE_ANSWERS_HIRE_SOURCE`) | `hire_source` filled from a `helper_profile` that states experience; replaces the narrowed question. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -1000,6 +1006,10 @@ Easy to get wrong:
   2026-10-29 (Xing Chain), each `False` for the earlier behaviour:
   `info_collector.STYLE_SWITCH_ANY_TIME`, `info_collector.CLOSING_SUMMARY_ALWAYS`,
   `info_collector.PARTIAL_ANSWER_FOLLOW_UP`, `info_collector.GENTLE_WORKLOAD_NOTE`.
+  2026-10-30 (VD transfer), each `False` for the earlier behaviour:
+  `ticket.FOLLOW_UP_WITH_CONTEXT`, `intent_classifier.LIVE_COLLECTION_HOLDS`,
+  `info_collector.SIBLING_SWITCH_KEEPS_ANSWERS`, `info_collector.CLARIFY_REASKS_PENDING`,
+  `info_collector.EITHER_OR_YES_NO`, `info_collector.EXPERIENCE_ANSWERS_HIRE_SOURCE`.
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2116,6 +2126,19 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-30** - **VD transfer, all at once (3766, 12:38-12:54 UTC; the
+  first run was deleted by a reset, so it was rebuilt from the screenshots).**
+  The lost answers were a SWITCH: "i did not understand what is this for ?"
+  carries a "?", so the answer rule did not hold the live transfer, the model's
+  new_hiring won, the switch cleared every non-portable answer, and the
+  new_hiring list (first-timer, how soon) came back. Now a question about our
+  question or a sibling swap keeps the live flow, and a sibling switch keeps
+  every shared answer. Also: follow-ups name their subject, the clarification
+  re-asks the pending question, "yes" to own-room-or-sharing is own room, and
+  stated experience answers hire_source. Replayed read-only on the real model:
+  closing summary reached, no question asked twice. `selfcheck_golive.py` 98
+  (8 new); 6 switches off, each red. E2E not run (fast fix).
 
 - **2026-10-29** - **Xing Chain (4443, 13:54-14:09 UTC; the report's times
   were IST): style, closing summary, household, workload.** (1) The style

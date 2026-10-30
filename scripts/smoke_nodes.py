@@ -2386,7 +2386,9 @@ CASES = [
                              "helper_profile": 1},
       "history_text": "You: Any preference on her age or experience?",
       "_stub_extraction": {},
-      "_expect_prompt": "Do NOT offer them a first-timer"}),
+      # 2026-10-30: the stated experience now ANSWERS hire_source
+      # (EXPERIENCE_ANSWERS_HIRE_SOURCE), so the question is not asked at all.
+      "_forbid_prompt": "first-timer"}),
     ("info_collector", "...while a client with no preference still is",
      {"service_type": "new_hiring", "intent": "new_hiring",
       "incoming_text": "no preference",

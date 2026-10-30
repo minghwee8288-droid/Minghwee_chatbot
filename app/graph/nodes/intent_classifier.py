@@ -146,6 +146,25 @@ _EXPLICIT_HUMAN = re.compile(
 # transfer question again. "Hire a [nationality] helper" with no transfer,
 # release or return word in it is a NEW HIRE. A question about it is answered
 # (answer_only); the next turn may collect. False = the classifier's label.
+# 2026-10-30: a live collection holds through a question about our own
+# question, and through the model swapping one hiring flow for its sibling on a
+# turn that names no service (see the rule after the answer rule).
+LIVE_COLLECTION_HOLDS = True
+_HIRING_SIBLINGS = frozenset({"new_hiring", "transfer", ticket_service.TRANSFER_EMPLOYER})
+_ASKS_WHAT_WE_MEANT = re.compile(
+    r"\b(?:did\s*n[o']?t|do\s*n[o']?t|didnt|dont|not)\s+(?:understand|get)\b"
+    r"|\bwhat\s+(?:is|was)\s+(?:this|that|it)\s+for\b|\bwhat\s+do\s+you\s+mean\b"
+    r"|\bwhat\s+does\s+(?:this|that|it)\s+mean\b|\bwhy\s+(?:are|do)\s+you\s+ask"
+    r"|\bmeaning\s*\?|\bnot\s+clear\b|\bunclear\b",
+    re.IGNORECASE,
+)
+
+
+def asks_what_we_meant(message: str) -> bool:
+    """The client asking what our last question meant, or why we asked it."""
+    return bool(_ASKS_WHAT_WE_MEANT.search(message or ""))
+
+
 HIRE_IS_NEW_HIRE = True
 _HIRES_A_HELPER = re.compile(
     r"\b(?:hire|hiring|employ|employing)\s+(?:a\s+|an\s+|one\s+|another\s+)?(?:new\s+)?"
@@ -1041,6 +1060,32 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
         logger.info(
             "Conversation %s: %r is an answer to our own question - keeping %s "
             "rather than switching to %s",
+            state.get("conversation_id"), message[:40], active_service, service_type,
+        )
+        service_type = active_service
+        intent = active_service if active_service in ALL_INTENTS else intent
+
+    # 2026-10-30 (3766, transfer, all at once): "i did not understand what is
+    # this for ?" carries a "?", so the answer rule above let the model's
+    # new_hiring win; the switch cleared the transfer answers and six answered
+    # questions were asked again. A question about OUR question, or a turn that
+    # names no service while one hiring flow is live and the model picks its
+    # sibling, stays on the live collection. False = the classifier's label.
+    if (
+        LIVE_COLLECTION_HOLDS
+        and active_service
+        and service_type
+        and service_type != active_service
+        and active_service not in (state.get("blocked_topics") or {})
+        and not _named_service(message)
+        and not hires_a_new_helper(message)
+        and (
+            asks_what_we_meant(message)
+            or ({active_service, service_type} <= _HIRING_SIBLINGS)
+        )
+    ):
+        logger.info(
+            "Conversation %s: %r stays on the live %s collection rather than %s",
             state.get("conversation_id"), message[:40], active_service, service_type,
         )
         service_type = active_service
