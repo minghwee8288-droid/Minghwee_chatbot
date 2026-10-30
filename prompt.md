@@ -3417,3 +3417,12 @@ then no embassy step and no travel.
 
 Every closing summary (every flow) numbers each group from 1: "From you" 1-2,
 "From the helper" 1-3 (`guards.NUMBER_EACH_GROUP`).
+
+Replacement closing summary (30 October): built in code from the fees document
+(`REPLACEMENT_FIXED_SUMMARY`). "Here is everything for replacing <first name>:",
+the timeline (4 to 6 weeks from overseas, 1 to 2 for a transfer helper), "If you
+need someone sooner, a transfer helper already in Singapore can usually start in
+1–2 weeks." when they want it ASAP, the package rule ($288 only inside 6 months
+of a placement by us; otherwise "our agent will confirm the fee"), "From you"
+1-2 and "About your current helper" 1-2, then her Work Permit cancelled, her
+flight home, her security bond discharged, and the new helper's six steps.

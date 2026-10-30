@@ -663,6 +663,7 @@ because the lead is opened early and the ticket is created much later.
 | "skip" answers an optional question | `info_collector._SKIPS_IT` (`SKIP_IS_AN_ANSWER`) | 2026-10-30: "skip" to the helper's number got "could you share another number?". skip / don't have / not sure / no idea to the optional field we last asked files it "not provided". |
 | A nationality the client named is not asked; the name question asks the name only | `info_collector` (`NATIONALITY_FROM_WORDS`, `NO_NATIONALITY_WITH_NAME`) | 2026-10-30: "may I know the helper's full name and nationality?", then the nationality again. `helper_nationality` is filled from the one nationality named in the client's lines for this request; a helper-name reply that asks a nationality becomes the written name question. |
 | Each group of a closing summary is numbered from 1 | `guards.numbered_from_one_per_group` (`NUMBER_EACH_GROUP`), on every briefing turn in `info_collector` | "From you" 1-2, "From the helper" 1-3; a label line ending ":" restarts the count. |
+| The replacement closing summary is built from the fees document | `info_collector.replacement_summary` (`REPLACEMENT_FIXED_SUMMARY`) | 2026-10-30: a 2-year helper being sent home got "our agent will confirm the exact fee" with no rule and none of her exit steps. Heading with her first name; the package rule (2 replacements within 6 months: $288 inside it, no figure after 6 months, not placed by us, or tenure unknown); a transfer-helper line on ASAP/urgent; "From you" / "About your current helper"; her Work Permit cancelled, flight home, bond discharged, then the new helper's steps. English only. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -1019,6 +1020,8 @@ Easy to get wrong:
   2026-10-30 (direct-hire intake), each `False` for the earlier behaviour:
   `info_collector.SKIP_IS_AN_ANSWER`, `info_collector.NATIONALITY_FROM_WORDS`,
   `info_collector.NO_NATIONALITY_WITH_NAME`, `guards.NUMBER_EACH_GROUP`.
+  2026-10-30 (replacement summary), `False` for the model-written summary:
+  `info_collector.REPLACEMENT_FIXED_SUMMARY`.
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2135,6 +2138,22 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-10-30** - **Replacement closing summary (test 6:57-7:01 PM IST: helper
+  with the client 2 years, sent home, ASAP, wants a Filipino with 3 years).**
+  The model-written summary deferred the fee with no rule, listed only the
+  client's documents and four of the new helper's steps. Now built from the
+  fees document: "Here is everything for replacing <first name>:", the
+  timeline, one "a transfer helper already in Singapore can usually start in
+  1-2 weeks" line on ASAP/urgent, the package rule (fees doc, "Fees: when a
+  figure is given": $288 only when we placed her under 6 months ago; after 6
+  months, not ours, or tenure unknown, the rule and "our agent will confirm the
+  fee"), documents "From you" / "About your current helper", and her exit
+  (Work Permit cancelled, flight home, bond discharged) before the new
+  helper's six steps. Replayed read-only on the real model with the test's
+  messages: as built. `selfcheck_golive.py` 4 new; switch off and the ASAP line
+  removed, each red. Two `smoke_nodes.py` replacement states now read the
+  built reply. E2E not run.
 
 - **2026-10-30** - **Direct-hire intake, from the 983b006 replay.** "skip" to
   the helper's number was asked again (optional, max_asks 2): a skip / don't

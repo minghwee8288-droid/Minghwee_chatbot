@@ -951,12 +951,61 @@ async def scenario_direct_hire_intake() -> None:
           "From the helper:\n1. A copy of her passport\n2. A copy of her Work Permit" in reply)
 
 
+async def scenario_replacement_summary() -> None:
+    """2026-10-30 replacement test: 2 years with the client, sent home, ASAP."""
+    ico = importlib.import_module("app.graph.nodes.info_collector")
+    base = {"full_name": "VD", "helper_name": "pogo growwstacks", "helper_tenure": "2 years",
+            "helper_from_us": "hired elsewhere - no placement on record",
+            "reason": "rude", "current_helper_exit": "send her back to her home country",
+            "timeline": "as soon as possible",
+            "replacement_preferences": "Filipino, 3 years of experience"}
+    t = ico.replacement_summary(base)
+    inside = ico.replacement_summary({**base, "helper_tenure": "4 months",
+                                      "helper_from_us": "from Ming Hwee - placed by us"})
+
+    # 1. The package rule: passed after 6 months (no figure), $288 inside it.
+    check("replacement fee: 2 years -> the 6-month period has passed, agent confirms, no "
+          "figure; inside the package -> $288",
+          "2 replacements within 6 months" in t and "that replacement period has passed" in t
+          and "$" not in t and "$288" in inside)
+    # 2. ASAP -> the transfer-helper line, once.
+    check("replacement ASAP: one line offering a transfer helper in 1-2 weeks",
+          t.count("If you need someone sooner, a transfer helper already in Singapore can "
+                  "usually start in 1–2 weeks.") == 1
+          and "sooner" not in ico.replacement_summary({**base, "timeline": "next month"}))
+    # 3. Documents grouped and numbered from 1; her exit steps before the new helper's.
+    check("replacement documents 'From you' / 'About your current helper' from 1, and her "
+          "Work Permit cancelled, flight home, bond discharged before the new helper's steps",
+          "From you:\n1. A copy of your NRIC\n2. Proof of income" in t
+          and "About your current helper:\n1. A copy of her passport\n2. Her Work Permit details" in t
+          and t.index("cancel Pogo's Work Permit") < t.index("book her flight home")
+          < t.index("security bond is discharged") < t.index("collected through our partner"))
+    # 4. Heading with her first name, and the node sends the built summary.
+    async def capture(*a, **kw):
+        return "MODEL-WRITTEN"
+    with patch.object(ico, "complete", new=capture, create=True), \
+         patch.object(ico, "complete_json", new=AsyncMock(return_value={}), create=True), \
+         patch.object(_rag_node, "briefing_records", new=AsyncMock(return_value={})), \
+         patch.object(ico, "_open_lead_early", new=AsyncMock(return_value={})):
+        out = await ico.info_collector({
+            "conversation_id": 1, "phone": CLIENT, "contact_type": "employer",
+            "intent": "replacement", "service_type": "replacement",
+            "collected_service": "replacement", "collected_info": dict(base),
+            "asked_field_counts": {k: 1 for k in base}, "question_style": "all",
+            "rag_matches": [], "history_text": "You: What are you looking for?",
+            "incoming_text": "Filipino, 3 years of experience"})
+    check("replacement heading 'Here is everything for replacing Pogo:' and the node sends it",
+          t.startswith("Here is everything for replacing Pogo:\n")
+          and str(out.get("reply") or "").startswith("Here is everything for replacing Pogo:"))
+
+
 async def main() -> int:
     for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
                      scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights,
                      scenario_vague_action, scenario_hire_documents, scenario_call_and_wording,
                      scenario_xing_chain, scenario_vd_transfer, scenario_direct_hire_summary,
-                     scenario_direct_hire_intake):
+                     scenario_direct_hire_intake,
+                     scenario_replacement_summary):
         try:
             await scenario()
         except Exception as exc:  # noqa: BLE001 - a crash is a failure, by name

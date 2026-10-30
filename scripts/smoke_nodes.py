@@ -1478,9 +1478,8 @@ CASES = [
                      "2 replacements within 6 months, and the replacement and "
                      "documentation fee is $288.\n\nI've passed everything to our team, "
                      "and a live agent will connect with you shortly.",
-      "_expect_reply": "$288",
-      "_expect_prompt": "THE COST SECTION, FOR THIS REPLACEMENT",
-      "_forbid_prompt": "--- The cost of a replacement ---"}),
+      # Built from the fees document since 2026-10-30 (REPLACEMENT_FIXED_SUMMARY).
+      "_expect_reply": "The replacement and documentation fee is $288"}),
     # ...and at 7 months it is outside the period: no package fee note.
     ("info_collector", "a replacement outside the package period defers its fee",
      {"intent": "replacement", "service_type": "replacement", "contact_type": "employer",
@@ -1496,8 +1495,7 @@ CASES = [
                              "replacement_preferences": 1},
       "briefed_services": [],
       "_stub_extraction": {"replacement_preferences": "more experienced with kids"},
-      "_expect_prompt": "--- The cost of a replacement ---",
-      "_forbid_prompt": "THE COST SECTION, FOR THIS REPLACEMENT"}),
+      "_expect_reply": "that replacement period has passed, so our agent will confirm the fee"}),
     # ...and it is home leave's note, not every briefing's. A passport renewal
     # has no flight in it at all.
     #

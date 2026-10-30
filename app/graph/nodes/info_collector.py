@@ -2660,6 +2660,95 @@ def direct_hire_summary(collected: dict) -> str:
     return "\n".join(lines)
 
 
+# 2026-10-30 (replacement, current helper with the client 2 years, being sent
+# home, "ASAP"): the model-written summary deferred the fee with no rule,
+# listed only the client's documents and gave four of the new helper's steps,
+# nothing about the helper leaving. Built here instead, from the fees document:
+# the package rule (2 replacements within 6 months; $288 inside it, no figure
+# outside it, not placed by us, or tenure unknown), one transfer-helper line
+# when they want it ASAP, documents "From you" / "About your current helper",
+# her exit steps (Work Permit cancelled, flight home, security bond
+# discharged) and then the new helper's steps, headed "Here is everything for
+# replacing <first name>:". English only. False = the model-written summary.
+REPLACEMENT_FIXED_SUMMARY = True
+_WANTS_TRANSFER_HELPER = re.compile(r"\btransfer\b|\balready\s+in\s+singapore\b", re.IGNORECASE)
+_TRANSFERRING_OUT = re.compile(r"\btransfer", re.IGNORECASE)
+_GOING_HOME = re.compile(r"\bhome\b|\bback\b|\brepatriat|\bsend(?:ing)?\s+her\b", re.IGNORECASE)
+
+
+def replacement_summary(collected: dict) -> str:
+    """The replacement closing summary, from the fees document."""
+    name = str(collected.get("helper_name") or "").strip()
+    first = name.split()[0] if name and name.lower() != UNANSWERED else ""
+    first = guards.tidy_name_case(first) if first else ""
+    her = first or "your current helper"
+    lines = [f"Here is everything for replacing {first}:" if first
+             else "Here is everything for your replacement:", ""]
+
+    wants = str(collected.get("replacement_preferences") or "")
+    transfer_helper = bool(_WANTS_TRANSFER_HELPER.search(wants)) and "not" not in wants.lower()
+    lines.append("It takes about 1 to 2 weeks for a transfer helper already in Singapore."
+                 if transfer_helper else
+                 "It takes about 4 to 6 weeks for a replacement helper from overseas.")
+    when = str(collected.get("timeline") or "")
+    if not transfer_helper and (_ASAP.search(when) or re.search(r"\burgent", when, re.IGNORECASE)):
+        lines.append("If you need someone sooner, a transfer helper already in Singapore can "
+                     "usually start in 1–2 weeks.")
+
+    months = months_with_us(collected.get("helper_tenure"))
+    from_us = str(collected.get("helper_from_us") or "")
+    rule = "A replacement under a Ming Hwee package is covered for 2 replacements within 6 months"
+    if months is not None and months >= _REPLACEMENT_PERIOD_MONTHS:
+        fee = (f"{rule}. As {her} has been with you for more than 6 months, that replacement "
+               "period has passed, so our agent will confirm the fee.")
+    elif from_us and not placed_by_us(from_us):
+        fee = (f"{rule} of a helper we placed. As {her} was not placed by us, it does not "
+               "apply, so our agent will confirm the fee.")
+    elif months is not None and placed_by_us(from_us):
+        fee = (f"{rule}, and {her} was placed by us less than 6 months ago, so this "
+               "replacement falls under her package. The replacement and documentation fee "
+               "is $288; insurance and third-party processing fees are charged again.")
+    else:
+        fee = f"{rule} of placement; our agent will confirm the fee for your replacement."
+    lines += ["", fee, "",
+              "Here is what we will need:",
+              "From you:",
+              "1. A copy of your NRIC",
+              "2. Proof of income (your Income Tax Assessment or a declaration of monthly income)",
+              "About your current helper:",
+              "1. A copy of her passport",
+              "2. Her Work Permit details"]
+
+    exit_ = str(collected.get("current_helper_exit") or "")
+    if _TRANSFERRING_OUT.search(exit_):
+        steps = [f"We arrange {her}'s transfer to her new employer; her Work Permit is "
+                 "cancelled once the transfer goes through, and her security bond is discharged."]
+    elif _GOING_HOME.search(exit_):
+        steps = [f"We cancel {her}'s Work Permit with MOM.",
+                 "We book her flight home.",
+                 "Her security bond is discharged once she has left Singapore."]
+    else:
+        steps = [f"We cancel {her}'s Work Permit, arrange her flight home or her transfer, "
+                 "and her security bond is discharged."]
+    steps += [
+        "We go through your revised requirements, shortlist matching candidates and arrange "
+        "a video interview.",
+        "Once you confirm the one you want, you sign the Replacement form, authorise us "
+        "through Singpass and sign the rest of the set electronically.",
+        "We send the Job Offer Form to her agency, and the new helper's documents (passport "
+        "copy, medical report, school certificate, signed Job Offer Form) are collected "
+        "through our partner.",
+        "We submit the application to MOM; once the In-Principle Approval (IPA) is issued, "
+        "you both sign it.",
+        "We arrange her insurance and security bond and agree when you are free to collect her.",
+        "She arrives, has her medical and her Settling-In Programme, and we hand over to you.",
+    ]
+    lines += ["", "Here is the process from here:"]
+    lines += [f"{i}. {s}" for i, s in enumerate(steps, 1)]
+    lines += ["", BRIEFING_CLOSING_LINE]
+    return "\n".join(lines)
+
+
 def states_a_time(text: str) -> bool:
     """A date, a span, or 'immediately' / ASAP."""
     return states_a_date(text) or bool(_ASAP.search(text or ""))
@@ -6143,9 +6232,15 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     complaint_name = str(collected.get("full_name") or "").strip()
     # Direct hire: the summary is built from the fees document, not written by
     # the model (DIRECT_HIRE_FIXED_SUMMARY, 2026-10-30), in English only.
+    # Replacement likewise (REPLACEMENT_FIXED_SUMMARY, 2026-10-30).
+    fixed_builder = (
+        direct_hire_summary if DIRECT_HIRE_FIXED_SUMMARY and service_type == "direct_hiring"
+        else replacement_summary if REPLACEMENT_FIXED_SUMMARY and service_type == "replacement"
+        else None
+    )
     fixed_summary = (
-        direct_hire_summary(collected)
-        if DIRECT_HIRE_FIXED_SUMMARY and service_type == "direct_hiring"
+        fixed_builder(collected)
+        if fixed_builder
         and (ticket_service.briefing_due(service_type, collected, state.get("briefed_services"))
              or closing_due_now) and not briefing_waits
         and not mainly_non_english(" ".join(
