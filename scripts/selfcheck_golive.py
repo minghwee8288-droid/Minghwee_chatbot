@@ -1089,6 +1089,14 @@ async def scenario_home_leave_2nov() -> None:
           and not __import__("re").search(r"\b(?:she|her)\b", text)
           and ico.HELPER_QUESTIONS_SECOND_PERSON)
 
+    # 1b. Phone test 2 Nov 3:47 PM: "i am sick i wanna go home" is her asking for herself.
+    check("helper-for-herself: 'i am sick i wanna go home' is the helper; 'my helper wanna "
+          "go home' is not",
+          ico._home_leave_for_herself({"incoming_text": "hey i am sick i wanna go home"})
+          and ico._home_leave_for_herself({"incoming_text": "i need to go back to my country"})
+          and not ico._home_leave_for_herself({"incoming_text": "my helper wanna go home"})
+          and not ico._home_leave_for_herself({"incoming_text": "i want her to go home"}))
+
     # 2. The ticket step: only once our agent confirms, never "now".
     briefing = ("Here is everything for Sneaky's home leave:\n\nIt takes about 2 weeks.\n\n"
                 "Here is the process from here:\n"

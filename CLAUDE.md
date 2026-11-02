@@ -1032,6 +1032,8 @@ Easy to get wrong:
   2026-11-02 (home leave), each `False` for the earlier behaviour:
   `info_collector.HELPER_QUESTIONS_SECOND_PERSON`, `info_collector.TICKET_AFTER_CONFIRM`,
   `info_collector.OPENING_ANSWERS_KEPT`, `info_collector.LEAVE_TIMELINE_CONFLICT`.
+  2026-11-02 (phone test), `False` for the earlier behaviour:
+  `info_collector.OWN_LEAVE_COLLOQUIAL` ("i wanna go home" is the helper herself).
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2149,6 +2151,17 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-02** - **"i am sick i wanna go home" was asked "May I know your
+  helper's name?"** (phone test 3:47 and 3:53 PM, after the deploy of the entry
+  below). The second-person fix was working; the detector of a helper asking
+  for herself (`_OWN_HOME_LEAVE`) did not know "wanna", so both chats ran the
+  employer's flow. Now wanna / wana / gonna / gotta / "i'd like", and "go back
+  to my country / village / ...", count (`OWN_LEAVE_COLLOQUIAL`); "my helper
+  wanna go home" and "i want her to go home" still do not. Replayed both chats
+  read-only on the real model: her questions in "you", her documents, the
+  "you or your employer" ticket line. `selfcheck_golive.py` 1 new, red with the
+  switch off; smoke and flows pass. E2E not run.
 
 - **2026-11-02** - **Home leave tests (IST 2:54-3:07 PM).** Replayed read-only on
   the real model before the change, all four reproduced: (1) Meera, asking for

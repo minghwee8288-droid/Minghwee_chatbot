@@ -771,9 +771,21 @@ _SPEAKING_AS_HELPER = re.compile(
 #     "I want HER to go home" is the employer saying the same sentence about
 #     somebody else, and it carries no helper word to be caught by - so the gap
 #     is closed rather than widened, the way _NO_PREFERENCE is anchored.
+#     2 Nov phone test: "i am sick i wanna go home" matched nothing ("wanna"),
+#     so she was asked her helper's name twice in a row. The colloquial forms
+#     (wanna / wana / gonna / gotta, "i'd like"), and going back to her own
+#     country or village, count too (`OWN_LEAVE_COLLOQUIAL`).
+OWN_LEAVE_COLLOQUIAL = True
+_WANT = (r"(?:want|need|would\s+like|wish|plan|am\s+planning|wanna|wana|wan|gonna|gotta|"
+         r"'?d\s+like)" if OWN_LEAVE_COLLOQUIAL
+         else r"(?:want|need|would\s+like|wish|plan|am\s+planning)")
 _OWN_HOME_LEAVE = re.compile(
-    r"\bi\s+(?:want|need|would\s+like|wish|plan|am\s+planning)\s+(?:to\s+)?"
+    r"\bi\s*" + _WANT + r"\s+(?:to\s+)?"
     r"(?:really\s+|just\s+|also\s+)?go(?:ing)?\s+(?:back\s+)?home\b"
+    + (r"|\bi\s*" + _WANT + r"\s+(?:to\s+)?(?:really\s+|just\s+)?go\s+back\s+to\s+my\s+"
+       r"(?:own\s+)?(?:country|hometown|home\s*town|village|family|kampung|province|"
+       r"philippines|indonesia|myanmar)\b" if OWN_LEAVE_COLLOQUIAL else "")
+    + r""
     r"|\bcan\s+i\s+go\s+(?:back\s+)?home\b"
     r"|\bi\s+(?:want|need|would\s+like|wish)\s+(?:to\s+)?"
     r"(?:take\s+|apply\s+for\s+|go\s+on\s+)?(?:my\s+)?home\s+leave\b"
