@@ -1034,6 +1034,8 @@ Easy to get wrong:
   `info_collector.OPENING_ANSWERS_KEPT`, `info_collector.LEAVE_TIMELINE_CONFLICT`.
   2026-11-02 (phone test), `False` for the earlier behaviour:
   `info_collector.OWN_LEAVE_COLLOQUIAL` ("i wanna go home" is the helper herself).
+  2026-11-02 (phone test 8:08 PM), each `False` for the earlier behaviour:
+  `info_collector.BRIEFING_FEE_THIS_TURN`, `info_collector.URGENT_SENTENCE_ONLY`.
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2151,6 +2153,18 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-02** - **The helper's own home-leave summary had no cost, and the
+  reference sat in step 1** (phone test 8:08 PM, Filipino, all answers in one
+  message). Replayed read-only on the real model, both reproduced: the fee check
+  read the nationality from the state before this turn's answers, so the
+  "no fee for this nationality" note fired and $400 was deferred
+  (`BRIEFING_FEE_THIS_TURN`, `briefing_fee_known`); and the urgency clean-up of
+  the sooner-than-usual line dropped the whole closing line, handover included,
+  so the reference anchored on step 1 (`URGENT_SENTENCE_ONLY`: only the urgent
+  sentence goes). After: "The home leave fee is $400...", reference after the
+  handover line. `selfcheck_golive.py` 2 new, each red with its switch off;
+  smoke and flows pass. E2E not run.
 
 - **2026-11-02** - **"i am sick i wanna go home" was asked "May I know your
   helper's name?"** (phone test 3:47 and 3:53 PM, after the deploy of the entry

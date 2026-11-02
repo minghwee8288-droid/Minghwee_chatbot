@@ -1125,6 +1125,24 @@ async def scenario_home_leave_2nov() -> None:
                    "promise it will be ready by then.")
           and line in fixed and "It takes about 2 weeks." not in fixed and later == "")
 
+    # 5. Phone test 2 Nov 8:08 PM (Pogo, PH): the urgency clean-up took the whole
+    #    closing line, handover included, so the reference landed in step 1.
+    closing = ("Here is everything for your home leave:\n\nIt takes approximately 4 weeks.\n\n"
+               "1. Our agent will contact your employer.\n\nWe will flag your request as urgent "
+               "with our team. I have passed everything to our team, and a live agent will "
+               "connect with you shortly.")
+    out5 = ico.with_leave_timeline_line(closing, "It usually takes about 4 weeks. We'll treat it "
+                                        "as urgent, but we can't promise it will be ready by then.")
+    check("home leave urgent clean-up drops only the urgent sentence, the handover line stays",
+          "I have passed everything to our team" in out5 and "flag your request" not in out5)
+
+    # 6. The same test: nationality answered in the completing message, $400 deferred.
+    st = {"service_type": "home_leave", "collected_info": {"requested_by": "helper"},
+          "incoming_text": "1. i am from philipines"}
+    check("home leave fee: nationality answered this turn counts (PH fee held), none -> not held",
+          ico.briefing_fee_known(st, {"nationality": "Filipino"}, "home_leave")
+          and not ico.briefing_fee_known(st, {}, "home_leave"))
+
 
 async def main() -> int:
     for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,

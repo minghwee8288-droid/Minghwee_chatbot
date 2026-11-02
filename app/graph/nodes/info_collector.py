@@ -1802,6 +1802,14 @@ HELPER_QUESTIONS_SECOND_PERSON = True
 TICKET_AFTER_CONFIRM = True
 OPENING_ANSWERS_KEPT = True
 LEAVE_TIMELINE_CONFLICT = True
+# 2 Nov phone test (Pogo, PH, all answers in one message): the closing summary
+# had no cost and no handover line. BRIEFING_FEE_THIS_TURN - the fee check read
+# the nationality before this turn's answers. URGENT_SENTENCE_ONLY - the
+# urgency clean-up dropped the whole closing line ("We will flag your request
+# as urgent... I have passed everything to our team..."), so the reference
+# landed in step 1; only the urgent sentence goes now.
+BRIEFING_FEE_THIS_TURN = True
+URGENT_SENTENCE_ONLY = True
 
 _SECOND_PERSON = (
     (re.compile(r"\bis she\b"), "are you"), (re.compile(r"\bshe is\b"), "you are"),
@@ -1891,6 +1899,12 @@ def leave_timeline_line(collected: dict) -> str:
             "it will be ready by then.")
 
 
+def briefing_fee_known(state: ConversationState, collected: dict, service_type: str | None) -> bool:
+    """Whether we hold this service's fee for her nationality, this turn's answers included."""
+    fee_state = {**state, "collected_info": collected} if BRIEFING_FEE_THIS_TURN else state
+    return ticket_service.fee_is_known_for(service_type, _known_nationality(fee_state))
+
+
 def with_leave_timeline_line(reply: str, line: str) -> str:
     """The timing line replaced by the two fixed sentences; other urgency lines go."""
     if not line or not reply:
@@ -1903,6 +1917,11 @@ def with_leave_timeline_line(reply: str, line: str) -> str:
             placed = True
             continue
         if bare and placed and re.search(r"\burgent", text, re.I) and len(text) < 220:
+            if URGENT_SENTENCE_ONLY:
+                kept = [s for s in re.split(r"(?<=[.!?])\s+", text.strip())
+                        if not re.search(r"\burgent", s, re.I)]
+                if kept:
+                    out.append(" ".join(kept))
             continue
         out.append(text)
     if not placed:
@@ -5587,8 +5606,11 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         # sentence about an employer's service. CANDIDATE_BRIEFING_NOTE already
         # forbids every figure outright, and bolting this on would reintroduce
         # the word cost to the one message that must not contain it.
+        # The nationality is read with THIS turn's answers (BRIEFING_FEE_THIS_TURN):
+        # 2 Nov, "i am from philipines" answered in the message that completed the
+        # intake was not in the state yet, so a $400 fee we hold was deferred.
         if service_type not in ticket_service.CANDIDATE_SERVICES and not (
-            ticket_service.fee_is_known_for(service_type, _known_nationality(state))
+            briefing_fee_known(state, collected, service_type)
         ):
             # "her embassy" is the right phrase for a passport renewal and
             # a home leave, where the fee IS an embassy's, and nonsense for a
