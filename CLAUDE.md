@@ -666,6 +666,7 @@ because the lead is opened early and the ticket is created much later.
 | The replacement closing summary is built from the fees document | `info_collector.replacement_summary` (`REPLACEMENT_FIXED_SUMMARY`) | 2026-10-30: a 2-year helper being sent home got "our agent will confirm the exact fee" with no rule and none of her exit steps. Heading with her first name; the package rule (2 replacements within 6 months: $288 inside it, no figure after 6 months, not placed by us, or tenure unknown); a transfer-helper line on ASAP/urgent; "From you" / "About your current helper"; her Work Permit cancelled, flight home, bond discharged, then the new helper's steps. English only. |
 | The safety reply carries the reference, 995 and the MOM helpline, and no introduction | `handover_executor.complete_crisis_reply` (`CRISIS_REPLY_COMPLETE`) | 2026-10-30: "hey i was beaten up by my employer please help me" raised CB-2026-0143 (high) but the reply had no reference and nothing for someone injured. Every dispute_assault reply: 999 sentence, then "If you are injured, please call an ambulance on 995." and the MOM helpline 1800-339-5505 (English: fixed text; other languages: the model is told), the reference after the handover sentence, any "I'm Claire" opening removed, still no "anything else?". Supersedes `SAFETY_REPLY_SHOWS_REFERENCE` while on. |
 | More crisis phrases force the safety reply without the model | `intent_classifier.CRISIS_PATTERNS` / `crisis_keyword` (`CRISIS_KEYWORDS`), in the classifier override and `matches_assault_keywords` | 2026-10-30: locked in / not allowed out, not given food / starving, passport taken, not paid for months, touched / sexual / harassed, threatened, hit / slapped / beaten / hurt me, suicide / want to die (no self-harm flow exists, so it takes the same safety reply). First person where an employer uses the same words about a helper; "no food" only as none given. English plus a few Bahasa/Tagalog phrases. The model harm check is still the second layer. |
+| A helper asking for herself is asked as "you"; the ticket is booked only after our agent confirms; a stated reason is kept; travel sooner than usual is said | `info_collector.for_herself`, `ticket_step_after_confirm`, `names_a_leave_reason` over the request's lines, `leave_timeline_line` (`HELPER_QUESTIONS_SECOND_PERSON`, `TICKET_AFTER_CONFIRM`, `OPENING_ANSWERS_KEPT`, `LEAVE_TIMELINE_CONFLICT`) | Home leave tests 2 Nov: Meera's list said "Which country is she from?"; step 1 said "book Sneaky's air ticket now"; "she is not well" in the opening message was asked again; "this week" against ID ~2 weeks got no comment. Second person on home leave and passport renewal for the helper herself; any numbered ticket step becomes the fixed "Once our agent confirms..." sentence (helper: "you or your employer"); "not well"/health is a reason and the check reads the client's lines for this request; ID 2 / PH 4 weeks, travel sooner -> "It usually takes about N weeks. We'll treat it as urgent, but we can't promise it will be ready by then." replacing the timing line. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -1028,6 +1029,9 @@ Easy to get wrong:
   `handover_executor.CRISIS_REPLY_COMPLETE`.
   2026-10-30 (crisis keywords), `False` for ASSAULT_PATTERNS alone:
   `intent_classifier.CRISIS_KEYWORDS`.
+  2026-11-02 (home leave), each `False` for the earlier behaviour:
+  `info_collector.HELPER_QUESTIONS_SECOND_PERSON`, `info_collector.TICKET_AFTER_CONFIRM`,
+  `info_collector.OPENING_ANSWERS_KEPT`, `info_collector.LEAVE_TIMELINE_CONFLICT`.
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2145,6 +2149,22 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-02** - **Home leave tests (IST 2:54-3:07 PM).** Replayed read-only on
+  the real model before the change, all four reproduced: (1) Meera, asking for
+  her own leave, got the all-at-once list in the third person ("Which country
+  is she from?") - the written questions are the employer's; now every question
+  a helper is asked about herself is in "you" (home leave and passport renewal),
+  and her closing documents read "your employer's NRIC / your Work Permit / your
+  passport". (2) Step 1 "Please book Sneaky's air ticket now": the note told the
+  model to; it now says the client books only after our agent confirms, and the
+  code rewrites any ticket step to the fixed sentence. (3) "she is not well" in
+  the opening message was asked again: not a reason to the check, which also
+  read only the current message. (4) "this week" against an Indonesian home
+  leave (~2 weeks) is said plainly, with no promise. Replayed after: all four
+  right. `selfcheck_golive.py` 4 new, each red with its switch off; smoke and
+  flows pass (one flows check and prompt.md entries 39 and 45 follow the new
+  note wording). E2E not run.
 
 - **2026-10-30** - **Crisis keyword list widened** (`CRISIS_KEYWORDS`): eight
   groups now force the safety reply with no model call - locked in, no food,

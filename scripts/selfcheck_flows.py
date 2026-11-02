@@ -1088,7 +1088,8 @@ rows = [
  # ...and says WHY, which is the whole of the agency's reasoning: confirmed
  # dates are what let the embassy paperwork go in immediately.
  ("...and says why, so it does not read as an instruction out of nowhere",
-  "confirmed travel dates" in _flat(tmpl.HOME_LEAVE_TICKET_NOTE), True),
+  "prepare her embassy paperwork with the travel dates" in _flat(tmpl.HOME_LEAVE_TICKET_NOTE),
+  True),
  # The itinerary is a FILIPINO embassy document and the records say so; for an
  # Indonesian helper they do not list it. Asking for it as a document she needs
  # would contradict the document list in the same message. Same rule as

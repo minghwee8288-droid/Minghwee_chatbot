@@ -898,15 +898,11 @@ take her at her word, say so warmly, and the registration simply carries on.
 # automatically the other's.
 HOME_LEAVE_TICKET_NOTE = """
 
-ONE MORE THING BELONGS IN THE STEPS, AND IT IS THE MOST USEFUL THING IN THIS
-MESSAGE: tell them to go ahead and book her air ticket now, and to send us a
-copy of it once they have it.
-
-Put it as one of the numbered steps they follow, early in that list - it is the
-first thing they can actually do. Say why in the same breath: the confirmed
-travel dates are what let us prepare and submit her embassy paperwork straight
-away, so booking now is what stops the whole thing waiting on a date nobody has
-fixed yet. They do NOT need to wait for us before buying it.
+ONE MORE THING BELONGS IN THE STEPS: the air ticket. They book it only AFTER
+our agent confirms - never tell them to book it now. Use this step, word for
+word: "Once our agent confirms, you can book her air ticket and send us a copy
+of the itinerary, so we can prepare her embassy paperwork with the travel
+dates." No step may tell the client to do anything "now".
 
 If her nationality is FILIPINO, her ticket itinerary is also one of the
 documents her embassy set needs, so it belongs in the document list as well as
@@ -1088,19 +1084,15 @@ are written to the employer, so adapt them to her:
   and "the fee is settled with your employer" with no figure went out live on
   an Indonesian helper's leave we price at $250. Where we hold no fee for her
   nationality, the line above about our agent confirming it applies instead.
-- DOCUMENTS: only what SHE provides (her passport and her Work Permit). Her
-  ORIGINAL passport only where the records say the original is needed for her
-  nationality (a Filipino helper's embassy needs it); for an Indonesian helper
-  a copy is enough - say "a copy of your passport". Anything else on the
-  list (an NRIC, the forms) is her EMPLOYER's: say her employer provides it.
-  Never ask her for an NRIC.
+- DOCUMENTS: worded to her - "a copy of your employer's NRIC", "a copy of
+  your Work Permit", "a copy of your passport". Her ORIGINAL passport only
+  where the records say the original is needed for her nationality (a Filipino
+  helper's embassy needs it). Never "her" or "the helper's".
 - NEXT STEPS: our agent will contact her employer on the number she gave to
-  confirm the dates and prepare the paperwork. Tell her NOT to buy her ticket
-  until her employer has confirmed the dates with us - who pays for it follows
-  her employment contract.
-
-Replace any instruction above that tells the client to book the ticket or send
-us a copy of it: that is for an employer.
+  confirm the dates and prepare the paperwork. The ticket step, word for word:
+  "Once our agent confirms, you or your employer can book your air ticket and
+  send us a copy of the itinerary, so we can prepare your embassy paperwork
+  with the travel dates." Never tell her to act "now".
 """
 
 

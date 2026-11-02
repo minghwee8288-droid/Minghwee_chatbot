@@ -1070,6 +1070,54 @@ async def scenario_crisis_keywords() -> None:
               all(h == "dispute_assault" for h in hits) and not any(misses))
 
 
+async def scenario_home_leave_2nov() -> None:
+    """2 Nov home-leave tests: helper's own list in "you", ticket after our agent
+    confirms, a reason in the opening message kept, travel sooner than usual."""
+    ico = importlib.import_module("app.graph.nodes.info_collector")
+    from app.services import ticket as _t
+
+    # 1. A helper asking for herself is asked as "you", on home leave and passport renewal.
+    hl = [ico.for_herself(f) for f in _t.SERVICE_FIELDS["home_leave"]]
+    pr = [ico.for_herself(f) for f in _t.SERVICE_FIELDS["passport_renewal"]]
+    text = " ".join(f.question for f in hl + pr).lower()
+    msg, _ = ico.all_questions_message([f for f in hl if f.key in ("nationality", "leave_dates")],
+                                       {}, True)
+    check("helper-for-herself: home leave and passport questions say 'you', never 'she/her'",
+          "which country are you from?" in msg.lower()
+          and "when are you planning to travel, and when would you be back?" in msg.lower()
+          and "your current passport" in text
+          and not __import__("re").search(r"\b(?:she|her)\b", text)
+          and ico.HELPER_QUESTIONS_SECOND_PERSON)
+
+    # 2. The ticket step: only once our agent confirms, never "now".
+    briefing = ("Here is everything for Sneaky's home leave:\n\nIt takes about 2 weeks.\n\n"
+                "Here is the process from here:\n"
+                "1. Please book Sneaky's air ticket now and send us a copy once you have it.\n"
+                "2. Sneaky signs the Home Leave form.")
+    out = ico.ticket_step_after_confirm(briefing, False)
+    own = ico.ticket_step_after_confirm(briefing, True)
+    check("home leave ticket step: 'Once our agent confirms, you can book her air ticket...', "
+          "no 'now'; the helper's own says 'you or your employer'",
+          "1. " + ico.TICKET_STEP_EMPLOYER in out and " now" not in out.lower()
+          and ico.TICKET_STEP_HERSELF in own)
+
+    # 3. A reason stated in the opening message is not asked again.
+    check("home leave: 'she is not well' in the opening message is a reason (not re-asked)",
+          ico.names_a_leave_reason("my helper want to go home she is not well")
+          and not ico.names_a_leave_reason("my helper want to go home"))
+
+    # 4. Travel sooner than the usual time is said plainly, no promise.
+    line = ico.leave_timeline_line({"nationality": "Indonesian",
+                                    "leave_dates": "this week, back after 3 weeks"})
+    later = ico.leave_timeline_line({"nationality": "Indonesian", "leave_dates": "next month"})
+    fixed = ico.with_leave_timeline_line(briefing, line)
+    check("home leave 'this week' (ID, ~2 weeks): 'It usually takes about 2 weeks. We'll treat "
+          "it as urgent, but we can't promise it will be ready by then.'; next month: nothing",
+          line == ("It usually takes about 2 weeks. We'll treat it as urgent, but we can't "
+                   "promise it will be ready by then.")
+          and line in fixed and "It takes about 2 weeks." not in fixed and later == "")
+
+
 async def main() -> int:
     for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
                      scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights,
@@ -1078,7 +1126,8 @@ async def main() -> int:
                      scenario_direct_hire_intake,
                      scenario_replacement_summary,
                      scenario_crisis_reply,
-                     scenario_crisis_keywords):
+                     scenario_crisis_keywords,
+                     scenario_home_leave_2nov):
         try:
             await scenario()
         except Exception as exc:  # noqa: BLE001 - a crash is a failure, by name

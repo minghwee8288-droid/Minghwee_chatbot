@@ -7,6 +7,7 @@ feel like they are filling in a form.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import re
@@ -1718,9 +1719,17 @@ _NAMES_A_LEAVE_REASON = re.compile(
 )
 
 
+_NAMES_A_HEALTH_REASON = re.compile(
+    r"\bnot\s+(?:feeling\s+)?(?:well|good|fine|ok(?:ay)?)\b|\bhealth\b|\bdoctor\b"
+    r"|\btreatment\b|\bcheck\s*-?\s*up\b",
+    re.IGNORECASE,
+)
+
+
 def names_a_leave_reason(text: str) -> bool:
     """Does the client's own message say WHY she is going home?"""
-    return bool(_NAMES_A_LEAVE_REASON.search(text or ""))
+    return bool(_NAMES_A_LEAVE_REASON.search(text or "")) or bool(
+        OPENING_ANSWERS_KEPT and _NAMES_A_HEALTH_REASON.search(text or ""))
 
 
 # Phase 3 Step 5 Batch E item 3 (2026-10-14). Phone test: "My helper needs to
@@ -1762,6 +1771,132 @@ URGENT_LEAVE_NOTE = (
 def urgent_leave(collected: dict) -> bool:
     """A home leave whose filed reason is a family matter or an emergency."""
     return bool(guards._FAMILY_MATTER.search(str(collected.get("leave_reason") or "")))
+
+
+# Home leave tests, 2 Nov (IST), each False for the earlier behaviour:
+# HELPER_QUESTIONS_SECOND_PERSON - a helper asking for her own home leave or
+#   passport renewal (Meera, 2:54 PM) got "Which country is she from? When is she
+#   planning to travel...?" in the all-at-once list: the written questions are
+#   the employer's. Every question she is asked is now put to her ("you").
+# TICKET_AFTER_CONFIRM - step 1 said "Please book Sneaky's air ticket now";
+#   the client books only once our agent confirms. Any numbered step about the
+#   ticket becomes the fixed sentence, and no step says "now".
+# OPENING_ANSWERS_KEPT - "my helper want to go home she is not well" was asked
+#   the reason again: "not well" was not a reason to the check, and the check
+#   read only the current message. It reads the client's lines for this request.
+# LEAVE_TIMELINE_CONFLICT - "this week" against an Indonesian home leave of
+#   about 2 weeks got no comment. The timing line now says it plainly.
+HELPER_QUESTIONS_SECOND_PERSON = True
+TICKET_AFTER_CONFIRM = True
+OPENING_ANSWERS_KEPT = True
+LEAVE_TIMELINE_CONFLICT = True
+
+_SECOND_PERSON = (
+    (re.compile(r"\bis she\b"), "are you"), (re.compile(r"\bshe is\b"), "you are"),
+    (re.compile(r"\bdoes she\b"), "do you"), (re.compile(r"\bhas she\b"), "have you"),
+    (re.compile(r"\bshe has\b"), "you have"), (re.compile(r"\bshe\b"), "you"),
+    (re.compile(r"\bherself\b"), "yourself"), (re.compile(r"\bher\b"), "your"),
+    (re.compile(r"\byour helper's\s+"), "your "),
+)
+
+
+def to_second_person(text: str) -> str:
+    """'Which country is she from?' -> 'Which country are you from?'"""
+    for pattern, repl in _SECOND_PERSON:
+        text = pattern.sub(repl, text)
+    return text
+
+
+def for_herself(field: ticket_service.Field) -> ticket_service.Field:
+    """The field as asked of the helper herself."""
+    return dataclasses.replace(field, question=to_second_person(field.question),
+                               label=to_second_person(field.label))
+
+
+TICKET_STEP_EMPLOYER = ("Once our agent confirms, you can book her air ticket and send us a copy "
+                        "of the itinerary, so we can prepare her embassy paperwork with the "
+                        "travel dates.")
+TICKET_STEP_HERSELF = ("Once our agent confirms, you or your employer can book your air ticket "
+                       "and send us a copy of the itinerary, so we can prepare your embassy "
+                       "paperwork with the travel dates.")
+_TICKET_STEP = re.compile(r"\b(?:air\s*)?tickets?\b|\bitinerar(?:y|ies)\b|\bflights?\b", re.I)
+_ITEM = re.compile(r"^(\s*\d+\.\s+)")
+_PROCESS_HEAD = re.compile(r"\b(?:process|steps?|next)\b.*:\s*$", re.I)
+
+
+def ticket_step_after_confirm(reply: str, herself: bool) -> str:
+    """Every numbered ticket step becomes the one fixed sentence (once)."""
+    if not TICKET_AFTER_CONFIRM or not reply:
+        return reply
+    fixed = TICKET_STEP_HERSELF if herself else TICKET_STEP_EMPLOYER
+    lines, out, placed, group_head = reply.split("\n"), [], False, ""
+    for line in lines:
+        item = _ITEM.match(line)
+        if not item:
+            group_head = line if line.strip().endswith(":") else group_head
+            out.append(line)
+            continue
+        in_documents = bool(re.search(r"\bdocument|\bneed\b|\bprovide\b", group_head, re.I))
+        if _TICKET_STEP.search(line) and not in_documents:
+            if not placed:
+                out.append(item.group(1) + fixed)
+                placed = True
+            continue
+        out.append(line)
+    if not placed:
+        for i, line in enumerate(out):
+            if _PROCESS_HEAD.search(line) and not _ITEM.match(line):
+                out.insert(i + 1, "1. " + fixed)
+                placed = True
+                break
+    return "\n".join(out)
+
+
+_HOME_LEAVE_USUAL = {"ID": (14, "about 2 weeks"), "PH": (28, "about 4 weeks")}
+_TRAVEL_START = re.compile(r"\b(?:back|return\w*|until|till|coming)\b|,|\bto\b(?=\s+\d)", re.I)
+
+
+def _travel_in_days(value: str) -> int | None:
+    """Roughly how soon she travels, from the start of the dates given."""
+    start = _TRAVEL_START.split(str(value or ""), maxsplit=1)[0].strip()
+    if not start:
+        return None
+    if _ASAP.search(start) or re.search(r"\b(?:now|today|tonight)\b", start, re.I):
+        return 0
+    return _expiry_in_days(start)
+
+
+def leave_timeline_line(collected: dict) -> str:
+    """The two fixed sentences when she travels sooner than the usual time."""
+    if not LEAVE_TIMELINE_CONFLICT:
+        return ""
+    code = lead_service.nationality_code(str(collected.get("nationality") or ""))
+    usual = _HOME_LEAVE_USUAL.get(code or "")
+    days = _travel_in_days(collected.get("leave_dates"))
+    if not usual or days is None or days >= usual[0]:
+        return ""
+    return (f"It usually takes {usual[1]}. We'll treat it as urgent, but we can't promise "
+            "it will be ready by then.")
+
+
+def with_leave_timeline_line(reply: str, line: str) -> str:
+    """The timing line replaced by the two fixed sentences; other urgency lines go."""
+    if not line or not reply:
+        return reply
+    lines, out, placed = reply.split("\n"), [], False
+    for i, text in enumerate(lines):
+        bare = not _ITEM.match(text) and not text.strip().endswith(":")
+        if bare and not placed and i > 0 and re.search(r"\bweeks?\b|working days", text, re.I):
+            out.append(line)
+            placed = True
+            continue
+        if bare and placed and re.search(r"\burgent", text, re.I) and len(text) < 220:
+            continue
+        out.append(text)
+    if not placed:
+        head = 1 if len(out) > 1 else 0
+        out[head:head] = ["", line] if out and out[0].strip() else [line]
+    return "\n".join(out)
 
 _PREFERENCE_FILLER = re.compile(
     # `current` and `existing` joined 2026-09-18: "replace current helper" was
@@ -3827,6 +3962,13 @@ async def _extract(
 
     allowed = {field.key for field in fields}
     cleaned: dict[str, Any] = {}
+    # What the client has said for this request, for the reason and date checks
+    # (OPENING_ANSWERS_KEPT): a reason given in the opening message stands.
+    request_words = state.get("incoming_text") or ""
+    if OPENING_ANSWERS_KEPT:
+        since = _history_since(state.get("history_text") or "", state.get("collected_since"))
+        request_words = " ".join([line[len("Client:"):] for line in since.splitlines()
+                                  if line.startswith("Client:")] + [request_words])
     for key, value in result.items():
         if key not in allowed:
             continue
@@ -4033,7 +4175,7 @@ async def _extract(
             LEAVE_REASON_ASKED
             and key == "leave_reason"
             and not asked.get(key)
-            and not names_a_leave_reason(state.get("incoming_text") or "")
+            and not names_a_leave_reason(request_words)
         ):
             logger.info(
                 "Conversation %s: ignoring '%s' for 'leave_reason' - the client's "
@@ -4062,7 +4204,7 @@ async def _extract(
             LEAVE_DATES_ASKED
             and key == "leave_dates"
             and not asked.get(key)
-            and not states_a_date(state.get("incoming_text") or "")
+            and not states_a_date(request_words)
         ):
             logger.info(
                 "Conversation %s: ignoring '%s' for 'leave_dates' - the client's "
@@ -5626,6 +5768,10 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         if retry:
             follow_up_notes[key] = PHONE_RECHECK_NOTE
             missing = [retry] + [f for f in missing if f.key != key]
+    # 2 Nov: a helper asking for her own home leave or passport renewal is
+    # asked every question as "you" (HELPER_QUESTIONS_SECOND_PERSON).
+    if HELPER_QUESTIONS_SECOND_PERSON and (leave_by_helper or whose_passport == "sender"):
+        missing = [for_herself(f) for f in missing]
 
     # The lead is opened the moment the client has given a name, not at the end
     # of collection. A client who answers two questions and then stops used to
@@ -6324,6 +6470,11 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
     # about the price and nothing about the process, the documents or the
     # timing. Marked given, it would never be tried again - which is the
     # 2026-09-08 defect, in the branch added the same day the guard was.
+    # 2 Nov home leave: the ticket is booked once our agent confirms, and a
+    # travel date sooner than the usual time is said plainly.
+    if briefing_due and service_type == "home_leave":
+        reply = ticket_step_after_confirm(reply, leave_by_helper)
+        reply = with_leave_timeline_line(reply, leave_timeline_line(collected))
     # Each group of a closing summary is numbered from 1 (NUMBER_EACH_GROUP).
     if briefing_due:
         reply = guards.numbered_from_one_per_group(reply)
