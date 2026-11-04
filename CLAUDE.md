@@ -165,7 +165,8 @@ render-service/      headless-Chromium page renderer for kb-admin's KB watcher
                      marked "Render with browser" (017; KB_RENDER_URL/KB_RENDER_SECRET
                      on Vercel). System Chrome (RENDER_CHROME_CHANNEL=chrome), site
                      allowlist RENDER_ALLOWED_HOSTS (default kemlu.go.id).
-                     NOT deployed yet. See render-service/README.md.
+                     Live on the bot's domain (`GET /kb-render/health` answers, measured
+                     2026-11-04). See render-service/README.md.
 reset-ui/            Next.js "clear a conversation" page (separate deliverable, own
                      Vercel project). Standalone: imports nothing from app/, calls no
                      chatbot endpoint, talks to Supabase directly with the service-role
@@ -1643,6 +1644,14 @@ Ordered by what will hurt first.
     answers, and the route is registered. `/docs`, `/redoc`, `/openapi.json` and a GET on
     `/admin/preview` are 404. `/` and `/health` show the version, and `/health` the
     environment (production). Nothing sensitive, but the app's routes are the only filter.
+    **Allowlist written, not applied (2026-11-04):** `docs/nginx_allowlist.conf`, steps in
+    `docs/DEPLOY_2026-11-04.md`: `/webhook/`, `/health`, `/health/ready`, `/internal/suggest`,
+    `/kb-render/`, and 404 for the rest. Not parsed by nginx yet. `/internal/suggest` stays
+    because it is in daily use: the portal's Team Inbox calls it server to server from
+    `apps/Wp-chat-interface/functions/_lib/suggest.js`, 171 calls from 2026-10-28 to 2026-11-04,
+    rollout `on`. `/kb-render/` stays because kb-admin on Vercel uses it. `/admin/preview` is
+    left out: it is not registered on the server (GET 404), so kb-admin's "Test a question"
+    does not reach production today; it needs its own block if that changes.
     Still unchecked: the rest of this entry.
     **What the server exposes has not been checked.** Whapi must reach
     `/webhook/`, so part of the app is necessarily public. To confirm: on the
@@ -1838,8 +1847,10 @@ Ordered by what will hurt first.
       checkpoints to 18, 11,405 blobs to 1,003, 10,058 writes to 1, and blob bytes from 3.17 MB
       to 0.18 MB.
     - *What it costs.* Incident work in this file replays turns from older checkpoints, so
-      pruning at once would remove that. Only a thread idle for 14 days is pruned; the 14 is
-      the decision to confirm.
+      pruning at once would remove that. Only a thread idle for 14 days is pruned (decided
+      2026-11-04), and **never a thread whose conversation has an open ticket** (status `open`
+      or `in_progress`), however long it has been idle: an agent may hand that client back.
+      Checked inside the transaction, so a ticket raised mid-pass stops it.
     - *What to delete, per thread, in one transaction.* Older checkpoints; their writes; and
       a blob only if its version is older than the one the latest checkpoint's
       `channel_versions` gives for that channel. Blobs are keyed by channel and version, not
@@ -1849,39 +1860,28 @@ Ordered by what will hurt first.
     - *Replaced threads.* Delete all of a thread only if no
       `wp_chat_conversations.langgraph_thread_id` points at it and it has been idle 14 days.
       A thread a conversation points at always keeps its latest: a parked client can come
-      back weeks later, and that row is the collection. Never a broad delete by date.
+      back weeks later, and that row is the collection. Never a broad delete by date. A replaced
+      thread's rows do not name a conversation, so the open-ticket rule can only cover the
+      current thread unless the old id is recorded when it is replaced; the bot never reads a
+      replaced thread, so what is lost there is replay evidence, not a client's state.
     - *How.* `app/services/checkpoint_pruning.py` on the checkpointer's own pool, once at
       startup and then every 6 hours from `lifespan` (one worker, so one runner), a capped
       number of threads per pass, ids and counts in the log. Switch `CHECKPOINT_PRUNING`,
       default off; a dry-run mode logs what it would delete.
     - *Proof before switching on.* The test: `aget_tuple` returns identical state before and
-      after pruning, and a real turn then runs from it, with a deleted referenced blob as the
-      fault that must go red. On PGlite, then the TEST copy, then a production dry run and a
+      after pruning, and a real turn then runs from it, with a deleted referenced blob and a
+      pruned open-ticket thread as the faults that must go red. On PGlite, then the TEST copy, then a production dry run and a
       full-column export before and after the first real pass. `reset_conversation.py` and
       reset-ui need no change.
 51. **Alert: an external uptime monitor on `/health/ready`, decided 2026-11-04, not set up.**
     It runs outside the server, so it still fires when the process has refused to start
-    (nginx answers 502, so the keyword is absent). Set it up only after the next deploy: the
-    live body has no `checkpointer` field until then, and a `postgres` keyword would alert at
-    once. **The keyword `postgres` only catches memory or no checkpointer.** The value is set
-    at startup, so it still reads postgres during a later database outage; `"status":"ok"`
-    catches all three critical checks and is asserted on the bytes sent. The monitor must
-    match on the body, since this always answers 200 unless the process is down. No nginx
-    change is needed to reach it (section 9.34). The block below only rate-limits it, because
-    each request is a database read:
-    ```nginx
-    # http context, e.g. /etc/nginx/conf.d/health_ready_limit.conf
-    limit_req_zone $binary_remote_addr zone=health_ready:1m rate=12r/m;
-
-    # the bot's HTTPS server block; an exact match beats the catch-all
-    location = /health/ready {
-        limit_except GET { deny all; }
-        limit_req zone=health_ready burst=5 nodelay;
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_read_timeout 10s;
-    }
-    ```
+    (nginx answers 502, so the keyword is absent). **Keyword: `"status":"ok"` (decided
+    2026-11-04)**, which catches all four critical checks and is asserted on the bytes sent;
+    `postgres` would miss a later database outage, because it is set at startup. Set it up
+    only after the next deploy, so the check it watches exists. It must match on the body,
+    since this always answers 200 unless the process is down, and alert after 2 failures in a
+    row. A Whapi outage now alerts too, by decision. Settings are in
+    `docs/DEPLOY_2026-11-04.md`, and its rate limit in `docs/nginx_allowlist.conf`.
 52. **How often the transcript window cuts something, measured 2026-11-04, no change made.**
     Bot traffic is too thin to decide on: 112 bot messages are stored, because the bot only
     serves the allowlist and resets delete rows. 36 of them (32%) went out with a cut-off
@@ -1902,13 +1902,17 @@ Ordered by what will hurt first.
       `names_a_leave_reason` does, so the model cannot add one. Short, in English, NRIC
       redacted, capped at 10 notes. A detail on a parked topic already goes to the ticket's
       follow-ups; it is recorded here too.
-    - *Where it lives, the decision to confirm.* A new `cb_client_notes` keyed on the
-      conversation (recommended) survives a new thread, so section 9.49 need not seed it, at
-      one more read per turn; reset-ui and `reset_conversation.py` must then clear it, which
-      `selfcheck_reset_ui.py` enforces. The checkpoint alone costs nothing and is lost on
-      `back_to_bot`. The portal's `wp_chat_contact_notes` (conversation_id, note,
-      created_by_name; 0 rows live) is only an option if the portal team confirm their UI
-      shows it and writing to it is fine.
+    - *Where it lives (decided 2026-11-04).* A new `cb_client_notes`, keyed by tenant and phone
+      number: bare digits, the same form as `wp_chat_conversations.customer_number`, read after
+      a LID is resolved so a note never lands on a pseudo-number. It survives a new thread and
+      a new conversation row, so section 9.49 need not seed it, at one more read per turn.
+      Columns: id, tenant_id, customer_number, note, source message id, created_at, with RLS on
+      and nothing for the portal's roles. A migration and rollback under `scripts/sql/`, applied
+      only by `apply_sql.py --expect-ref`. Because the phone outlives the chat,
+      `reset_conversation.py`, reset-ui and `purge_test_contact.py` must all clear it by that
+      number, enforced by `selfcheck_reset_ui.py`. One number can be two people (a helper on her
+      employer's phone), so a note is background, and is said to be from this number, never
+      stated as a fact about the person writing.
     - *Reaching the agent.* On the ticket's `captured_info` with a `_DETAIL_LABELS` entry, and
       as a follow-up on an open ticket.
     - *Reaching the model.* A block labelled as background in `system._contact_block`, used
@@ -1916,12 +1920,23 @@ Ordered by what will hurt first.
       a note must not get past `ungrounded_figures`, and that is asserted.
     - *Switch and proof.* `CLIENT_NOTES`, default off; replay real transcripts, with
       invented-note and grounding faults that must go red, then the e2e.
-    - *The summary half needs little new.* The portal already summarises:
-      `wp_chat_summaries` holds a row for all 153 chats active in 30 days and over 40 rows
-      (median `short_summary` 250 characters; 99 of them generated within 24 hours of the last
-      message). Read that as background instead of writing a second one, under the same
-      never-grounding rule and its own switch. It is the portal's table and written for staff,
-      so check its contents first; nothing in `app/` reads it today.
+    - *The portal's summaries are not safe to read as they are (sampled 2026-11-04, 10 random
+      chats active in 30 days and over 40 rows, read-only).* One row per chat, overwritten, no
+      history. **Facts looked right where checked**, including a refund sum, but only a few lines
+      per chat were read against the messages, and one summary gives a helper two names that may
+      be two people. **Freshness is uneven:** it refreshes when somebody
+      opens the chat in the portal, at most every 2 hours, and only with new messages
+      (`decideRefresh` in the portal's `functions/_lib/ai.js`, 2-hour gate), so a chat nobody opens goes
+      stale. Of 153 such chats, 24 are fully up to date, the median is 4 messages behind, the
+      90th percentile 62, and the worst 618. **It mixes up who is who:** a supplier chat where
+      Ming Hwee is the customer reads "the agent is frustrated, accusing the customer", and
+      another calls staff member Geraldine the customer. In 4 of the 10, the agency's auto-reply
+      reads as an agent's action. **It is not always a client:** 3 of the 10 were a supplier, a
+      group chat, and a chat carrying many employers' refunds. **It holds what a reply must not
+      use:** bank details, emails, a helper's pregnancy, an accusation of theft, and old "Action
+      needed" lines that read as instructions. If the bot ever reads it: `short_summary` only,
+      one-to-one client chats only, 5 or fewer messages behind, digits removed, never grounding,
+      own switch. `client_notes` does not depend on it. Nothing in `app/` reads it today.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -2270,7 +2285,8 @@ behaviour behind one switch. Details of each step are in §11.
 | KBW8 | All five client sites: per-source render (render-service with system Chrome + allowlist), non-English pages, approver-only unverified connection, failed drafts retried; migration 017 on production (2026-10-16) | see git log |
 
 **Before go-live, added 2026-11-04:** checkpoint pruning (section 9.50) and `client_notes`
-(section 9.53). Both are planned and not built, and each plan has one decision to confirm.
+(section 9.53). Both plans are decided and neither is built. The deploy steps for the work
+so far are in `docs/DEPLOY_2026-11-04.md`.
 
 **Still to do, in order:** Step 5 is done (every item, the last being item 2 in Batch G), Step 6 is done (parts 1-4, 6b, 6c), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
@@ -2347,6 +2363,11 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **Docs only: nginx allowlist, deploy runbook, decided plans, summaries
+  sampled.** `docs/nginx_allowlist.conf` and `docs/DEPLOY_2026-11-04.md`, neither run yet.
+  Sections 9.34, 9.50, 9.51 and 9.53 updated with the decisions. Section 2 no longer says
+  render-service is undeployed: `/kb-render/health` answers publicly.
 
 - **2026-11-04** - **`warnings` is out of the public `/health/ready` body.** It names missing
   settings. Now only a request from inside the container, or with `X-Health-Key`
