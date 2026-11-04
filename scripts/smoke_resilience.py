@@ -174,17 +174,26 @@ async def _health_checks() -> list[tuple[str, bool]]:
     results.append(("healthcheck: a body that is not the expected shape is not",
                     not healthcheck.ready([]) and not healthcheck.ready({})))
 
-    async def ready_with(saver, database=True, **overrides):
+    def reset_channel():
+        health._channel_checked_at = None
+        health._channel_ok = False
+        health._channel_unknown_in_a_row = 0
+
+    async def ready_with(saver, database=True, channel=True, **overrides):
         keys = {"whapi_api_token": "x", "openrouter_api_key": "x", "tenant_id": "x",
                 "embedding_api_key": "x", "transcription_api_key": "x", "transcription_enabled": True,
                 "openai_api_key": "", **overrides}
         saved = graph._checkpointer
         graph._checkpointer = saver
+        reset_channel()
         patches = [patch.object(settings, name, value) for name, value in keys.items()]
         for p in patches:
             p.start()
         try:
-            with patch.object(health.db, "healthcheck", AsyncMock(return_value=database)):
+            with patch.object(health.db, "healthcheck", AsyncMock(return_value=database)), \
+                    patch.object(health.whapi, "channel_connected",
+                                 AsyncMock(side_effect=channel) if isinstance(channel, Exception)
+                                 else AsyncMock(return_value=channel)):
                 return await health.readiness()
         finally:
             for p in patches:
@@ -201,7 +210,7 @@ async def _health_checks() -> list[tuple[str, bool]]:
     results.append(("no checkpointer yet: ready says degraded", body["status"] == "degraded"))
     results.append(("the switch is on", health.CHECKPOINTER_IN_READY is True))
 
-    # Only three things decide the status.
+    # Only these things decide the status.
     no_openrouter = {"openrouter_api_key": "", "transcription_api_key": ""}
     body = await ready_with(_Fake(), database=False)
     results.append(("database down: degraded", body["status"] == "degraded" and body["checks"]["database"] is False))
@@ -217,8 +226,9 @@ async def _health_checks() -> list[tuple[str, bool]]:
         results.append((f"{name} missing: still ok, named as a warning",
                         body["status"] == "ok" and body.get("warnings") == expected and healthcheck.ready(body)))
     body = await ready_with(_Fake())
-    results.append(("nothing failing: no warnings, and only the three checks",
-                    body.get("warnings") == [] and set(body["checks"]) == {"database", "whapi_token", "checkpointer_durable"}))
+    results.append(("nothing failing: no warnings, and only the four checks",
+                    body.get("warnings") == []
+                    and set(body["checks"]) == {"database", "whapi_token", "whapi_channel", "checkpointer_durable"}))
     with patch.object(health, "CRITICAL_CHECKS_ONLY", False):
         body = await ready_with(_Fake(), **no_openrouter)
     results.append(("switch off: any failing check is degraded, as before",
@@ -266,6 +276,123 @@ async def _health_checks() -> list[tuple[str, bool]]:
     down = wire(await ready_with(_Fake(), database=False))
     results.append(("database down: only the status keyword goes, postgres stays",
                     "postgres" in down and '"status":"ok"' not in down))
+    unpaired = wire(await ready_with(_Fake(), channel=False))
+    results.append(("channel down: only the status keyword goes, postgres stays",
+                    "postgres" in unpaired and '"status":"ok"' not in unpaired))
+
+    # What the Whapi call makes of each answer, through the real client.
+    import httpx
+
+    from app.whapi.client import WhapiClient
+
+    seen_queries: list[str] = []
+
+    async def channel_answer(respond) -> object:
+        def handler(request):
+            seen_queries.append(str(request.url.query, "ascii"))
+            return respond(request)
+
+        client = WhapiClient(token="x", base_url="https://whapi.test")
+        client._client = httpx.AsyncClient(base_url="https://whapi.test", transport=httpx.MockTransport(handler))
+        try:
+            return await client.channel_connected(2.5)
+        finally:
+            await client.close()
+
+    def stall(request):
+        raise httpx.ReadTimeout("stalled", request=request)
+
+    full = {"status": {"code": 4, "text": "AUTH"}, "user": {"id": "6565342277"}, "ip": "10.0.0.1"}
+    for name, respond, expected in (
+        ("AUTH is connected", lambda r: httpx.Response(200, json=full), True),
+        ("QR is not", lambda r: httpx.Response(200, json={"status": {"code": 3, "text": "QR"}}), False),
+        ("no status is not", lambda r: httpx.Response(200, json={}), False),
+        ("a 404 is not", lambda r: httpx.Response(404, json={}), False),
+        ("a 401 is not", lambda r: httpx.Response(401, json={}), False),
+        ("a 500 cannot tell", lambda r: httpx.Response(500, json={}), None),
+        ("a 429 cannot tell", lambda r: httpx.Response(429, json={}), None),
+        ("a stall cannot tell", stall, None),
+        ("not JSON cannot tell", lambda r: httpx.Response(200, text="<html>"), None),
+        ("a list cannot tell", lambda r: httpx.Response(200, json=[]), None),
+    ):
+        results.append((f"Whapi channel: {name}", await channel_answer(respond) is expected))
+    results.append(("Whapi channel: never asks it to launch the channel", set(seen_queries) == {"wakeup=false"}))
+
+    # The cache: public endpoint, so one call a minute whoever is asking.
+    clock = [1000.0]
+
+    async def connected_after_a_pause(*_):
+        await asyncio.sleep(0)
+        return True
+
+    calls = AsyncMock(side_effect=connected_after_a_pause)
+
+    # health's own name for the clock only: the real time.monotonic is the event loop's.
+    def channel_patches(token="x"):
+        return (patch.object(settings, "whapi_api_token", token),
+                patch.object(health.whapi, "channel_connected", calls),
+                patch.object(health, "time", type("Clock", (), {"monotonic": staticmethod(lambda: clock[0])})))
+
+    async def asked(answer=None, token="x"):
+        if answer is not None:
+            calls.side_effect = answer
+        one, two, three = channel_patches(token)
+        with one, two, three:
+            return await health._whapi_channel_ok()
+
+    reset_channel()
+    one, two, three = channel_patches()
+    with one, two, three:
+        together = await asyncio.gather(*(health._whapi_channel_ok() for _ in range(20)))
+    results.append(("cache: twenty at once make one call", calls.await_count == 1 and all(together)))
+    clock[0] += 59
+    await asked()
+    results.append(("cache: inside 60s no second call", calls.await_count == 1))
+    clock[0] += 2
+    await asked()
+    results.append(("cache: past 60s it asks again", calls.await_count == 2))
+    results.append(("cache: the call is given the short timeout",
+                    calls.await_args.args == (health._CHANNEL_TIMEOUT_SECONDS,)))
+    results.append(("the timeout is under the healthcheck command's",
+                    health._CHANNEL_TIMEOUT_SECONDS < healthcheck.TIMEOUT_SECONDS))
+    results.append(("the cache is 60s", health._CHANNEL_CACHE_SECONDS == 60.0))
+
+    clock[0] += 61
+    one_stall = await asked(answer=[None])
+    clock[0] += 30
+    no_call_yet = calls.await_count
+    await asked()
+    results.append(("one stall keeps the last good answer, and is cached too",
+                    one_stall is True and calls.await_count == no_call_yet))
+    clock[0] += 31
+    second_stall = await asked(answer=[None])
+    results.append(("a second stall in a row is not connected", second_stall is False))
+    clock[0] += 61
+    recovered = await asked(answer=[True])
+    results.append(("...and it recovers on the next good answer", recovered is True))
+    clock[0] += 61
+    results.append(("...and a good answer clears the count of stalls", await asked(answer=[None]) is True))
+    clock[0] += 61
+    await asked(answer=[True])
+    clock[0] += 61
+    results.append(("Whapi saying not connected counts at once", await asked(answer=[False]) is False))
+    reset_channel()
+    results.append(("no answer yet and a stall is not connected", await asked(answer=[None]) is False))
+    reset_channel()
+    calls.reset_mock()
+    results.append(("no token: false, and no call", await asked(token="") is False and calls.await_count == 0))
+
+    secret_error = RuntimeError("https://x?token=sk-hunter2-4242")
+    raised = wire(await ready_with(_Fake(), channel=secret_error))
+    results.append(("the call raising: degraded, and its text is not in the body",
+                    '"status":"ok"' not in raised and "hunter2" not in raised))
+    with patch.object(health, "WHAPI_CHANNEL_IN_READY", False):
+        calls.reset_mock()
+        with patch.object(health.whapi, "channel_connected", calls):
+            body = await ready_with(_Fake(), channel=False)
+    results.append(("switch off: not asked, not reported, and it decides nothing",
+                    body["status"] == "ok" and "whapi_channel" not in body["checks"]))
+    results.append(("that switch is on", health.WHAPI_CHANNEL_IN_READY is True))
 
     # The real command against a real socket: /health/ready answers 200 either way.
     class Handler(http.server.BaseHTTPRequestHandler):

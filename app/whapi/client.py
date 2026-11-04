@@ -175,6 +175,29 @@ class WhapiClient:
             logger.warning("Whapi GET %s failed", path, exc_info=True)
             return None
 
+    async def channel_connected(self, timeout: float) -> bool | None:
+        """Is our WhatsApp channel paired and running? For /health/ready.
+
+        True when Whapi says AUTH, False when it says anything else or refuses
+        us, None when we could not tell (a stall, a 5xx). wakeup=false, because
+        by default this call tries to launch the channel. Nothing from the body
+        is returned: it holds our number and the channel's IP.
+        """
+        try:
+            client = await self._get_client()
+            response = await client.get("/health", params={"wakeup": "false"}, timeout=timeout)
+        except httpx.HTTPError:
+            return None
+        if response.status_code in (408, 429) or response.status_code >= 500:
+            return None
+        if response.status_code >= 400:
+            return False
+        try:
+            status = response.json().get("status")
+        except (ValueError, AttributeError):
+            return None
+        return isinstance(status, dict) and status.get("text") == "AUTH"
+
     def _remember_lid(self, lid: str, phone: str) -> str:
         """Cache one LID -> phone mapping, oldest out first."""
         resolved = normalize_phone(phone)

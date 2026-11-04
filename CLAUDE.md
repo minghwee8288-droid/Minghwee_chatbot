@@ -652,7 +652,8 @@ because the lead is opened early and the ticket is created much later.
 | A reply never reads out an internal case number | `guards.without_case_numbers` in `graph.run_turn` (and the preview) (`NO_CASE_NUMBER_READ_OUT`) | Batch G G4. The case numbers held for the client (`matched_cases`, the case row) and anything in the portal's case format (MH-YYYY-NNNN) are taken out, keeping the sentence ("Your case is at the documents stage"). The CB-YYYY-NNNN ticket reference is never touched. |
 | A dead pooled connection does not crash a turn, and a crash is not mislabelled | `checkpointer.CbAsyncPostgresSaver._retry` (`RETRY_ON_DEAD_CONNECTION`) + `handover.REASON_BOT_ERROR` (`DISTINCT_CRASH_REASON`) | Batch G G1. A checkpoint read or write that fails on the connection is tried once more on a fresh one (the read is a read, both writes are upserts). A real crash is `bot_error`; `bot_confused` now means only a turn that handed over because it could not answer. Both count as a standdown. |
 | A database failure at startup never leaves the bot on memory | `graph._durable_checkpointer` (`REQUIRE_DURABLE_CHECKPOINTER`) | With `SUPABASE_DB_URL` set it retries for `CHECKPOINTER_RETRY_SECONDS` (60), then refuses to start, and `restart: unless-stopped` keeps trying. Keyed on the URL rather than `ENVIRONMENT`, which defaults to development. With no URL, memory is allowed unless `ENVIRONMENT` is production. The retry must fit inside the healthcheck's `start_period` (90s), and `smoke_resilience.py` compares them. Logs the exception's type only: psycopg errors can quote the URL. |
-| The container reads as healthy only if `/health/ready` says ok | `app/healthcheck.py` (`python -m app.healthcheck`, in compose and the `Dockerfile`) + `health.CHECKPOINTER_IN_READY` | `/health/ready` always answers 200, so the command parses the body, and `/health` says ok whatever the state. Memory, or no checkpointer yet, is degraded. Standard library only, nothing from the app. Docker only labels the container: an unhealthy one is not restarted, so a short Supabase failure costs a label and no replies. Only the checkpointer, the database and the Whapi token decide it (`health.CRITICAL_CHECKS_ONLY`); anything else failing is named under `warnings`. `whapi_token` proves the token is set, not that Whapi is up. |
+| The container reads as healthy only if `/health/ready` says ok | `app/healthcheck.py` (`python -m app.healthcheck`, in compose and the `Dockerfile`) + `health.CHECKPOINTER_IN_READY` | `/health/ready` always answers 200, so the command parses the body, and `/health` says ok whatever the state. Memory, or no checkpointer yet, is degraded. Standard library only, nothing from the app. Docker only labels the container: an unhealthy one is not restarted, so a short Supabase failure costs a label and no replies. Only the checkpointer, the database, the Whapi token and the live channel decide it (`health.CRITICAL_CHECKS_ONLY`); anything else failing is named under `warnings`. |
+| A disconnected WhatsApp channel reads as unhealthy, without a public request reaching Whapi each time | `health._whapi_channel_ok` + `whapi.channel_connected` (`WHAPI_CHANNEL_IN_READY`) | One `GET /health?wakeup=false` per 60s, single flight, 2.5s limit (under the healthcheck command's 4s). Not `AUTH`, or a 4xx: false at once. A stall or a 5xx keeps the last good answer for one refresh, then false. Nothing from Whapi's body reaches ours. |
 | The public health body gives nothing away | `health.readiness` + `smoke_resilience.py` | nginx forwards it with no auth, so: booleans and fixed names only. No exception text, count, version or value from the environment; asserted with secrets planted in the settings and every check failing. `/` and `/health` do show the version, and `/health` the environment. |
 | A restart answers what it is holding | `debouncer._drain_all` (`DRAIN_ON_SHUTDOWN`) + `stop_grace_period: 60s` in compose | Waiting batches run at once on shutdown, running turns are waited for, before Whapi and the graph close. Limit `DRAIN_TIMEOUT_SECONDS` (45), which must stay under the grace period, and `smoke_resilience.py` compares them. Past it, turns are cancelled and message ids logged. Covers a normal stop or deploy; a crash or kill still loses the buffer, which is the startup scan's job. |
 | The startup scan claims before it sends, and never answers another channel's message | `app/services/recovery.py` (`STARTUP_RECOVERY_SCAN`, default off) + `cb_recovery_claims` | Written and OFF. The unanswered messages under 10 min old are one batch (`BATCH_ONLY_INSIDE_WINDOW`); an older one is neither replied to nor claimed, though the model still reads it in the transcript. Each is claimed by Whapi id before any reply, and a failed claim sends nothing. An auto-reply is not an answer. Only messages from before startup, to our own `to_number` (not `business_number`, which 3,454 of 3,829 live rows disagree with). The same gates as `handle_inbound`, and a row whose number is LID-shaped is skipped (`LID_SHAPE_NOT_NAME`: 15+ digits, 14 unless it starts 62, 13 unless it starts 62/880/86). More than 25 to answer sends none of them. |
@@ -1077,7 +1078,8 @@ Easy to get wrong:
   `debouncer.DRAIN_ON_SHUTDOWN` (shutdown discards waiting messages),
   `health.CRITICAL_CHECKS_ONLY` (any failing check makes `/health/ready` degraded),
   `recovery.BATCH_ONLY_INSIDE_WINDOW` (the scan batches everything since our last outbound),
-  `recovery.LID_SHAPE_NOT_NAME` (the scan skips rows named after their own number).
+  `recovery.LID_SHAPE_NOT_NAME` (the scan skips rows named after their own number),
+  `health.WHAPI_CHANNEL_IN_READY` (`/health/ready` does not ask Whapi about the channel).
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2342,6 +2344,18 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **`/health/ready` asks Whapi whether the channel is connected.**
+  `whapi_token` only proved the token is set, so a disconnected channel read as healthy.
+  `GET /health?wakeup=false` (without that it tries to launch the channel), which the live
+  channel answers `AUTH`; `whapi_channel` is now a critical check, so a Whapi outage now
+  alerts, by decision. One call per 60s however many ask, with a 2.5s limit, because the
+  endpoint is public and the healthcheck command gives up at 4s. Measured: about 350 ms, and
+  one stall of over 10 s in 15 calls, so "could not tell" keeps the last good answer for one
+  refresh and goes false on the second in a row; Whapi saying anything but `AUTH`, or a 4xx,
+  goes false at once. Nothing from Whapi's body is used: it holds our number and IP. 28 more
+  checks in `smoke_resilience.py`; 17 faults, 17 red, after 2 were green because the checks
+  were too weak (a stub that never yielded, and a recovery test that could not tell).
 
 - **2026-11-04** - **Docs only: the alert decided, what nginx exposes, two plans.** Section
   9.51: an external uptime monitor, not a cron, with the nginx rate-limit block. Section 9.34:
