@@ -2059,10 +2059,11 @@ Ordered by what will hurt first.
     conversation row is keyed on one is `no_conversation` (section 9.16). (e) Whether the portal should show
     `follow_ups[].source`; today a call note reads as an ordinary follow-up that starts "Phone call on".
 
-56. **`CB-2026-0160` on production is a test row, still open, needing a go-word to remove.** Open, high priority,
-    `dispute_assault`, assigned to an admin, on conversation 77 (a real client's thread, last message 8 Sep), with one
-    `cb_handovers` row (`dispute_escalation`). Its text is a selfcheck fixture. Written 2026-11-04 13:18 UTC by a draft of
-    a selfcheck case; see the change log. Not removed, because production is read-only without a go-word.
+56. **RESOLVED 2026-11-04: `CB-2026-0160`, a test row on production, was deleted on the user's go-word.** It was open, high
+    priority, `dispute_assault`, assigned to an admin, on conversation 77 (a real client's thread, last message 8 Sep), with
+    one `cb_handovers` row (`dispute_escalation`). Its text was a selfcheck fixture. Written 2026-11-04 13:18 UTC by a draft
+    of a selfcheck case; see the change log. No message went to the client, the chat was not paused, and no assignment moved.
+    The ticket number stays unused: the counter was not reset.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -2499,6 +2500,14 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **Docs only: the test rows on production are gone (section 9.56).** On the user's go-word and approval of
+  the exact SQL, `CB-2026-0160` and its one `cb_handovers` row were deleted in one guarded transaction, after a full-column
+  export of both to `Minghwee_backups/`, outside the repo. Checked first, read-only: no other test row in `cb_tickets`,
+  `cb_handovers`, `leads`, `wp_chat_messages`, `cb_round_robin_state` or `call_ticket_assignment_cursor`; `wp_chat_messages`
+  and Whapi's history show no message to the client. After: `CB-2026-0170`, the ticket counter (170), conversation 77, the
+  round robin and the call cursor unchanged. `CB-2026-0161` to `0169` went out in one LID chat from 13:50 to 14:29 UTC and
+  have no rows left, which points to a phone test and a reset, not proved.
 
 - **2026-11-04** - **An offline suite can no longer reach production (`scripts/no_network.py`).** Found while
   fault-testing the call work: one case had run outside its fake database and made a real, failed read, so the suites
