@@ -12,7 +12,8 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 20s
+      # Longer than graph.CHECKPOINTER_RETRY_SECONDS (60s) plus the rest of startup.
+      start_period: 90s
     logging:
       driver: json-file
       options:

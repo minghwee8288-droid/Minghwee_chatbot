@@ -648,6 +648,7 @@ because the lead is opened early and the ticket is created much later.
 | The agency's fees document is the source of truth for fees, timelines and wording | `load_service_notes.py` (ROWS + generated UPDATES, `TEXT_REPLACEMENTS`), `kb_rules` floors | 2026-10-15, with the client's decisions A-G: $288 replacement fee everywhere, direct hire 1-2 weeks here and PH 5-6 / ID 4 / MM 2-4 weeks after MOM approval, salary floors PH 650 / ID 550 / MM 500, the +$60 lines in the document's words, "falls under her package" never "guarantee period". The .docx is in `docs/`, kept out of git. A closing briefing now also states a fixed fee plainly from its OWN records (`info_collector._write`). |
 | A reply never reads out an internal case number | `guards.without_case_numbers` in `graph.run_turn` (and the preview) (`NO_CASE_NUMBER_READ_OUT`) | Batch G G4. The case numbers held for the client (`matched_cases`, the case row) and anything in the portal's case format (MH-YYYY-NNNN) are taken out, keeping the sentence ("Your case is at the documents stage"). The CB-YYYY-NNNN ticket reference is never touched. |
 | A dead pooled connection does not crash a turn, and a crash is not mislabelled | `checkpointer.CbAsyncPostgresSaver._retry` (`RETRY_ON_DEAD_CONNECTION`) + `handover.REASON_BOT_ERROR` (`DISTINCT_CRASH_REASON`) | Batch G G1. A checkpoint read or write that fails on the connection is tried once more on a fresh one (the read is a read, both writes are upserts). A real crash is `bot_error`; `bot_confused` now means only a turn that handed over because it could not answer. Both count as a standdown. |
+| A database failure at startup never leaves the bot on memory | `graph._durable_checkpointer` (`REQUIRE_DURABLE_CHECKPOINTER`) | With `SUPABASE_DB_URL` set it retries for `CHECKPOINTER_RETRY_SECONDS` (60), then refuses to start, and `restart: unless-stopped` keeps trying. Keyed on the URL rather than `ENVIRONMENT`, which defaults to development. With no URL, memory is allowed unless `ENVIRONMENT` is production. The retry must fit inside the healthcheck's `start_period` (90s), and `smoke_resilience.py` compares them. Logs the exception's type only: psycopg errors can quote the URL. |
 | One helper's details never become another helper's | `info_collector.nationality_carries` / `nationality_for_turn` + `_history_since` (`collected_since`) | `nationality` is portable for a hiring client (the nationality they want) and NOT across a switch into or out of `passport_renewal`/`home_leave`, where it is one helper's. Read by the collector's reset AND by `rag_retriever`, which runs before the reset. The extractor reads history only from the message that started the current request, on every turn after a switch, not just the switch turn. |
 | One salesperson per client conversation, and the portal inbox never loses a hand-assigned owner | `assignment.resolve_agent` (`_portal_owner`) + `claim_portal_owner` | A ticket goes to whoever owns the chat in the portal before the round robin is asked; the bot only ever FILLS an empty `wp_chat_conversations.assigned_user_id` (the IS NULL is in the UPDATE itself). `to_human` used to set it unconditionally, and the ordinary ticket path (`log_escalation`) never set it at all. Profile ↔ portal login is `cb_agent_portal_users`, ours, not `wp_chat_users.profile_id`, theirs. |
 | Nothing the KB watcher drafts reaches the chatbot without an APPROVER | `kb_admin_watch_approve` (015, `kb_admin__require_actor(..., 'approver')`) + `app/watch/actions.ts` (`canApprove` first) | A watched page's change becomes a PROPOSAL (`cb_kb_drafts`), never a live row. Approve writes the text through the existing `kb_admin_save_draft` / `kb_admin_create_entry` and it goes live only through the existing `kb_admin_publish` (canary-checked embedding). Proved on PGlite (real migrations 001-009 + 015): the live entry is unchanged until publish. |
@@ -1063,6 +1064,8 @@ Easy to get wrong:
   `info_collector.OWN_LEAVE_COLLOQUIAL` ("i wanna go home" is the helper herself).
   2026-11-02 (phone test 8:08 PM), each `False` for the earlier behaviour:
   `info_collector.BRIEFING_FEE_THIS_TURN`, `info_collector.URGENT_SENTENCE_ONLY`.
+  2026-11-04, `False` for the earlier behaviour:
+  `graph.REQUIRE_DURABLE_CHECKPOINTER` (any checkpointer failure falls back to memory).
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -1948,6 +1951,8 @@ python scripts/selfcheck_golive.py     # the 2026-10-23 replays: staff message +
                                        #   "Okay" -> silent, quoted staff message -> silent,
                                        #   internal number, picked-up ticket, stale intake +
                                        #   "ok", helper rights -> the list, no ticket. No network.
+python scripts/smoke_resilience.py     # startup, health and shutdown, in seconds, no
+                                       #   network. smoke_nodes.py runs it too.
 python scripts/selfcheck_suggest.py    # POST /internal/suggest end to end with the DB,
                                        #   the model and WhatsApp faked. No network.
 python scripts/selfcheck_recognition.py   # 4 contacts (case employer, past placement,
@@ -2190,6 +2195,18 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **A database failure at startup no longer leaves the bot on memory.**
+  The fallback was decided once at startup, so one short failure during a deploy kept the
+  bot on in-memory state until the next restart, however soon the database came back: it
+  went on replying and lost every collection on restart, with one log line to show for it.
+  With `SUPABASE_DB_URL` set it now retries for 60s and then refuses to start, and
+  `restart: unless-stopped` keeps trying. `start_period` goes from 20s to 90s in both
+  `docker-compose.yml` and the `Dockerfile` so the retry fits inside it. New
+  `scripts/smoke_resilience.py`, also run by `smoke_nodes.py`: 13 checks; 11 faults
+  injected on a copy, 11 red. The alert on this is NOT wired: where it goes is waiting on
+  a decision. **Check before deploying: a server with `ENVIRONMENT` left at development
+  and no database URL still gets memory**, which the next change reports as degraded.
 
 - **2026-11-04** - **Docs only: this file caught up with the code.** No behaviour changed.
   `app/suggest/` (`POST /internal/suggest`, reply drafts for the Smart Inbox, merged

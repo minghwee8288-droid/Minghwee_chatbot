@@ -351,7 +351,7 @@ def build_graph(checkpointer: Any = None):
     return builder.compile(checkpointer=checkpointer)
 
 
-async def _build_checkpointer() -> Any:
+async def _build_checkpointer(open_timeout: float = 15) -> Any:
     """Postgres checkpointer when a connection string is configured."""
     global _pool
 
@@ -408,11 +408,97 @@ async def _build_checkpointer() -> Any:
             "row_factory": dict_row,
         },
     )
-    await _pool.open(wait=True, timeout=15)
+    await _pool.open(wait=True, timeout=open_timeout)
     checkpointer = CbAsyncPostgresSaver(_pool)
     await checkpointer.setup()
     logger.info("LangGraph Postgres checkpointer ready (cb_checkpoint* tables)")
     return checkpointer
+
+
+# 2026-11-04: a database failure at startup no longer leaves the bot on memory.
+# The fallback was decided once, at startup, so one short failure during a
+# deploy kept the bot on in-memory state until the next restart, however soon
+# the database came back: it went on replying and forgot every collection on
+# restart, with one log line to show for it. With a database configured it now
+# retries for CHECKPOINTER_RETRY_SECONDS and then refuses to start, and
+# `restart: unless-stopped` keeps trying, so a short failure heals itself.
+#
+# Keyed on SUPABASE_DB_URL being set rather than on ENVIRONMENT, which defaults
+# to "development" (see ENABLE_API_DOCS, section 9.33): a server that never
+# changed it would keep the silent fallback. Memory stays for a machine with no
+# database configured, unless ENVIRONMENT says production. False = the old
+# fallback to memory on any failure.
+REQUIRE_DURABLE_CHECKPOINTER = True
+# Must fit inside the healthcheck's start_period (docker-compose.yml and the
+# Dockerfile, 90s), or the container reads as unhealthy while it is still
+# retrying. smoke_resilience.py compares the two.
+CHECKPOINTER_RETRY_SECONDS = 60.0
+CHECKPOINTER_RETRY_PAUSE_SECONDS = 5.0
+
+
+class CheckpointerUnavailable(RuntimeError):
+    """No durable checkpointer, and running without one is not allowed."""
+
+
+async def _discard_pool() -> None:
+    """Close a pool left behind by a failed attempt, so retries do not pile up."""
+    global _pool
+    pool, _pool = _pool, None
+    if pool is not None:
+        try:
+            await pool.close()
+        except Exception as exc:  # noqa: BLE001 - it is being thrown away anyway
+            logger.warning("Could not close a failed checkpoint pool (%s)", type(exc).__name__)
+
+
+async def _durable_checkpointer() -> Any:
+    """The checkpointer, retried within CHECKPOINTER_RETRY_SECONDS, or a refusal.
+
+    A failure logs the exception's TYPE only: psycopg's connection errors can
+    quote part of the URL, password included (scripts/apply_sql.py does the same).
+    """
+    from langgraph.checkpoint.memory import MemorySaver
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + CHECKPOINTER_RETRY_SECONDS
+    attempt = 0
+    while True:
+        attempt += 1
+        remaining = max(deadline - loop.time(), 0.1)
+        try:
+            saver = await asyncio.wait_for(
+                _build_checkpointer(open_timeout=min(15, remaining)), timeout=remaining
+            )
+        except Exception as exc:  # noqa: BLE001 - every failure is retried the same way
+            await _discard_pool()
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                logger.critical(
+                    "Refusing to start: no Postgres checkpointer after %d attempt(s) in %gs (%s)",
+                    attempt, CHECKPOINTER_RETRY_SECONDS, type(exc).__name__,
+                )
+                raise CheckpointerUnavailable(
+                    f"no Postgres checkpointer after {attempt} attempt(s) ({type(exc).__name__})"
+                ) from None
+            logger.warning(
+                "Postgres checkpointer attempt %d failed (%s) - retrying for %.0fs more",
+                attempt, type(exc).__name__, remaining,
+            )
+            await asyncio.sleep(min(CHECKPOINTER_RETRY_PAUSE_SECONDS, remaining))
+            continue
+        if isinstance(saver, MemorySaver) and settings.is_production:
+            logger.critical("Refusing to start: ENVIRONMENT is production and the checkpointer is memory")
+            raise CheckpointerUnavailable("ENVIRONMENT is production and the checkpointer is memory")
+        return saver
+
+
+def checkpointer_backend() -> str:
+    """Where conversation state is being kept: postgres, memory, or none yet."""
+    if _checkpointer is None:
+        return "none"
+    from langgraph.checkpoint.memory import MemorySaver
+
+    return "memory" if isinstance(_checkpointer, MemorySaver) else "postgres"
 
 
 async def init_graph() -> Any:
@@ -421,13 +507,16 @@ async def init_graph() -> Any:
 
     if _graph is not None:
         return _graph
-    try:
-        _checkpointer = await _build_checkpointer()
-    except Exception:  # noqa: BLE001 - the bot still works without persistence
-        from langgraph.checkpoint.memory import MemorySaver
+    if REQUIRE_DURABLE_CHECKPOINTER:
+        _checkpointer = await _durable_checkpointer()
+    else:
+        try:
+            _checkpointer = await _build_checkpointer()
+        except Exception:  # noqa: BLE001 - the bot still works without persistence
+            from langgraph.checkpoint.memory import MemorySaver
 
-        logger.exception("Postgres checkpointer unavailable — falling back to memory")
-        _checkpointer = MemorySaver()
+            logger.exception("Postgres checkpointer unavailable — falling back to memory")
+            _checkpointer = MemorySaver()
 
     _graph = build_graph(_checkpointer)
     logger.info("Conversation graph compiled")

@@ -5913,6 +5913,14 @@ async def main() -> int:
     from app.config import settings as _settings
     _settings.typing_indicator = False
     failures = 0
+    # Startup, health and shutdown (2026-11-04): their own file, because they
+    # run in seconds on their own. Imported here so this run still covers them.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import smoke_resilience
+
+    for label, ok in await smoke_resilience.checks():
+        print(f"  {'PASS' if ok else 'FAIL'}  startup  {label:44}")
+        failures += not ok
     for label, ok in await _lid_checks():
         print(f"  {'PASS' if ok else 'FAIL'}  webhook  {label:44}")
         failures += not ok
