@@ -1631,7 +1631,15 @@ Ordered by what will hurt first.
     every route, `/admin/preview` and the webhook path pattern included.
     Pre-existing. Turn all three off outside development (`docs_url=None`,
     `redoc_url=None`, `openapi_url=None`).
-34. **What the server exposes has not been checked.** Whapi must reach
+34. **nginx forwards every path to the app, measured from outside on 2026-11-04.** So the
+    "want" below is not met. `/`, `/health` and `/health/ready` answer 200, and an unknown path
+    gets the app's own JSON 404, not nginx's. `GET /internal/suggest` gets the app's 405, so
+    the `limit_except` block in `docs/DEPLOY_SUGGESTED_REPLIES.md` is either absent or not what
+    answers, and the route is registered. `/docs`, `/redoc`, `/openapi.json` and a GET on
+    `/admin/preview` are 404. `/` and `/health` show the version, and `/health` the
+    environment (production). Nothing sensitive, but the app's routes are the only filter.
+    Still unchecked: the rest of this entry.
+    **What the server exposes has not been checked.** Whapi must reach
     `/webhook/`, so part of the app is necessarily public. To confirm: on the
     server `sudo ss -ltnp`, `sudo ufw status verbose` and
     `sudo nginx -T | grep -nE 'server_name|listen|location|proxy_pass'`; from
@@ -1819,16 +1827,56 @@ Ordered by what will hurt first.
     blobs, 8.0 MB writes), so about 25 KB a checkpoint. That is testers only, and resets
     delete rows, so it understates. A rough upper bound at go-live: 6,181 inbound messages
     in the last 30 days at a handful of checkpoints a turn is hundreds of MB a month, on a
-    database shared with two other products. Keep a thread's latest checkpoint only (a turn
-    resumes from the latest, and nothing here replays history) and delete threads no
-    conversation points at. Must go through the bot's own connection, never a broad
-    delete by date: a parked client can come back weeks later, and an open thread's latest
-    checkpoint is the collection.
-51. **The alert on a refused or memory-backed start is not wired; where it goes is waiting
-    on a decision.** A refusal is a `CRITICAL` log line, and the healthcheck labels the
-    container unhealthy. Nothing tells a person. A process that is refusing to start cannot
-    reliably alert about itself, so whichever channel is chosen, the check should run outside
-    the container.
+    database shared with two other products.
+    **Before go-live. Plan, not built (2026-11-04):**
+    - *What it saves.* Measured live: keeping only each thread's latest checkpoint takes 869
+      checkpoints to 18, 11,405 blobs to 1,003, 10,058 writes to 1, and blob bytes from 3.17 MB
+      to 0.18 MB.
+    - *What it costs.* Incident work in this file replays turns from older checkpoints, so
+      pruning at once would remove that. Only a thread idle for 14 days is pruned; the 14 is
+      the decision to confirm.
+    - *What to delete, per thread, in one transaction.* Older checkpoints; their writes; and
+      a blob only if its version is older than the one the latest checkpoint's
+      `channel_versions` gives for that channel. Blobs are keyed by channel and version, not
+      by checkpoint, and a turn writes its blobs before its checkpoint, so "not referenced by
+      the latest" could delete a running turn's blobs; "older than" cannot. Re-read the latest
+      inside the transaction, and stop if it moved.
+    - *Replaced threads.* Delete all of a thread only if no
+      `wp_chat_conversations.langgraph_thread_id` points at it and it has been idle 14 days.
+      A thread a conversation points at always keeps its latest: a parked client can come
+      back weeks later, and that row is the collection. Never a broad delete by date.
+    - *How.* `app/services/checkpoint_pruning.py` on the checkpointer's own pool, once at
+      startup and then every 6 hours from `lifespan` (one worker, so one runner), a capped
+      number of threads per pass, ids and counts in the log. Switch `CHECKPOINT_PRUNING`,
+      default off; a dry-run mode logs what it would delete.
+    - *Proof before switching on.* The test: `aget_tuple` returns identical state before and
+      after pruning, and a real turn then runs from it, with a deleted referenced blob as the
+      fault that must go red. On PGlite, then the TEST copy, then a production dry run and a
+      full-column export before and after the first real pass. `reset_conversation.py` and
+      reset-ui need no change.
+51. **Alert: an external uptime monitor on `/health/ready`, decided 2026-11-04, not set up.**
+    It runs outside the server, so it still fires when the process has refused to start
+    (nginx answers 502, so the keyword is absent). Set it up only after the next deploy: the
+    live body has no `checkpointer` field until then, and a `postgres` keyword would alert at
+    once. **The keyword `postgres` only catches memory or no checkpointer.** The value is set
+    at startup, so it still reads postgres during a later database outage; `"status":"ok"`
+    catches all three critical checks and is asserted on the bytes sent. The monitor must
+    match on the body, since this always answers 200 unless the process is down. No nginx
+    change is needed to reach it (section 9.34). The block below only rate-limits it, because
+    each request is a database read:
+    ```nginx
+    # http context, e.g. /etc/nginx/conf.d/health_ready_limit.conf
+    limit_req_zone $binary_remote_addr zone=health_ready:1m rate=12r/m;
+
+    # the bot's HTTPS server block; an exact match beats the catch-all
+    location = /health/ready {
+        limit_except GET { deny all; }
+        limit_req zone=health_ready burst=5 nodelay;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_read_timeout 10s;
+    }
+    ```
 52. **How often the transcript window cuts something, measured 2026-11-04, no change made.**
     Bot traffic is too thin to decide on: 112 bot messages are stored, because the bot only
     serves the allowlist and resets delete rows. 36 of them (32%) went out with a cut-off
@@ -1837,8 +1885,38 @@ Ordered by what will hurt first.
     the last 30 days, **152 (46%) are over 40 rows** (median 33, 90th percentile 333, largest
     3,839), but only **49 of 1,477 sittings (3.3%)** pass 40 on their own, with a 6-hour gap
     ending a sitting. So the window fills across days, not in one long intake, and agents
-    are 48% of the rows. That points at `client_notes` and a summary of earlier sittings,
-    not a higher `HISTORY_LIMIT`. Re-measure once the bot has real traffic.
+    are 48% of the rows. That points at `client_notes` (section 9.53) and a summary of earlier
+    sittings, not a higher `HISTORY_LIMIT`. Re-measure once the bot has real traffic.
+53. **What a client volunteers has nowhere to live.** Since the house-rules question went
+    (2026-10-15), "no phone after 10pm" is acknowledged (`_VOLUNTEERED_REQUIREMENT`) and fills
+    no field, so it stays only in the transcript: it rolls off the 40-row window and never
+    reaches the agent.
+    **Before go-live. Plan, not built (2026-11-04):**
+    - *Capture.* One more key in the existing extraction call (`EXTRACTION_SYSTEM`), so no
+      extra model call. Kept only if its words are in the client's own message, as
+      `names_a_leave_reason` does, so the model cannot add one. Short, in English, NRIC
+      redacted, capped at 10 notes. A detail on a parked topic already goes to the ticket's
+      follow-ups; it is recorded here too.
+    - *Where it lives, the decision to confirm.* A new `cb_client_notes` keyed on the
+      conversation (recommended) survives a new thread, so section 9.49 need not seed it, at
+      one more read per turn; reset-ui and `reset_conversation.py` must then clear it, which
+      `selfcheck_reset_ui.py` enforces. The checkpoint alone costs nothing and is lost on
+      `back_to_bot`. The portal's `wp_chat_contact_notes` (conversation_id, note,
+      created_by_name; 0 rows live) is only an option if the portal team confirm their UI
+      shows it and writing to it is fine.
+    - *Reaching the agent.* On the ticket's `captured_info` with a `_DETAIL_LABELS` entry, and
+      as a follow-up on an open ticket.
+    - *Reaching the model.* A block labelled as background in `system._contact_block`, used
+      but not read back at them (the `RETURNING_NOTE` rule). **Never grounding:** a figure in
+      a note must not get past `ungrounded_figures`, and that is asserted.
+    - *Switch and proof.* `CLIENT_NOTES`, default off; replay real transcripts, with
+      invented-note and grounding faults that must go red, then the e2e.
+    - *The summary half needs little new.* The portal already summarises:
+      `wp_chat_summaries` holds a row for all 153 chats active in 30 days and over 40 rows
+      (median `short_summary` 250 characters; 99 of them generated within 24 hours of the last
+      message). Read that as background instead of writing a second one, under the same
+      never-grounding rule and its own switch. It is the portal's table and written for staff,
+      so check its contents first; nothing in `app/` reads it today.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -2186,6 +2264,9 @@ behaviour behind one switch. Details of each step are in §11.
 | KBW7 | The live existing-entry search reads the entries' text (kb_admin_match_live returns none); a failed search stops with "Couldn't check existing entries" | see git log |
 | KBW8 | All five client sites: per-source render (render-service with system Chrome + allowlist), non-English pages, approver-only unverified connection, failed drafts retried; migration 017 on production (2026-10-16) | see git log |
 
+**Before go-live, added 2026-11-04:** checkpoint pruning (section 9.50) and `client_notes`
+(section 9.53). Both are planned and not built, and each plan has one decision to confirm.
+
 **Still to do, in order:** Step 5 is done (every item, the last being item 2 in Batch G), Step 6 is done (parts 1-4, 6b, 6c), Step 7 (escalation audit, read-only, report outside the repo),
 Step 8 (recognition harness: build, then stop before seeding with two options;
 the webhook builds `known_helpers` only when `contact_type == "employer"`).
@@ -2261,6 +2342,11 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **Docs only: the alert decided, what nginx exposes, two plans.** Section
+  9.51: an external uptime monitor, not a cron, with the nginx rate-limit block. Section 9.34:
+  nginx forwards every path, measured from outside. Sections 9.50 and 9.53: plans for
+  checkpoint pruning and `client_notes`, both moved ahead of go-live, neither built.
 
 - **2026-11-04** - **The startup scan finds fabricated rows by the number's shape (still
   off).** The name rule skipped a row named after its own number, which missed LID rows that
