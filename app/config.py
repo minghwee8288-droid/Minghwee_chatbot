@@ -295,6 +295,11 @@ class Settings(BaseSettings):
     # applied first. Off until that is done and it has been tried on a test number.
     startup_recovery_scan: bool = False
 
+    # Note each thread a conversation stops using, so pruning can find it later
+    # (CLAUDE.md section 9.50). Needs scripts/sql/replaced_threads_001_create.sql
+    # applied first. Records only: nothing deletes a checkpoint.
+    record_replaced_threads: bool = False
+
     # The WhatsApp Business app can send greeting and away messages by itself.
     # They arrive as outbound messages the bot did not send, which the agent
     # detector would otherwise read as "a human has taken over" — silencing the

@@ -83,6 +83,17 @@ def main() -> int:
             f"{len(py_tables)} table(s)" if py_tables == ts_tables else f"py={sorted(py_tables)} ts={sorted(ts_tables)}",
         )
 
+    print("\nThe replaced-thread record goes with the thread's rows")
+    for name, source in (("script", py), ("UI", ts)):
+        check(
+            f"the {name} deletes the old thread's record, by thread id",
+            re.search(r"DELETE FROM cb_replaced_threads WHERE thread_id = ", source) is not None,
+        )
+        check(
+            f"the {name} copes with the table not being applied",
+            "to_regclass('public.cb_replaced_threads')" in source,
+        )
+
     print("\nConversation columns blanked")
     py_update = re.search(r"await conversation_service\.update\((.*?)\n    \)", py, re.S)
     ts_update = re.search(r"\.update\(\{(.*?)\n      \}\)", ts, re.S)

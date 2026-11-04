@@ -18,6 +18,11 @@ from app.utils import digits_only, phone_variants
 logger = logging.getLogger(__name__)
 
 TABLE = "wp_chat_conversations"
+REPLACED_THREADS_TABLE = "cb_replaced_threads"
+
+# Why a thread stopped being used (cb_replaced_threads.reason).
+REASON_REOPENED = "conversation_reopened"
+REASON_CLAIMED = "conversation_claimed"
 
 # bot_status values
 BOT_NONE = "none"
@@ -142,6 +147,38 @@ async def update(conversation_id: int, **fields: Any) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
+async def record_replaced_thread(conversation: dict[str, Any], reason: str) -> None:
+    """Note the thread a conversation is about to stop using, for pruning later.
+
+    Called BEFORE the new id is written, so a thread can never be replaced and
+    forgotten by a crash between the two. A failure here is logged and goes no
+    further: a client's turn must not fail over evidence, and an unrecorded
+    thread is simply never pruned, so what a failure costs is disk, not data.
+    """
+    thread_id = conversation.get("langgraph_thread_id")
+    if not settings.record_replaced_threads or not thread_id:
+        return
+    try:
+        await db.execute(
+            db.table(REPLACED_THREADS_TABLE).upsert(
+                {
+                    "thread_id": thread_id,
+                    "tenant_id": settings.tenant_id or None,
+                    "conversation_id": conversation["id"],
+                    "reason": reason,
+                },
+                on_conflict="thread_id",
+                ignore_duplicates=True,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - see the docstring
+        logger.error(
+            "Could not record replaced thread on conversation %s (%s): it will never be pruned",
+            conversation.get("id"),
+            type(exc).__name__,
+        )
+
+
 async def get_or_create(
     phone: str, customer_name: str = "", *, engage: bool = True
 ) -> tuple[dict[str, Any], bool]:
@@ -166,6 +203,7 @@ async def get_or_create(
         reopened = status in CLOSED_STATUSES
 
         if engage and bot_status != HUMAN_ACTIVE and (bot_status == BOT_NONE or reopened):
+            await record_replaced_thread(existing, REASON_REOPENED if reopened else REASON_CLAIMED)
             patch.update(
                 {
                     "bot_status": BOT_ACTIVE,

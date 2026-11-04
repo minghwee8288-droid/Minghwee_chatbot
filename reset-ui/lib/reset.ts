@@ -113,6 +113,13 @@ async function wipeCheckpoints(threadId: string | null): Promise<ResetStep> {
         `;
         deleted += result.count ?? 0;
       }
+      // Its rows are gone, so a record of it is too. Only this thread's: an older
+      // replaced thread still has rows, and its record is what lets pruning find
+      // them. The table may not be applied yet.
+      const [found] = await sql`SELECT to_regclass('public.cb_replaced_threads') AS t`;
+      if (found?.t) {
+        await sql`DELETE FROM cb_replaced_threads WHERE thread_id = ${threadId}`;
+      }
       return deleted;
     });
     return {

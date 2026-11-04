@@ -149,7 +149,8 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
                      (13 watcher entries re-tagged; NOT APPLIED),
                      internal_contacts_001_create (cb_internal_contacts; not applied
                      when written, 2026-10-23), recovery_001_claims
-                     (cb_recovery_claims, the startup scan's claims; NOT APPLIED)
+                     (cb_recovery_claims, the startup scan's claims; NOT APPLIED),
+                     replaced_threads_001_create (cb_replaced_threads; NOT APPLIED)
                      — applied ONLY via apply_sql.py --expect-ref <project ref>
   gen_fee_locked.py  the watcher's fee lock: the 23 questions + 7 corrections the
                      fees document set, read from the loader, written into
@@ -662,6 +663,7 @@ because the lead is opened early and the ticket is created much later.
 | Which settings are missing is not public | `health._may_see_warnings` (`WARNINGS_PRIVATE`) + `HEALTH_DETAILS_KEY` | `warnings` appears only for a request from inside the container with no forwarding header, or with the right `X-Health-Key`. nginx may pass a caller's own `X-Forwarded-For` through, so a loopback peer alone proves nothing; the header's presence is what is tested. curl from the server's own shell arrives from Docker's gateway, so it sees no warnings. The status does not change. |
 | A caller cannot choose the address the app sees | `app/forwarded.py` (`NGINX_ONLY_FORWARDED`) -> `run.py`'s `forwarded_allow_ips` | `X-Forwarded-For` and `X-Forwarded-Proto` are believed only from the container's default gateway, which is how nginx on the host arrives. Read at startup from `/proc/net/route` and logged. `FORWARDED_ALLOW_IPS` overrides it and cannot be `*`. Wrong address = every request reads as the gateway, which costs nothing: `health._may_see_warnings` is the only reader of the client's address. |
 | A model reply that carries on after a complete answer is still that answer | `llm.try_parse_json` (`_first_object`, `FIRST_JSON_OBJECT`) + `suggest.llm.draft` (`RETRY_UNPARSABLE`) | Section 9.54. Read from the first brace only, so a cut-off reply is never read from an inner object, and a stray `{}` in front is not an answer. Shared by the bot and the suggest route; only a reply that used to read as a failure changes. One more call on the suggest route if it still cannot be read (the bot's `complete_json` already did that), never for a call that failed. |
+| A replaced thread is recorded before it is replaced, and a failed record never costs a turn | `conversation.record_replaced_thread` from `get_or_create` and `handover.back_to_bot` (`RECORD_REPLACED_THREADS`, default off) | Section 9.50. The old id goes into `cb_replaced_threads` before the new id is written; a failure logs an error and the turn carries on, and an unrecorded thread is never pruned. Recording only: nothing in the bot deletes a checkpoint. A reset deletes the record of the thread whose rows it deletes, and only that one. |
 | A restart answers what it is holding | `debouncer._drain_all` (`DRAIN_ON_SHUTDOWN`) + `stop_grace_period: 60s` in compose | Waiting batches run at once on shutdown, running turns are waited for, before Whapi and the graph close. Limit `DRAIN_TIMEOUT_SECONDS` (45), which must stay under the grace period, and `smoke_resilience.py` compares them. Past it, turns are cancelled and message ids logged. Covers a normal stop or deploy; a crash or kill still loses the buffer, which is the startup scan's job. |
 | The startup scan claims before it sends, and never answers another channel's message | `app/services/recovery.py` (`STARTUP_RECOVERY_SCAN`, default off) + `cb_recovery_claims` | Written and OFF. The unanswered messages under 10 min old are one batch (`BATCH_ONLY_INSIDE_WINDOW`); an older one is neither replied to nor claimed, though the model still reads it in the transcript. Each is claimed by Whapi id before any reply, and a failed claim sends nothing. An auto-reply is not an answer. Only messages from before startup, to our own `to_number` (not `business_number`, which 3,454 of 3,829 live rows disagree with). The same gates as `handle_inbound`, and a row whose number is LID-shaped is skipped (`LID_SHAPE_NOT_NAME`: 15+ digits, 14 unless it starts 62, 13 unless it starts 62/880/86). More than 25 to answer sends none of them. |
 | One helper's details never become another helper's | `info_collector.nationality_carries` / `nationality_for_turn` + `_history_since` (`collected_since`) | `nationality` is portable for a hiring client (the nationality they want) and NOT across a switch into or out of `passport_renewal`/`home_leave`, where it is one helper's. Read by the collector's reset AND by `rag_retriever`, which runs before the reset. The extractor reads history only from the message that started the current request, on every turn after a switch, not just the switch turn. |
@@ -1114,6 +1116,11 @@ Easy to get wrong:
   `scripts/sql/recovery_001_claims.sql`, confirm `WHAPI_SENDER_PHONE` is right (the scan
   refuses without it, and uses it to ignore other channels), and try it on a test number
   with the allowlist in force. With the table missing it sends nothing and logs an error.
+- `RECORD_REPLACED_THREADS` (default **false**) — note each thread a conversation stops using,
+  for pruning later (section 9.50). Order: apply `scripts/sql/replaced_threads_001_create.sql`,
+  set this, `docker compose up -d`, then run `scripts/backfill_replaced_threads.py --apply
+  --expect-ref <ref>`. With the table missing, every replaced thread logs an error and the turn
+  carries on.
 - **`POST /internal/suggest` settings are read from the process environment, not
   `app/config.py`** (`app/suggest/settings.py`). In Docker, `env_file` puts `.env` there;
   locally they must be exported in the shell. `SUGGEST_SECRET`: empty means the route is
@@ -1876,27 +1883,32 @@ Ordered by what will hurt first.
       thread is pruned whole only if it is recorded, as below, and its conversation has no open
       ticket; the bot never reads a replaced thread, so what is lost there is replay evidence,
       not a client's state.
-    - *Recording the old thread (plan, 2026-11-04).* A new `cb_replaced_threads`: thread_id
-      (primary key), tenant_id, conversation_id, replaced_at, reason. Not a column on
-      `wp_chat_conversations`, which is the portal's. Two places in `app/` replace a live
-      thread: `conversation.get_or_create` (a reopened or unclaimed conversation) and
-      `handover.back_to_bot`. Each inserts the row BEFORE it writes the new id, skipping a null
-      old id. If the insert fails, the thread is still replaced and an error logged, because a
-      client's turn must not fail over evidence; an unrecorded thread is simply never pruned, so
-      a failure keeps data. `reset_conversation.py` and reset-ui also replace the id, but they
-      delete the old thread's rows, so they delete its record instead, and
-      `purge_test_contact.py` likewise, enforced by `selfcheck_reset_ui.py`. Nothing in the
-      portal's source writes this column. The pruner's test, in its transaction: recorded, idle
-      14 days, and no `open`/`in_progress` ticket on that conversation; it deletes the record
-      with the last of the thread's rows.
+    - *Recording the old thread (built 2026-11-04, off, SQL not applied; no deletion).*
+      `cb_replaced_threads`: thread_id (primary key), tenant_id, conversation_id, replaced_at,
+      reason. Not a column on `wp_chat_conversations`, which is the portal's, and no foreign key
+      to it. Two places in `app/` replace a live thread: `conversation.get_or_create` (a reopened
+      or unclaimed conversation) and `handover.back_to_bot`. Each records BEFORE it writes the new
+      id, skipping a null old id. If that fails, the thread is still replaced and an error logged,
+      because a client's turn must not fail over evidence; an unrecorded thread is simply never
+      pruned, so a failure keeps data. `reset_conversation.py` and reset-ui delete the old
+      thread's rows, so they delete that thread's record too, enforced by
+      `selfcheck_reset_ui.py`. They leave an OLDER replaced thread's record alone: its rows are
+      still there, and the record is what lets pruning find them. `purge_test_contact.py` was in
+      this plan and is deliberately unchanged: it touches no thread, and says to run the reset.
+      `fix_split_conversations.py`, a one-off repair, can overwrite a keeper's thread unrecorded,
+      which only means that thread is never pruned. Nothing in the portal's source writes this
+      column. The pruner's test, in its transaction: recorded, idle 14 days, and no
+      `open`/`in_progress` ticket on that conversation; it deletes the record with the last of the
+      thread's rows.
       *The 6 replaced threads already there* (all last used 2026-10-08 or earlier): each id reads
-      `conv-<conversation id>-...` and each still holds a `conversation_id` blob, so the migration
-      can backfill them, keeping only rows where the name matches a real conversation. The id's
-      format is not a contract, so future threads are recorded rather than parsed. (This entry
-      said before that replaced rows name no conversation. That was wrong.)
-      *Proof before switching on:* a fault for each of: record written after the replace, a failed
-      insert blocking the turn, a pruned thread with an open ticket, an unrecorded thread pruned.
-      Migration and rollback on PGlite. Not built.
+      `conv-<conversation id>-...`, and `scripts/backfill_replaced_threads.py` records them from
+      that name, `replaced_at` being the last use. **3 of the 6 belong to conversations that no
+      longer exist** (3853, 3968, 4534), so they go in as `backfill_conversation_gone` rather than
+      being dropped as this plan first said: nothing else will ever find them, and they cannot have
+      an open ticket. The id's format is not a contract, so future threads are recorded rather than
+      parsed. (This entry said before that replaced rows name no conversation. That was wrong.)
+      *Proof before the pruner is switched on:* faults for a pruned thread with an open ticket and
+      an unrecorded thread pruned, with the pruner. Not built.
     - *How.* `app/services/checkpoint_pruning.py` on the checkpointer's own pool, once at
       startup and then every 6 hours from `lifespan` (one worker, so one runner), a capped
       number of threads per pass, ids and counts in the log. Switch `CHECKPOINT_PRUNING`,
@@ -2178,6 +2190,7 @@ python scripts/load_service_notes.py --expect-ref <ref>   # the loader now REQUI
                                        #   the ref it may write to (not for --dry-run)
                                        #   and never touches a row tagged managed_by=ui
 python scripts/apply_sql.py --expect-ref <ref> scripts/sql/<file>.sql
+python scripts/backfill_replaced_threads.py  # lists replaced threads; --apply --expect-ref <ref> records them
 python scripts/gen_fee_locked.py [--check]   # the KB watcher's fee lock from the loader
                                        #   -> kb-admin/lib/watcher/fee-locked.ts + the 015 SQL arrays
 python scripts/preflight.py            # go-live gate: KB, agents, branch, portal bridge
@@ -2408,6 +2421,18 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **Replaced threads can be recorded; off, SQL written and not applied, nothing
+  deleted (section 9.50).** `cb_replaced_threads`, the two writes behind `RECORD_REPLACED_THREADS`,
+  `scripts/backfill_replaced_threads.py`, and the reset's delete of the record. A dry run of the
+  backfill on production, read-only, finds all 6 threads; 3 of them belong to conversations since
+  deleted, which changes the plan (see 9.50). The migration, rollback and the backfill's own
+  statements on PGlite: 23 of 23. 33 checks in `smoke_resilience.py`, through the real
+  `get_or_create`, `back_to_bot` and reset function; 22 faults, 22 red, one of them by crashing the
+  check rather than failing it by name. **Not run for real:** the bot's write through PostgREST
+  (no table anywhere; its SQL equivalent ran on PGlite), the backfill's `--apply`, and either reset
+  against a real table. reset-ui changes, so the next push redeploys it; it copes with the table
+  missing, and `tsc` passes.
 
 - **2026-11-04** - **A reply that carries on after a complete answer is read as that answer
   (section 9.54).** `try_parse_json` now takes the first complete object when more follows, from

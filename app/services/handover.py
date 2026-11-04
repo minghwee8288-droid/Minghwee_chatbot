@@ -324,6 +324,7 @@ async def back_to_bot(conversation: dict[str, Any], reason: str = REASON_AGENT_R
     carrying stale collected_info into whatever the client raises next.
     """
     conversation_id = conversation["id"]
+    await conversation_service.record_replaced_thread(conversation, reason)
     await conversation_service.update(
         conversation_id,
         bot_status=conversation_service.BOT_ACTIVE,

@@ -121,6 +121,12 @@ def _wipe_checkpoints(thread_id: str | None) -> None:
                     cur.execute(f"DELETE FROM {table} WHERE thread_id = %s", (thread_id,))
                     total += cur.rowcount
                 print(f"  cleared LangGraph checkpoint for thread {thread_id} ({total} row(s))")
+                # Its rows are gone, so a record of it is too. Only this thread's:
+                # an older replaced thread still has rows, and its record is what
+                # lets pruning find them. The table may not be applied yet.
+                cur.execute("SELECT to_regclass('public.cb_replaced_threads')")
+                if cur.fetchone()[0]:
+                    cur.execute("DELETE FROM cb_replaced_threads WHERE thread_id = %s", (thread_id,))
     except Exception as exc:  # noqa: BLE001 - an uninitialised checkpointer must not block the reset
         print(f"  could not clear checkpoint rows for thread {thread_id}: {exc}")
 

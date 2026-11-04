@@ -1195,9 +1195,196 @@ async def _json_checks() -> list[tuple[str, bool]]:
     return results
 
 
+async def _replaced_thread_checks() -> list[tuple[str, bool]]:
+    """Recording only: the real get_or_create and back_to_bot over a fake table."""
+    import logging
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.config import settings
+    from app.services import conversation as conv
+    from app.services import handover
+
+    results: list[tuple[str, bool]] = []
+
+    class Db:
+        """Writes in the order they happen. Anything to the record table can be made to fail."""
+
+        def __init__(self, fail: bool = False) -> None:
+            self.fail, self.log = fail, []
+
+        def table(self, name: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                upsert=lambda row, **kw: ("record", name, row, kw),
+                insert=lambda row: ("insert", name, row, {}),
+            )
+
+        async def execute(self, query: tuple) -> SimpleNamespace:
+            if self.fail:
+                raise RuntimeError("relation does not exist: SECRET-DETAIL")
+            self.log.append(query)
+            return SimpleNamespace(data=[])
+
+        async def insert(self, table: str, row: dict) -> dict:
+            self.log.append(("insert", table, row, {}))
+            return {**row, "id": 77}
+
+        async def update(self, table: str, row: dict, **where: object) -> list[dict]:
+            self.log.append(("update", table, row, where))
+            return [{**row, **where}]
+
+    def row(**fields: object) -> dict:
+        return {"id": 5, "status": "open", "bot_status": conv.BOT_ACTIVE, "langgraph_thread_id": "conv-5-old", **fields}
+
+    async def open_it(existing: dict | None, *, on: bool = True, fail: bool = False, engage: bool = True) -> Db:
+        fake = Db(fail)
+        with patch.object(conv, "db", fake), patch.object(settings, "record_replaced_threads", on), \
+                patch.object(conv, "get_by_phone", AsyncMock(return_value=existing)):
+            await conv.get_or_create("+6590000000", "Tan", engage=engage)
+        return fake
+
+    def kinds(fake: Db) -> list[str]:
+        return [entry[0] for entry in fake.log]
+
+    def new_id_written(fake: Db) -> bool:
+        return any(e[0] == "update" and str(e[2].get("langgraph_thread_id", "")).startswith("conv-5-") for e in fake.log)
+
+    results.append(("threads: the switch is off by default", type(settings).model_fields["record_replaced_threads"].default is False))
+
+    fake = await open_it(row(status="resolved"))
+    entry = next((e for e in fake.log if e[0] == "record"), None)
+    results.append(("threads: a reopened conversation records its old thread", bool(entry) and entry[1] == "cb_replaced_threads"))
+    results.append(("threads: ...before the new id is written", kinds(fake) == ["record", "update"]))
+    results.append(("threads: ...with the old id, not the new one", bool(entry) and entry[2]["thread_id"] == "conv-5-old"))
+    results.append(("threads: ...its conversation and why", bool(entry) and entry[2]["conversation_id"] == 5 and entry[2]["reason"] == "conversation_reopened"))
+    results.append(("threads: ...and a repeat changes nothing", bool(entry) and entry[3] == {"on_conflict": "thread_id", "ignore_duplicates": True}))
+    results.append(("threads: the new id is still written", new_id_written(fake)))
+
+    fake = await open_it(row(bot_status=conv.BOT_NONE))
+    entry = next((e for e in fake.log if e[0] == "record"), None)
+    results.append(("threads: a claimed conversation says so", bool(entry) and entry[2]["reason"] == "conversation_claimed"))
+
+    fake = await open_it(row(status="resolved"), on=False)
+    results.append(("threads: switch off, nothing recorded, thread still replaced", kinds(fake) == ["update"] and new_id_written(fake)))
+    fake = await open_it(row(status="resolved", langgraph_thread_id=None))
+    results.append(("threads: no old id, nothing to record", kinds(fake) == ["update"] and new_id_written(fake)))
+    fake = await open_it(row())
+    results.append(("threads: a thread kept is not recorded", "record" not in kinds(fake) and not new_id_written(fake)))
+    fake = await open_it(row(bot_status=conv.HUMAN_ACTIVE, status="resolved"))
+    results.append(("threads: a human's thread is not replaced or recorded", "record" not in kinds(fake)))
+    fake = await open_it(row(status="resolved"), engage=False)
+    results.append(("threads: not engaging replaces and records nothing", "record" not in kinds(fake)))
+    fake = await open_it(None)
+    results.append(("threads: a brand-new conversation records nothing", "record" not in kinds(fake)))
+
+    # A failed record must cost the client nothing.
+    lines: list[str] = []
+    handler = logging.Handler()
+    handler.emit = lambda record: lines.append(f"{record.levelname} {record.getMessage()}")  # type: ignore[method-assign]
+    conv.logger.addHandler(handler)
+    try:
+        fake = await open_it(row(status="resolved"), fail=True)
+    finally:
+        conv.logger.removeHandler(handler)
+    results.append(("threads: a failed record still replaces the thread", new_id_written(fake)))
+    results.append(("threads: ...and is logged as an error", any(line.startswith("ERROR") for line in lines)))
+    results.append(("threads: ...without the database's own words", not any("SECRET" in line for line in lines)))
+
+    async def hand_back(on: bool = True, fail: bool = False) -> Db:
+        fake = Db(fail)
+        with patch.object(conv, "db", fake), patch.object(settings, "record_replaced_threads", on), \
+                patch.object(handover, "_log", AsyncMock()):
+            await handover.back_to_bot(row(), reason="bot_error")
+        return fake
+
+    fake = await hand_back()
+    entry = next((e for e in fake.log if e[0] == "record"), None)
+    results.append(("threads: back_to_bot records before it writes", kinds(fake) == ["record", "update"]))
+    results.append(("threads: ...the old id and the handover's reason", bool(entry) and entry[2]["thread_id"] == "conv-5-old" and entry[2]["reason"] == "bot_error"))
+    fake = await hand_back(on=False)
+    results.append(("threads: back_to_bot with the switch off", kinds(fake) == ["update"]))
+    fake = await hand_back(fail=True)
+    results.append(("threads: back_to_bot survives a failed record", new_id_written(fake)))
+
+    # The two paths that keep the thread record nothing.
+    for name, call in (
+        ("resume_from_pause", lambda: handover.resume_from_pause(row())),
+        ("undo_agent_takeover", lambda: handover.undo_agent_takeover(5, "broadcast")),
+    ):
+        fake = Db()
+        with patch.object(conv, "db", fake), patch.object(settings, "record_replaced_threads", True), \
+                patch.object(handover, "_log", AsyncMock()):
+            await call()
+        results.append((f"threads: {name} keeps the thread and records nothing", "record" not in kinds(fake)))
+
+    # Recording only: nothing here may delete a checkpoint.
+    sql = (ROOT / "scripts" / "sql" / "replaced_threads_001_create.sql").read_text(encoding="utf-8").lower()
+    sql = re.sub(r"--.*", "", sql)  # the statements, not the notes about them
+    backfill = (ROOT / "scripts" / "backfill_replaced_threads.py").read_text(encoding="utf-8").lower()
+    code = (ROOT / "app" / "services" / "conversation.py").read_text(encoding="utf-8").lower()
+    results.append(("threads: the migration deletes nothing", "delete " not in sql and "cb_checkpoint" not in sql))
+    results.append(("threads: the migration has no foreign key to the portal", "references" not in sql))
+    results.append(("threads: the migration turns RLS on", "enable row level security" in sql))
+    results.append(("threads: the rollback exists", (ROOT / "scripts" / "sql" / "rollback" / "rollback_replaced_threads_001_create.sql").is_file()))
+    results.append(("threads: the backfill deletes nothing", "delete from" not in backfill and ".delete(" not in backfill))
+    results.append(("threads: the backfill writes only on --apply, with a project ref", "require_ref(args.expect_ref)" in backfill and "if args.apply:" in backfill and "set transaction read only" in backfill))
+    results.append(("threads: the app deletes no checkpoint", "cb_checkpoint" not in code))
+
+    # The reset deletes the old thread's rows, so its record goes with them. The real
+    # function, with only the connection faked.
+    import runpy
+
+    import psycopg
+
+    wipe = runpy.run_path(str(ROOT / "scripts" / "reset_conversation.py"), run_name="reset")["_wipe_checkpoints"]
+
+    async def reset_statements(table_exists: bool) -> list[tuple[str, tuple]]:
+        seen: list[tuple[str, tuple]] = []
+
+        class Cursor:
+            rowcount = 0
+
+            def __enter__(self) -> "Cursor":
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def execute(self, statement: str, params: tuple = ()) -> None:
+                seen.append((statement, params))
+
+            def fetchone(self) -> tuple:
+                return ("cb_replaced_threads" if table_exists else None,)
+
+        class Connection:
+            def __enter__(self) -> "Connection":
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def cursor(self) -> Cursor:
+                return Cursor()
+
+        with patch.object(psycopg, "connect", lambda *a, **k: Connection()), \
+                patch.object(settings, "supabase_db_url", "postgresql://fake"), \
+                patch("builtins.print"):
+            wipe("conv-5-old")
+        return seen
+
+    seen = await reset_statements(True)
+    record = [s for s in seen if "cb_replaced_threads" in s[0] and s[0].startswith("DELETE")]
+    results.append(("threads: a reset deletes that thread's record, by its id", record == [("DELETE FROM cb_replaced_threads WHERE thread_id = %s", ("conv-5-old",))]))
+    results.append(("threads: ...after its checkpoint rows", seen.index(record[0]) > 2 if record else False))
+    seen = await reset_statements(False)
+    results.append(("threads: a reset works before the table is applied", not any(s[0].startswith("DELETE FROM cb_replaced") for s in seen) and len(seen) == 4))
+    return results
+
+
 async def checks() -> list[tuple[str, bool]]:
     return [
         *await _json_checks(),
+        *await _replaced_thread_checks(),
         *await _checkpointer_checks(),
         *await _health_checks(),
         *await _forwarded_checks(),
