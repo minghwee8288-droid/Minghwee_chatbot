@@ -671,8 +671,15 @@ async def _recovery_checks() -> list[tuple[str, bool]]:
     # The window.
     r = await scan([inbound("m1", 11)])
     results.append(("past the window: left alone", not r["batches"] and not r["store"]["claims"]))
-    r = await scan([inbound("m1", 300), inbound("m2", 3)])
-    results.append(("the window reads the newest message; the batch stays whole", r["batches"] == [["m1", "m2"]]))
+    r = await scan([inbound("old", 300), inbound("m1", 9), inbound("m2", 3)])
+    results.append(("only what is inside the window goes in the batch", r["batches"] == [["m1", "m2"]]))
+    results.append(("...and an older message is not claimed", set(r["store"]["claims"]) == {"m1", "m2"}))
+    r = await scan([inbound("edge", recovery.RECOVERY_WINDOW_MINUTES), inbound("past", recovery.RECOVERY_WINDOW_MINUTES + 1)])
+    results.append(("exactly at the window's edge is inside it", r["batches"] == [["edge"]]))
+    with patch.object(recovery, "BATCH_ONLY_INSIDE_WINDOW", False):
+        r = await scan([inbound("old", 300), inbound("m1", 3)])
+    results.append(("switch off: the whole unanswered run, as before", r["batches"] == [["old", "m1"]]))
+    results.append(("the window switch is on", recovery.BATCH_ONLY_INSIDE_WINDOW is True))
     # whapi_message_id is nullable: a row in the window with no id leaves only old ones.
     r = await scan([inbound("old", 300), {**inbound("x", 3), "whapi_message_id": None}])
     results.append(("only old messages left to answer: left alone", not r["batches"]))

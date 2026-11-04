@@ -10,11 +10,11 @@ succeeds, so nothing is sent.
 
 The shape of it, each part because a wrong late reply is worse than none:
 
-- Only a conversation whose newest unanswered message is under
-  RECOVERY_WINDOW_MINUTES old, from before this process started. A later message
-  is the live webhook's.
-- Every inbound message since our last outbound is one batch, read together as
-  the debouncer would have, so the client gets one reply and not several.
+- Only unanswered messages under RECOVERY_WINDOW_MINUTES old, from before this
+  process started. A later message is the live webhook's, and an older one is
+  not replied to or claimed, though it stays in the transcript the model reads.
+- Those messages are one batch, read together as the debouncer would have, so
+  the client gets one reply and not several.
 - Each message is claimed by its Whapi id in cb_recovery_claims BEFORE anything
   is sent, and a message somebody else claimed is dropped. A turn that then fails
   stays claimed: at most once. wp_chat_messages cannot do this job, because the
@@ -59,6 +59,11 @@ RECOVERY_MAX_BATCHES = 25
 # Rows read per conversation to find our last outbound: HISTORY_LIMIT's order of
 # size. A chat with more unanswered messages than this is not a crash's doing.
 RECOVERY_HISTORY_ROWS = 50
+# 2026-11-04: an unanswered message older than the window stays out of the batch,
+# so a recent "hello" does not bring a question from days ago back as this turn's
+# request. False = everything since our last outbound goes in, if the newest is
+# inside the window.
+BATCH_ONLY_INSIDE_WINDOW = True
 
 _MESSAGE_COLUMNS = (
     "direction, body, is_bot, sent_by, to_number, whapi_message_id, created_at, "
@@ -203,6 +208,10 @@ async def _pending(
     rows = [row for row in rows if _on_our_channel(row, ours)]
     if not rows:
         return "answered", None, []
+    if BATCH_ONLY_INSIDE_WINDOW:
+        rows = [r for r in rows if (created := _parse(r.get("created_at"))) is not None and created >= cutoff]
+        if not rows:
+            return "too_old", None, []
     newest = _parse(rows[-1].get("created_at"))
     if newest is None:
         return "too_old", None, []

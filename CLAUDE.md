@@ -655,7 +655,7 @@ because the lead is opened early and the ticket is created much later.
 | The container reads as healthy only if `/health/ready` says ok | `app/healthcheck.py` (`python -m app.healthcheck`, in compose and the `Dockerfile`) + `health.CHECKPOINTER_IN_READY` | `/health/ready` always answers 200, so the command parses the body, and `/health` says ok whatever the state. Memory, or no checkpointer yet, is degraded. Standard library only, nothing from the app. Docker only labels the container: an unhealthy one is not restarted, so a short Supabase failure costs a label and no replies. Only the checkpointer, the database and the Whapi token decide it (`health.CRITICAL_CHECKS_ONLY`); anything else failing is named under `warnings`. `whapi_token` proves the token is set, not that Whapi is up. |
 | The public health body gives nothing away | `health.readiness` + `smoke_resilience.py` | nginx forwards it with no auth, so: booleans and fixed names only. No exception text, count, version or value from the environment; asserted with secrets planted in the settings and every check failing. `/` and `/health` do show the version, and `/health` the environment. |
 | A restart answers what it is holding | `debouncer._drain_all` (`DRAIN_ON_SHUTDOWN`) + `stop_grace_period: 60s` in compose | Waiting batches run at once on shutdown, running turns are waited for, before Whapi and the graph close. Limit `DRAIN_TIMEOUT_SECONDS` (45), which must stay under the grace period, and `smoke_resilience.py` compares them. Past it, turns are cancelled and message ids logged. Covers a normal stop or deploy; a crash or kill still loses the buffer, which is the startup scan's job. |
-| The startup scan claims before it sends, and never answers another channel's message | `app/services/recovery.py` (`STARTUP_RECOVERY_SCAN`, default off) + `cb_recovery_claims` | Written and OFF. Every inbound message since our last outbound is one batch; each is claimed by Whapi id before any reply, and a failed claim sends nothing. An auto-reply is not an answer. Only messages under 10 min old by the newest, from before startup, to our own `to_number` (not `business_number`, which 3,454 of 3,829 live rows disagree with). The same gates as `handle_inbound`. More than 25 to answer sends none of them. |
+| The startup scan claims before it sends, and never answers another channel's message | `app/services/recovery.py` (`STARTUP_RECOVERY_SCAN`, default off) + `cb_recovery_claims` | Written and OFF. The unanswered messages under 10 min old are one batch (`BATCH_ONLY_INSIDE_WINDOW`); an older one is neither replied to nor claimed, though the model still reads it in the transcript. Each is claimed by Whapi id before any reply, and a failed claim sends nothing. An auto-reply is not an answer. Only messages from before startup, to our own `to_number` (not `business_number`, which 3,454 of 3,829 live rows disagree with). The same gates as `handle_inbound`. More than 25 to answer sends none of them. |
 | One helper's details never become another helper's | `info_collector.nationality_carries` / `nationality_for_turn` + `_history_since` (`collected_since`) | `nationality` is portable for a hiring client (the nationality they want) and NOT across a switch into or out of `passport_renewal`/`home_leave`, where it is one helper's. Read by the collector's reset AND by `rag_retriever`, which runs before the reset. The extractor reads history only from the message that started the current request, on every turn after a switch, not just the switch turn. |
 | One salesperson per client conversation, and the portal inbox never loses a hand-assigned owner | `assignment.resolve_agent` (`_portal_owner`) + `claim_portal_owner` | A ticket goes to whoever owns the chat in the portal before the round robin is asked; the bot only ever FILLS an empty `wp_chat_conversations.assigned_user_id` (the IS NULL is in the UPDATE itself). `to_human` used to set it unconditionally, and the ordinary ticket path (`log_escalation`) never set it at all. Profile ↔ portal login is `cb_agent_portal_users`, ours, not `wp_chat_users.profile_id`, theirs. |
 | Nothing the KB watcher drafts reaches the chatbot without an APPROVER | `kb_admin_watch_approve` (015, `kb_admin__require_actor(..., 'approver')`) + `app/watch/actions.ts` (`canApprove` first) | A watched page's change becomes a PROPOSAL (`cb_kb_drafts`), never a live row. Approve writes the text through the existing `kb_admin_save_draft` / `kb_admin_create_entry` and it goes live only through the existing `kb_admin_publish` (canary-checked embedding). Proved on PGlite (real migrations 001-009 + 015): the live entry is unchanged until publish. |
@@ -1075,7 +1075,8 @@ Easy to get wrong:
   `graph.REQUIRE_DURABLE_CHECKPOINTER` (any checkpointer failure falls back to memory),
   `health.CHECKPOINTER_IN_READY` (`/health/ready` does not report the checkpointer),
   `debouncer.DRAIN_ON_SHUTDOWN` (shutdown discards waiting messages),
-  `health.CRITICAL_CHECKS_ONLY` (any failing check makes `/health/ready` degraded).
+  `health.CRITICAL_CHECKS_ONLY` (any failing check makes `/health/ready` degraded),
+  `recovery.BATCH_ONLY_INSIDE_WINDOW` (the scan batches everything since our last outbound).
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2260,6 +2261,13 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-11-04** - **The startup scan batches only messages inside its window (still off).**
+  It took everything since our last outbound as long as the newest was recent, so a "hello"
+  could carry a days-old question back in as this turn's request. Older messages are no
+  longer replied to or claimed. They stay in the transcript the model reads
+  (`get_history` excludes only the batch), so the reply is not blind to them. 5 checks in
+  `smoke_resilience.py` replace the 1 that pinned the old behaviour; 3 faults, 3 red.
+
 - **2026-11-04** - **Only the checkpointer, the database and Whapi make the bot unhealthy.**
   Supersedes the line in the entry below saying any failing check shows as unhealthy: a
   missing transcription key costs voice notes, not the bot. The rest are named under
@@ -2268,7 +2276,7 @@ Append here, newest first. One entry per behavioural change.
   (`main.lifespan`), so the only warning production can really show is the transcription key.
   The body is public, so a check plants secrets in the settings, fails every check and
   asserts no secret and no digit in the bytes sent. Live before this change, the body held
-  only booleans, confirmed against `bot.minghwee.com`. 22 more checks in
+  only booleans, confirmed against `bot.minghwee.com`. 15 more checks in
   `smoke_resilience.py`; 10 faults, 10 red.
 
 - **2026-11-04** - **Docs only: five open items added to section 9.** The overwrite rule
