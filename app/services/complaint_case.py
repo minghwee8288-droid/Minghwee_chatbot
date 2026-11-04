@@ -92,6 +92,9 @@ async def raise_ticket(
             description=description_for(case),
             complaint_level=case.get("level"),
             priority=PRIORITY_BY_LEVEL.get(case.get("level") or "", "medium"),
+            # So a P1 stands out on the Complaints tab until assignment is decided.
+            # status stays open, for the reason given in write_through.
+            workflow_status="escalated" if case.get("level") == "P1" else None,
         )
         if ticket:
             await _mirror({**case, "ticket_id": ticket.get("id")}, conversation.get("id"), transcript)
@@ -116,6 +119,7 @@ async def write_through(case: dict[str, Any], message: str, transcript: str = ""
         if row is None:
             return
         info = dict(row.get("captured_info") or {})
+        was_p1 = (info.get("complaint") or {}).get("level") == "P1"
         info["complaint"], info["triage"] = split(case)
         if (message or "").strip():
             info["follow_ups"] = [
@@ -128,7 +132,9 @@ async def write_through(case: dict[str, Any], message: str, transcript: str = ""
             "description": description_for(case),
             "priority": PRIORITY_BY_LEVEL.get(case.get("level") or "", "medium"),
         }
-        if case.get("urgent"):
+        # Reaching P1 escalates once. Not on every message: an agent may have moved
+        # the ticket on since.
+        if case.get("urgent") or (case.get("level") == "P1" and not was_p1):
             # "Urgent" in the tab's terms: top priority and the Escalated status.
             # status stays open: in_progress reads as an agent picking it up, which
             # would pause the bot (TICKET_PICKUP_PAUSES).

@@ -3791,6 +3791,7 @@ async def create(
     description: str = "",
     complaint_level: str | None = None,
     priority: str | None = None,
+    workflow_status: str | None = None,
 ) -> dict[str, Any] | None:
     stored_service, true_service = _storable_service(service_type, conversation)
     info = dict(captured_info or {})
@@ -3839,6 +3840,8 @@ async def create(
         payload["created_lead_id"] = created_lead_id
     if complaint_level:
         payload["complaint_level"] = complaint_level
+    if workflow_status:
+        payload["workflow_status"] = workflow_status
 
     async def _insert(row: dict[str, Any]) -> dict[str, Any] | None:
         return await db.insert_numbered(

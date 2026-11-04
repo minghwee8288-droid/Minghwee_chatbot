@@ -110,6 +110,13 @@ FOLLOW_OTHER = (
     "call 999. If you are hurt or very unwell, call 995 or go to your nearest hospital A&E."
 )
 
+# Her answer to "Are you thinking about ending your life right now?" is yes. Built
+# only from the P1 suicide template's own sentences (instruction of 4 Nov 2026).
+FOLLOW_SUICIDE_NOW = (
+    "Please call 995 now or go to your nearest hospital A&E. We are not a medical "
+    "service, so please contact them first. Your reference is {ref}."
+)
+
 # PENDING THOMAS APPROVAL: the doc gives no wording for these two. Built from its
 # own sentences; no safety numbers, because neither case has a safety concern.
 P3_ADDED = (

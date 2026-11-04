@@ -724,7 +724,7 @@ because the lead is opened early and the ticket is created much later.
 
 | A helper's complaint is graded on every message, and P1 is never preceded by a question | `complaint_triage.decide_turn` / `assess` / `open_case` / `advance` (`COMPLAINT_TRIAGE_ENABLED`) | Helper and unknown-role chats. A keyword net (`keyword_floor`) holds when the model fails: at least P2, P1 on self-harm, assault, injury or a report happening now. An employer's chat is not graded and keeps its flows, unless the message is a helper's words about "my ma'am" on that phone. An employer's emergency takes the crisis path (`EMPLOYER_EMERGENCY`, `CRISIS_REPLY_COMPLETE`). Highest of several issues; the level never falls. A bare "ya" or the time she gives cannot raise it on the model's word (it re-read the old report in the history, on the real model, and sent the emergency template to a phone someone could see). |
 | A complaint's messages are the approved wording | `complaint_templates.py` + `reply_is_fixed` in `run_turn` | No reply guard rewrites them; only the reference is shown as code. A translation must keep 999, 995, A&E and the reference, or the English goes (`translated_ok`). `FORBIDDEN` is asserted over every template and checked on the one model-written answer (P4). The recruiter's number only ever comes from `FCC_CONTACT_NUMBER`; unset, its clause or sentence goes. |
-| A complaint ticket exists before the first triage question, and goes on the portal's Complaints tab | `complaint_case.raise_ticket` + `ticket.create(complaint_level=, priority=)` | The portal's rule: `service_type` holds `dispute_salary` or `dispute_assault` (its `tickets_repo._CB_IS_COMPLAINT`), so that is what is stored, by type; `complaint_level` holds P1-P4. Topic key `helper_complaint`, in `ALWAYS_SEPARATE` by its service, so nothing folds into it. No owner (the FCC pool) and it does not pause the chat. A "not safe" sets priority high and `workflow_status` escalated with status still `open`: `in_progress` would read as an agent picking it up and quieten the bot. |
+| A complaint ticket exists before the first triage question, and goes on the portal's Complaints tab | `complaint_case.raise_ticket` + `ticket.create(complaint_level=, priority=)` | The portal's rule: `service_type` holds `dispute_salary` or `dispute_assault` (its `tickets_repo._CB_IS_COMPLAINT`), so that is what is stored, by type; `complaint_level` holds P1-P4. Topic key `helper_complaint`, in `ALWAYS_SEPARATE` by its service, so nothing folds into it. No owner (the FCC pool) and it does not pause the chat. Every P1 is created (or, raised to P1, set once) with `workflow_status` escalated, so it stands out until assignment is decided. A "not safe", or a yes to the suicide template's question (`suicide_answer`, which sends the 995 line), sets priority high and `workflow_status` escalated with status still `open`: `in_progress` would read as an agent picking it up and quieten the bot. |
 | A P1 does not wait on the database or a typing client | `nodes/complaint_triage._ticket_for` (`P1_TICKET_SECONDS`) + `reply_must_send` in `webhook._process_locked` | 3 s, then the template goes without its reference while the ticket retries, and "Your reference is ..." follows. Never held while she is typing, never dropped as a repeat. A chat a human holds gets the same words (`emergency_reply`). |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -2065,8 +2065,7 @@ at a time.
   P4 ticket's message), all marked PENDING THOMAS APPROVAL in `complaint_templates.py`. Whether Saturday
   counts as a working day, and the public holiday list. **Who is told when a P1 arrives**: the ticket has
   no owner by instruction (the FCC pool) and nothing notifies anyone, where the old crisis ticket went to
-  an admin. And what a bare "yes" to "Are you thinking about ending your life right now?" should get:
-  today it is the fixed "any other message" line, which carries 995.
+  an admin. Until that is decided every P1 is marked Escalated on the tab.
 - **Helpers' names on placements.** Most live `placements` rows carry no
   `candidate_id`, so for those clients we cannot name the helper and the bot
   asks for her name instead of confirming it. Filling `candidate_id` in the
@@ -2457,6 +2456,14 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **A yes to the suicide template's question gets the 995 line, and every P1 is Escalated.**
+  After `P1_SUICIDE`, yes (or words meaning she is thinking of ending her life now) sends "Please call 995
+  now ...", with the ticket urgent; a plain no or "I'm ok" sends FOLLOW_SAFE; "not ok" is not a no. The
+  template asks two questions and ends on "Is there someone safe near you?", so a yes or no may answer that
+  one instead: both are read as the first, which is the safer reading of a yes and not of a no. Every P1
+  ticket now has `workflow_status` escalated, at creation or once on reaching P1, so it stands out until
+  assignment is decided. **Assignment is untouched.** `selfcheck_golive.py` gains the cases; E2E not run.
 
 - **2026-11-04** - **The single crisis reply becomes Thomas's complaint severity flow, behind
   `COMPLAINT_TRIAGE_ENABLED`.** Helper and unknown-role chats: every message graded P1-P4 beside the

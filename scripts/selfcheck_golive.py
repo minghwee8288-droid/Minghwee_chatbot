@@ -1277,6 +1277,97 @@ async def scenario_complaint_triage():
     check("complaint 2: the keyword net catches it with the model down",
           down.startswith("I'm really glad you told me."))
 
+    # 2, the answer to its question (4 Nov 2026).
+    for answer, label in (("yes", "yes"), ("oo", "oo"), ("yes I am thinking about it", "yes, thinking"),
+                          ("I want to die", "self-harm words"),
+                          ("no I want to die", "a no, then self-harm words")):
+        w = ComplaintWorld()
+        await w.turn("I don't want to live anymore", _h("P1", "self_harm"))
+        w.ticket()["workflow_status"] = None  # so only this answer can set it
+        r2b, a2b = await w.turn(answer, {"speaker": "helper", "level": "none"})
+        check(f"complaint 2: suicide + '{label}' -> the 995 line with the reference, ticket urgent",
+              a2b == ("Please call 995 now or go to your nearest hospital A&E. We are not a medical "
+                      f"service, so please contact them first. Your reference is `{w.ticket()['ticket_number']}`.")
+              and w.ticket()["workflow_status"] == "escalated" and w.ticket()["priority"] == "high"
+              and w.ticket()["status"] == "open" and r2b.get("reply_must_send"))
+    for answer in ("no", "I'm ok", "no thanks"):
+        w = ComplaintWorld()
+        await w.turn("I don't want to live anymore", _h("P1", "self_harm"))
+        _r, a2n = await w.turn(answer, {"speaker": "helper", "level": "none"})
+        check(f"complaint 2: suicide + '{answer}' -> FOLLOW_SAFE",
+              a2n.startswith("Thank you for letting us know.")
+              and w.ticket()["captured_info"]["complaint"]["safe_status"] == "safe")
+    w = ComplaintWorld()
+    await w.turn("I don't want to live anymore", _h("P1", "self_harm"))
+    _r, a2u = await w.turn("no I'm not ok", {"speaker": "helper", "level": "none"})
+    check("complaint 2: 'no I'm not ok' is not a no: never FOLLOW_SAFE, and the 995 line stays in the reply",
+          "Thank you for letting us know" not in a2u and "995" in a2u)
+    w = ComplaintWorld()
+    await w.turn("my ma'am beat me just now, I'm bleeding", _h("P1", "physical"))
+    _r, a2p = await w.turn("yes", {"speaker": "helper", "level": "none"})
+    check("complaint 2: the 995 line belongs to the suicide template: 'yes' after the emergency one does not get it",
+          "We are not a medical service" not in a2p)
+
+    # Every P1 ticket is escalated, however it got there; a P2 or P3 is not.
+    p1_tickets = {}
+    w = ComplaintWorld()
+    await w.turn("my ma'am beat me just now, I'm bleeding", _h("P1", "physical"))
+    p1_tickets["emergency"] = w.ticket()
+    w = ComplaintWorld()
+    await w.turn("I don't want to live anymore", _h("P1", "self_harm"))
+    p1_tickets["suicide"] = w.ticket()
+    w = ComplaintWorld()
+    await w.turn("my ma'am beat me just now", RuntimeError("model down"))
+    p1_tickets["keywords only"] = w.ticket()
+    w = ComplaintWorld()
+    await w.turn("she hit me last week", _h("P2", "physical"))
+    p2_row = dict(w.ticket())
+    await w.turn("yes", {"speaker": "helper", "level": "none"})
+    await w.turn("yes I'm hurt", {"speaker": "helper", "level": "none"})
+    p1_tickets["raised from P2"] = w.ticket()
+    check("complaint: every P1 ticket has workflow_status=escalated, status still open "
+          f"({', '.join(p1_tickets)})",
+          all(t["complaint_level"] == "P1" and t["workflow_status"] == "escalated" and t["status"] == "open"
+              for t in p1_tickets.values()))
+    check("complaint: a P2 ticket is not escalated", "workflow_status" not in p2_row)
+    w = ComplaintWorld()
+    await w.turn("salary not paid for 2 months", _h("P3", "salary"))
+    check("complaint: a P3 ticket is not escalated", "workflow_status" not in w.ticket())
+    w = ComplaintWorld()
+    await w.turn("she hit me last week", _h("P2", "physical"))
+    await w.turn("yes", {"speaker": "helper", "level": "none"})
+    await w.turn("no", {"speaker": "helper", "level": "none"})
+    await w.turn("yes", {"speaker": "helper", "level": "none"})
+    await w.turn("no", {"speaker": "helper", "level": "none"})
+    before = w.ticket().get("workflow_status")
+    await w.turn("not safe", {"speaker": "helper", "level": "none"})
+    check("complaint: 'not safe' on an open P2 still escalates it",
+          before is None and w.ticket()["workflow_status"] == "escalated")
+    w = ComplaintWorld()
+    await w.turn("my ma'am beat me just now, I'm bleeding", _h("P1", "physical"))
+    w.ticket()["workflow_status"] = "stuck"  # an agent moved it on
+    await w.turn("she took my things", {"speaker": "helper", "level": "none"})
+    check("complaint: a later message does not undo what an agent set on a P1",
+          w.ticket()["workflow_status"] == "stuck")
+
+    # Assignment: as at 7b20d23, whatever the level.
+    rows = []
+    for text, llm_ in (("my ma'am beat me just now, I'm bleeding", _h("P1", "physical")),
+                       ("I don't want to live anymore", _h("P1", "self_harm")),
+                       ("she hit me last week", _h("P2", "physical")),
+                       ("salary not paid for 2 months", _h("P3", "salary"))):
+        w = ComplaintWorld()
+        await w.turn(text, llm_)
+        await w.turn("not safe", {"speaker": "helper", "level": "none"})
+        rows.append(w.ticket())
+    check("complaint: assignment fields unchanged from 7b20d23: no owner, rule round_robin, on every level, "
+          "after an update too",
+          all(r["assigned_agent_id"] is None and r["assignment_rule"] == "round_robin" for r in rows))
+    source = Path(_ct_cc.__file__).read_text(encoding="utf-8")
+    check("complaint: the complaint flow neither picks an agent nor writes the owner",
+          "resolve_agent" not in source and source.count("assigned_agent_id") == 1
+          and "resolve_agent" not in Path(_ct_node.__file__).read_text(encoding="utf-8"))
+
     # 3. P2 physical: Q1 -> Q2 -> Q3 -> Q4 -> the template, with no question repeated.
     w = ComplaintWorld()
     llm = _h("P2", "physical", facts_complete=True)

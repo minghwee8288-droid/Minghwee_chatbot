@@ -298,6 +298,13 @@ _NOT_SAFE_WORD = re.compile(
 _SAFE_WORD = re.compile(
     r"^\W*(?:i\s*(?:am|'?m)\s+)?(?:safe|aman|ligtas|ligtas\s+ako)(?:\s+now)?\W*$", re.IGNORECASE
 )
+_THINKING_OF_IT = re.compile(r"\bthinking\b|\bend(?:ing)?\s+it\b", re.IGNORECASE)
+_NOT_OK = re.compile(r"\bnot\s+(?:ok|okay|fine|good|alright|well)\b", re.IGNORECASE)
+_NOT_NOW = re.compile(
+    r"^\W*(?:no|nope|nah|not\s+really|tidak|nggak|enggak|hindi|wala"
+    r"|(?:i\s*(?:am|'?m)\s+)?(?:ok|okay|fine|alright))\b",
+    re.IGNORECASE,
+)
 _HURT = re.compile(r"\b(?:hurt|injur\w*|bleeding|unwell|sakit|masakit|luka)\b", re.IGNORECASE)
 _CAN_BE_SEEN = re.compile(
     r"\b(?:can|could|will|might|may)\s+see\b|\bsee(?:s|ing)?\s+(?:my|this|the)\s+phone\b"
@@ -409,7 +416,7 @@ def _go_p1(case: dict[str, Any], reason: str) -> str:
     case["stage"] = "open"
     case["pending"] = None
     kind = _p1_kind(case)
-    case["awaiting"] = "safe_word" if kind == "P1" else None
+    case["awaiting"] = "safe_word" if kind == "P1" else "suicide_check"
     return kind
 
 
@@ -495,6 +502,26 @@ def _apply_answer(case: dict[str, Any], pending: str, message: str, a: Assessmen
     return None
 
 
+def suicide_answer(message: str, a: Assessment) -> str | None:
+    """Her answer to the suicide template's question: 'now', 'no', or None if unclear.
+
+    Any doubt goes the safe way: words of self-harm count even after a "no", and "not
+    ok" is not a no. The model is asked last, so it cannot override a plain "no".
+    """
+    text = message or ""
+    if _SELF_HARM.search(text) or _THINKING_OF_IT.search(text):
+        return "now"
+    if _NOT_OK.search(text):
+        return None
+    if _NOT_NOW.search(text):
+        return "no"
+    if _YES.search(text):
+        return "now"
+    if a.level == "P1" and a.complaint_type == "self_harm" and len(text.split()) >= 3:
+        return "now"
+    return None
+
+
 def advance(case: dict[str, Any], a: Assessment, message: str) -> tuple[dict[str, Any], str | None]:
     """A message on an open case: the new case, and which message goes next.
 
@@ -516,6 +543,18 @@ def advance(case: dict[str, Any], a: Assessment, message: str) -> tuple[dict[str
             case["safe_status"] = "safe"
             case["awaiting"] = None
             return case, "FOLLOW_SAFE"
+        if case.get("awaiting") == "suicide_check":
+            answer = suicide_answer(message, a)
+            if answer:
+                case["awaiting"] = None
+                _absorb(case, a)
+            if answer == "now":
+                case["safe_status"] = "not_safe"
+                case["urgent"] = True
+                return case, "FOLLOW_SUICIDE_NOW"
+            if answer == "no":
+                case["safe_status"] = "safe"
+                return case, "FOLLOW_SAFE"
 
     # The model may grade the old report again on a bare "ya" or "after 9pm". An
     # answer that short raises nothing unless its own words do; nor does the time

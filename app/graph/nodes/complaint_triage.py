@@ -68,6 +68,8 @@ def _text_for(kind: str, case: dict[str, Any], ref: str | None) -> str:
         return templates.follow_up(templates.FOLLOW_SAFE, ref)
     if kind == "FOLLOW_NOT_SAFE":
         return templates.follow_up(templates.FOLLOW_NOT_SAFE, ref)
+    if kind == "FOLLOW_SUICIDE_NOW":
+        return templates.follow_up(templates.FOLLOW_SUICIDE_NOW, ref)
     if kind == "FOLLOW_OTHER":
         return templates.follow_up(templates.FOLLOW_OTHER, ref)
     if kind == "P3_ADDED":
@@ -256,7 +258,7 @@ async def complaint_triage_node(state: ConversationState) -> dict[str, Any]:
         **update,
         "reply": reply,
         "extra_replies": extra,
-        "reply_must_send": kind in {"P1", "P1_SUICIDE", "FOLLOW_NOT_SAFE", "NOT_SAFE"},
+        "reply_must_send": kind in {"P1", "P1_SUICIDE", "FOLLOW_NOT_SAFE", "FOLLOW_SUICIDE_NOW", "NOT_SAFE"},
         "complaint_case": case,
         "complaint_p4": None,
         "ticket_id": ticket_id or case.get("ticket_id"),
