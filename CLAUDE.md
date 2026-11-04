@@ -1787,6 +1787,55 @@ Ordered by what will hurt first.
     addition that sits beside a live sentence the page contradicts by a rule the mechanical test
     cannot see; the reviewer sees both, and Edit fixes it.
 
+48. **There is no general rule for when a later value may overwrite an answered field.**
+    `info_collector`: `collected = {**previous, **extracted}`, so whatever the extractor
+    returns on any turn replaces what we hold, and the checkpoint's reducer does the same.
+    What protects a field today is a list of one-off guards, each added after a live
+    failure: `_ASKS_FOR_CARE` ("1 is elderly care" rewrote `requirement`),
+    `_settled_transfer_direction` (the bare word "transfer" wiped a settled direction),
+    `_echoes_another_answer`, `_restates_the_service`. The next field along has none. The
+    shape of a rule: a field already answered is only replaced when this message plainly
+    corrects it or answers it after we asked again, and a real correction must still win
+    (2026-09-17, a client correcting our records beats our guess). This is collection
+    gating, which sections 9.12, 9.21 and 9.22 say not to change in a hurry, so it wants a
+    replay over real transcripts first.
+49. **A new thread starts with nothing, even when we know plenty.** `back_to_bot` and a
+    reopened conversation mint a fresh `langgraph_thread_id` for a clean slate, so the
+    checkpoint's name, helpers, answers, `briefed_services`, `flagged_once` and
+    `question_style` are gone, while the transcript and the live lookups stay. Live, 6 of
+    the 18 threads in `cb_checkpoints` are no longer current on any conversation (2026-11-04).
+    Seeding means copying chosen fields across when the id is replaced. The care is in what
+    NOT to copy: `collected_info` is what the fresh thread exists to drop
+    (`finished_collection`, CB-2026-0028 and 0030), and a crash recovery may have left the
+    old state in whatever produced the exception. Candidates are the facts about the person
+    (name, `helpers_named`, `question_style`), never a collection in progress.
+50. **Nothing ever deletes a checkpoint.** Outside `reset_conversation.py` and reset-ui, no
+    code removes `cb_checkpoint*` rows, and a replaced thread's rows are orphaned for good.
+    Live, 2026-11-04: 869 checkpoints on 18 threads, 21 MB (5.6 MB checkpoints, 7.7 MB
+    blobs, 8.0 MB writes), so about 25 KB a checkpoint. That is testers only, and resets
+    delete rows, so it understates. A rough upper bound at go-live: 6,181 inbound messages
+    in the last 30 days at a handful of checkpoints a turn is hundreds of MB a month, on a
+    database shared with two other products. Keep a thread's latest checkpoint only (a turn
+    resumes from the latest, and nothing here replays history) and delete threads no
+    conversation points at. Must go through the bot's own connection, never a broad
+    delete by date: a parked client can come back weeks later, and an open thread's latest
+    checkpoint is the collection.
+51. **The alert on a refused or memory-backed start is not wired; where it goes is waiting
+    on a decision.** A refusal is a `CRITICAL` log line, and the healthcheck labels the
+    container unhealthy. Nothing tells a person. A process that is refusing to start cannot
+    reliably alert about itself, so whichever channel is chosen, the check should run outside
+    the container.
+52. **How often the transcript window cuts something, measured 2026-11-04, no change made.**
+    Bot traffic is too thin to decide on: 112 bot messages are stored, because the bot only
+    serves the allowlist and resets delete rows. 36 of them (32%) went out with a cut-off
+    transcript, on 4 conversations; 3 of 18 checkpoint threads passed 40 rows. The real
+    clients' chats the bot would inherit at go-live are the better guide: of 333 active in
+    the last 30 days, **152 (46%) are over 40 rows** (median 33, 90th percentile 333, largest
+    3,839), but only **49 of 1,477 sittings (3.3%)** pass 40 on their own, with a 6-hour gap
+    ending a sitting. So the window fills across days, not in one long intake, and agents
+    are 48% of the rows. That points at `client_notes` and a summary of earlier sittings,
+    not a higher `HISTORY_LIMIT`. Re-measure once the bot has real traffic.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
@@ -2208,6 +2257,10 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **Docs only: five open items added to section 9.** The overwrite rule
+  (9.48), new-thread seeding (9.49), checkpoint pruning (9.50), the alert decision (9.51)
+  and the numbers on the transcript window (9.52), from a read-only query.
 
 - **2026-11-04** - **The startup scan is written and switched off.** For what graceful
   shutdown cannot cover: a crash or kill loses the debouncer's buffer, and a message sent
