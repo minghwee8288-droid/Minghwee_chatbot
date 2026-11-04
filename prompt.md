@@ -3438,3 +3438,47 @@ would you be back?"), on home leave and passport renewal
 time (Indonesian about 2 weeks, Filipino about 4 weeks), the timing line becomes
 "It usually takes about 2 weeks. We'll treat it as urgent, but we can't promise
 it will be ready by then." (`LEAVE_TIMELINE_CONFLICT`).
+
+---
+
+## Helper complaints: severity and triage (4 November)
+
+`settings.complaint_triage_enabled` (true). From a helper or an unknown sender, every message is
+graded P1-P4 beside the classifier, and the replies are fixed text, not model-written: the wording
+is Thomas's guidelines of 2 Nov 2026, kept in `app/graph/complaint_templates.py`. Those are the
+source; this section does not copy them. The lines there marked PENDING THOMAS APPROVAL are the
+three follow-ups on an open P1/P2 case and two lines the guidelines give no wording for.
+
+The model is used three times, none of them to write a reply to a safety report.
+
+### Prompt - grading a message
+
+`complaint_triage.SEVERITY_SYSTEM`: speaker (helper, employer, unknown); level (P1-P4 or none); the
+complaint type with each type's default level and when it goes higher, as the guidelines list them;
+take the highest of several issues and, if unsure, go higher. It grades THIS message: a yes or no, a
+time or a short answer is "none" unless the message itself reports something new, and P1 needs a sign
+in her own words. It also returns what her message already answers of the triage questions, so she
+is not asked them. A keyword net (English, Tagalog, Bahasa) forces at least P2, and P1 on self-harm,
+an assault or an injury, whatever the model says or if it fails.
+
+### Prompt - a helper's general question (P4)
+
+```
+A domestic helper in Singapore asked a question. Answer it in 1-2 short sentences in plain English,
+from the records below ONLY. Give no legal or medical advice, promise no outcome, do not tell her to
+confront anyone. If the records do not answer it, reply exactly: NO_ANSWER
+```
+
+The answer goes inside the P4 template. No answer, a figure not in the records, or anything
+`complaint_templates.FORBIDDEN` catches: a P4 ticket instead.
+
+### Prompt - translating a complaint message
+
+```
+Translate this message from a maid agency to a domestic helper into {language}.
+Translate only: add nothing, remove nothing and give no advice of your own. Keep these exactly as
+written: the numbers 999 and 995, the letters A&E, any reference like CB-2026-0001, and any phone
+number. Reply with the translation and nothing else.
+```
+
+If 999, 995, A&E or the reference does not survive, the English goes instead.

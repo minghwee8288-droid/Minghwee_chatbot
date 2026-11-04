@@ -377,6 +377,16 @@ class ConversationState(TypedDict, total=False):
     candidate_record: dict[str, Any] | None
     info_complete: bool
 
+    # --- Helper complaints (app/graph/complaint_triage.py) ---
+    # What the flow decided this turn: per turn, in _TURN_RESET.
+    complaint_step: dict[str, Any] | None
+    # The case as last written. The ticket is the record; this copy is used only
+    # while a ticket could not be raised. Absent from _TURN_RESET.
+    complaint_case: dict[str, Any] | None
+    # We answered a helper's question and asked whether anything else worries her
+    # ({"question", "answer"}), kept until she replies. Absent from _TURN_RESET.
+    complaint_p4: dict[str, Any] | None
+
     # --- Output ---
     reply: str
     reply_sent: bool
@@ -384,6 +394,12 @@ class ConversationState(TypedDict, total=False):
     # a person reads and does not answer. Set by the classifier, honoured by the
     # router, and delivered as an empty reply (the webhook sends nothing).
     suppress_reply: bool
+    # The reply is approved wording: run_turn's reply guards leave it alone.
+    reply_is_fixed: bool
+    # Never dropped as a repeat, never held while she is still typing (a P1).
+    reply_must_send: bool
+    # Further messages sent straight after the reply.
+    extra_replies: list[str]
 
     # --- Handover ---
     needs_handover: bool

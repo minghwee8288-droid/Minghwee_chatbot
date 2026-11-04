@@ -14,6 +14,9 @@ from app.graph import guards
 from app.graph import language
 from app.services import lead as lead_service
 from app.graph.guards import answering_our_question, without_tag_before_possessive
+from app.graph import complaint_triage
+from app.graph.nodes.complaint_triage import complaint_triage_node
+from app.services import complaint_case
 from app.graph.nodes.blocked_topic_responder import (
     PROBE_REPLY,
     asks_general_info,
@@ -77,6 +80,11 @@ def route_after_intent(state: ConversationState) -> str:
     # another "still checking on that for you".
     if state.get("suppress_reply"):
         return END
+
+    # A helper's complaint (Thomas's guidelines, 2 Nov 2026): ahead of everything,
+    # including a parked topic. Off the switch this key is never set.
+    if complaint_triage.in_flow(state):
+        return "complaint_triage"
 
     # A vague action request, or the answer to our question about one
     # (app/graph/clarify.py). Before the parked-topic check: "please send the
@@ -271,6 +279,31 @@ PREFETCH_SEARCH_EMBEDDING = True
 
 
 async def _classify_with_prefetch(state: ConversationState) -> dict[str, Any]:
+    """The classifier, with the complaint assessment beside it (no added wait)."""
+    if not complaint_triage.enabled():
+        return await _classify(state)
+    classify = asyncio.ensure_future(_classify(state))
+    try:
+        decided = await complaint_triage.decide_turn(state)
+    except Exception:  # noqa: BLE001 - the crisis reply below still catches a report of harm
+        logger.exception("Complaint assessment failed on %s - normal flow", state.get("conversation_id"))
+        decided = None
+    decided = decided or {}
+    step = decided.get("complaint_step") or {}
+    if step and not step.get("kind") and step.get("case"):
+        # An open P3 case and a message about something else: on the ticket, then
+        # the normal flow answers it.
+        await complaint_case.write_through(step["case"], step.get("message") or "")
+        decided = {k: v for k, v in decided.items() if k != "complaint_step"}
+        step = {}
+    if step.get("kind") or decided.get("suppress_reply") or decided.get("intent"):
+        classify.cancel()
+        classify.add_done_callback(lambda task: task.cancelled() or task.exception())
+        return decided
+    return {**(await classify), **decided}
+
+
+async def _classify(state: ConversationState) -> dict[str, Any]:
     if PREFETCH_SEARCH_EMBEDDING and state.get("intent"):
         try:
             rag.prefetch_query(_search_query(state))
@@ -295,6 +328,7 @@ def build_graph(checkpointer: Any = None):
     builder.add_node("handover_executor", handover_executor)
     builder.add_node("blocked_topic_responder", blocked_topic_responder)
     builder.add_node("action_clarifier", action_clarifier)
+    builder.add_node("complaint_triage", complaint_triage_node)
 
     builder.add_edge(START, "intent_classifier")
     builder.add_conditional_edges(
@@ -305,9 +339,11 @@ def build_graph(checkpointer: Any = None):
             "handover_executor": "handover_executor",
             "blocked_topic_responder": "blocked_topic_responder",
             "action_clarifier": "action_clarifier",
+            "complaint_triage": "complaint_triage",
             END: END,
         },
     )
+    builder.add_edge("complaint_triage", END)
     builder.add_conditional_edges(
         "action_clarifier",
         route_after_response,
@@ -572,6 +608,10 @@ _TURN_RESET: dict[str, Any] = {
     "action_answer": False,
     "action_summary": None,
     "answer_only": False,
+    "complaint_step": None,
+    "reply_is_fixed": False,
+    "reply_must_send": False,
+    "extra_replies": [],
 }
 
 
@@ -675,6 +715,16 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             )
             state_input = {**state_input, **reset}
     result = dict(await graph.ainvoke(state_input, config=config))
+    # A complaint message is approved wording and goes out as written; only the
+    # reference is shown as code, so WhatsApp does not link it as a phone number.
+    if result.get("reply_is_fixed"):
+        from app.graph import reference as _shown
+        if _shown.REFERENCE_AS_CODE:
+            result["reply"] = guards.references_as_code(result.get("reply") or "")
+            result["extra_replies"] = [
+                guards.references_as_code(line) for line in result.get("extra_replies") or []
+            ]
+        return result
     # Step 2c: every node's reply passes here, so the tag is fixed once.
     if NO_TAG_BEFORE_POSSESSIVE and result.get("reply"):
         result["reply"] = without_tag_before_possessive(result["reply"])

@@ -58,6 +58,16 @@ class Settings(BaseSettings):
     # every call needs room for it or the reply is cut off mid-sentence.
     llm_reasoning_headroom: int = 400
 
+
+    def working_day_numbers(self) -> set[int]:
+        names = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+        days = {names.index(d.strip().lower()[:3]) for d in (self.working_days or "").split(",")
+                if d.strip().lower()[:3] in names}
+        return days or {0, 1, 2, 3, 4}
+
+    def public_holiday_dates(self) -> set[str]:
+        return {d.strip() for d in (self.public_holidays or "").split(",") if d.strip()}
+
     @property
     def reasoning_body(self) -> dict:
         """OpenRouter's `reasoning` request field, or {} to leave it alone."""
@@ -299,6 +309,20 @@ class Settings(BaseSettings):
     # (CLAUDE.md section 9.50). Needs scripts/sql/replaced_threads_001_create.sql
     # applied first. Records only: nothing deletes a checkpoint.
     record_replaced_threads: bool = False
+
+    # Helper complaint severity and triage (Thomas's guidelines, 2 Nov 2026;
+    # app/graph/complaint_triage.py). False = the single crisis reply as before.
+    complaint_triage_enabled: bool = True
+    # The recruiter's number in the complaint messages. Unset = the clause naming
+    # it is dropped. Only ever from here: no number is written in code.
+    fcc_contact_number: str = ""
+    # When "the next working day" falls, for a complaint's next_followup_date.
+    # TODO: Thomas to confirm whether Saturday counts, and the holiday list.
+    working_days: str = "Mon,Tue,Wed,Thu,Fri"
+    public_holidays: str = ""  # comma-separated ISO dates
+    # Copy each complaint's fields into cb_complaint_cases. Needs
+    # scripts/sql/cb_complaint_cases_001.sql applied first; nothing reads the copy.
+    complaint_case_table: bool = False
 
     # The WhatsApp Business app can send greeting and away messages by itself.
     # They arrive as outbound messages the bot did not send, which the agent

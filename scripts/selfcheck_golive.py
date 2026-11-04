@@ -41,6 +41,19 @@ from app.whapi.parser import IncomingMessage  # noqa: E402
 
 import importlib  # noqa: E402
 
+import re  # noqa: E402
+from datetime import date  # noqa: E402
+
+from langgraph.checkpoint.memory import MemorySaver  # noqa: E402
+
+from app.config import settings  # noqa: E402
+from app.graph import complaint_templates as _ct_t  # noqa: E402
+from app.graph import complaint_triage as _ct  # noqa: E402
+from app.services import complaint_case as _ct_cc  # noqa: E402
+_ct_tpl_path = _ct_t.__file__
+_ct_node = importlib.import_module("app.graph.nodes.complaint_triage")
+_ct_he = importlib.import_module("app.graph.nodes.handover_executor")
+
 _ic = importlib.import_module("app.graph.nodes.intent_classifier")
 _rag_node = importlib.import_module("app.graph.nodes.rag_retriever")
 _rg = importlib.import_module("app.graph.nodes.response_generator")
@@ -1144,6 +1157,506 @@ async def scenario_home_leave_2nov() -> None:
           and not ico.briefing_fee_known(st, {}, "home_leave"))
 
 
+# --- Helper complaint severity and triage (Thomas's guidelines, 2 Nov 2026) --
+
+class ComplaintWorld:
+    """The real graph, nodes and ticket service, with a list for cb_tickets."""
+
+    def __init__(self, contact="unknown", employer_id=None):
+        self.rows: list[dict] = []
+        self.contact, self.employer_id = contact, employer_id
+        self.history: list[str] = []
+        self.classified = 0
+        self.assessed = 0
+        self.model = _graph.build_graph(MemorySaver())
+        self.thread = f"t-{id(self)}"
+
+    async def insert_numbered(self, table, row, *, number_field, next_number):
+        saved = {**row, "id": f"id-{len(self.rows) + 1}",
+                 number_field: f"CB-2026-{len(self.rows) + 900:04d}"}
+        self.rows.append(saved)
+        return saved
+
+    async def select_one(self, table, columns="*", **filters):
+        return next((r for r in self.rows if r["id"] == filters.get("id")), None)
+
+    async def update(self, table, payload, **filters):
+        for r in self.rows:
+            if r["id"] == filters.get("id"):
+                r.update(payload)
+        return self.rows
+
+    def open_topics(self):
+        topics = {}
+        for row in self.rows:
+            if row.get("status") in ticket_service.OPEN_STATUSES:
+                info = row.get("captured_info") or {}
+                topics[info.get("topic_key") or ticket_service.primary_service_type(row)] = row
+        return topics
+
+    async def classify(self, state):
+        self.classified += 1
+        return {"suppress_reply": True, "reply": "", "intent": state.get("intent")}
+
+    async def turn(self, text, llm=None):
+        async def ask(message, history, pending):
+            self.assessed += 1
+            if isinstance(llm, Exception):
+                raise llm
+            return dict(llm or {"speaker": "unknown", "level": "none"})
+
+        db = SimpleNamespace(insert_numbered=self.insert_numbered, select_one=self.select_one,
+                             update=self.update, execute=AsyncMock(), rpc=AsyncMock(return_value=None))
+        payload = {
+            "conversation_id": 77, "phone": CLIENT, "customer_name": "", "contact_type": self.contact,
+            "matched_employer_id": self.employer_id, "blocked_topics": self.open_topics(),
+            "incoming_text": text, "history_text": "\n".join(self.history), "media_items": [],
+        }
+        with patch.object(_graph, "_graph", self.model), \
+                patch.object(_graph, "_classify", new=self.classify), \
+                patch.object(_ct, "_ask_model", new=ask), \
+                patch.object(_ct_cc, "db", db), patch.object(ticket_service, "db", db), \
+                patch.object(_ct_node.handover_service, "_log", new=AsyncMock()), \
+                patch.object(_ct_he.handover_service, "log_escalation", new=AsyncMock(return_value={})), \
+                patch.object(_ct_he.assignment_service, "resolve_agent",
+                             new=AsyncMock(return_value=(None, "round_robin"))), \
+                patch.object(_ct_he, "_assault_reply", new=AsyncMock(return_value="Call the police on 999.")), \
+                patch.object(_ct_cc, "RETRY_PAUSE_SECONDS", 0):
+            result = await _graph.run_turn(self.thread, payload)
+        reply = result.get("reply") or ""
+        self.history += [f"Client: {text}", f"You: {reply}"]
+        return result, reply
+
+    def ticket(self):
+        return self.rows[-1] if self.rows else None
+
+
+def _complaints_tab(row) -> bool:
+    """tickets_repo._CB_IS_COMPLAINT, the portal's own rule (checked against the
+    real SQL by a read-only replay)."""
+    return bool(set(row.get("service_type") or []) & {"dispute_salary", "dispute_assault"})
+
+
+def _h(level, kind, **more):
+    return {"speaker": "helper", "level": level, "complaint_type": kind, **more}
+
+
+REF_RE = "CB-2026-09"
+
+
+async def scenario_complaint_triage():
+    Q = _ct_t
+
+    # 1. P1: no question first, the ticket raised first.
+    w = ComplaintWorld()
+    r, reply = await w.turn("my ma'am beat me just now, I'm bleeding", _h("P1", "physical"))
+    t = w.ticket()
+    check("complaint 1: 'beat me just now, bleeding' -> the P1 template word for word, no question "
+          "before it; P1 ticket high priority, reference in the message",
+          reply.startswith("I'm very sorry this is happening. Your safety comes first.")
+          and "call the police on 999 now" in reply and "Call 995 or go to your nearest hospital A&E" in reply
+          and 'Can you reply "safe" or "not safe"?' in reply
+          and t and t["complaint_level"] == "P1" and t["priority"] == "high"
+          and f"Your reference is `{t['ticket_number']}`." in reply and r.get("reply_must_send"))
+    w0 = ComplaintWorld()
+    _r, down = await w0.turn("my ma'am beat me just now, I'm bleeding", RuntimeError("model down"))
+    check("complaint 1: the keyword net holds with the model down -> the same P1, ticket P1",
+          down.startswith("I'm very sorry this is happening.") and w0.ticket()["complaint_level"] == "P1")
+
+    # 2. Suicide template, then the reference as its own message.
+    w = ComplaintWorld()
+    r, reply = await w.turn("I don't want to live anymore", _h("P1", "self_harm"))
+    extra = r.get("extra_replies") or []
+    check("complaint 2: 'don't want to live' -> the P1 suicide template, then a separate reference message",
+          reply.startswith("I'm really glad you told me. Are you thinking about ending your life right now?")
+          and "call 995 now" in reply and "reference" not in reply
+          and extra == [f"Your reference is `{w.ticket()['ticket_number']}`."]
+          and w.ticket()["complaint_level"] == "P1")
+    w0 = ComplaintWorld()
+    _r, down = await w0.turn("I don't want to live anymore", RuntimeError("model down"))
+    check("complaint 2: the keyword net catches it with the model down",
+          down.startswith("I'm really glad you told me."))
+
+    # 3. P2 physical: Q1 -> Q2 -> Q3 -> Q4 -> the template, with no question repeated.
+    w = ComplaintWorld()
+    llm = _h("P2", "physical", facts_complete=True)
+    _r, a1 = await w.turn("she hit me last week", llm)
+    ticket_first = w.ticket() is not None and w.ticket()["complaint_level"] == "P2"
+    _r, a2 = await w.turn("yes", {"speaker": "helper", "level": "P1", "complaint_type": "physical"})
+    _r, a3 = await w.turn("no", {"speaker": "helper", "level": "none"})
+    _r, a4 = await w.turn("yes", {"speaker": "helper", "level": "none"})
+    _r, a5 = await w.turn("no", {"speaker": "helper", "level": "none"})
+    check("complaint 3: 'she hit me last week' -> ticket first at P2, then Q1, Q2, Q3, Q4, one per message",
+          ticket_first and (a1, a2, a3, a4) == (Q.Q1, Q.Q2, Q.Q3, Q.Q4))
+    check("complaint 3: at most four questions, then the P2 general template with the reference, "
+          "the safety line dropped because triage asked it",
+          a5.startswith("Thank you for telling us. This sounds serious")
+          and "Are you safe right now?" not in a5 and "Is it safe to chat?" not in a5
+          and "We will not contact your employer unless you agree" in a5
+          and f"`{w.ticket()['ticket_number']}`" in a5 and w.ticket()["complaint_level"] == "P2")
+
+    # 3b. A P1 sign in an answer stops triage.
+    w = ComplaintWorld()
+    await w.turn("she hit me last week", llm)
+    await w.turn("yes", {"speaker": "helper", "level": "none"})
+    _r, stop = await w.turn("yes I'm hurt", {"speaker": "helper", "level": "none"})
+    check("complaint 3b: Q2 'yes I'm hurt' stops triage -> P1 template, level raised on the ticket, "
+          "with the history",
+          stop.startswith("I'm very sorry this is happening.") and w.ticket()["complaint_level"] == "P1"
+          and [h["level"] for h in w.ticket()["captured_info"]["complaint"]["level_history"]] == ["P2", "P1"])
+
+    # 4. No sleep: Q1, then the sleep template with the duration.
+    w = ComplaintWorld()
+    _r, a1 = await w.turn("I haven't slept for 2 days", _h("P2", "overwork", duration="2 days"))
+    _r, a2 = await w.turn("yes", {"speaker": "helper", "level": "none"})
+    check("complaint 4: 'haven't slept for 2 days' -> Q1, then the sleep template with 'Going 2 days'",
+          a1 == Q.Q1 and "Going 2 days without sleep is serious and can affect your health." in a2
+          and "Are you feeling very unwell, or do you feel unsafe right now?" in a2)
+    w0 = ComplaintWorld()
+    await w0.turn("no sleep at all", _h("P2", "overwork"))
+    _r, nod = await w0.turn("yes", {"speaker": "helper", "level": "none"})
+    check("complaint 4: duration unknown -> 'Going without sleep is serious'",
+          "Going without sleep is serious and can affect your health." in nod)
+
+    # 5. P3 salary.
+    w = ComplaintWorld()
+    _r, a1 = await w.turn("salary not paid for 2 months", _h("P3", "salary"))
+    _r, a2 = await w.turn("yes", {"speaker": "helper", "level": "none"})
+    check("complaint 5: unpaid salary -> ticket P3 medium priority, Q1, then the P3 template asking "
+          "for the salary months",
+          a1 == Q.Q1 and "Please tell us which salary months are affected." in a2
+          and "offer mediation" in a2 and w.ticket()["complaint_level"] == "P3"
+          and w.ticket()["priority"] == "medium" and f"`{w.ticket()['ticket_number']}`" in a2)
+
+    # 6. P4: answered, no ticket.
+    w = ComplaintWorld()
+    with patch.object(_ct_node, "_kb_answer", new=AsyncMock(return_value="You get one rest day a week.")):
+        r6, a6 = await w.turn("how many rest days do I get?", _h("P4", "general"))
+    check("complaint 6: 'how many rest days' -> the P4 template with the answer, no ticket",
+          a6 == ("Thanks for your message. You get one rest day a week.\n\n"
+                 "Is there anything else about this that is worrying you?") and not w.rows)
+
+    # 7. Not safe to chat.
+    w = ComplaintWorld()
+    await w.turn("she hit me last week", llm)
+    await w.turn("yes", {"speaker": "helper", "level": "none"})
+    await w.turn("no", {"speaker": "helper", "level": "none"})
+    _r, a7 = await w.turn("no, ma'am can see my phone", {"speaker": "helper", "level": "none"})
+    tri = w.ticket()["captured_info"]
+    check("complaint 7: Q3 'ma'am can see my phone' -> the NOT-SAFE template, triage stops, ticket kept",
+          a7 == Q.NOT_SAFE_TO_CHAT and tri["complaint"]["safe_to_chat"] == "no"
+          and tri["triage"]["stage"] == "open" and tri["triage"]["pending"] is None
+          and w.ticket()["status"] == "open")
+    r7, a7b = await w.turn("after 9pm", {"speaker": "helper", "level": "P1", "complaint_type": "physical",
+                                         "best_time": "after 9pm"})
+    check("complaint 7: the time she gives is not re-graded from the history: no P1 template to a "
+          "phone someone can see (real model, 2026-11-04)",
+          "Your safety comes first" not in a7b and a7b.startswith("Thank you, we have added this")
+          and w.ticket()["complaint_level"] == "P2")
+    check("complaint 7: the best time she gives is saved on the case",
+          w.ticket()["captured_info"]["complaint"]["best_time_to_contact"] == "after 9pm")
+
+    # 8. Several issues: the highest, of the higher type.
+    w = ComplaintWorld()
+    _r, a8 = await w.turn("no salary and she slaps me", _h("P3", "salary"))
+    check("complaint 8: 'no salary and she slaps me' -> P2 (the highest), physical type, triage begins",
+          a8 == Q.Q1 and w.ticket()["complaint_level"] == "P2"
+          and w.ticket()["captured_info"]["complaint"]["complaint_type"] == "physical")
+
+    # 9. Tagalog: translated, numbers and reference intact; a bad translation falls back.
+    tagalog = ("Pasensya na. Tumawag sa pulis sa 999. Tumawag sa 995 o pumunta sa A&E. "
+               "Ang iyong reference ay {ref}.")
+
+    async def translate(system, text, **kwargs):
+        ref = next(iter(guards.TICKET_REFERENCE.findall(text)), "")
+        return tagalog.format(ref=ref)
+
+    w = ComplaintWorld()
+    with patch.object(_ct_node, "complete", new=translate):
+        _r, a9 = await w.turn("sinaktan ako ng amo ko ngayon", _h("P1", "physical", language="Tagalog"))
+    check("complaint 9: Tagalog -> P1 in Tagalog with 999, 995, A&E and the reference intact",
+          "Tumawag sa pulis sa 999" in a9 and "995" in a9 and "A&E" in a9
+          and f"`{w.ticket()['ticket_number']}`" in a9 and w.ticket()["complaint_level"] == "P1")
+    w0 = ComplaintWorld()
+    _r, kw = await w0.turn("sinaktan ako ng amo ko ngayon", RuntimeError("model down"))
+    check("complaint 9: the Tagalog keywords reach P1 with the model down", w0.ticket()["complaint_level"] == "P1")
+    bad = AsyncMock(return_value="Pasensya na, tumawag sa pulis.")
+    w1 = ComplaintWorld()
+    with patch.object(_ct_node, "complete", new=bad):
+        _r, eng = await w1.turn("sinaktan ako ng amo ko ngayon", _h("P1", "physical", language="Tagalog"))
+    check("complaint 9: a translation that loses 999 or the reference -> the English goes instead",
+          eng.startswith("I'm very sorry this is happening."))
+
+    # 10. "not safe" after P1.
+    w = ComplaintWorld()
+    await w.turn("my ma'am beat me just now, I'm bleeding", _h("P1", "physical"))
+    r10, a10 = await w.turn("not safe", _h("P1", "physical"))
+    t = w.ticket()
+    check("complaint 10: 'not safe' -> the 999 line with the reference, ticket urgent (high + "
+          "Escalated, status still open so the chat is not paused), safe_status=not_safe",
+          a10.startswith("Please call the police on 999 now.") and t["priority"] == "high"
+          and t["workflow_status"] == "escalated" and t["status"] == "open"
+          and t["captured_info"]["complaint"]["safe_status"] == "not_safe" and r10.get("reply_must_send"))
+    _r, a10b = await w.turn("safe", {"speaker": "helper", "level": "none"})
+    _r, a10c = await w.turn("she took my things", {"speaker": "helper", "level": "none"})
+    check("complaint 10: 'safe' and any other message get their fixed lines, and every message is "
+          "on the ticket",
+          a10b.startswith("Thank you for letting us know.")
+          and a10c.startswith("Thank you, we have added this to your case") and "995" in a10c
+          and "she took my things" in str(w.ticket()["captured_info"]["follow_ups"]))
+    _r, again = await w.turn("she hit me again right now", _h("P1", "physical"))
+    check("complaint 10: a new P1 sign on an open case -> the P1 template again",
+          again.startswith("I'm very sorry this is happening."))
+
+    # 11. No FCC number: no placeholder anywhere.
+    with patch.object(settings, "fcc_contact_number", ""):
+        texts = [Q.p1_emergency("X"), Q.p2_sleep("X", "2 days"), Q.p2_general("X")]
+    check("complaint 11: FCC_CONTACT_NUMBER unset -> no recruiter clause, no placeholder, no gap",
+          not any("recruiter" in x or "[" in x or "{" in x or "  " in x for x in texts)
+          and "message us here. We have issued" in texts[0])
+    with patch.object(settings, "fcc_contact_number", "NUMBER"):
+        with_number = Q.p1_emergency("X"), Q.p2_general("X")
+    check("complaint 11: set -> read from the setting, the clause and the sentence appear",
+          "message us here or call your recruiter on NUMBER. We" in with_number[0]
+          and "You can also call your recruiter on NUMBER." in with_number[1])
+    source = Path(_ct_tpl_path).read_text(encoding="utf-8")
+    check("complaint 11: no phone number written in the templates module",
+          not re.search(r"\d{4}[ -]?\d{4}", source))
+
+    # 12. An employer's fee question: flow unchanged, no assessment at all.
+    w = ComplaintWorld(contact="employer", employer_id="e1")
+    r12, a12 = await w.turn("how much is the agency fee?", _h("P4", "general"))
+    check("complaint 12: employer fee question -> normal flow, no model call for severity, no "
+          "'worrying you?' line, no ticket",
+          w.classified == 1 and w.assessed == 0 and "worrying" not in a12 and not w.rows)
+    w = ComplaintWorld()
+    await w.turn("my helper wants a salary increase, what should I do", {"speaker": "employer", "level": "P3"})
+    check("complaint 12: an unknown sender the model reads as an employer -> normal flow",
+          w.classified == 1 and not w.rows)
+    w = ComplaintWorld(contact="employer", employer_id="e1")
+    r12b, _a = await w.turn("my helper is unconscious, please help")
+    check("complaint 12: an employer's emergency -> the crisis path (999/995), not the helper flow",
+          r12b.get("intent") == "dispute_assault" and w.assessed == 0)
+
+    # 13. Silent after Q1.
+    w = ComplaintWorld()
+    await w.turn("she hit me last week", llm)
+    t = w.ticket()
+    check("complaint 13: silent after Q1 -> the ticket already exists at the provisional level, on "
+          "the Complaints tab",
+          t and t["complaint_level"] == "P2" and _complaints_tab(t)
+          and t["captured_info"]["triage"]["pending"] == "Q1")
+
+    # 14. Switch off: the old crisis reply, exactly.
+    w = ComplaintWorld()
+    async def old_reply(state):
+        return ("I'm so sorry. Please call the police at 999 immediately. I've alerted our team and a "
+                "live agent will connect with you shortly.")
+    with patch.object(settings, "complaint_triage_enabled", False), \
+            patch.object(_graph.complaint_triage, "decide_turn", new=AsyncMock(side_effect=AssertionError)), \
+            patch.object(_ct_he, "_assault_reply", new=old_reply), \
+            patch.object(_ct_he.handover_service, "log_escalation", new=AsyncMock(return_value={})), \
+            patch.object(_ct_he.assignment_service, "resolve_agent", new=AsyncMock(return_value=(None, "round_robin"))), \
+            patch.object(_ct, "_ask_model", new=AsyncMock(side_effect=AssertionError)), \
+            patch.object(_graph, "_graph", w.model), patch.object(ticket_service, "db", SimpleNamespace(
+                insert_numbered=w.insert_numbered, rpc=AsyncMock(return_value=None), execute=AsyncMock())):
+        r14 = await _graph.run_turn("off-1", {
+            "conversation_id": 77, "phone": CLIENT, "contact_type": "unknown", "blocked_topics": {},
+            "incoming_text": "my ma'am beat me up", "history_text": "", "media_items": []})
+    reply14 = r14.get("reply") or ""
+    check("complaint 14: COMPLAINT_TRIAGE_ENABLED=false -> the old crisis reply (MOM helpline, 995 "
+          "line), a dispute_assault ticket with no level, no complaint step",
+          _ct_he.MOM_HELPLINE_LINE in reply14 and _ct_he.AMBULANCE_LINE in reply14
+          and w.rows and "complaint_level" not in w.rows[-1] and not r14.get("reply_is_fixed"))
+
+    # 15 + 16. Which tab.
+    w = ComplaintWorld()
+    await w.turn("my ma'am beat me just now, I'm bleeding", _h("P1", "physical"))
+    check("complaint 15: the P1 ticket is in the Complaints tab's query and not the General tab's",
+          _complaints_tab(w.ticket()) and w.ticket()["service_type"] == ["dispute_assault"])
+    plain = ComplaintWorld()
+    with patch.object(ticket_service, "db", SimpleNamespace(
+            insert_numbered=plain.insert_numbered, rpc=AsyncMock(return_value=None))):
+        await ticket_service.create(conversation={"id": 1}, service_type="fee_enquiry", captured_info={},
+                                    assigned_agent_id=None, assignment_rule="round_robin")
+    check("complaint 16: an employer's fee ticket is in General, not Complaints, and carries no level",
+          not _complaints_tab(plain.ticket()) and "complaint_level" not in plain.ticket())
+    t = w.ticket()
+    t["captured_info"]["topic_key"] = ticket_service.HELPER_COMPLAINT
+    merged = await ticket_service.pick_ticket_to_update({"helper_complaint": t}, message="fee?", service_type="fee_enquiry")
+    check("complaint 16: a later fee ticket on the same chat is not folded into the complaint", merged is None)
+
+    # 17. P4 resolved / unresolved / no KB answer.
+    w = ComplaintWorld()
+    with patch.object(_ct_node, "_kb_answer", new=AsyncMock(return_value="You get one rest day a week.")):
+        await w.turn("how many rest days do I get?", _h("P4", "general"))
+    _r, a17 = await w.turn("no thanks", {"speaker": "helper", "level": "none"})
+    check("complaint 17: a P4 question answered, 'no thanks' -> no ticket, nothing more sent",
+          not w.rows and not a17)
+    w = ComplaintWorld()
+    with patch.object(_ct_node, "_kb_answer", new=AsyncMock(return_value="You get one rest day a week.")):
+        await w.turn("how many rest days do I get?", _h("P4", "general"))
+    _r, a17b = await w.turn("yes I still don't get any, it is not solved", {"speaker": "helper", "level": "none"})
+    check("complaint 17: the same question left unresolved -> a P4 ticket on the Complaints tab, "
+          "reference sent",
+          w.ticket() and w.ticket()["complaint_level"] == "P4" and _complaints_tab(w.ticket())
+          and f"`{w.ticket()['ticket_number']}`" in a17b)
+    w = ComplaintWorld()
+    with patch.object(_ct_node, "_kb_answer", new=AsyncMock(return_value=None)):
+        _r, a17c = await w.turn("can I use my phone at night?", _h("P4", "general"))
+    check("complaint 17: the records hold no answer -> a P4 ticket, not an invented answer",
+          w.ticket()["complaint_level"] == "P4" and "We have issued a ticket." in a17c)
+
+    # The P1 message does not wait on the database.
+    w = ComplaintWorld()
+    calls = []
+
+    async def slow(*a, **k):
+        await asyncio.sleep(0.2)
+        return {"id": "late-1", "ticket_number": "CB-2026-0990"}
+
+    sent: list[str] = []
+
+    async def capture(conv, body):
+        sent.append(body)
+
+    with patch.object(_ct_cc, "raise_ticket", new=slow), patch.object(_ct_node, "P1_TICKET_SECONDS", 0.01), \
+            patch.object(_ct_node.message_service, "send_bot_reply", new=capture):
+        _r, fast = await w.turn("my ma'am beat me just now, I'm bleeding", _h("P1", "physical"))
+        no_ref = "reference" not in fast and fast.endswith('Can you reply "safe" or "not safe"?')
+        await asyncio.sleep(0.3)
+    check("complaint: P1 ticket slower than the limit -> the template goes at once with no reference "
+          "line, then 'Your reference is ...' follows",
+          no_ref and sent == ["Your reference is `CB-2026-0990`."])
+
+    # Guardrails, over every template.
+    every = [Q.p1_emergency("R"), Q.P1_SUICIDE, Q.p2_sleep("R", "2 days"), Q.p2_general("R"), Q.p3("R", "salary"),
+             Q.p4("x"), Q.NOT_SAFE_TO_CHAT, Q.FOLLOW_SAFE, Q.FOLLOW_NOT_SAFE, Q.FOLLOW_OTHER, Q.P3_ADDED,
+             Q.P4_TICKET, *Q.QUESTIONS.values(), Q.Q6_SEXUAL]
+    check("complaint guardrails: no template says confront your employer, promises an outcome, gives "
+          "legal or medical advice, accuses, says we will contact the employer, or asks for details",
+          not any(Q.FORBIDDEN.search(x) for x in every))
+    check("complaint guardrails: the sexual type asks only 'when did it last happen', never for details",
+          _ct_node._text_for("QUESTION", {"pending": "Q6", "complaint_type": "sexual"}, None) == "When did it last happen?")
+    check("complaint guardrails: the check itself catches each thing",
+          all(Q.FORBIDDEN.search(x) for x in (
+              "Please confront your employer.", "We will contact your employer today.",
+              "We guarantee this.", "It will be resolved.", "You can sue her.", "Take some medicine.",
+              "Your employer is guilty.", "Tell us exactly what he did.")))
+    # Outside working hours: nothing reads the clock. Asserted over the two modules.
+    for mod in (_ct, _ct_node):
+        src = Path(mod.__file__).read_text(encoding="utf-8")
+    check("complaint: outside working hours the flow is identical (the only date read is the follow-up day)",
+          "business_hours" not in Path(_ct.__file__).read_text(encoding="utf-8"))
+    with patch.object(settings, "working_days", "Mon,Tue,Wed,Thu,Fri"), \
+            patch.object(settings, "public_holidays", "2026-11-09"):
+        day = _ct.next_working_day(date(2026, 11, 6))  # a Friday, then a holiday Monday
+    check("complaint: next_followup_date skips the weekend and a listed public holiday",
+          day == date(2026, 11, 10))
+    check("complaint: the safe-word reply is read before the model, 'not safe' on a helper's own words",
+          _ct._NOT_SAFE_WORD.search("I am not safe") and _ct._SAFE_WORD.search("safe")
+          and not _ct._SAFE_WORD.search("not safe"))
+
+
+async def scenario_complaint_webhook():
+    """The two webhook paths: a P1 is never dropped or held, and a chat a human holds
+    still gets the complaint's safety reply. The real _process_locked and send_bot_reply."""
+    conversation = {"id": 77, "customer_number": CLIENT.lstrip("+"), "bot_status": _conv.BOT_ACTIVE,
+                    "status": "open", "langgraph_thread_id": "t-77", "contact_type": "unknown",
+                    "last_bot_reply_at": NOW.isoformat()}
+    sent: list[str] = []
+
+    async def send_text(to, body, **kwargs):
+        sent.append(body)
+        return {"message": {"id": f"out-{len(sent)}"}}
+
+    none, empty = AsyncMock(return_value=None), AsyncMock(return_value=[])
+
+    async def one_turn(result, history=()):
+        sent.clear()
+        ms = _wh.message_service
+        from contextlib import ExitStack
+
+        with ExitStack() as stack:
+            for p in (
+                patch.object(_wh.conversation_service, "get_by_phone", new=AsyncMock(return_value=dict(conversation))),
+                patch.object(ms, "get_history", new=AsyncMock(return_value=list(history))),
+                patch.object(_wh.ticket_service, "recent_for_conversation", new=empty),
+                patch.object(_wh.lead_service, "find_by_phone", new=none),
+                patch.object(_wh.contact_service, "count_prior_hires", new=AsyncMock(return_value=0)),
+                patch.object(_wh.contact_service, "get_placed_helper", new=none),
+                patch.object(_wh.contact_service, "get_placement_helpers", new=empty),
+                patch.object(_wh.ticket_service, "helpers_on_conversation", new=empty),
+                patch.object(_wh.contact_service, "get_record_name", new=none),
+                patch.object(_wh.contact_service, "get_cases", new=empty),
+                patch.object(_wh.contact_service, "get_candidate_record", new=none),
+                patch.object(_wh.ticket_service, "open_topics_for_conversation", new=empty),
+                patch.object(_wh.ticket_service, "completed_topics_for_conversation", new=empty),
+                patch.object(_wh, "last_human_activity_at", new=none),
+                patch.object(_wh, "run_turn", new=AsyncMock(return_value=result)),
+                patch.object(_wh.debouncer, "has_pending", new=AsyncMock(return_value=True)),
+                patch.object(ms.whapi, "send_text", new=send_text),
+                patch.object(ms, "_insert_ignoring_duplicates", new=none),
+                patch.object(ms.conversation_service, "touch_outbound", new=none),
+                patch.object(_wh.conversation_service, "update", new=none),
+                patch.object(_wh.typing_indicator, "stop", new=AsyncMock()),
+            ):
+                stack.enter_context(p)
+            await _wh._process_locked(CLIENT, [message("help", mid="c-1")])
+        return list(sent)
+
+    out = await one_turn({"reply": "P1 TEMPLATE", "reply_must_send": True, "extra_replies": ["REF LINE"]})
+    check("complaint webhook: a P1 goes out while she is still typing, and the reference follows as "
+          "its own message", out == ["P1 TEMPLATE", "REF LINE"])
+    out = await one_turn({"reply": "ordinary reply"})
+    check("complaint webhook: an ordinary reply is still held while she is typing", out == [])
+    earlier = [{"created_at": NOW.isoformat(), "direction": "outbound", "is_bot": True, "sent_by": "bot",
+                "body": "Please call the police on 999 now."}]
+    fixed = "Please call the police on 999 now."
+    with patch.object(_wh, "recent_bot_lines", new=lambda *a: [fixed]):
+        out = await one_turn({"reply": fixed, "reply_must_send": True}, earlier)
+    check("complaint webhook: the 999 line is sent again however recently it went out", out == [fixed])
+
+    # A chat a human holds.
+    raised = AsyncMock(return_value={"id": "e1", "ticket_number": "CB-2026-0991"})
+    delivered: list[str] = []
+
+    async def deliver(conv, body):
+        delivered.append(body)
+
+    held = {**conversation, "bot_status": _conv.HUMAN_ACTIVE}
+    with patch.object(_wh, "confirm_harm", new=AsyncMock(return_value=True)), \
+            patch.object(_ct_cc, "raise_ticket", new=raised), \
+            patch.object(_ct, "_ask_model", new=AsyncMock(return_value=_h("P1", "physical"))), \
+            patch.object(_wh.message_service, "send_bot_reply", new=deliver):
+        done = await _wh.emergency_override(held, "my ma'am beat me just now, I'm bleeding")
+    check("complaint webhook: a report on a chat a human holds gets the same P1 template, reference "
+          "included, with a complaint ticket",
+          done and delivered and delivered[0].startswith("I'm very sorry this is happening.")
+          and "`CB-2026-0991`" in delivered[0] and raised.await_count == 1)
+    delivered.clear()
+    old = AsyncMock(return_value={"id": "e2", "ticket_number": "CB-2026-0992"})
+    with patch.object(settings, "complaint_triage_enabled", False), \
+            patch.object(_wh, "confirm_harm", new=AsyncMock(return_value=True)), \
+            patch.object(_wh.assignment_service, "resolve_agent", new=AsyncMock(return_value=(None, "round_robin"))), \
+            patch.object(_wh.ticket_service, "create", new=old), \
+            patch.object(_wh.handover_service, "_log", new=AsyncMock()), \
+            patch.object(_wh.message_service, "send_bot_reply", new=deliver):
+        await _wh.emergency_override(held, "my ma'am beat me just now, I'm bleeding")
+    check("complaint webhook: switch off -> the old emergency reply", delivered == [_wh.ASSAULT_FALLBACK_REPLY])
+
+    # The reply guards leave approved wording alone.
+    w = ComplaintWorld()
+    w.history = []
+    leave = {"service_type": "home_leave", "collected_info": {"leave_reason": "family matter"}}
+    with patch.object(_graph, "_graph", SimpleNamespace(ainvoke=AsyncMock(return_value={
+            **leave, "reply": _ct_t.p1_emergency("CB-2026-0900"), "reply_is_fixed": True}))), \
+            patch.object(_graph, "STALE_INTAKE_RESET", False):
+        r = await _graph.run_turn("t", {"incoming_text": "family emergency, she hit me", "history_text": ""})
+    check("complaint: approved wording passes run_turn untouched apart from the reference as code",
+          r["reply"] == _ct_t.p1_emergency("`CB-2026-0900`"))
+
+
 async def main() -> int:
     for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
                      scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights,
@@ -1153,7 +1666,9 @@ async def main() -> int:
                      scenario_replacement_summary,
                      scenario_crisis_reply,
                      scenario_crisis_keywords,
-                     scenario_home_leave_2nov):
+                     scenario_home_leave_2nov,
+                     scenario_complaint_triage,
+                     scenario_complaint_webhook):
         try:
             await scenario()
         except Exception as exc:  # noqa: BLE001 - a crash is a failure, by name

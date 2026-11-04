@@ -27,6 +27,7 @@ from app.graph.guards import (
     near_duplicate,
     recent_bot_lines,
 )
+from app.graph.nodes.complaint_triage import emergency_reply as complaint_emergency_reply
 from app.graph.nodes.handover_executor import ASSAULT_FALLBACK_REPLY
 from app.graph.nodes.intent_classifier import (
     confirm_harm,
@@ -293,6 +294,17 @@ async def emergency_override(conversation: dict[str, Any], text: str) -> bool:
     if not await confirm_harm(text):
         logger.info("Assault keywords on a stood-down thread, but verification disagreed")
         return False
+
+    # A helper's report goes down the complaint flow, in the same words as any
+    # other hour. An employer's chat, or the switch off, carries on as below.
+    fixed_reply = await complaint_emergency_reply(conversation, text)
+    if fixed_reply:
+        logger.warning("EMERGENCY OVERRIDE on conversation %s - complaint reply", conversation["id"])
+        try:
+            await message_service.send_bot_reply(conversation, fixed_reply)
+        except WhapiError:
+            logger.exception("Could not deliver the emergency reply on conversation %s", conversation["id"])
+        return True
 
     conversation_id = conversation["id"]
     logger.warning(
@@ -1326,7 +1338,8 @@ async def _process_locked(
     repeats_us = replied_recently and any(
         near_duplicate(reply, line) for line in recent_bot_lines(payload["history_text"], 2)
     )
-    if repeats_us and ("?" not in reply or _predates_our_last_reply(conversation, messages)):
+    if (repeats_us and not result.get("reply_must_send")
+            and ("?" not in reply or _predates_our_last_reply(conversation, messages))):
         logger.info(
             "Conversation %s: reply repeats our last message — not sending it again",
             conversation["id"],
@@ -1346,7 +1359,7 @@ async def _process_locked(
     # got "Are you currently in Singapore or still overseas?" immediately
     # followed by "That's okay, Chinese cooking is fine. Are you currently in
     # Singapore or still overseas?" — the same question twice in one minute.
-    if allow_hold and await debouncer.has_pending(phone):
+    if allow_hold and not result.get("reply_must_send") and await debouncer.has_pending(phone):
         logger.info(
             "Conversation %s: client is still typing — holding this reply so the next "
             "pass answers all of it at once",
@@ -1356,6 +1369,8 @@ async def _process_locked(
 
     try:
         await message_service.send_bot_reply(conversation, reply)
+        for line in result.get("extra_replies") or []:
+            await message_service.send_bot_reply(conversation, line)
     except WhapiError:
         await _fail_over_to_human(conversation)
         return

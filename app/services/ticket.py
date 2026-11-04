@@ -187,6 +187,7 @@ SERVICE_LABELS = {
     "case_enquiry": "their case status",
     "media_received": "a document they sent",
     "dispute_assault": "a safety report",
+    "helper_complaint": "a helper's complaint",
 }
 
 
@@ -298,6 +299,12 @@ MISSING_HELPER = "missing_helper"
 # to have a clear expectation ... it should ask for details and provide [a]
 # complaint / ticketing number". Pay and leave disputes keep dispute_salary.
 COMPLAINT = "complaint"
+
+# A helper's own complaint under Thomas's guidelines (app/graph/complaint_triage.py).
+# Its topic key on captured_info, kept apart from every other topic; the stored
+# service_type is dispute_assault or dispute_salary, which is what puts it on the
+# portal's Complaints tab.
+HELPER_COMPLAINT = "helper_complaint"
 
 # What the client is told about the wait, and the number to call if it cannot
 # wait. Both are the agency's own words (2026-10-07: "a senior team member will
@@ -3782,6 +3789,8 @@ async def create(
     assignment_rule: str | None,
     created_lead_id: str | None = None,
     description: str = "",
+    complaint_level: str | None = None,
+    priority: str | None = None,
 ) -> dict[str, Any] | None:
     stored_service, true_service = _storable_service(service_type, conversation)
     info = dict(captured_info or {})
@@ -3817,7 +3826,7 @@ async def create(
         # enquiry_type above, regardless of what this array can hold.
         "service_type": [stored_service],
         "description": description or "",
-        "priority": priority_for(service_type),
+        "priority": priority or priority_for(service_type),
         "captured_info": info,
         "employer_id": conversation.get("matched_employer_id"),
         "candidate_id": conversation.get("matched_candidate_id"),
@@ -3828,6 +3837,8 @@ async def create(
     }
     if created_lead_id:
         payload["created_lead_id"] = created_lead_id
+    if complaint_level:
+        payload["complaint_level"] = complaint_level
 
     async def _insert(row: dict[str, Any]) -> dict[str, Any] | None:
         return await db.insert_numbered(

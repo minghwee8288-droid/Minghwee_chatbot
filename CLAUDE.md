@@ -81,6 +81,10 @@ app/
                      to call, the ticket reference) - written here, not by the model
     reference.py     the ticket's CB-YYYY-NNNN, put into the handover sentence the
                      reply already has (handover_executor; parked-topic chases)
+    complaint_triage.py  a helper's complaint graded P1-P4 and triaged, one question at
+                     a time (Thomas's guidelines, 2 Nov 2026); no writes.
+                     complaint_templates.py is the approved wording; the ticket and
+                     the message are nodes/complaint_triage.py
     clarify.py       a vague action request ("send the video", "any update") is asked
                      about first, then ticketed with the answer (2026-10-28); a call
                      request gets one fixed reply and is never asked about
@@ -120,6 +124,7 @@ app/
     message.py       store/send, auto-reply detection, history
     conversation.py  wp_chat_conversations access, bot_status
     handover.py      cb_handovers; escalation vs stand-down
+    complaint_case.py  a helper complaint's ticket, kept up to date
     contact.py       identify a number against master records
     assignment.py    which agent gets it
     internal_contacts.py  owner/staff numbers the bot never answers
@@ -251,6 +256,7 @@ breaks duplicate suppression, the debouncer and agent detection.
 ```
 START -> intent_classifier
   suppress_reply ................................. END
+  a helper's complaint (complaint_step) .......... complaint_triage -> END
   clarify_action / action_answer ................. action_clarifier
                                                    (question -> END; answer or call request ->
                                                    ticket_creator, or END when it lands on an
@@ -289,7 +295,10 @@ blocked_topic_responder -> END
 State lives in a LangGraph Postgres checkpointer on `cb_checkpoint*` tables, keyed by
 `wp_chat_conversations.langgraph_thread_id`.
 
-`_TURN_RESET` (graph.py) blanks 17 per-turn fields each invocation. `ticket_id` is in
+The complaint assessment runs beside the classifier inside the `intent_classifier` node
+(`_classify_with_prefetch`); when it takes the turn, the classifier's call is cancelled.
+
+`_TURN_RESET` (graph.py) blanks 21 per-turn fields each invocation. `ticket_id` is in
 that list; `created_lead_id` deliberately is **not** — it must survive across turns
 because the lead is opened early and the ticket is created much later.
 
@@ -713,6 +722,11 @@ because the lead is opened early and the ticket is created much later.
 | More crisis phrases force the safety reply without the model | `intent_classifier.CRISIS_PATTERNS` / `crisis_keyword` (`CRISIS_KEYWORDS`), in the classifier override and `matches_assault_keywords` | 2026-10-30: locked in / not allowed out, not given food / starving, passport taken, not paid for months, touched / sexual / harassed, threatened, hit / slapped / beaten / hurt me, suicide / want to die (no self-harm flow exists, so it takes the same safety reply). First person where an employer uses the same words about a helper; "no food" only as none given. English plus a few Bahasa/Tagalog phrases. The model harm check is still the second layer. |
 | A helper asking for herself is asked as "you"; the ticket is booked only after our agent confirms; a stated reason is kept; travel sooner than usual is said | `info_collector.for_herself`, `ticket_step_after_confirm`, `names_a_leave_reason` over the request's lines, `leave_timeline_line` (`HELPER_QUESTIONS_SECOND_PERSON`, `TICKET_AFTER_CONFIRM`, `OPENING_ANSWERS_KEPT`, `LEAVE_TIMELINE_CONFLICT`) | Home leave tests 2 Nov: Meera's list said "Which country is she from?"; step 1 said "book Sneaky's air ticket now"; "she is not well" in the opening message was asked again; "this week" against ID ~2 weeks got no comment. Second person on home leave and passport renewal for the helper herself; any numbered ticket step becomes the fixed "Once our agent confirms..." sentence (helper: "you or your employer"); "not well"/health is a reason and the check reads the client's lines for this request; ID 2 / PH 4 weeks, travel sooner -> "It usually takes about N weeks. We'll treat it as urgent, but we can't promise it will be ready by then." replacing the timing line. |
 
+| A helper's complaint is graded on every message, and P1 is never preceded by a question | `complaint_triage.decide_turn` / `assess` / `open_case` / `advance` (`COMPLAINT_TRIAGE_ENABLED`) | Helper and unknown-role chats. A keyword net (`keyword_floor`) holds when the model fails: at least P2, P1 on self-harm, assault, injury or a report happening now. An employer's chat is not graded and keeps its flows, unless the message is a helper's words about "my ma'am" on that phone. An employer's emergency takes the crisis path (`EMPLOYER_EMERGENCY`, `CRISIS_REPLY_COMPLETE`). Highest of several issues; the level never falls. A bare "ya" or the time she gives cannot raise it on the model's word (it re-read the old report in the history, on the real model, and sent the emergency template to a phone someone could see). |
+| A complaint's messages are the approved wording | `complaint_templates.py` + `reply_is_fixed` in `run_turn` | No reply guard rewrites them; only the reference is shown as code. A translation must keep 999, 995, A&E and the reference, or the English goes (`translated_ok`). `FORBIDDEN` is asserted over every template and checked on the one model-written answer (P4). The recruiter's number only ever comes from `FCC_CONTACT_NUMBER`; unset, its clause or sentence goes. |
+| A complaint ticket exists before the first triage question, and goes on the portal's Complaints tab | `complaint_case.raise_ticket` + `ticket.create(complaint_level=, priority=)` | The portal's rule: `service_type` holds `dispute_salary` or `dispute_assault` (its `tickets_repo._CB_IS_COMPLAINT`), so that is what is stored, by type; `complaint_level` holds P1-P4. Topic key `helper_complaint`, in `ALWAYS_SEPARATE` by its service, so nothing folds into it. No owner (the FCC pool) and it does not pause the chat. A "not safe" sets priority high and `workflow_status` escalated with status still `open`: `in_progress` would read as an agent picking it up and quieten the bot. |
+| A P1 does not wait on the database or a typing client | `nodes/complaint_triage._ticket_for` (`P1_TICKET_SECONDS`) + `reply_must_send` in `webhook._process_locked` | 3 s, then the template goes without its reference while the ticket retries, and "Your reference is ..." follows. Never held while she is typing, never dropped as a repeat. A chat a human holds gets the same words (`emergency_reply`). |
+
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
 own last line contained a question mark.
@@ -795,6 +809,15 @@ there is no direct employer link — which is why `get_cases` reads the two
 `converted_case_id` columns as well. The table was **empty on every check made against
 it**; the whole layer is written for data that has not arrived yet, which is why the
 seeder exists.
+
+**`cb_tickets.complaint_level`** is the portal's (its migration 0133): P1 | P2 | P3 | P4 or null, and
+the console only reads it. There are no complaint tables: the Complaints tab is a split of `cb_tickets`
+and `call_tickets` on `service_type` (and `category` for a call), see `docs/ticket-management.md` in the
+portal repo. A helper complaint's other fields are on `captured_info`: `complaint` (type, her words,
+safe_to_chat, safe_status, best time, consent, employer contact, next follow-up, level history) and
+`triage` (where the flow has got to), both shown by the portal's drawer. That ticket row is the record
+and what the next turn reads. `scripts/sql/cb_complaint_cases_001.sql` (NOT APPLIED) adds a copy with real
+columns plus the transcript; `COMPLAINT_CASE_TABLE` writes it, and nothing reads it.
 
 **The bot never closes a ticket.** No code path writes `cb_tickets.status` after insert.
 The portal owns resolution.
@@ -1111,6 +1134,12 @@ Easy to get wrong:
   `pipeline.RENDER_PER_SOURCE`, `pipeline.RETRY_FAILED_DRAFTS`,
   `fetcher.UNVERIFIED_SOURCES`, `language.NON_ENGLISH_PAGES`. render-service:
   `RENDER_ALLOWED_HOSTS` (default `kemlu.go.id`; `*` = any public host).
+- `COMPLAINT_TRIAGE_ENABLED` (default **true**) - the helper complaint flow. False brings the single
+  crisis reply back exactly, on every path. `FCC_CONTACT_NUMBER` - the recruiter's number in its
+  messages, read only from here; **unset, the clause is dropped, so set it on the server.**
+  `WORKING_DAYS` (Mon,Tue,Wed,Thu,Fri) and `PUBLIC_HOLIDAYS` (comma-separated ISO dates, empty) decide
+  `next_followup_date`. `COMPLAINT_CASE_TABLE` (default **false**) - copy each case to
+  `cb_complaint_cases`; only after that migration is applied.
 - `STARTUP_RECOVERY_SCAN` (default **false**) — answer, once at startup, messages a crash
   left unanswered (`app/services/recovery.py`). Before switching on: apply
   `scripts/sql/recovery_001_claims.sql`, confirm `WHAPI_SENDER_PHONE` is right (the scan
@@ -2031,6 +2060,13 @@ at a time.
   cooking option, so a consultant is not blind — but if they want the employer's
   dietary requirement back as a question, it is one field beside the religion one
   rather than inside the cooking question it used to share.
+- **The helper complaint guidelines: what is still theirs (2026-11-04).** Approve the three follow-ups
+  on an open P1/P2 case and two lines the guidelines give no wording for (a fact added to a P3 case, a
+  P4 ticket's message), all marked PENDING THOMAS APPROVAL in `complaint_templates.py`. Whether Saturday
+  counts as a working day, and the public holiday list. **Who is told when a P1 arrives**: the ticket has
+  no owner by instruction (the FCC pool) and nothing notifies anyone, where the old crisis ticket went to
+  an admin. And what a bare "yes" to "Are you thinking about ending your life right now?" should get:
+  today it is the fixed "any other message" line, which carries 995.
 - **Helpers' names on placements.** Most live `placements` rows carry no
   `candidate_id`, so for those clients we cannot name the helper and the bot
   asks for her name instead of confirming it. Filling `candidate_id` in the
@@ -2421,6 +2457,26 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **The single crisis reply becomes Thomas's complaint severity flow, behind
+  `COMPLAINT_TRIAGE_ENABLED`.** Helper and unknown-role chats: every message graded P1-P4 beside the
+  classifier, a keyword net underneath; P1 sends its template at once, P2 asks up to four questions
+  one per message, P3 one, P4 answers from the KB; the wording is his, word for word. Each complaint
+  raises its ticket first, on the portal's Complaints tab. **There were no new tables to write to**,
+  though the brief expected some: read from production and the portal's source (`D:` checkout, a6ff47d),
+  the tab is a split of `cb_tickets` on `service_type`, with the new `complaint_level` column. Fields with
+  no column are on `captured_info`, so the flow needs no migration; `cb_complaint_cases_001` is prepared
+  and not applied. Old complaint tickets to move: 0 (`cb_tickets` holds one row, a transfer).
+  `selfcheck_golive.py` 185 (48 new, the 17 cases plus guardrails, the wait limit and the two webhook
+  paths); 34 faults injected. Replayed read-only on the real model, all 17 and four controls, which found
+  what the stubs could not: the model re-grading a bare "ya" and "after 9pm" as P1 from the history, and
+  "she slaps me" as P1. Fixed in the prompt and in code. The portal's own predicate, read from its source,
+  run read-only on production's Postgres for 15 and 16. Keyword net on 5,006 real in-scope messages of 30
+  days: 0 hits, so no false alarm and also no real test of a true one; the model on 40 of them: 0 graded.
+  Migration on PGlite: 11 of 11, with its rollback. **One slip, no harm:** the first run of the new
+  selfcheck case for an employer emergency reached the real `handover_executor`, so it made one real model
+  call and some database reads; checked afterwards, nothing was written (no ticket, handover, owner or
+  round-robin change), and it is stubbed now. E2E not run (fast fix).
 
 - **2026-11-04** - **Replaced threads can be recorded; off, SQL written and not applied, nothing
   deleted (section 9.50).** `cb_replaced_threads`, the two writes behind `RECORD_REPLACED_THREADS`,
