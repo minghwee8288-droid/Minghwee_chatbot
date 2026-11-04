@@ -244,10 +244,150 @@ async def _health_checks() -> list[tuple[str, bool]]:
     return results
 
 
+def _message(message_id: str, phone: str = "+6591234567"):
+    from datetime import datetime, timezone
+
+    from app.whapi.parser import IncomingMessage
+
+    return IncomingMessage(
+        whapi_message_id=message_id, chat_id="", customer_number=phone, customer_name="",
+        body=f"body {message_id}", message_type="text", from_me=False,
+        timestamp=datetime.now(timezone.utc),
+    )
+
+
+async def _shutdown_checks() -> list[tuple[str, bool]]:
+    from app.api import webhook
+    from app.whapi import debouncer as module
+    from app.whapi.debouncer import MessageDebouncer
+
+    results: list[tuple[str, bool]] = []
+    handled: list[list[str]] = []
+
+    async def handler(phone, batch):
+        handled.append([m.whapi_message_id for m in batch])
+
+    # Waiting out a long debounce: answered at once, not dropped.
+    d = MessageDebouncer(delay=600, handler=handler)
+    await d.add(_message("a"))
+    await d.add(_message("b"))
+    await d.add(_message("c", "+6598765432"))
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    await d.shutdown()
+    results.append(("waiting messages are answered, not dropped",
+                    sorted(map(sorted, handled)) == [["a", "b"], ["c"]]))
+    results.append(("...without waiting out the debounce", loop.time() - started < 2))
+    results.append(("...and the buffers end empty", not d._buffers and not d._timers))
+
+    # Switch off: the old behaviour.
+    handled.clear()
+    d = MessageDebouncer(delay=600, handler=handler)
+    await d.add(_message("a"))
+    with patch.object(module, "DRAIN_ON_SHUTDOWN", False):
+        await d.shutdown()
+    results.append(("switch off: dropped, as before", not handled and not d._buffers))
+    results.append(("the switch is on", module.DRAIN_ON_SHUTDOWN is True))
+
+    # A turn already running is waited for, not abandoned.
+    finished: list[str] = []
+    entered = asyncio.Event()
+
+    async def slow(phone, batch):
+        entered.set()
+        await asyncio.sleep(0.2)
+        finished.append(batch[0].whapi_message_id)
+
+    d = MessageDebouncer(delay=0, handler=slow)
+    await d.add(_message("running"))
+    await asyncio.wait_for(entered.wait(), 2)
+    await d.shutdown()
+    results.append(("a turn already running is waited for", finished == ["running"]))
+
+    # Bounded: a turn that never ends cannot outlast the limit.
+    cancelled: list[bool] = []
+
+    async def stuck(phone, batch):
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    d = MessageDebouncer(delay=600, handler=stuck)
+    await d.add(_message("stuck"))
+    started = loop.time()
+    with patch.object(module, "DRAIN_TIMEOUT_SECONDS", 0.2):
+        await d.shutdown()
+    results.append(("a stuck turn is cancelled at the limit",
+                    loop.time() - started < 2 and cancelled == [True]))
+
+    # One bad batch does not cost the others.
+    handled.clear()
+
+    async def one_bad(phone, batch):
+        if batch[0].whapi_message_id == "bad":
+            raise ValueError("boom")
+        handled.append([m.whapi_message_id for m in batch])
+
+    d = MessageDebouncer(delay=600, handler=one_bad)
+    await d.add(_message("bad", "+6591111111"))
+    await d.add(_message("good", "+6592222222"))
+    await d.shutdown()
+    results.append(("one failing batch does not cost the others", handled == [["good"]]))
+
+    # A batch that lands back in the buffer during the drain is still answered.
+    handled.clear()
+    d = None
+
+    async def requeues(phone, batch):
+        ids = [m.whapi_message_id for m in batch]
+        if ids == ["first"]:
+            await d.requeue(phone, [_message("second")])
+        handled.append(ids)
+
+    d = MessageDebouncer(delay=600, handler=requeues)
+    await d.add(_message("first"))
+    await d.shutdown()
+    results.append(("a batch requeued during the drain is answered",
+                    handled == [["first"], ["second"]]))
+
+    # The real handler, with only the turn itself stubbed.
+    turns: list[list[str]] = []
+
+    async def locked(phone, pending, *, allow_hold=True):
+        turns.append([m.whapi_message_id for m in pending])
+
+    d = MessageDebouncer(delay=600, handler=webhook.process_batch)
+    await d.add(_message("real"))
+    with patch.object(webhook, "_process_locked", locked), \
+            patch.object(webhook.typing_indicator, "stop", _no_op):
+        await d.shutdown()
+    results.append(("the real process_batch runs the batch", turns == [["real"]]))
+
+    main_source = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
+    results.append(("lifespan drains before it closes Whapi and the graph",
+                    main_source.index("debouncer.shutdown()") < main_source.index("whapi.close()")
+                    < main_source.index("close_graph()")))
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    grace = re.search(r"stop_grace_period:\s*(\d+s)", compose)
+    results.append((f"the {module.DRAIN_TIMEOUT_SECONDS:g}s limit fits inside stop_grace_period",
+                    bool(grace) and _seconds(grace.group(1)) > module.DRAIN_TIMEOUT_SECONDS + 5))
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    results.append(("the app is PID 1 in exec form, so the stop signal reaches it",
+                    'CMD ["python", "run.py"]' in dockerfile))
+    return results
+
+
+async def _no_op(*args, **kwargs):
+    return None
+
+
 async def checks() -> list[tuple[str, bool]]:
     return [
         *await _checkpointer_checks(),
         *await _health_checks(),
+        *await _shutdown_checks(),
     ]
 
 

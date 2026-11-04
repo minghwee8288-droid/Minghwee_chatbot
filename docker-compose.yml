@@ -7,6 +7,9 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped
+    # Longer than debouncer.DRAIN_TIMEOUT_SECONDS (45s): a stop lets waiting
+    # messages be answered. Docker's default of 10s is shorter than one turn.
+    stop_grace_period: 60s
     healthcheck:
       # Parses the body of /health/ready, which always answers 200 (app/healthcheck.py).
       test: ["CMD", "python", "-m", "app.healthcheck"]

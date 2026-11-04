@@ -18,6 +18,15 @@ logger = logging.getLogger(__name__)
 
 Handler = Callable[[str, list[IncomingMessage]], Awaitable[None]]
 
+# 2026-11-04: a restart answers what it is holding instead of dropping it. The
+# messages waiting here were already stored and read-receipted, so the client
+# had seen the blue ticks and got nothing, and nothing ever retried them. False
+# = shutdown discards the buffers, as before.
+DRAIN_ON_SHUTDOWN = True
+# Must stay under the container's stop_grace_period (docker-compose.yml, 60s),
+# or Docker kills the turn this is waiting for. smoke_resilience.py compares them.
+DRAIN_TIMEOUT_SECONDS = 45.0
+
 
 class MessageDebouncer:
     def __init__(
@@ -34,6 +43,9 @@ class MessageDebouncer:
         self._handler = handler
         self._buffers: dict[str, list[IncomingMessage]] = {}
         self._timers: dict[str, asyncio.Task] = {}
+        # Batches being handled right now. Their timers have already left
+        # _timers, so shutdown would not otherwise know to wait for them.
+        self._running: set[asyncio.Task] = set()
         self._lock = asyncio.Lock()
 
     async def add(self, message: IncomingMessage) -> None:
@@ -70,10 +82,17 @@ class MessageDebouncer:
         if not batch:
             return
 
+        await self._handle(phone, batch)
+
+    async def _handle(self, phone: str, batch: list[IncomingMessage]) -> None:
+        task = asyncio.current_task()
+        self._running.add(task)
         try:
             await self._handler(phone, batch)
         except Exception:  # noqa: BLE001 - a failed batch must not kill the task
             logger.exception("Debounced handler failed for %s", phone)
+        finally:
+            self._running.discard(task)
 
     async def requeue(self, phone: str, messages: list[IncomingMessage]) -> None:
         """Hand messages back to the buffer for whoever is mid-turn to collect."""
@@ -113,11 +132,64 @@ class MessageDebouncer:
         await self.drain(phone)
 
     async def shutdown(self) -> None:
-        async with self._lock:
-            timers = list(self._timers.values())
-            self._timers.clear()
-            self._buffers.clear()
-        for timer in timers:
-            timer.cancel()
-        if timers:
-            await asyncio.gather(*timers, return_exceptions=True)
+        if not DRAIN_ON_SHUTDOWN:
+            async with self._lock:
+                timers = list(self._timers.values())
+                self._timers.clear()
+                self._buffers.clear()
+            for timer in timers:
+                timer.cancel()
+            if timers:
+                await asyncio.gather(*timers, return_exceptions=True)
+            return
+        await self._drain_all()
+
+    async def _drain_all(self) -> None:
+        """Answer every waiting batch now, and let running ones finish.
+
+        Skipping the rest of the debounce can split a client's thought in two,
+        which is a small price against never answering at all. Runs in a loop
+        because a batch can land back in the buffer: process_batch hands its
+        messages to a turn already running on that number (requeue), and if that
+        turn has just finished its last look, nobody else would collect them.
+        What is still unfinished at the time limit is cancelled and named in the
+        log, by message id.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + DRAIN_TIMEOUT_SECONDS
+        total = 0
+        while True:
+            async with self._lock:
+                timers = list(self._timers.values())
+                self._timers.clear()
+                batches = list(self._buffers.items())
+                self._buffers.clear()
+            for timer in timers:
+                timer.cancel()
+            if timers:
+                await asyncio.gather(*timers, return_exceptions=True)
+            total += len(batches)
+            tasks = {asyncio.create_task(self._handle(phone, batch)) for phone, batch in batches}
+            await asyncio.sleep(0)  # let each register itself as running
+            pending = self._running | tasks
+            if not pending:
+                break
+            _, not_done = await asyncio.wait(
+                pending, timeout=max(deadline - loop.time(), 0)
+            )
+            if not_done:
+                for task in not_done:
+                    task.cancel()
+                await asyncio.gather(*not_done, return_exceptions=True)
+                logger.error(
+                    "Shutdown: %d turn(s) still running after %gs were cancelled",
+                    len(not_done), DRAIN_TIMEOUT_SECONDS,
+                )
+            async with self._lock:
+                left = [m.whapi_message_id for batch in self._buffers.values() for m in batch]
+            if not_done or not (self._buffers or self._timers):
+                if not_done and left:
+                    logger.error("Shutdown: messages left unanswered: %s", left)
+                break
+        if total:
+            logger.info("Shutdown: answered %d waiting batch(es)", total)
