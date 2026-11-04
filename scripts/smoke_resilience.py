@@ -174,12 +174,18 @@ async def _health_checks() -> list[tuple[str, bool]]:
     results.append(("healthcheck: a body that is not the expected shape is not",
                     not healthcheck.ready([]) and not healthcheck.ready({})))
 
+    from starlette.requests import Request
+
+    def http_request(peer="127.0.0.1", headers=()):
+        return Request({"type": "http", "client": (peer, 1234), "query_string": b"",
+                        "headers": [(k.lower().encode(), v.encode()) for k, v in headers]})
+
     def reset_channel():
         health._channel_checked_at = None
         health._channel_ok = False
         health._channel_unknown_in_a_row = 0
 
-    async def ready_with(saver, database=True, channel=True, **overrides):
+    async def ready_with(saver, database=True, channel=True, request=None, **overrides):
         keys = {"whapi_api_token": "x", "openrouter_api_key": "x", "tenant_id": "x",
                 "embedding_api_key": "x", "transcription_api_key": "x", "transcription_enabled": True,
                 "openai_api_key": "", **overrides}
@@ -194,7 +200,7 @@ async def _health_checks() -> list[tuple[str, bool]]:
                     patch.object(health.whapi, "channel_connected",
                                  AsyncMock(side_effect=channel) if isinstance(channel, Exception)
                                  else AsyncMock(return_value=channel)):
-                return await health.readiness()
+                return await health.readiness(request or http_request())
         finally:
             for p in patches:
                 p.stop()
@@ -253,7 +259,8 @@ async def _health_checks() -> list[tuple[str, bool]]:
                 patch.object(settings, "supabase_db_url", f"postgresql://u:{secret}@db:5432/x"), \
                 patch.object(health.db, "execute", AsyncMock(side_effect=OSError(f"postgresql://u:{secret}@db:5432"))), \
                 patch.object(health.db, "table", lambda *_: type("Q", (), {"select": lambda s, *a: s, "limit": lambda s, *a: s})()):
-            worst = await health.readiness()
+            worst = await health.readiness(http_request())
+            public_worst = await health.readiness(http_request("172.18.0.1"))
     finally:
         graph._checkpointer = saved
     text = JSONResponse(worst).body.decode()
@@ -265,6 +272,69 @@ async def _health_checks() -> list[tuple[str, bool]]:
                     and all(isinstance(v, str) for v in worst.get("warnings", []))))
     results.append(("...and leaves out what /health shows (version, environment)",
                     "version" not in worst and "environment" not in worst))
+    results.append(("the public body, everything failing, names no setting",
+                    set(public_worst) == {"checks", "checkpointer", "status"}
+                    and public_worst["status"] == "degraded"
+                    and not {"openrouter_key", "embedding_key", "transcription_key", "tenant_id"} & set(public_worst["checks"])
+                    and not re.search(r"openrouter|embedding|transcription|tenant", JSONResponse(public_worst).body.decode())))
+
+    # Who sees warnings, through the real route so the Request is really injected.
+    from fastapi import FastAPI
+    import httpx as _httpx
+
+    route_app = FastAPI()
+    route_app.include_router(health.router)
+    missing = {"transcription_api_key": "", "openrouter_api_key": ""}
+
+    async def over_http(peer, headers=None, key="", url="/health/ready", **overrides):
+        keys = {"whapi_api_token": "x", "openrouter_api_key": "x", "tenant_id": "x", "embedding_api_key": "x",
+                "transcription_api_key": "x", "transcription_enabled": True, "openai_api_key": "",
+                "health_details_key": key, **overrides}
+        patches = [patch.object(settings, n, v) for n, v in keys.items()]
+        saved_saver = graph._checkpointer
+        graph._checkpointer = _Fake()
+        reset_channel()
+        for p in patches:
+            p.start()
+        try:
+            with patch.object(health.db, "healthcheck", AsyncMock(return_value=True)), \
+                    patch.object(health.whapi, "channel_connected", AsyncMock(return_value=True)):
+                transport = _httpx.ASGITransport(app=route_app, client=(peer, 1234))
+                async with _httpx.AsyncClient(transport=transport, base_url="http://bot") as client:
+                    return await client.get(url, headers=headers or {})
+        finally:
+            for p in patches:
+                p.stop()
+            graph._checkpointer = saved_saver
+
+    shown = lambda r: "warnings" in r.json() and "openrouter_key" in r.json()["warnings"]  # noqa: E731
+    gateway = "172.18.0.1"
+    cases = (
+        ("inside the container sees them", dict(peer="127.0.0.1"), True),
+        ("IPv6 loopback too", dict(peer="::1"), True),
+        ("through nginx they are hidden", dict(peer=gateway, headers={"X-Forwarded-For": "8.8.8.8"}), False),
+        ("from Docker's gateway with no header, hidden", dict(peer=gateway), False),
+        ("a spoofed forward that makes the peer 127.0.0.1, hidden",
+         dict(peer="127.0.0.1", headers={"X-Forwarded-For": "127.0.0.1"}), False),
+        ("X-Real-IP counts as a proxy", dict(peer="127.0.0.1", headers={"X-Real-IP": "1.2.3.4"}), False),
+        ("Forwarded counts as a proxy", dict(peer="127.0.0.1", headers={"Forwarded": "for=1.2.3.4"}), False),
+        ("the right key from outside sees them",
+         dict(peer=gateway, key="k-right", headers={"X-Health-Key": "k-right", "X-Forwarded-For": "8.8.8.8"}), True),
+        ("the wrong key does not", dict(peer=gateway, key="k-right", headers={"X-Health-Key": "nope"}), False),
+        ("no key set: an empty header does not open it", dict(peer=gateway, headers={"X-Health-Key": ""}), False),
+        ("a key with non-ASCII does not crash it", dict(peer=gateway, key="k", headers={"X-Health-Key": "é".encode("latin-1")}), False),
+        ("the key in the URL does not count", dict(peer=gateway, key="k-right", url="/health/ready?x-health-key=k-right"), False),
+    )
+    for name, kwargs, expected in cases:
+        response = await over_http(**kwargs, **missing)
+        results.append((f"warnings: {name}", response.status_code == 200 and shown(response) is expected))
+    hidden = await over_http(peer=gateway, **missing)
+    results.append(("hidden means the word is not in the bytes, and the status is unchanged",
+                    "warnings" not in hidden.text and hidden.json()["status"] == "ok" and '"status":"ok"' in hidden.text))
+    with patch.object(health, "WARNINGS_PRIVATE", False):
+        response = await over_http(peer=gateway, **missing)
+    results.append(("switch off: warnings for everyone, as before", shown(response)))
+    results.append(("that switch is on", health.WARNINGS_PRIVATE is True))
 
     # What the uptime monitor matches on, as the bytes it will really receive.
     wire = lambda b: JSONResponse(b).body.decode()  # noqa: E731

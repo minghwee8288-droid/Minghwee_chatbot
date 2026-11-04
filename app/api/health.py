@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from app import __version__
 from app.config import settings
@@ -46,6 +47,25 @@ _channel_lock = asyncio.Lock()
 _channel_checked_at: float | None = None
 _channel_ok = False
 _channel_unknown_in_a_row = 0
+
+# 2026-11-04: "warnings" names which settings are missing, so the public body does
+# not carry it. It shows for a request from inside the container, or with the
+# X-Health-Key header (HEALTH_DETAILS_KEY). A forwarding header means it came
+# through a proxy, whatever the peer: run.py trusts X-Forwarded-For from anyone, so
+# a caller can make the peer read 127.0.0.1, and curl from the server's own shell
+# arrives from Docker's gateway, the same as nginx. False = warnings for everyone.
+WARNINGS_PRIVATE = True
+_PROXY_HEADERS = ("x-forwarded-for", "x-real-ip", "forwarded")
+
+
+def _may_see_warnings(request: Request) -> bool:
+    if not WARNINGS_PRIVATE:
+        return True
+    key = settings.health_details_key
+    if key and hmac.compare_digest(request.headers.get("x-health-key", "").encode(), key.encode()):
+        return True
+    peer = request.client.host if request.client else ""
+    return peer in ("127.0.0.1", "::1") and not any(h in request.headers for h in _PROXY_HEADERS)
 
 
 async def _whapi_channel_ok() -> bool:
@@ -92,7 +112,7 @@ async def health() -> dict[str, object]:
 
 
 @router.get("/health/ready")
-async def readiness() -> dict[str, object]:
+async def readiness(request: Request) -> dict[str, object]:
     checks: dict[str, bool] = {}
     if WHAPI_CHANNEL_IN_READY:
         checks["database"], checks["whapi_channel"] = await asyncio.gather(
@@ -116,7 +136,8 @@ async def readiness() -> dict[str, object]:
         checks["checkpointer_durable"] = backend == "postgres"
         body["checkpointer"] = backend
     if CRITICAL_CHECKS_ONLY:
-        body["warnings"] = sorted(k for k, ok in checks.items() if k not in _CRITICAL_CHECKS and not ok)
+        if _may_see_warnings(request):
+            body["warnings"] = sorted(k for k, ok in checks.items() if k not in _CRITICAL_CHECKS and not ok)
         checks = {k: ok for k, ok in checks.items() if k in _CRITICAL_CHECKS}
         body["checks"] = checks
     body["status"] = "ok" if all(checks.values()) else "degraded"

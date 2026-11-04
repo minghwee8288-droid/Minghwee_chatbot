@@ -374,6 +374,9 @@ class Settings(BaseSettings):
     # .env.example sets it so - a server that never changed it would publish
     # every route, the webhook path pattern included (§9.33).
     enable_api_docs: bool = False
+    # Header X-Health-Key on /health/ready shows "warnings" from anywhere. Empty
+    # means no key opens it, and only a request from inside the container sees them.
+    health_details_key: str = ""
 
     @property
     def is_production(self) -> bool:
