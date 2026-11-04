@@ -174,16 +174,17 @@ async def _health_checks() -> list[tuple[str, bool]]:
     results.append(("healthcheck: a body that is not the expected shape is not",
                     not healthcheck.ready([]) and not healthcheck.ready({})))
 
-    async def ready_with(saver):
+    async def ready_with(saver, database=True, **overrides):
         keys = {"whapi_api_token": "x", "openrouter_api_key": "x", "tenant_id": "x",
-                "embedding_api_key": "x", "transcription_api_key": "x"}
+                "embedding_api_key": "x", "transcription_api_key": "x", "transcription_enabled": True,
+                "openai_api_key": "", **overrides}
         saved = graph._checkpointer
         graph._checkpointer = saver
         patches = [patch.object(settings, name, value) for name, value in keys.items()]
         for p in patches:
             p.start()
         try:
-            with patch.object(health.db, "healthcheck", AsyncMock(return_value=True)):
+            with patch.object(health.db, "healthcheck", AsyncMock(return_value=database)):
                 return await health.readiness()
         finally:
             for p in patches:
@@ -199,6 +200,72 @@ async def _health_checks() -> list[tuple[str, bool]]:
     body = await ready_with(None)
     results.append(("no checkpointer yet: ready says degraded", body["status"] == "degraded"))
     results.append(("the switch is on", health.CHECKPOINTER_IN_READY is True))
+
+    # Only three things decide the status.
+    no_openrouter = {"openrouter_api_key": "", "transcription_api_key": ""}
+    body = await ready_with(_Fake(), database=False)
+    results.append(("database down: degraded", body["status"] == "degraded" and body["checks"]["database"] is False))
+    body = await ready_with(_Fake(), whapi_api_token="")
+    results.append(("no Whapi token: degraded", body["status"] == "degraded" and body["checks"]["whapi_token"] is False))
+    for name, overrides, expected in (
+        ("transcription key", {"transcription_api_key": "", "openrouter_api_key": ""}, ["openrouter_key", "transcription_key"]),
+        ("embedding key", {"embedding_api_key": "", "openrouter_api_key": "", "embedding_base_url": "https://x"},
+         ["embedding_key", "openrouter_key"]),
+        ("tenant", {"tenant_id": ""}, ["tenant_id"]),
+    ):
+        body = await ready_with(_Fake(), **overrides)
+        results.append((f"{name} missing: still ok, named as a warning",
+                        body["status"] == "ok" and body.get("warnings") == expected and healthcheck.ready(body)))
+    body = await ready_with(_Fake())
+    results.append(("nothing failing: no warnings, and only the three checks",
+                    body.get("warnings") == [] and set(body["checks"]) == {"database", "whapi_token", "checkpointer_durable"}))
+    with patch.object(health, "CRITICAL_CHECKS_ONLY", False):
+        body = await ready_with(_Fake(), **no_openrouter)
+    results.append(("switch off: any failing check is degraded, as before",
+                    body["status"] == "degraded" and "warnings" not in body))
+    results.append(("that switch is on", health.CRITICAL_CHECKS_ONLY is True))
+
+    # The body is public. Worst case: every check failing, secrets planted in
+    # every setting, and the real db.healthcheck swallowing an error that quotes them.
+    from fastapi.responses import JSONResponse
+
+    secret = "sk-hunter2-4242"
+    saved = graph._checkpointer
+    graph._checkpointer = MemorySaver()
+    try:
+        with patch.object(settings, "whapi_api_token", ""), \
+                patch.object(settings, "openrouter_api_key", ""), \
+                patch.object(settings, "tenant_id", ""), \
+                patch.object(settings, "embedding_api_key", ""), \
+                patch.object(settings, "openai_api_key", ""), \
+                patch.object(settings, "transcription_api_key", ""), \
+                patch.object(settings, "supabase_service_role_key", secret), \
+                patch.object(settings, "supabase_db_url", f"postgresql://u:{secret}@db:5432/x"), \
+                patch.object(health.db, "execute", AsyncMock(side_effect=OSError(f"postgresql://u:{secret}@db:5432"))), \
+                patch.object(health.db, "table", lambda *_: type("Q", (), {"select": lambda s, *a: s, "limit": lambda s, *a: s})()):
+            worst = await health.readiness()
+    finally:
+        graph._checkpointer = saved
+    text = JSONResponse(worst).body.decode()
+    results.append(("the public body quotes no secret and holds no number",
+                    secret not in text and not re.search(r"\d", text)))
+    results.append(("...and holds exactly these fields",
+                    set(worst) == {"checks", "checkpointer", "warnings", "status"}
+                    and all(isinstance(v, bool) for v in worst["checks"].values())
+                    and all(isinstance(v, str) for v in worst.get("warnings", []))))
+    results.append(("...and leaves out what /health shows (version, environment)",
+                    "version" not in worst and "environment" not in worst))
+
+    # What the uptime monitor matches on, as the bytes it will really receive.
+    wire = lambda b: JSONResponse(b).body.decode()  # noqa: E731
+    healthy = wire(await ready_with(_Fake()))
+    results.append(("the monitor's keywords are in a healthy body", "postgres" in healthy and '"status":"ok"' in healthy))
+    for name, saver in (("on memory", MemorySaver()), ("with no checkpointer", None)):
+        text = wire(await ready_with(saver))
+        results.append((f"{name} neither keyword is there", "postgres" not in text and '"status":"ok"' not in text))
+    down = wire(await ready_with(_Fake(), database=False))
+    results.append(("database down: only the status keyword goes, postgres stays",
+                    "postgres" in down and '"status":"ok"' not in down))
 
     # The real command against a real socket: /health/ready answers 200 either way.
     class Handler(http.server.BaseHTTPRequestHandler):

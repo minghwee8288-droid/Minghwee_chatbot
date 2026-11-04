@@ -15,6 +15,15 @@ router = APIRouter(tags=["health"])
 # False = the checkpointer is not reported.
 CHECKPOINTER_IN_READY = True
 
+# 2026-11-04: only these decide the status, and so the container's label and the
+# uptime monitor. Anything else failing is named under "warnings", because a
+# missing transcription key costs voice notes and not the bot. The whole body is
+# public (no auth, through nginx), so it holds booleans and fixed names only:
+# never an exception's text, a count, a version or a value from the environment.
+# False = any failing check is degraded, and no warnings.
+CRITICAL_CHECKS_ONLY = True
+_CRITICAL_CHECKS = frozenset({"database", "whapi_token", "checkpointer_durable"})
+
 
 @router.get("/health")
 async def health() -> dict[str, object]:
@@ -44,5 +53,9 @@ async def readiness() -> dict[str, object]:
         backend = checkpointer_backend()
         checks["checkpointer_durable"] = backend == "postgres"
         body["checkpointer"] = backend
+    if CRITICAL_CHECKS_ONLY:
+        body["warnings"] = sorted(k for k, ok in checks.items() if k not in _CRITICAL_CHECKS and not ok)
+        checks = {k: ok for k, ok in checks.items() if k in _CRITICAL_CHECKS}
+        body["checks"] = checks
     body["status"] = "ok" if all(checks.values()) else "degraded"
     return body

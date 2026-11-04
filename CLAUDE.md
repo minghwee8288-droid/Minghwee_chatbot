@@ -652,7 +652,8 @@ because the lead is opened early and the ticket is created much later.
 | A reply never reads out an internal case number | `guards.without_case_numbers` in `graph.run_turn` (and the preview) (`NO_CASE_NUMBER_READ_OUT`) | Batch G G4. The case numbers held for the client (`matched_cases`, the case row) and anything in the portal's case format (MH-YYYY-NNNN) are taken out, keeping the sentence ("Your case is at the documents stage"). The CB-YYYY-NNNN ticket reference is never touched. |
 | A dead pooled connection does not crash a turn, and a crash is not mislabelled | `checkpointer.CbAsyncPostgresSaver._retry` (`RETRY_ON_DEAD_CONNECTION`) + `handover.REASON_BOT_ERROR` (`DISTINCT_CRASH_REASON`) | Batch G G1. A checkpoint read or write that fails on the connection is tried once more on a fresh one (the read is a read, both writes are upserts). A real crash is `bot_error`; `bot_confused` now means only a turn that handed over because it could not answer. Both count as a standdown. |
 | A database failure at startup never leaves the bot on memory | `graph._durable_checkpointer` (`REQUIRE_DURABLE_CHECKPOINTER`) | With `SUPABASE_DB_URL` set it retries for `CHECKPOINTER_RETRY_SECONDS` (60), then refuses to start, and `restart: unless-stopped` keeps trying. Keyed on the URL rather than `ENVIRONMENT`, which defaults to development. With no URL, memory is allowed unless `ENVIRONMENT` is production. The retry must fit inside the healthcheck's `start_period` (90s), and `smoke_resilience.py` compares them. Logs the exception's type only: psycopg errors can quote the URL. |
-| The container reads as healthy only if `/health/ready` says ok | `app/healthcheck.py` (`python -m app.healthcheck`, in compose and the `Dockerfile`) + `health.CHECKPOINTER_IN_READY` | `/health/ready` always answers 200, so the command parses the body, and `/health` says ok whatever the state. Memory, or no checkpointer yet, is degraded. Standard library only, nothing from the app. Docker only labels the container: an unhealthy one is not restarted, so a short Supabase failure costs a label and no replies. |
+| The container reads as healthy only if `/health/ready` says ok | `app/healthcheck.py` (`python -m app.healthcheck`, in compose and the `Dockerfile`) + `health.CHECKPOINTER_IN_READY` | `/health/ready` always answers 200, so the command parses the body, and `/health` says ok whatever the state. Memory, or no checkpointer yet, is degraded. Standard library only, nothing from the app. Docker only labels the container: an unhealthy one is not restarted, so a short Supabase failure costs a label and no replies. Only the checkpointer, the database and the Whapi token decide it (`health.CRITICAL_CHECKS_ONLY`); anything else failing is named under `warnings`. `whapi_token` proves the token is set, not that Whapi is up. |
+| The public health body gives nothing away | `health.readiness` + `smoke_resilience.py` | nginx forwards it with no auth, so: booleans and fixed names only. No exception text, count, version or value from the environment; asserted with secrets planted in the settings and every check failing. `/` and `/health` do show the version, and `/health` the environment. |
 | A restart answers what it is holding | `debouncer._drain_all` (`DRAIN_ON_SHUTDOWN`) + `stop_grace_period: 60s` in compose | Waiting batches run at once on shutdown, running turns are waited for, before Whapi and the graph close. Limit `DRAIN_TIMEOUT_SECONDS` (45), which must stay under the grace period, and `smoke_resilience.py` compares them. Past it, turns are cancelled and message ids logged. Covers a normal stop or deploy; a crash or kill still loses the buffer, which is the startup scan's job. |
 | The startup scan claims before it sends, and never answers another channel's message | `app/services/recovery.py` (`STARTUP_RECOVERY_SCAN`, default off) + `cb_recovery_claims` | Written and OFF. Every inbound message since our last outbound is one batch; each is claimed by Whapi id before any reply, and a failed claim sends nothing. An auto-reply is not an answer. Only messages under 10 min old by the newest, from before startup, to our own `to_number` (not `business_number`, which 3,454 of 3,829 live rows disagree with). The same gates as `handle_inbound`. More than 25 to answer sends none of them. |
 | One helper's details never become another helper's | `info_collector.nationality_carries` / `nationality_for_turn` + `_history_since` (`collected_since`) | `nationality` is portable for a hiring client (the nationality they want) and NOT across a switch into or out of `passport_renewal`/`home_leave`, where it is one helper's. Read by the collector's reset AND by `rag_retriever`, which runs before the reset. The extractor reads history only from the message that started the current request, on every turn after a switch, not just the switch turn. |
@@ -1073,7 +1074,8 @@ Easy to get wrong:
   2026-11-04, `False` for the earlier behaviour:
   `graph.REQUIRE_DURABLE_CHECKPOINTER` (any checkpointer failure falls back to memory),
   `health.CHECKPOINTER_IN_READY` (`/health/ready` does not report the checkpointer),
-  `debouncer.DRAIN_ON_SHUTDOWN` (shutdown discards waiting messages).
+  `debouncer.DRAIN_ON_SHUTDOWN` (shutdown discards waiting messages),
+  `health.CRITICAL_CHECKS_ONLY` (any failing check makes `/health/ready` degraded).
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2257,6 +2259,17 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **Only the checkpointer, the database and Whapi make the bot unhealthy.**
+  Supersedes the line in the entry below saying any failing check shows as unhealthy: a
+  missing transcription key costs voice notes, not the bot. The rest are named under
+  `warnings` in `/health/ready`, and `checks` holds only the three. In production a missing
+  OpenRouter, embedding or tenant setting (and the Whapi token) refuses to start anyway
+  (`main.lifespan`), so the only warning production can really show is the transcription key.
+  The body is public, so a check plants secrets in the settings, fails every check and
+  asserts no secret and no digit in the bytes sent. Live before this change, the body held
+  only booleans, confirmed against `bot.minghwee.com`. 22 more checks in
+  `smoke_resilience.py`; 10 faults, 10 red.
 
 - **2026-11-04** - **Docs only: five open items added to section 9.** The overwrite rule
   (9.48), new-thread seeding (9.49), checkpoint pruning (9.50), the alert decision (9.51)
