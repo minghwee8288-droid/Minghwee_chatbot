@@ -679,6 +679,9 @@ async def _recovery_checks() -> list[tuple[str, bool]]:
     with patch.object(recovery, "BATCH_ONLY_INSIDE_WINDOW", False):
         r = await scan([inbound("old", 300), inbound("m1", 3)])
     results.append(("switch off: the whole unanswered run, as before", r["batches"] == [["old", "m1"]]))
+    with patch.object(recovery, "BATCH_ONLY_INSIDE_WINDOW", False):
+        r = await scan([inbound("old", 300), inbound("older", 200)])
+    results.append(("...and still nothing when the newest is past the window", not r["batches"]))
     results.append(("the window switch is on", recovery.BATCH_ONLY_INSIDE_WINDOW is True))
     # whapi_message_id is nullable: a row in the window with no id leaves only old ones.
     r = await scan([inbound("old", 300), {**inbound("x", 3), "whapi_message_id": None}])
@@ -705,8 +708,27 @@ async def _recovery_checks() -> list[tuple[str, bool]]:
     results.append(("our own number unknown: no scan at all", not r["batches"] and r["counts"] == {"refused": 1}))
     r = await scan([inbound("m1", 3)], [conversation(is_group=True)])
     results.append(("a group is not answered", not r["batches"]))
+    # Fabricated rows, by shape. Every number here is made up.
+    def row_verdict(number, name="Tan"):
+        return recovery._not_ours_to_answer({"customer_number": number, "customer_name": name})
+
+    for number, why in (("116909177569373", "15 digits"), ("95786411008174", "14 digits, reads like Myanmar"),
+                        ("7312345678901", "13 digits, no real prefix")):
+        results.append((f"LID-shaped ({why}), with a push name: not answered", row_verdict(number) == "no_real_number"))
+    for number, why in (("6591234567", "Singapore"), ("919876543210", "India"), ("6281234567890", "Indonesia, 13"),
+                        ("62881234567890", "Indonesia, 14"), ("8801712345678", "Bangladesh, 13"),
+                        ("8613812345678", "China, 13")):
+        results.append((f"a real number ({why}) is answered", row_verdict(number) == ""))
+    results.append(("a real client with no push name is answered", row_verdict(phone, f"+{phone}") == ""))
+    results.append(("a chat id instead of a number is not answered", row_verdict("116909177569373@lid") == "no_real_number"))
+    r = await scan([inbound("m1", 3)], [conversation(customer_number="116909177569373")], allowed="116909177569373")
+    results.append(("a LID row gets nothing, past every other gate", not r["batches"] and not r["store"]["claims"]))
     r = await scan([inbound("m1", 3)], [conversation(customer_name=f"+{phone}")])
-    results.append(("a row with no real number behind it is not answered", not r["batches"]))
+    results.append(("...and a row merely named after its number gets its reply", r["batches"] == [["m1"]]))
+    with patch.object(recovery, "LID_SHAPE_NOT_NAME", False):
+        results.append(("switch off: the name decides, as before",
+                        row_verdict(phone, f"+{phone}") == "no_real_number" and row_verdict("116909177569373") == ""))
+    results.append(("the shape switch is on", recovery.LID_SHAPE_NOT_NAME is True))
     r = await scan([inbound("m1", 3)], allowed="6500000000")
     results.append(("the allowlist applies", not r["batches"] and not r["store"]["claims"]))
     r = await scan([inbound("m1", 3)], internal=True)

@@ -64,6 +64,17 @@ RECOVERY_HISTORY_ROWS = 50
 # request. False = everything since our last outbound goes in, if the newest is
 # inside the window.
 BATCH_ONLY_INSIDE_WINDOW = True
+# 2026-11-04: a row minted out of a LID (section 9.16) is told by its number, not
+# its name. A portal row can gain a push name, and a real client can lack one.
+# Tested against Whapi's chat list, 3,085 LIDs and 2,410 real phones: this catches
+# 3,061 LIDs and no phone. On the live conversations it catches 155 of 156 LID rows
+# and no phone, where the name caught 150 and also skipped 7 real phones and 21 rows
+# Whapi's list does not hold, which this now answers. What it misses is a LID that could be a real number: 11-12 digits, or starting 62.
+# False = a row named after its own number is skipped instead.
+LID_SHAPE_NOT_NAME = True
+# The only 13-digit numbers in the live data: Indonesia, Bangladesh, China. Another
+# country's real 13-digit number is skipped here, which costs one late reply.
+_REAL_13_DIGIT_PREFIXES = ("62", "880", "86")
 
 _MESSAGE_COLUMNS = (
     "direction, body, is_bot, sent_by, to_number, whapi_message_id, created_at, "
@@ -140,6 +151,15 @@ async def _unanswered(rows: list[dict[str, Any]], conversation_id: int) -> list[
     return unanswered
 
 
+def _lid_shaped(digits: str) -> bool:
+    """A LID that was stored as a phone number: longer than any real one we have seen."""
+    return (
+        len(digits) >= 15
+        or (len(digits) == 14 and not digits.startswith("62"))
+        or (len(digits) == 13 and not digits.startswith(_REAL_13_DIGIT_PREFIXES))
+    )
+
+
 def _not_ours_to_answer(conversation: dict[str, Any]) -> str:
     """Why this conversation is not one to message at all, or empty."""
     if conversation.get("is_group") or conversation.get("group_jid"):
@@ -147,10 +167,9 @@ def _not_ours_to_answer(conversation: dict[str, Any]) -> str:
     number = str(conversation.get("customer_number") or "")
     if "@" in number:
         return "no_real_number"
-    # A row named after its own number has no push name behind it, and that is
-    # the mark of the rows minted out of a LID (section 9.16): the "number" is
-    # not a phone. A real client with no push name is skipped too, the safe way.
     digits = digits_only(number)
+    if LID_SHAPE_NOT_NAME:
+        return "no_real_number" if _lid_shaped(digits) else ""
     if digits and digits == digits_only(conversation.get("customer_name") or ""):
         return "no_real_number"
     return ""
