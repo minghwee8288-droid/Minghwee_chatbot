@@ -156,8 +156,99 @@ async def _checkpointer_checks() -> list[tuple[str, bool]]:
     return results
 
 
+async def _health_checks() -> list[tuple[str, bool]]:
+    import http.server
+    import threading
+    from unittest.mock import AsyncMock
+
+    from langgraph.checkpoint.memory import MemorySaver
+
+    from app import healthcheck
+    from app.api import health
+    from app.config import settings
+    from app.graph import graph
+
+    results: list[tuple[str, bool]] = []
+    results.append(("healthcheck: status ok is healthy", healthcheck.ready({"status": "ok"})))
+    results.append(("healthcheck: degraded is not", not healthcheck.ready({"status": "degraded"})))
+    results.append(("healthcheck: a body that is not the expected shape is not",
+                    not healthcheck.ready([]) and not healthcheck.ready({})))
+
+    async def ready_with(saver):
+        keys = {"whapi_api_token": "x", "openrouter_api_key": "x", "tenant_id": "x",
+                "embedding_api_key": "x", "transcription_api_key": "x"}
+        saved = graph._checkpointer
+        graph._checkpointer = saver
+        patches = [patch.object(settings, name, value) for name, value in keys.items()]
+        for p in patches:
+            p.start()
+        try:
+            with patch.object(health.db, "healthcheck", AsyncMock(return_value=True)):
+                return await health.readiness()
+        finally:
+            for p in patches:
+                p.stop()
+            graph._checkpointer = saved
+
+    body = await ready_with(_Fake())
+    results.append(("Postgres: ready says ok and names it",
+                    body["status"] == "ok" and body.get("checkpointer") == "postgres"))
+    body = await ready_with(MemorySaver())
+    results.append(("memory: ready says degraded and names it",
+                    body["status"] == "degraded" and body.get("checkpointer") == "memory"))
+    body = await ready_with(None)
+    results.append(("no checkpointer yet: ready says degraded", body["status"] == "degraded"))
+    results.append(("the switch is on", health.CHECKPOINTER_IN_READY is True))
+
+    # The real command against a real socket: /health/ready answers 200 either way.
+    class Handler(http.server.BaseHTTPRequestHandler):
+        payload = b"{}"
+
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(type(self).payload)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}/health/ready"
+    try:
+        Handler.payload = b'{"status": "ok"}'
+        code_ok = await asyncio.to_thread(healthcheck.main, url)
+        Handler.payload = b'{"status": "degraded", "checkpointer": "memory"}'
+        code_degraded = await asyncio.to_thread(healthcheck.main, url)
+        Handler.payload = b"not json"
+        code_garbage = await asyncio.to_thread(healthcheck.main, url)
+    finally:
+        server.shutdown()
+        server.server_close()
+    code_down = await asyncio.to_thread(healthcheck.main, url)
+    results.append(("the command exits 0 on a 200 saying ok", code_ok == 0))
+    results.append(("...and 1 on a 200 saying degraded", code_degraded == 1))
+    results.append(("...and 1 on a 200 it cannot read", code_garbage == 1))
+    results.append(("...and 1 when nothing answers", code_down == 1))
+
+    source = (ROOT / "app" / "healthcheck.py").read_text(encoding="utf-8")
+    results.append(("the command imports nothing from the app",
+                    not re.search(r"^\s*(from|import)\s+app\b", source, re.M)))
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    results.append(("compose's healthcheck runs it",
+                    '"python", "-m", "app.healthcheck"' in compose and "localhost:8000/health" not in compose))
+    results.append(("the Dockerfile's healthcheck runs it",
+                    "CMD python -m app.healthcheck" in dockerfile and "localhost:8000/health" not in dockerfile))
+    return results
+
+
 async def checks() -> list[tuple[str, bool]]:
-    return await _checkpointer_checks()
+    return [
+        *await _checkpointer_checks(),
+        *await _health_checks(),
+    ]
 
 
 async def main() -> int:

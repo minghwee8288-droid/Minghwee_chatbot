@@ -10,6 +10,11 @@ from app.db.supabase import db
 
 router = APIRouter(tags=["health"])
 
+# 2026-11-04: /health/ready says where conversation state is kept, and memory
+# is degraded. It is what the container's healthcheck reads (app/healthcheck.py).
+# False = the checkpointer is not reported.
+CHECKPOINTER_IN_READY = True
+
 
 @router.get("/health")
 async def health() -> dict[str, object]:
@@ -32,4 +37,12 @@ async def readiness() -> dict[str, object]:
         or bool(settings.resolved_transcription_key),
         "tenant_id": bool(settings.tenant_id),
     }
-    return {"status": "ok" if all(checks.values()) else "degraded", "checks": checks}
+    body: dict[str, object] = {"checks": checks}
+    if CHECKPOINTER_IN_READY:
+        from app.graph.graph import checkpointer_backend
+
+        backend = checkpointer_backend()
+        checks["checkpointer_durable"] = backend == "postgres"
+        body["checkpointer"] = backend
+    body["status"] = "ok" if all(checks.values()) else "degraded"
+    return body

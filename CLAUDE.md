@@ -649,6 +649,7 @@ because the lead is opened early and the ticket is created much later.
 | A reply never reads out an internal case number | `guards.without_case_numbers` in `graph.run_turn` (and the preview) (`NO_CASE_NUMBER_READ_OUT`) | Batch G G4. The case numbers held for the client (`matched_cases`, the case row) and anything in the portal's case format (MH-YYYY-NNNN) are taken out, keeping the sentence ("Your case is at the documents stage"). The CB-YYYY-NNNN ticket reference is never touched. |
 | A dead pooled connection does not crash a turn, and a crash is not mislabelled | `checkpointer.CbAsyncPostgresSaver._retry` (`RETRY_ON_DEAD_CONNECTION`) + `handover.REASON_BOT_ERROR` (`DISTINCT_CRASH_REASON`) | Batch G G1. A checkpoint read or write that fails on the connection is tried once more on a fresh one (the read is a read, both writes are upserts). A real crash is `bot_error`; `bot_confused` now means only a turn that handed over because it could not answer. Both count as a standdown. |
 | A database failure at startup never leaves the bot on memory | `graph._durable_checkpointer` (`REQUIRE_DURABLE_CHECKPOINTER`) | With `SUPABASE_DB_URL` set it retries for `CHECKPOINTER_RETRY_SECONDS` (60), then refuses to start, and `restart: unless-stopped` keeps trying. Keyed on the URL rather than `ENVIRONMENT`, which defaults to development. With no URL, memory is allowed unless `ENVIRONMENT` is production. The retry must fit inside the healthcheck's `start_period` (90s), and `smoke_resilience.py` compares them. Logs the exception's type only: psycopg errors can quote the URL. |
+| The container reads as healthy only if `/health/ready` says ok | `app/healthcheck.py` (`python -m app.healthcheck`, in compose and the `Dockerfile`) + `health.CHECKPOINTER_IN_READY` | `/health/ready` always answers 200, so the command parses the body, and `/health` says ok whatever the state. Memory, or no checkpointer yet, is degraded. Standard library only, nothing from the app. Docker only labels the container: an unhealthy one is not restarted, so a short Supabase failure costs a label and no replies. |
 | One helper's details never become another helper's | `info_collector.nationality_carries` / `nationality_for_turn` + `_history_since` (`collected_since`) | `nationality` is portable for a hiring client (the nationality they want) and NOT across a switch into or out of `passport_renewal`/`home_leave`, where it is one helper's. Read by the collector's reset AND by `rag_retriever`, which runs before the reset. The extractor reads history only from the message that started the current request, on every turn after a switch, not just the switch turn. |
 | One salesperson per client conversation, and the portal inbox never loses a hand-assigned owner | `assignment.resolve_agent` (`_portal_owner`) + `claim_portal_owner` | A ticket goes to whoever owns the chat in the portal before the round robin is asked; the bot only ever FILLS an empty `wp_chat_conversations.assigned_user_id` (the IS NULL is in the UPDATE itself). `to_human` used to set it unconditionally, and the ordinary ticket path (`log_escalation`) never set it at all. Profile ↔ portal login is `cb_agent_portal_users`, ours, not `wp_chat_users.profile_id`, theirs. |
 | Nothing the KB watcher drafts reaches the chatbot without an APPROVER | `kb_admin_watch_approve` (015, `kb_admin__require_actor(..., 'approver')`) + `app/watch/actions.ts` (`canApprove` first) | A watched page's change becomes a PROPOSAL (`cb_kb_drafts`), never a live row. Approve writes the text through the existing `kb_admin_save_draft` / `kb_admin_create_entry` and it goes live only through the existing `kb_admin_publish` (canary-checked embedding). Proved on PGlite (real migrations 001-009 + 015): the live entry is unchanged until publish. |
@@ -1065,7 +1066,8 @@ Easy to get wrong:
   2026-11-02 (phone test 8:08 PM), each `False` for the earlier behaviour:
   `info_collector.BRIEFING_FEE_THIS_TURN`, `info_collector.URGENT_SENTENCE_ONLY`.
   2026-11-04, `False` for the earlier behaviour:
-  `graph.REQUIRE_DURABLE_CHECKPOINTER` (any checkpointer failure falls back to memory).
+  `graph.REQUIRE_DURABLE_CHECKPOINTER` (any checkpointer failure falls back to memory),
+  `health.CHECKPOINTER_IN_READY` (`/health/ready` does not report the checkpointer).
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2195,6 +2197,17 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **The healthcheck reads `/health/ready`, and that reports the
+  checkpointer.** The container's check was `curl /health`, which says ok whatever state
+  the bot is in, and `/health/ready` answers 200 even when degraded, so `curl -f` could
+  not have seen it. `python -m app.healthcheck` parses the body. `/health/ready` gains
+  `checkpointer` (postgres, memory or none) and `checks.checkpointer_durable`, and anything
+  but postgres is degraded. **Any other failing check now also shows as unhealthy**, such
+  as a missing transcription key, so look at the body if `docker compose ps` says so after
+  the next deploy. Docker does not restart an unhealthy container. 15 more checks in
+  `smoke_resilience.py`, including the real command against a real socket; 8 faults, 8 red.
+  The real app started with a dead URL exits non-zero, and with no URL serves degraded.
 
 - **2026-11-04** - **A database failure at startup no longer leaves the bot on memory.**
   The fallback was decided once at startup, so one short failure during a deploy kept the
