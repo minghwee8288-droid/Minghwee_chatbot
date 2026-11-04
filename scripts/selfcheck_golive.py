@@ -1305,7 +1305,7 @@ async def scenario_complaint_triage():
         await w.turn("I don't want to live anymore", _h("P1", "self_harm"))
         _r, a2n = await w.turn(answer, {"speaker": "helper", "level": "none"})
         check(f"complaint 2: suicide + '{answer}' -> FOLLOW_SAFE, the ticket still escalated",
-              a2n.startswith("Thank you for letting us know.")
+              a2n.startswith("I'm glad you're safe right now.")
               and w.ticket()["captured_info"]["complaint"]["safe_status"] == "safe"
               and w.ticket()["workflow_status"] == "escalated")
 
@@ -1450,9 +1450,10 @@ async def scenario_complaint_triage():
     w = ComplaintWorld()
     with patch.object(_ct_node, "_kb_answer", new=AsyncMock(return_value="You get one rest day a week.")):
         r6, a6 = await w.turn("how many rest days do I get?", _h("P4", "general"))
-    check("complaint 6: 'how many rest days' -> the P4 template with the answer, no ticket",
-          a6 == ("Thanks for your message. You get one rest day a week.\n\n"
-                 "Is there anything else about this that is worrying you?") and not w.rows)
+    check("complaint 6: 'how many rest days' -> Claire's introduction, then the P4 template with the "
+          "answer, no ticket",
+          a6 == ("Hi, I'm Claire, Ming Hwee's AI assistant.\n\nThanks for your message. You get one rest day "
+                 "a week.\n\nIs there anything else about this that is worrying you?") and not w.rows)
 
     # 7. Not safe to chat.
     w = ComplaintWorld()
@@ -1469,7 +1470,7 @@ async def scenario_complaint_triage():
                                          "best_time": "after 9pm"})
     check("complaint 7: the time she gives is not re-graded from the history: no P1 template to a "
           "phone someone can see (real model, 2026-11-04)",
-          "Your safety comes first" not in a7b and a7b.startswith("Thank you, we have added this")
+          "Your safety comes first" not in a7b and a7b.startswith("Thank you, we have noted that.")
           and w.ticket()["complaint_level"] == "P2")
     check("complaint 7: the best time she gives is saved on the case",
           w.ticket()["captured_info"]["complaint"]["best_time_to_contact"] == "after 9pm")
@@ -1519,7 +1520,7 @@ async def scenario_complaint_triage():
     _r, a10c = await w.turn("she took my things", {"speaker": "helper", "level": "none"})
     check("complaint 10: 'safe' and any other message get their fixed lines, and every message is "
           "on the ticket",
-          a10b.startswith("Thank you for letting us know.")
+          a10b.startswith("I'm glad you're safe right now.")
           and a10c.startswith("Thank you, we have added this to your case") and "995" in a10c
           and "she took my things" in str(w.ticket()["captured_info"]["follow_ups"]))
     _r, again = await w.turn("she hit me again right now", _h("P1", "physical"))
@@ -1655,7 +1656,8 @@ async def scenario_complaint_triage():
           "legal or medical advice, accuses, says we will contact the employer, or asks for details",
           not any(Q.FORBIDDEN.search(x) for x in every))
     check("complaint guardrails: the sexual type asks only 'when did it last happen', never for details",
-          _ct_node._text_for("QUESTION", {"pending": "Q6", "complaint_type": "sexual"}, None) == "When did it last happen?")
+          _ct_node._text_for("QUESTION", {"pending": "Q6", "complaint_type": "sexual", "asked": ["Q1", "Q6"]}, None)
+          == "When did it last happen? You don't need to share any more than that.")
     check("complaint guardrails: the check itself catches each thing",
           all(Q.FORBIDDEN.search(x) for x in (
               "Please confront your employer.", "We will contact your employer today.",
@@ -1674,6 +1676,289 @@ async def scenario_complaint_triage():
     check("complaint: the safe-word reply is read before the model, 'not safe' on a helper's own words",
           _ct._NOT_SAFE_WORD.search("I am not safe") and _ct._SAFE_WORD.search("safe")
           and not _ct._SAFE_WORD.search("not safe"))
+
+
+async def scenario_complaint_warm():
+    """4 Nov 2026, the PM's test: a helper's own question, the best time, a job seeker
+    in an employer's flow, and warmer lines on an open case."""
+    import hashlib
+
+    Q = _ct_t
+    none = {"speaker": "helper", "level": "none"}
+    answer = "You are entitled to at least 1 rest day a week."
+    template = f"Thanks for your message. {answer}\n\nIs there anything else about this that is worrying you?"
+
+    # 1. A rights question in the first person.
+    for text in ("how many rest days do I get", "can I have my phone", "what is my salary day",
+                 "when do i get paid?", "do i have a rest day"):
+        check(f"complaint P4: '{text}' reads as her own question", _ct.asks_own_rights(text))
+    for text in ("how many rest days does my helper get", "how many rest days should i give",
+                 "how much salary do i pay", "can i renew my passport", "how much is the fee for my phone",
+                 "what is her salary day", "my salary is not paid", "hello"):
+        check(f"complaint P4: '{text}' does not", not _ct.asks_own_rights(text))
+    for text, llm in (("how many rest days do I get", _h("P4", "general")),
+                      ("can I have my phone", none),
+                      ("what is my salary day", {"speaker": "employer", "level": "none"})):
+        w = ComplaintWorld()
+        with patch.object(_ct_node, "_kb_answer", new=AsyncMock(return_value=answer)):
+            r, a = await w.turn(text, llm)
+        check(f"complaint P4: '{text}' on an unknown chat -> introduction + the P4 template, no ticket, "
+              "whatever the model called it",
+              a == f"Hi, I'm Claire, Ming Hwee's AI assistant.\n\n{template}" and not w.rows and w.classified == 0)
+    w = ComplaintWorld()
+    w.history = ["Client: hello", "You: Hi, I'm Claire, Ming Hwee's AI assistant. How can I help you?"]
+    with patch.object(_ct_node, "_kb_answer", new=AsyncMock(return_value=answer)):
+        _r, a = await w.turn("how many rest days do I get", none)
+    check("complaint P4: Claire has already spoken -> exactly the template, no line before it", a == template)
+    w = ComplaintWorld()
+    with patch.object(_ct_node, "_kb_answer", new=AsyncMock(return_value=answer)):
+        await w.turn("how many rest days do I get", none)
+        _r, a = await w.turn("can I have my phone", none)
+    check("complaint P4: a second question of her own is answered, not filed as unresolved",
+          a == template and not w.rows)
+    w = ComplaintWorld(contact="employer")
+    with patch.object(_ct_node, "_kb_answer", new=AsyncMock(return_value=answer)):
+        _r, a = await w.turn("how many rest days do I get", none)
+    check("complaint P4: a type left on the row by an earlier enquiry, no record -> still her question",
+          template in a and not w.rows)
+    w = ComplaintWorld(contact="employer", employer_id="e1")
+    _r, _a = await w.turn("how many rest days does my helper get", _h("P4", "general"))
+    check("complaint P4: the employer's question on an employer's chat -> the normal flow, unchanged",
+          w.classified == 1 and w.assessed == 0 and not w.rows)
+    w = ComplaintWorld(contact="employer", employer_id="e1")
+    await w.turn("how many rest days do I get", none)
+    check("complaint P4: an employer on record keeps the employer flow", w.classified == 1 and w.assessed == 0)
+    w = ComplaintWorld()
+    await w.turn("how many rest days does my helper get", {"speaker": "employer", "level": "none"})
+    check("complaint P4: an unknown sender asking about 'my helper' -> the normal flow", w.classified == 1)
+
+    # ...and the answer is written to her.
+    state = {"incoming_text": "how many rest days do I get", "history_text": ""}
+    found = AsyncMock(return_value={"rag_matches": [{"id": "r"}], "rag_best_score": 0.9,
+                                    "rag_context": "A helper gets 1 rest day a week."})
+    with patch.object(_rag_node, "rag_retriever", new=found):
+        writes = AsyncMock(side_effect=["Your helper gets 1 rest day a week.", answer])
+        with patch.object(_ct_node, "complete", new=writes):
+            fixed = await _ct_node._kb_answer(state)
+        again = AsyncMock(return_value="Your helper gets 1 rest day a week.")
+        with patch.object(_ct_node, "complete", new=again):
+            twice = await _ct_node._kb_answer(state)
+        long = AsyncMock(return_value="You get 1 rest day. It is every week. It can be paid. Ask your agent.")
+        with patch.object(_ct_node, "complete", new=long):
+            short = await _ct_node._kb_answer(state)
+    with patch.object(_rag_node, "rag_retriever", new=found), \
+            patch.object(_ct_node, "complete", new=AsyncMock(return_value="You get **1 rest day** a week.")):
+        plain = await _ct_node._kb_answer(state)
+    check("complaint P4: no markdown bold reaches her", plain == "You get 1 rest day a week.")
+    check("complaint P4: an answer about 'your helper' is written again to her", fixed == answer and writes.await_count == 2)
+    check("complaint P4: still about 'your helper' on the second try -> no answer (a P4 ticket)", twice is None)
+    check("complaint P4: the answer is at most 2 sentences", short == "You get 1 rest day. It is every week.")
+
+    # 2. The best time after the NOT-SAFE template.
+    async def not_safe(w):
+        await w.turn("she hit me last week", _h("P2", "physical", facts_complete=True))
+        await w.turn("yes", none)
+        await w.turn("no", none)
+        _r, sent = await w.turn("no, ma'am can see my phone", none)
+        return sent
+
+    for text, saved in (("please call me tomorrow", "please call me tomorrow"), ("after 9pm", "after 9pm"),
+                        ("Sunday morning", "Sunday morning"), ("call me later", "call me later")):
+        w = ComplaintWorld()
+        first = await not_safe(w)
+        _r, a = await w.turn(text, none)
+        check(f"complaint best time: not-safe -> '{text}' -> the noted line, saved on the ticket",
+              first == Q.NOT_SAFE_TO_CHAT
+              and a == ("Thank you, we have noted that. Your reference is "
+                        f"`{w.ticket()['ticket_number']}`. The next available Family Care Consultant will reach "
+                        "out to you at the time you gave, during working hours. If you are in danger at any "
+                        "time, call 999.")
+              and w.ticket()["captured_info"]["complaint"]["best_time_to_contact"] == saved)
+    w = ComplaintWorld()
+    await not_safe(w)
+    _r, a = await w.turn("ok", {"speaker": "helper", "level": "none", "best_time": "ok"})
+    check("complaint best time: not-safe -> 'ok' -> FOLLOW_OTHER, and 'ok' is not a time, whatever the model says",
+          a.startswith("Thank you, we have added this to your case")
+          and w.ticket()["captured_info"]["complaint"]["best_time_to_contact"] is None)
+    _r, a = await w.turn("tomorrow", none)
+    check("complaint best time: 'ok', then the time -> still noted",
+          a.startswith("Thank you, we have noted that.")
+          and w.ticket()["captured_info"]["complaint"]["best_time_to_contact"] == "tomorrow")
+    w = ComplaintWorld()
+    await not_safe(w)
+    _r, a = await w.turn("she took my bag too", none)
+    check("complaint best time: not-safe -> a message with no time -> FOLLOW_OTHER, no time saved",
+          a.startswith("Thank you, we have added this to your case")
+          and w.ticket()["captured_info"]["complaint"]["best_time_to_contact"] is None)
+
+    # 3. A job seeker at any point.
+    fee = {"intent": "fee_enquiry", "service_type": "fee_enquiry", "confidence": 0.8}
+    asked = "You: What kind of care would this be for?"
+
+    async def classify(text, active, verdict, **extra):
+        state = {"conversation_id": 1, "phone": CLIENT, "contact_type": "unknown", "incoming_text": text,
+                 "history_text": asked, "service_type": active, "collected_info": {}, "blocked_topics": {}, **extra}
+        with patch.object(_ic, "complete_json", new=AsyncMock(return_value=dict(verdict))):
+            return {**state, **await _ic.intent_classifier(state)}
+
+    for text in ("i want a job that's why asking", "looking for work", "I am a helper looking for employer",
+                 "i need a job", "im looking for work", "i want to work", "give me a job",
+                 "saya mau cari kerja", "naghahanap ako ng trabaho"):
+        s = await classify(text, "fee_enquiry", fee)
+        check(f"job seeker: '{text}' in a fee enquiry -> her registration, read as a candidate",
+              s["service_type"] == ticket_service.CANDIDATE_HIRING and s["intent"] == _ic.CANDIDATE_INTENT
+              and s.get("detected_contact_type") == "candidate" and _graph.route_after_intent(s) != "blocked_topic_responder")
+    s = await classify("i am looking for a job", "new_hiring", {"intent": "new_hiring", "service_type": "new_hiring"})
+    check("job seeker: mid new hire -> her registration", s["service_type"] == ticket_service.CANDIDATE_HIRING)
+    s = await classify("i want a job", "new_hiring", {"intent": "new_hiring", "service_type": "new_hiring"},
+                       matched_employer_id="e1", contact_type="employer")
+    check("job seeker: even on a number with an employer record", s["service_type"] == ticket_service.CANDIDATE_HIRING)
+    for text, active in (("she is looking for work elsewhere", "replacement"),
+                         ("i need work done at home", "new_hiring"),
+                         ("i want a job for my helper", "transfer_employer"),
+                         ("i need a work permit renewal", "renewal")):
+        s = await classify(text, active, {"intent": active, "service_type": active})
+        check(f"job seeker: '{text}' is not one", s["service_type"] == active)
+    s = await classify("i know a helper looking for work", "new_hiring", {"intent": "new_hiring", "service_type": "new_hiring"})
+    check("job seeker: a helper the sender knows is not the sender", s["service_type"] == "new_hiring")
+    s = await classify("my friend's maid is looking for a new employer", None, {"intent": "other"})
+    check("job seeker: somebody else's helper stays a third party", s["service_type"] != ticket_service.CANDIDATE_HIRING)
+
+    ico = importlib.import_module("app.graph.nodes.info_collector")
+
+    async def collect(state, extraction=None, reply="Got it."):
+        prompts = []
+
+        async def capture(system_prompt, *a, **kw):
+            prompts.append(system_prompt or "")
+            return reply
+
+        with patch.object(ico, "complete", new=capture, create=True), \
+                patch.object(ico, "complete_json", new=AsyncMock(return_value=dict(extraction or {})), create=True), \
+                patch.object(_rag_node, "briefing_records",
+                             new=AsyncMock(return_value={"rag_matches": [], "rag_context": ""})), \
+                patch.object(ico, "_open_lead_early", new=AsyncMock(return_value={})):
+            return await ico.info_collector(state), "\n".join(prompts)
+
+    out, _p = await collect({
+        "conversation_id": 1, "phone": CLIENT, "contact_type": "candidate", "detected_contact_type": "candidate",
+        "intent": _ic.CANDIDATE_INTENT, "service_type": ticket_service.CANDIDATE_HIRING, "collected_service": "fee_enquiry",
+        "collected_info": {"nationality": "Filipino", "care_type": "eldercare"},
+        "asked_field_counts": {"nationality": 1, "care_type": 1}, "rag_matches": [],
+        "history_text": asked, "incoming_text": "i want a job that's why asking"})
+    check("job seeker: 'fees for a Filipino helper' is not her country, and no ticket is raised",
+          "nationality" not in (out.get("collected_info") or {}) and "care_type" not in (out.get("collected_info") or {})
+          and not out.get("info_complete"))
+
+    # A reply that answers nothing is not asked the same question again.
+    care = {"key": "care_type", "text": "What kind of care would this be for?"}
+    base = {"conversation_id": 1, "phone": CLIENT, "contact_type": "employer", "intent": "fee_enquiry",
+            "service_type": "fee_enquiry", "collected_service": "fee_enquiry", "collected_info": {"nationality": "Filipino"},
+            "asked_field_counts": {"nationality": 1, "care_type": 1}, "rag_matches": [], "last_question": care,
+            "history_text": asked, "incoming_text": "my cat is sick today"}
+    out, prompt = await collect(base)
+    check("off-topic: the last question of a flow -> not asked again: responded to, and the collection closes",
+          out.get("info_complete") and "Respond to what they actually said" in prompt
+          and "care type" not in (out.get("last_question") or {}).get("key", ""))
+    check("off-topic: the field is filed unanswered",
+          (out.get("collected_info") or {}).get("care_type") == ico.UNANSWERED)
+    room = {"key": "household", "text": "How many people live in your household, and who are they?"}
+    hire = {"conversation_id": 1, "phone": CLIENT, "contact_type": "employer", "intent": "new_hiring",
+            "service_type": "new_hiring", "collected_service": "new_hiring", "question_style": "one",
+            "collected_info": {"full_name": "Mary", "requirement": "childcare", "children_detail": "2 kids",
+                               "first_time_hire": "first time with us - no placement on record"},
+            "asked_field_counts": {"full_name": 1, "household": 1}, "rag_matches": [], "last_question": room,
+            "history_text": f"You: {room['text']}", "incoming_text": "my cat is sick today"}
+    out, prompt = await collect(hire, reply="Sorry to hear that.")
+    check("off-topic: with more to ask -> the next question goes, not the same one",
+          (out.get("last_question") or {}).get("key") not in (None, "household")
+          and "Respond to what they actually said" in prompt and "has answered it" not in prompt)
+    out, prompt = await collect({**hire, "incoming_text": "condo"}, reply="Got it.")
+    check("off-topic: a short reply may be an answer the extractor missed -> left to the normal path",
+          "Respond to what they actually said" not in prompt)
+    out, prompt = await collect({**hire, "incoming_text": "why do you need that?"}, reply="Got it.")
+    check("off-topic: a question of theirs -> the existing answer-then-ask path",
+          "Respond to what they actually said" not in prompt)
+
+    # 4. Warmer lines.
+    w = ComplaintWorld()
+    llm = _h("P2", "physical", facts_complete=True)
+    _r, a1 = await w.turn("she hit me last week", llm)
+    _r, a2 = await w.turn("yes", none)
+    _r, a3 = await w.turn("no", none)
+    _r, a4 = await w.turn("yes", none)
+    _r, a5 = await w.turn("no", none)
+    check("warm: the first question carries the acknowledgement",
+          a1 == "I'm so sorry to hear this, and thank you for telling me. Are you safe right now?")
+    check("warm: the second has the 'Thank you' lead and no repeated sorry",
+          a2 == "Thank you for letting me know. Are you hurt or feeling very unwell?")
+    check("warm: the third and fourth questions as worded",
+          a3 == "Thank you. Is it safe to chat now, or could someone else see this phone?"
+          and a4 == "I want to make sure you're okay. Is the person who hurt you nearby right now?")
+    ref = f"`{w.ticket()['ticket_number']}`"
+    _r, ok1 = await w.turn("ok", none)
+    _r, ok2 = await w.turn("thanks", none)
+    _r, ok3 = await w.turn("ok", none)
+    short = ("You're welcome. We're here for you. If anything changes, call 999 if you are in danger, or 995 if "
+             "you are hurt or very unwell.")
+    check("warm: 'ok' twice -> the short warm line, the reference only once",
+          ok1 == f"{short} Your reference is {ref}." and ok2 == short)
+    check("warm: a third 'ok' would repeat the line -> nothing sent, and it is still on the ticket",
+          ok3 == "" and len([f for f in w.ticket()["captured_info"]["follow_ups"] if f["message"] == "ok"]) == 2)
+    _r, real1 = await w.turn("she took my bag", none)
+    _r, real2 = await w.turn("she took my shoes", none)
+    check("warm: a real new message gets FOLLOW_OTHER; a second gets the short line, without 'You're welcome'",
+          real1.startswith("Thank you, we have added this to your case") and real2.startswith("We're here for you."))
+    w = ComplaintWorld()
+    await w.turn("my ma'am beat me just now, I'm bleeding", _h("P1", "physical"))
+    _r, s1 = await w.turn("not safe", none)
+    _r, s2 = await w.turn("not safe", none)
+    check("warm: a safety message is never shortened: 'not safe' twice -> the 999 line twice",
+          s1.startswith("Please call the police on 999 now.") and s2 == s1)
+    w = ComplaintWorld()
+    _r, first = await w.turn("she hit me last week", _h("P2", "physical", facts_complete=True, answers={"Q1": "yes"}))
+    check("warm: she already said she is safe -> Q1 is not asked, and the first question asked has the acknowledgement",
+          first == "I'm so sorry to hear this, and thank you for telling me. Are you hurt or feeling very unwell?")
+
+    # Listen first.
+    w = ComplaintWorld()
+    await w.turn("no rest day for 2 weeks", _h("P3", "rest_day"))
+    _r, a = await w.turn("yes", none)
+    check("listen: 'no rest day for 2 weeks' -> the P3 reply reflects '2 weeks' and does not ask for it",
+          "You mentioned you haven't had a rest day for 2 weeks." in a and "which rest days" not in a
+          and "offer mediation" in a)
+    w = ComplaintWorld()
+    await w.turn("I don't get my rest day", _h("P3", "rest_day"))
+    _r, a = await w.turn("yes", none)
+    check("listen: she gave no span -> the P3 template asks, word for word", "Please tell us which rest days were missed." in a)
+    w = ComplaintWorld()
+    await w.turn("salary not paid for 2 months", _h("P3", "salary"))
+    _r, a = await w.turn("yes", none)
+    check("listen: the salary ask is unchanged", "Please tell us which salary months are affected." in a)
+
+    # The bodies Thomas approved, byte for byte, as committed before this change.
+    bodies = {
+        "P1_EMERGENCY": "1010ef21d7af4b395ebcc814bcb7e34cefe314b1f89205d4814a7ad32bc5483c",
+        "P1_SUICIDE": "7b821baa64e6649a66538bdd1206e52188a28e06a46ab4902c1ce7bc5433c038",
+        "P2_SLEEP": "a9366853ae1eb04d971479ef35365c7d63006374da234eb4866849a1039b1362",
+        "P2_GENERAL": "c1226f178d6183579e741f7359177d79f3af88cb5942de832345b94b90812b1b",
+        "P3": "be5f6068095ffd65f83352233344b0fb138d073580bca4ded6a3c2daceac5b45",
+        "P4": "2955646241beea21760dbca9f4cff732dd3640e65a2b28e59d385556ab6ec6a9",
+        "NOT_SAFE_TO_CHAT": "1a5c946fe4f0f8367b59fa8822a202b8507ff6a155f14bfbf27030ebbc3f53bb",
+    }
+    check("warm: the P1, P2, P3, P4 and NOT-SAFE template bodies are unchanged byte for byte",
+          all(hashlib.sha256(getattr(Q, k).encode()).hexdigest() == v for k, v in bodies.items()))
+    lines = [*Q.QUESTIONS.values(), Q.Q6_SEXUAL, Q.FOLLOW_SAFE, Q.FOLLOW_BEST_TIME, Q.P3_ADDED, Q.SHORT_REPLY,
+             Q.SHORT_OPENING, Q.P3_REST_DAY_REFLECTED, Q.question("Q3", first=True)]
+    check("warm: the new lines promise nothing, confront nobody, carry at most one sorry, no emoji, no 'As an AI'",
+          not any(Q.FORBIDDEN.search(x) for x in lines)
+          and all(x.lower().count("sorry") <= 1 and x.isascii() and "as an ai" not in x.lower() for x in lines))
+    source = Path(_ct_tpl_path).read_text(encoding="utf-8")
+    for name in ("WARM_WORDING = True", "she gave a time after the NOT-SAFE", "a bare \"ok\" or \"thanks\"",
+                 "she already said how long"):
+        idx = source.find(name)
+        check(f"warm: marked PENDING THOMAS APPROVAL: {name}",
+              idx >= 0 and "PENDING THOMAS APPROVAL" in source[max(0, idx - 260):idx + 60])
 
 
 async def scenario_complaint_webhook():
@@ -2531,6 +2816,7 @@ async def main() -> int:
                      scenario_crisis_keywords,
                      scenario_home_leave_2nov,
                      scenario_complaint_triage,
+                     scenario_complaint_warm,
                      scenario_complaint_webhook,
                      scenario_call_context):
         try:

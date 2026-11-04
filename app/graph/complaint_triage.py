@@ -310,7 +310,7 @@ _CLEARLY_SAFE = re.compile(
     r")(?:\W+(?:now|already|thanks?|thank\s+you))*\W*$",
     re.IGNORECASE,
 )
-_HURT =re.compile(r"\b(?:hurt|injur\w*|bleeding|unwell|sakit|masakit|luka)\b", re.IGNORECASE)
+_HURT = re.compile(r"\b(?:hurt|injur\w*|bleeding|unwell|sakit|masakit|luka)\b", re.IGNORECASE)
 _CAN_BE_SEEN = re.compile(
     r"\b(?:can|could|will|might|may)\s+see\b|\bsee(?:s|ing)?\s+(?:my|this|the)\s+phone\b"
     r"|\bchecks?\s+my\s+phone\b|\bwatching\b|\bnot\s+safe\s+to\s+(?:chat|talk)\b",
@@ -326,6 +326,84 @@ _UNRESOLVED = re.compile(
     r"|\bdid\s*n[o']t\s+(?:help|answer)\b|\bworr(?:y|ied|ying)\b",
     re.IGNORECASE,
 )
+
+
+# 4 Nov 2026, the PM's test, each False for the behaviour before it.
+# A rights question in the first person is the helper's, on any chat without an
+# employer record: "can I have my phone" and "what is my salary day" went down the
+# intake path, and got "Which nationality are you looking at?".
+OWN_RIGHTS_QUESTION = True
+# A time after the NOT-SAFE template is noted as a time. "ok" was saved as the best
+# time to contact her.
+BEST_TIME_LINE = True
+# A bare "ok" gets a short line, and no follow-up goes twice in a row in one case.
+SHORT_FOLLOW_UPS = True
+# "no rest day for 2 weeks" is not asked which rest days were missed.
+REFLECT_REST_DAYS = True
+
+_RIGHTS_TOPIC = re.compile(
+    r"\b(?:rest\s*days?|off\s*days?|days?\s+off|salary|paid|pay|phone|passport|contract|"
+    r"overtime|food|meals?|room|bonus|deduct\w*|rights?)\b",
+    re.IGNORECASE,
+)
+_ASKS_ABOUT_HERSELF = re.compile(
+    r"\b(?:how\s+(?:many|much|often|long)|when|what|which|can\s+i|may\s+i|do\s+i|am\s+i|"
+    r"will\s+i|must\s+i|should\s+i)\b",
+    re.IGNORECASE,
+)
+_FIRST_PERSON = re.compile(r"\b(?:i|my|me)\b", re.IGNORECASE)
+# An employer's question, or a service we run a flow for.
+_NOT_HERSELF = re.compile(
+    r"\bmy\s+(?:\w+\s+)?(?:helper|maid|worker|fdw|domestic)\b|\b(?:she|her|hers|they|their)\b"
+    r"|\bi\s+(?:\w+\s+){0,3}(?:give|pay|offer|hire|budget)\b|\bhir(?:e|ing)\b|\bbudget\b"
+    r"|\brenew\w*|\btransfer\w*|\breplac\w*|\bhome\s+leave\b|\bfees?\b|\bcost\b",
+    re.IGNORECASE,
+)
+
+
+def asks_own_rights(message: str) -> bool:
+    """A question about her own rest days, pay, phone and the like, in the first person."""
+    text = message or ""
+    return bool(
+        _RIGHTS_TOPIC.search(text)
+        and _FIRST_PERSON.search(text)
+        and ("?" in text or _ASKS_ABOUT_HERSELF.search(text))
+        and not _NOT_HERSELF.search(text)
+    )
+
+
+_GIVES_TIME = re.compile(
+    r"\b(?:today|tonight|tomorrow|tmr|tmrw|later|morning|afternoon|evening|night|noon|midnight|"
+    r"weekend|next\s+week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|"
+    r"besok|nanti|malam|pagi|sore|bukas|mamaya|gabi|umaga|hapon)\b"
+    r"|\b\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)\b|\b(?:after|before|around|at)\s+\d{1,2}\b",
+    re.IGNORECASE,
+)
+_BARE_ACK = re.compile(
+    r"^\W*(?:(?:ok+|oka+y+|okie|kk?|noted|thanks?|thx|tq|ty|thank\s+you|salamat|"
+    r"terima\s*kasih|makasih)(?:\W+|$))+$",
+    re.IGNORECASE,
+)
+_REST_SPAN = re.compile(
+    r"\b(?:\d+|an?|one|two|three|four|five|six|seven|eight|nine|ten|several|many)\s+"
+    r"(?:day|week|month|year|sunday)s?\b",
+    re.IGNORECASE,
+)
+# Follow-ups that may be shortened. A safety message (NOT-SAFE, 995, P1) always goes.
+_REPEATABLE_ONLY_SHORT = {"FOLLOW_OTHER", "FOLLOW_SAFE", "FOLLOW_BEST_TIME", "P3_ADDED"}
+
+
+def is_bare_ack(message: str) -> bool:
+    return bool(_BARE_ACK.match(message or ""))
+
+
+def rest_day_span(case: dict[str, Any]) -> str | None:
+    """"2 weeks" out of "no rest day for 2 weeks", in her words; None when not said."""
+    if not REFLECT_REST_DAYS or case.get("complaint_type") != "rest_day":
+        return None
+    found = _REST_SPAN.search(case.get("facts_in_her_words") or "")
+    return found.group(0) if found else None
 
 
 def _yes_no(message: str) -> str | None:
@@ -519,6 +597,35 @@ def clearly_safe_after_suicide_template(message: str) -> bool:
 
 
 def advance(case: dict[str, Any], a: Assessment, message: str) -> tuple[dict[str, Any], str | None]:
+    """_next_step, then the rule that no follow-up goes twice in a row. A follow-up
+    identical to the one before becomes the short line; a short line identical to the
+    one before becomes nothing ("SILENT"): she has said "ok" again, and a consultant
+    reads that and carries on."""
+    new_case, kind = _next_step(case, a, message)
+    if not SHORT_FOLLOW_UPS:
+        return new_case, kind
+    bare = is_bare_ack(message)
+    # After NOT-SAFE, "ok" still gets the full line: it carries her reference, which
+    # that template does not.
+    if (
+        (kind == "FOLLOW_OTHER" and bare and case.get("awaiting") != "best_time")
+        or (kind in _REPEATABLE_ONLY_SHORT and kind == case.get("last_reply"))
+    ):
+        new_case["thanked"] = bare
+        new_case["short_with_ref"] = bool(
+            new_case.get("ticket_number") and not new_case.get("short_ref_sent")
+        )
+        if not new_case["short_with_ref"] and case.get("last_reply") == "FOLLOW_SHORT_PLAIN":
+            return new_case, "SILENT"
+        if new_case["short_with_ref"]:
+            new_case["short_ref_sent"] = True
+        new_case["last_reply"] = "FOLLOW_SHORT" if new_case["short_with_ref"] else "FOLLOW_SHORT_PLAIN"
+        return new_case, "FOLLOW_SHORT"
+    new_case["last_reply"] = kind
+    return new_case, kind
+
+
+def _next_step(case: dict[str, Any], a: Assessment, message: str) -> tuple[dict[str, Any], str | None]:
     """A message on an open case: the new case, and which message goes next.
 
     None = this message is not about the complaint and the case does not hold the
@@ -556,6 +663,10 @@ def advance(case: dict[str, Any], a: Assessment, message: str) -> tuple[dict[str
         len((message or "").split()) < 3 or case.get("awaiting") == "best_time"
     ):
         a = replace(a, level=None, complaint_type=None, p1_signs=[])
+    # ...nor does "ok" hold a time, whatever the model read into the history.
+    waiting_for_time = BEST_TIME_LINE and case.get("awaiting") == "best_time"
+    if waiting_for_time and (is_bare_ack(message) or not (_GIVES_TIME.search(message or "") or a.best_time)):
+        a = replace(a, best_time=None)
 
     previous = case.get("level")
     _absorb(case, a)
@@ -588,6 +699,15 @@ def advance(case: dict[str, Any], a: Assessment, message: str) -> tuple[dict[str
         return case, _ask_or_finish(case)
 
     awaiting = case.get("awaiting")
+    if waiting_for_time:
+        if a.best_time or _GIVES_TIME.search(message or ""):
+            case["awaiting"] = None
+            case["best_time_to_contact"] = (a.best_time or (message or "").strip())[:200]
+            return case, "FOLLOW_BEST_TIME"
+        # "ok" may still be followed by the time. Anything else moves on.
+        if not is_bare_ack(message):
+            case["awaiting"] = None
+        return case, "FOLLOW_OTHER"
     if awaiting == "best_time":
         case["awaiting"] = None
         case["best_time_to_contact"] = case.get("best_time_to_contact") or (message or "").strip()[:200]
@@ -663,6 +783,11 @@ async def decide_turn(state: ConversationState) -> dict[str, Any] | None:
     message = state.get("incoming_text") or ""
     case = load_case(state)
 
+    # A type left on the row by an earlier enquiry is not a record of who this is, so
+    # her own question on such a chat is hers. A record on file keeps the employer flow.
+    own_rights = OWN_RIGHTS_QUESTION and asks_own_rights(message)
+    on_record = bool(state.get("matched_employer_id") or state.get("matched_supplier_id"))
+
     if case is None and _master_employer(state):
         # Employer chats keep their flows. A helper writing about "my ma'am" on
         # her employer's phone is still the helper; an emergency an employer
@@ -670,12 +795,22 @@ async def decide_turn(state: ConversationState) -> dict[str, Any] | None:
         if not (_HELPER_ABOUT_EMPLOYER.search(message) and keyword_floor(message)[0]):
             if EMPLOYER_EMERGENCY.search(message):
                 return _employer_emergency()
-            return None
+            if on_record or not own_rights:
+                return None
 
     a = await assess(message, state.get("history_text") or "", _pending_text(case))
+    # Never read from the model alone: it called "can I have my phone" no complaint.
+    if own_rights and rank(a.level) < rank("P4"):
+        a = replace(a, level="P4", complaint_type="general", speaker="helper")
+    elif own_rights and a.level == "P4":
+        a = replace(a, speaker="helper")
 
     if case is not None:
         new_case, kind = advance(case, a, message)
+        if kind == "SILENT":
+            # On the ticket, with nothing sent (_classify_with_prefetch writes it).
+            return {"suppress_reply": True, "reply": "",
+                    "complaint_step": {"kind": None, "case": new_case, "message": message}}
         return {"complaint_step": {"kind": kind, "case": new_case, "message": message,
                                    "assessment": asdict(a)}}
 
@@ -689,7 +824,8 @@ async def decide_turn(state: ConversationState) -> dict[str, Any] | None:
     if a.employer_emergency:
         return _employer_emergency()
 
-    if p4_open:
+    # A new question of her own after a P4 answer is answered, not filed as unresolved.
+    if p4_open and not own_rights:
         # We asked "is anything else about this worrying you?".
         if _RESOLVED.search(message):
             return {"complaint_p4": None, "suppress_reply": True, "reply": "",

@@ -255,6 +255,43 @@ _JOBSEEKER_PATTERN = re.compile(
 )
 
 
+# 4 Nov 2026, conversation 4443: "what are your fees for a Filipino helper?", then "i
+# want a job that's why asking", was asked "What kind of care would this be for?" a
+# second time and raised fee ticket CB-2026-0170. The override below stands aside while
+# a service is in hand, because "looking for work" may be someone else's helper
+# ("she is looking for work elsewhere", as a reason for a replacement). The sender
+# asking for work in the first person is her registration at ANY point: it ends the
+# employer flow, with or without a record on the number. False = as above.
+JOBSEEKER_ANY_POINT = True
+_SEEKS_WORK_HERSELF = re.compile(
+    r"\bi\s*(?:'?m|\s+am)?\s*(?:really\s+|just\s+)?(?:want|need|looking\s+for|searching\s+for|seeking)\s+"
+    r"(?:(?:a|an|some|new|another)\s+){0,2}(?:job\b|work\b(?!\s+(?:done|permit|pass)))"
+    r"|\bi\s+(?:want|need|would\s+like)\s+to\s+(?:work\b(?!\s+(?:permit|pass))|find\s+(?:(?:a|an|new)\s+){0,2}(?:job|work|employer))"
+    r"|\b(?:helper|maid|domestic\s+worker)\s+(?:and\s+)?(?:i\s*(?:'?m|\s+am)\s+)?(?:looking|searching)\s+for\s+"
+    r"(?:(?:a|an|new)\s+){0,2}(?:employer|job|work)\b"
+    r"|\bi\s*(?:'?m|\s+am)?\s*(?:looking|searching)\s+for\s+(?:(?:a|an|new)\s+){0,2}employer\b"
+    r"|^\W*(?:(?:hi|hello|hey)\W+)?(?:looking|searching)\s+for\s+(?:(?:a|an|new)\s+){0,2}(?:job|work|employer)\b"
+    r"|\b(?:give|find)\s+me\s+(?:(?:a|an|new)\s+){0,2}(?:job|work|employer)\b"
+    r"|\bsaya\s+(?:mau|ingin|cari|mencari|perlu)\s+(?:\w+\s+)?(?:kerja|pekerjaan)\b"
+    r"|\b(?:gusto|kailangan)\s+ko\s+(?:ng\s+)?(?:trabaho|magtrabaho)\b|\bnaghahanap\s+ako\s+ng\s+trabaho\b",
+    re.IGNORECASE,
+)
+_FOR_SOMEONE_ELSE = re.compile(
+    r"\bfor\s+(?:my|our|her|him)\b|\bmy\s+(?:\w+\s+)?(?:helper|maid|worker|friend|sister|cousin)\b",
+    re.IGNORECASE,
+)
+
+
+def seeks_work_herself(message: str) -> bool:
+    text = message or ""
+    return bool(
+        JOBSEEKER_ANY_POINT
+        and _SEEKS_WORK_HERSELF.search(text)
+        and not _FOR_SOMEONE_ELSE.search(text)
+        and not relays_another_helper(text)
+    )
+
+
 def _is_jobseeker(message: str, intent: str) -> bool:
     """Whether this message is somebody asking us for work.
 
@@ -1376,6 +1413,17 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
         else:
             intent = "new_hiring"
 
+    # Last, so none of the rules above that hold a live collection can hold this one.
+    seeks_work = seeks_work_herself(message) and intent not in {
+        "dispute_assault", ticket_service.MISSING_HELPER, ticket_service.COMPLAINT,
+    }
+    if seeks_work:
+        logger.info(
+            "Conversation %s: the sender is asking for work - %s, not %r",
+            state.get("conversation_id"), ticket_service.CANDIDATE_HIRING, service_type,
+        )
+        intent, service_type, answer_only = CANDIDATE_INTENT, ticket_service.CANDIDATE_HIRING, False
+
     try:
         confidence = float(result.get("confidence") or 0.0)
     except (TypeError, ValueError):
@@ -1407,7 +1455,7 @@ async def intent_classifier(state: ConversationState) -> dict[str, Any]:
             state.get("incoming_text") or "", state.get("history_text") or ""
         ):
             detected = "candidate"
-        if speaks_for_herself:
+        if speaks_for_herself or seeks_work:
             detected = "candidate"
         if detected:
             update["detected_contact_type"] = detected

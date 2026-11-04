@@ -3447,7 +3447,11 @@ it will be ready by then." (`LEAVE_TIMELINE_CONFLICT`).
 graded P1-P4 beside the classifier, and the replies are fixed text, not model-written: the wording
 is Thomas's guidelines of 2 Nov 2026, kept in `app/graph/complaint_templates.py`. Those are the
 source; this section does not copy them. The lines there marked PENDING THOMAS APPROVAL are the
-three follow-ups on an open P1/P2 case and two lines the guidelines give no wording for.
+three follow-ups on an open P1/P2 case, two lines the guidelines give no wording for, and the warmer
+triage questions and follow-ups of 4 November (`WARM_WORDING`). The P1, P2, P3, P4 and NOT-SAFE bodies
+are his word for word. A question she asks about her own rights ("how many rest days do I get") is P4
+whatever the model calls it, on a helper's or an unknown chat. The first message of a conversation
+opens with Claire's introduction, then the P4 template.
 
 The model is used three times, none of them to write a reply to a safety report.
 
@@ -3464,12 +3468,16 @@ an assault or an injury, whatever the model says or if it fails.
 ### Prompt - a helper's general question (P4)
 
 ```
-A domestic helper in Singapore asked a question. Answer it in 1-2 short sentences in plain English,
-from the records below ONLY. Give no legal or medical advice, promise no outcome, do not tell her to
-confront anyone. If the records do not answer it, reply exactly: NO_ANSWER
+A domestic helper in Singapore asked a question about herself. Answer it in 1-2 short sentences in
+plain, warm English, from the records below ONLY. Write to her as "you" ("You are entitled to at least
+1 rest day a week"): the records may be written to an employer, so never write "your helper", "the
+helper", "she" or "her". Give no legal or medical advice, promise no outcome, do not tell her to
+confront anyone, and do not doubt or blame her. If the records do not answer it, reply exactly: NO_ANSWER
 ```
 
-The answer goes inside the P4 template. No answer, a figure not in the records, or anything
+The answer goes inside the P4 template, with any bold removed. An answer about "your helper" is written
+once more with `You wrote about "her" or "your helper". She is the one asking: write to her as "you".`
+added. Still about someone else, no answer, a figure not in the records, or anything
 `complaint_templates.FORBIDDEN` catches: a P4 ticket instead.
 
 ### Prompt - translating a complaint message
@@ -3482,6 +3490,19 @@ number. Reply with the translation and nothing else.
 ```
 
 If 999, 995, A&E or the reference does not survive, the English goes instead.
+
+---
+
+## A reply that answers nothing (4 November)
+
+`info_collector.NOT_AN_ANSWER_NOTE`, added to the collector's instruction when a reply of three or more
+words fills no field and asks nothing (`NO_QUESTION_TWICE`). The next question goes instead; if none is
+left, the field is filed unanswered and the collection closes.
+
+```
+Their message does not answer your last question. Respond to what they actually said first, in one
+short sentence. Do not ask your last question again in any form.
+```
 
 ---
 

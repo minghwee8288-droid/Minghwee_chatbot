@@ -728,6 +728,12 @@ because the lead is opened early and the ticket is created much later.
 | A helper's complaint is graded on every message, and P1 is never preceded by a question | `complaint_triage.decide_turn` / `assess` / `open_case` / `advance` (`COMPLAINT_TRIAGE_ENABLED`) | Helper and unknown-role chats. A keyword net (`keyword_floor`) holds when the model fails: at least P2, P1 on self-harm, assault, injury or a report happening now. An employer's chat is not graded and keeps its flows, unless the message is a helper's words about "my ma'am" on that phone. An employer's emergency takes the crisis path (`EMPLOYER_EMERGENCY`, `CRISIS_REPLY_COMPLETE`). Highest of several issues; the level never falls. A bare "ya" or the time she gives cannot raise it on the model's word (it re-read the old report in the history, on the real model, and sent the emergency template to a phone someone could see). |
 | A complaint's messages are the approved wording | `complaint_templates.py` + `reply_is_fixed` in `run_turn` | No reply guard rewrites them; only the reference is shown as code. A translation must keep 999, 995, A&E and the reference, or the English goes (`translated_ok`). `FORBIDDEN` is asserted over every template and checked on the one model-written answer (P4). The recruiter's number only ever comes from `FCC_CONTACT_NUMBER`; unset, its clause or sentence goes. |
 | A complaint ticket exists before the first triage question, and goes on the portal's Complaints tab | `complaint_case.raise_ticket` + `ticket.create(complaint_level=, priority=)` | The portal's rule: `service_type` holds `dispute_salary` or `dispute_assault` (its `tickets_repo._CB_IS_COMPLAINT`), so that is what is stored, by type; `complaint_level` holds P1-P4. Topic key `helper_complaint`, in `ALWAYS_SEPARATE` by its service, so nothing folds into it. No owner (the FCC pool) and it does not pause the chat. Every P1 is created (or, raised to P1, set once) with `workflow_status` escalated, so it stands out until assignment is decided. A "not safe", or any reply to the suicide template that does not plainly say she is safe (`clearly_safe_after_suicide_template`; the rest get the 995 line, once), sets priority high and `workflow_status` escalated with status still `open`: `in_progress` would read as an agent picking it up and quieten the bot. |
+| A helper's question about her own rights is answered to her, in the P4 template | `complaint_triage.asks_own_rights` + `nodes/complaint_triage._kb_answer` (`OWN_RIGHTS_QUESTION`) | First person on a helper's or unknown chat, whatever the model graded it; a type inherited from an earlier enquiry does not stop it, an employer record does. An answer about "your helper" is rewritten once, then becomes a P4 ticket. Two sentences, no bold (no reply guard runs on it). On a first message the introduction goes before the template. |
+| A time given after NOT-SAFE is saved and answered | `complaint_triage._next_step` (`_GIVES_TIME`, `BEST_TIME_LINE`) | `best_time_to_contact` on the ticket, `FOLLOW_BEST_TIME` sent. "ok" is not a time, whatever the model says. |
+| No follow-up goes twice in a row on a case | `complaint_triage.advance` (`SHORT_FOLLOW_UPS`) | A bare ack after FOLLOW_OTHER, or a line that would repeat, becomes `SHORT_REPLY`, the reference once per case. If that would repeat too, nothing is sent and the message stays on the ticket. "You're welcome" only when she thanked us. NOT-SAFE, 995 and P1 lines are never shortened. |
+| A rest-day span she gave is reflected, not asked for | `complaint_triage.rest_day_span` + `templates.p3` (`REFLECT_REST_DAYS`) | Replaces only the P3 ask sentence. The salary ask is unchanged: a span is not which months. |
+| "I want a job" ends an employer flow at any point | `intent_classifier.seeks_work_herself` (`JOBSEEKER_ANY_POINT`), last of the classifier's rules | First person only, even with an employer record; "she is looking for work", "for my helper", a relay and "work permit" are not it. The new flow keeps her name and nothing else from the enquiry (`info_collector.JOB_SEEKER_KEEPS_NAME_ONLY`). Conversation 4443, CB-2026-0170. |
+| A reply that answers nothing is not asked the same question again | `info_collector.not_an_answer` (`NO_QUESTION_TWICE`) | 3+ words, no field filled, no question, one-by-one flow. The next question goes; with none left the field is filed unanswered and the collection closes, raising its ticket. |
 | A P1 does not wait on the database or a typing client | `nodes/complaint_triage._ticket_for` (`P1_TICKET_SECONDS`) + `reply_must_send` in `webhook._process_locked` | 3 s, then the template goes without its reference while the ticket retries, and "Your reference is ..." follows. Never held while she is typing, never dropped as a repeat. A chat a human holds gets the same words (`emergency_reply`). |
 
 | What was said on a phone call is never asked again, and never changed | `app/services/call_context.py` (`CALL_CONTEXT_ENABLED`, default off) via `graph.run_turn`, `info_collector._known_from_calls`, `system.build_system_prompt` | Read from `call_details`. Which side is the client is decided by `customer_side`; several conversations or none is `unmatched` with the reason, never a guess. Only allowlisted numbers go to the model. Every item needs a quote found in the transcript, and a fact's quote must be on a line our agent did not say. Facts go in UNDER the client's own words at turn time, so the job never touches a checkpoint; a value the call replaced cannot be extracted back from the old chat line. A newer explicit call beats an older chat value, the older is kept in `call_fact_history`, and the agent gets the note, not the client. Asked about something our team agreed: fixed wording, never ahead of a safety report. A complaint on a call raises its ticket (`source: call`) with nothing pending, and nothing is sent. |
@@ -1122,6 +1128,11 @@ Easy to get wrong:
   `info_collector.OWN_LEAVE_COLLOQUIAL` ("i wanna go home" is the helper herself).
   2026-11-02 (phone test 8:08 PM), each `False` for the earlier behaviour:
   `info_collector.BRIEFING_FEE_THIS_TURN`, `info_collector.URGENT_SENTENCE_ONLY`.
+  2026-11-04 (PM's test), each `False` for the earlier behaviour:
+  `complaint_templates.WARM_WORDING`, `complaint_triage.OWN_RIGHTS_QUESTION`,
+  `complaint_triage.BEST_TIME_LINE`, `complaint_triage.SHORT_FOLLOW_UPS`,
+  `complaint_triage.REFLECT_REST_DAYS`, `intent_classifier.JOBSEEKER_ANY_POINT`,
+  `info_collector.NO_QUESTION_TWICE`, `info_collector.JOB_SEEKER_KEEPS_NAME_ONLY`.
   2026-11-04, `False` for the earlier behaviour:
   `graph.REQUIRE_DURABLE_CHECKPOINTER` (any checkpointer failure falls back to memory),
   `health.CHECKPOINTER_IN_READY` (`/health/ready` does not report the checkpointer),
@@ -2104,7 +2115,8 @@ at a time.
   rather than inside the cooking question it used to share.
 - **The helper complaint guidelines: what is still theirs (2026-11-04).** Approve the three follow-ups
   on an open P1/P2 case and two lines the guidelines give no wording for (a fact added to a P3 case, a
-  P4 ticket's message), all marked PENDING THOMAS APPROVAL in `complaint_templates.py`. Whether Saturday
+  P4 ticket's message), plus the warmer questions, follow-ups, best-time line, short reply and rest-day
+  reflection of 2026-11-04, all marked PENDING THOMAS APPROVAL in `complaint_templates.py`. Whether Saturday
   counts as a working day, and the public holiday list. **Who is told when a P1 arrives**: the ticket has
   no owner by instruction (the FCC pool) and nothing notifies anyone, where the old crisis ticket went to
   an admin. Until that is decided every P1 is marked Escalated on the tab.
@@ -2501,6 +2513,16 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **The PM's test: a helper's own question, the best time, a job seeker, warmer lines.**
+  See section 5 for the rules. Fixed: "how many rest days do I get" went to the P4 template only if the
+  model graded it so, and "can I have my phone" and "what is my salary day" fell into the employer intake;
+  "ok" after NOT-SAFE was saved as the best time; "i want a job that's why asking" kept the fee enquiry
+  and raised a fee ticket (CB-2026-0170, 4443's real transcript); "my cat is sick today" got the same
+  question back. New wording behind `WARM_WORDING`, PENDING THOMAS APPROVAL; the P1, P2, P3, P4 and
+  NOT-SAFE bodies are checked by hash against the commit before. The replay found bold in a P4 answer,
+  which no guard removes on this path. Replayed read-only on the real model, 11 scenarios rebuilt from the
+  brief: the 9 screenshots were not to hand and only 4443's chat is still on production. E2E not run.
 
 - **2026-11-04** - **Docs only: `cb_call_context_001` is applied on production.** On the user's go-word, through
   `apply_sql.py --expect-ref`: the table exists, RLS on with no policies, 0 rows, nothing for `anon` or `authenticated`.

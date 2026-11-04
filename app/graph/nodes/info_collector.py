@@ -4683,6 +4683,16 @@ def _known_from_calls(state: ConversationState, service_type: str | None) -> dic
     return known
 
 
+# False = a reply that answers nothing is asked the same question again.
+NO_QUESTION_TWICE = True
+# 2026-11-04: False = a job seeker's registration inherits the employer enquiry's answers.
+JOB_SEEKER_KEEPS_NAME_ONLY = True
+NOT_AN_ANSWER_NOTE = (
+    "\n\nTheir message does not answer your last question. Respond to what they actually "
+    "said first, in one short sentence. Do not ask your last question again in any form."
+)
+
+
 def nationality_carries(old_service: str | None, new_service: str | None) -> bool:
     """Whether the `nationality` collected under old_service still holds under
     new_service. One rule, read by the collector's switch reset AND by
@@ -4691,6 +4701,14 @@ def nationality_carries(old_service: str | None, new_service: str | None) -> boo
     the collector had correctly dropped the nationality a node later."""
     if not old_service or not new_service or old_service == new_service:
         return True
+    # "Fees for a Filipino helper" is what an employer's enquiry asked about, and
+    # she has said she is looking for work: it is not the country she is from.
+    if (
+        JOB_SEEKER_KEEPS_NAME_ONLY
+        and new_service == ticket_service.CANDIDATE_HIRING
+        and old_service != ticket_service.CANDIDATE_REGISTRATION
+    ):
+        return False
     return not ({old_service, new_service} & _HELPER_SPECIFIC_NATIONALITY)
 
 
@@ -4883,6 +4901,14 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
                 carried_over[key] = value
                 if key in old_counts:
                     kept_counts[key] = old_counts[key]
+    # 4 Nov 2026 (PM's test): what an employer's enquiry collected (care type,
+    # household, budget) is not about the job seeker it turned out to be. Her name stays.
+    if (
+        JOB_SEEKER_KEEPS_NAME_ONLY and switched and not restart
+        and service_type == ticket_service.CANDIDATE_HIRING
+        and state.get("collected_service") != ticket_service.CANDIDATE_REGISTRATION
+    ):
+        carried_over = {k: v for k, v in carried_over.items() if k == "full_name"}
     previous = carried_over if switched else everything
     asked = dict(kept_counts) if switched else dict(state.get("asked_field_counts") or {})
     if switched:
@@ -5168,7 +5194,32 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         (state.get("last_question") or {}).get("partner")
         if REASK_PAIR_PARTNER and isinstance(state.get("last_question"), dict) else None
     )
-    exhausted = {
+    # 4 Nov 2026 (PM's test): "my cat is sick today" to "What kind of care would this
+    # be for?" got the same question back. A reply that answers nothing is responded
+    # to, and the next question goes instead; with none left, the collection closes.
+    # A question, a short reply (it may be an answer the extractor missed) and our
+    # own re-asks keep their paths.
+    last_q = state.get("last_question") if isinstance(state.get("last_question"), dict) else {}
+    not_an_answer = (
+        NO_QUESTION_TWICE
+        and not switched
+        and bool(pending_key)
+        and state.get("question_style") != "all"
+        and len((state.get("incoming_text") or "").split()) >= 3
+        and not side_question
+        and not asks_what_we_meant(state.get("incoming_text") or "")
+        and not _ASKS_SOMETHING.search(state.get("incoming_text") or "")
+        and not any(
+            str(v or "").strip() and str(previous.get(k) or "") != str(v)
+            for k, v in extracted.items()
+        )
+        and pending_key in {f.key for f in ticket_service.missing_fields(service_type, collected)}
+        and _first_line(last_q.get("text")).strip() in last_bot_line(state.get("history_text") or "")
+    )
+    nothing_else_to_ask = not_an_answer and not [
+        f for f in ticket_service.missing_fields(service_type, collected) if f.key != pending_key
+    ]
+    exhausted = ({pending_key: UNANSWERED} if nothing_else_to_ask else {}) | {
         field.key: UNANSWERED
         for field in ticket_service.missing_fields(service_type, collected)
         if asked.get(field.key, 0) >= min(field.max_asks, MAX_ASKS_PER_FIELD)
@@ -6137,6 +6188,10 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         missing = [pending] + [f for f in missing if f.key != pending.key]
         answer_first = (answer_first or ANSWER_THEN_ASK_INSTRUCTION) + CLARIFY_NOTE.format(
             question=pending.question or pending.label)
+    if not_an_answer:
+        if missing and missing[0].key == pending_key:
+            missing = missing[1:] + [missing[0]]
+        answer_first = (answer_first or "") + NOT_AN_ANSWER_NOTE
     plain_turn = not (answer_first or overview or workload_blocks or follow_up_notes)
     client_name = str(collected.get("full_name") or "").strip()
     # The reply that thanks them for their name: the name became known on this
@@ -6253,7 +6308,7 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             'form - not reworded, not shortened, and not as "any other...?" or '
             '"anything else?". Acknowledge their answer briefly if it needs '
             "it, then ask only the question below."
-            if previous_answered
+            if previous_answered and not not_an_answer
             else ""
         )
         if partner and closed_note:  # Step 6: the pair is asked, not one question

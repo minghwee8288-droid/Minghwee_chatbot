@@ -36,7 +36,7 @@ _COMPLAINT_KEYS = (
 )
 _TRIAGE_KEYS = (
     "stage", "pending", "asked", "answers", "awaiting", "language", "duration",
-    "facts_complete", "p1_signs",
+    "facts_complete", "p1_signs", "last_reply", "short_ref_sent",
 )
 TABLE = "cb_complaint_cases"
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 from app.config import settings
@@ -42,12 +43,23 @@ Translate only: add nothing, remove nothing and give no advice of your own. Keep
 written: the numbers 999 and 995, the letters A&E, any reference like CB-2026-0001, and any phone \
 number. Reply with the translation and nothing else."""
 
-P4_SYSTEM = """A domestic helper in Singapore asked a question. Answer it in 1-2 short sentences in \
-plain English, from the records below ONLY. Give no legal or medical advice, promise no outcome, \
-do not tell her to confront anyone. If the records do not answer it, reply exactly: NO_ANSWER
+P4_SYSTEM = """A domestic helper in Singapore asked a question about herself. Answer it in 1-2 short \
+sentences in plain, warm English, from the records below ONLY. Write to her as "you" ("You are \
+entitled to at least 1 rest day a week"): the records may be written to an employer, so never write \
+"your helper", "the helper", "she" or "her". Give no legal or medical advice, promise no outcome, do \
+not tell her to confront anyone, and do not doubt or blame her. If the records do not answer it, \
+reply exactly: NO_ANSWER
 
 Records:
 {records}"""
+
+
+_ABOUT_SOMEONE_ELSE = re.compile(
+    r"\byour\s+(?:\w+\s+)?(?:helper|maid|fdw|worker)\b|\bthe\s+(?:helper|maid|fdw)\b"
+    r"|\b(?:she|her|hers)\b",
+    re.IGNORECASE,
+)
+_AS_AN_AI = re.compile(r"\bas\s+an\s+ai\b", re.IGNORECASE)
 
 
 def _text_for(kind: str, case: dict[str, Any], ref: str | None) -> str:
@@ -61,7 +73,13 @@ def _text_for(kind: str, case: dict[str, Any], ref: str | None) -> str:
     if kind == "P2_GENERAL":
         return templates.p2_general(ref, asked_safe="Q1" in asked, asked_chat="Q3" in asked)
     if kind == "P3":
-        return templates.p3(ref, case.get("complaint_type"))
+        return templates.p3(ref, case.get("complaint_type"), triage.rest_day_span(case))
+    if kind == "FOLLOW_BEST_TIME":
+        return templates.follow_up(templates.FOLLOW_BEST_TIME, ref)
+    if kind == "FOLLOW_SHORT":
+        return templates.short_reply(
+            ref if case.get("short_with_ref") else None, thanked=bool(case.get("thanked"))
+        )
     if kind == "NOT_SAFE":
         return templates.NOT_SAFE_TO_CHAT
     if kind == "FOLLOW_SAFE":
@@ -77,10 +95,11 @@ def _text_for(kind: str, case: dict[str, Any], ref: str | None) -> str:
     if kind == "P4_TICKET":
         return templates.follow_up(templates.P4_TICKET, ref)
     if kind == "QUESTION":
-        pending = case.get("pending")
-        if pending == "Q6" and case.get("complaint_type") == "sexual":
-            return templates.Q6_SEXUAL
-        return templates.QUESTIONS.get(pending or "", "")
+        return templates.question(
+            case.get("pending"),
+            first=len(asked) <= 1,
+            sexual=case.get("complaint_type") == "sexual",
+        )
     return ""
 
 
@@ -128,8 +147,19 @@ async def _kb_answer(state: ConversationState) -> str | None:
         answer = (await complete(
             P4_SYSTEM.format(records=records), message, temperature=0.2, max_tokens=160
         )).strip().strip('"')
+        # The records are often written to an employer. One more try, then a ticket.
+        if _ABOUT_SOMEONE_ELSE.search(answer):
+            answer = (await complete(
+                P4_SYSTEM.format(records=records)
+                + '\n\nYou wrote about "her" or "your helper". She is the one asking: write to her as "you".',
+                message, temperature=0.2, max_tokens=160,
+            )).strip().strip('"')
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not write a P4 answer (%s)", type(exc).__name__)
+        return None
+    # This reply goes out with no reply guards, and the records are often in bold (replay).
+    answer = guards.clamp_reply(re.sub(r"\*+", "", answer), max_sentences=2)
+    if _ABOUT_SOMEONE_ELSE.search(answer) or _AS_AN_AI.search(answer):
         return None
     if (not answer or "NO_ANSWER" in answer or templates.FORBIDDEN.search(answer)
             or guards.ungrounded_figures(answer, records, message)):
@@ -215,9 +245,13 @@ async def complaint_triage_node(state: ConversationState) -> dict[str, Any]:
         answer = await _kb_answer(state)
         if answer:
             language = (step.get("assessment") or {}).get("language")
+            text = templates.p4(answer)
+            # The existing rule: Claire says who she is in her first message.
+            if not guards.claire_has_spoken(state.get("history_text") or ""):
+                text = f"{templates.INTRO}\n\n{text}"
             return {
                 **update,
-                "reply": await _in_her_language(templates.p4(answer), language),
+                "reply": await _in_her_language(text, language),
                 "complaint_p4": {"question": message[:500], "answer": answer[:500]},
                 "detected_contact_type": "candidate",
             }

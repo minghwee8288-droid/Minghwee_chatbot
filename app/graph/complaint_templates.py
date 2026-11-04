@@ -82,21 +82,47 @@ NOT_SAFE_TO_CHAT = (
     "If you are in danger at any time, call 999."
 )
 
-# The triage questions, one per message.
-Q1 = "Are you safe right now?"
-Q2 = "Are you hurt or feeling very unwell?"
-Q3 = "Is it safe to chat, or could someone see this phone?"
-Q4 = "Is the person who is hurting you nearby?"
-Q5 = "Can you leave the house if you need to?"
-Q6 = "What happened, and when did it last happen?"
-Q6_SEXUAL = "When did it last happen?"  # never ask for the details
+# 4 Nov 2026, the PM's test: the questions and follow-ups read as cold. The lines this
+# switch selects are PENDING THOMAS APPROVAL. The P1, P2, P3, P4 and NOT-SAFE template
+# bodies above are his and do not change. False = the wording he approved on 2 Nov.
+WARM_WORDING = True
+
+# The triage questions, one per message, and what each is without its lead-in. The
+# first question of a case carries the one acknowledgement (question() below).
+FIRST_QUESTION_LEAD = "I'm so sorry to hear this, and thank you for telling me."
+BARE_QUESTIONS = {
+    "Q1": "Are you safe right now?",
+    "Q2": "Are you hurt or feeling very unwell?",
+    "Q3": "Is it safe to chat now, or could someone else see this phone?" if WARM_WORDING
+    else "Is it safe to chat, or could someone see this phone?",
+    "Q4": "Is the person who hurt you nearby right now?" if WARM_WORDING
+    else "Is the person who is hurting you nearby?",
+    "Q5": "Can you leave the house if you need to?",
+    "Q6": "If you feel comfortable, could you tell me what happened, and when it last "
+    "happened? Take your time." if WARM_WORDING
+    else "What happened, and when did it last happen?",
+}
+if WARM_WORDING:
+    Q1 = f"{FIRST_QUESTION_LEAD} {BARE_QUESTIONS['Q1']}"
+    Q2 = f"Thank you for letting me know. {BARE_QUESTIONS['Q2']}"
+    Q3 = f"Thank you. {BARE_QUESTIONS['Q3']}"
+    Q4 = f"I want to make sure you're okay. {BARE_QUESTIONS['Q4']}"
+    Q5 = BARE_QUESTIONS["Q5"]
+    Q6 = BARE_QUESTIONS["Q6"]
+    # never ask for the details
+    Q6_SEXUAL = "When did it last happen? You don't need to share any more than that."
+else:
+    Q1, Q2, Q3 = BARE_QUESTIONS["Q1"], BARE_QUESTIONS["Q2"], BARE_QUESTIONS["Q3"]
+    Q4, Q5, Q6 = BARE_QUESTIONS["Q4"], BARE_QUESTIONS["Q5"], BARE_QUESTIONS["Q6"]
+    Q6_SEXUAL = "When did it last happen?"  # never ask for the details
 QUESTIONS = {"Q1": Q1, "Q2": Q2, "Q3": Q3, "Q4": Q4, "Q5": Q5, "Q6": Q6}
 
 REFERENCE_ONLY = "Your reference is {ref}."
 
 # PENDING THOMAS APPROVAL: the three follow-ups on an open P1/P2 case.
 FOLLOW_SAFE = (
-    "Thank you for letting us know. Your reference is {ref}. The next available Family "
+    ("I'm glad you're safe right now." if WARM_WORDING else "Thank you for letting us know.")
+    + " Your reference is {ref}. The next available Family "
     "Care Consultant will reach out to you during the next working day. If you are in "
     "danger at any time, call 999."
 )
@@ -110,6 +136,25 @@ FOLLOW_OTHER = (
     "call 999. If you are hurt or very unwell, call 995 or go to your nearest hospital A&E."
 )
 
+# PENDING THOMAS APPROVAL: she gave a time after the NOT-SAFE template.
+FOLLOW_BEST_TIME = (
+    "Thank you, we have noted that. Your reference is {ref}. The next available Family "
+    "Care Consultant will reach out to you at the time you gave, during working hours. "
+    "If you are in danger at any time, call 999."
+)
+
+# PENDING THOMAS APPROVAL: a bare "ok" or "thanks" on an open case, and any follow-up
+# that would otherwise repeat the one before it word for word. The opening goes when
+# she did not thank us: "You're welcome" does not answer something she told us.
+SHORT_OPENING = "You're welcome. "
+SHORT_REPLY = (
+    "We're here for you. If anything changes, call 999 if you are in danger, or 995 if "
+    "you are hurt or very unwell."
+)
+
+# First message of a conversation: the AI disclosure, then the P4 template.
+INTRO = "Hi, I'm Claire, Ming Hwee's AI assistant."
+
 # Her reply to the P1 suicide template does not clearly say she is safe. Built only
 # from that template's own sentences (instructions of 4 Nov 2026).
 FOLLOW_SUICIDE_NOW = (
@@ -120,9 +165,13 @@ FOLLOW_SUICIDE_NOW = (
 # PENDING THOMAS APPROVAL: the doc gives no wording for these two. Built from its
 # own sentences; no safety numbers, because neither case has a safety concern.
 P3_ADDED = (
-    "Thank you, we have added this to your case {ref}. The next available Family Care "
+    ("Thank you for sharing this with us. I've added it to your case {ref}." if WARM_WORDING
+     else "Thank you, we have added this to your case {ref}.")
+    + " The next available Family Care "
     "Consultant will reach out to you during the next working day."
 )
+# PENDING THOMAS APPROVAL: she already said how long, so she is not asked for it.
+P3_REST_DAY_REFLECTED = "You mentioned you haven't had a rest day for {span}."
 P4_TICKET = (
     "We have issued a ticket. The next available Family Care Consultant will reach out to "
     "you during the next working day. Your reference is {ref}."
@@ -184,10 +233,34 @@ def p2_general(ref: str | None, *, asked_safe: bool = False, asked_chat: bool = 
     )
 
 
-def p3(ref: str | None, complaint_type: str | None) -> str:
-    return P3.format(
+def p3(ref: str | None, complaint_type: str | None, rest_day_span: str | None = None) -> str:
+    template = P3
+    if rest_day_span and complaint_type == "rest_day":
+        template = P3.replace(
+            "Please tell us {ask}.", P3_REST_DAY_REFLECTED.format(span=rest_day_span)
+        )
+    return template.format(
         ask=P3_ASK.get(complaint_type or "", P3_ASK_DEFAULT), ref_sentence=_ref_sentence(ref)
     )
+
+
+def question(pending: str | None, *, first: bool, sexual: bool = False) -> str:
+    """The question to send. The acknowledgement goes on the first of a case only, and
+    whichever question that is carries no other lead-in."""
+    if pending == "Q6" and sexual:
+        return Q6_SEXUAL
+    if not WARM_WORDING:
+        return QUESTIONS.get(pending or "", "")
+    if first:
+        return f"{FIRST_QUESTION_LEAD} {BARE_QUESTIONS.get(pending or '', '')}".strip()
+    if pending == "Q1":
+        return f"Thank you. {BARE_QUESTIONS['Q1']}"
+    return QUESTIONS.get(pending or "", "")
+
+
+def short_reply(ref: str | None, *, thanked: bool) -> str:
+    opening = SHORT_OPENING if thanked else ""
+    return f"{opening}{SHORT_REPLY}{_ref_sentence(ref)}"
 
 
 def p4(answer: str) -> str:
