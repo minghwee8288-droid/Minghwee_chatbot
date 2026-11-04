@@ -30,6 +30,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import no_network  # noqa: E402,F401 - first: this suite cannot reach production
 
 # Step 2c: what a renewal turn retrieves before the extraction (no fee row),
 # what the briefing search returns, and a briefing quoting the fee.
@@ -6014,4 +6016,4 @@ async def main() -> int:
     return 1 if failures else 0
 
 
-raise SystemExit(asyncio.run(main()))
+raise SystemExit(no_network.exit_code(asyncio.run(main())))

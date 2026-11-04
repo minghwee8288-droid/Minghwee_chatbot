@@ -125,6 +125,8 @@ app/
     conversation.py  wp_chat_conversations access, bot_status
     handover.py      cb_handovers; escalation vs stand-down
     complaint_case.py  a helper complaint's ticket, kept up to date
+    call_context.py  what was said on a phone call, carried into WhatsApp. OFF
+                     (CALL_CONTEXT_ENABLED); needs cb_call_context_001 applied
     contact.py       identify a number against master records
     assignment.py    which agent gets it
     internal_contacts.py  owner/staff numbers the bot never answers
@@ -155,7 +157,8 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
                      internal_contacts_001_create (cb_internal_contacts; not applied
                      when written, 2026-10-23), recovery_001_claims
                      (cb_recovery_claims, the startup scan's claims; NOT APPLIED),
-                     replaced_threads_001_create (cb_replaced_threads; NOT APPLIED)
+                     replaced_threads_001_create (cb_replaced_threads; NOT APPLIED),
+                     cb_call_context_001 (cb_call_context; NOT APPLIED)
                      — applied ONLY via apply_sql.py --expect-ref <project ref>
   gen_fee_locked.py  the watcher's fee lock: the 23 questions + 7 corrections the
                      fees document set, read from the loader, written into
@@ -727,6 +730,8 @@ because the lead is opened early and the ticket is created much later.
 | A complaint ticket exists before the first triage question, and goes on the portal's Complaints tab | `complaint_case.raise_ticket` + `ticket.create(complaint_level=, priority=)` | The portal's rule: `service_type` holds `dispute_salary` or `dispute_assault` (its `tickets_repo._CB_IS_COMPLAINT`), so that is what is stored, by type; `complaint_level` holds P1-P4. Topic key `helper_complaint`, in `ALWAYS_SEPARATE` by its service, so nothing folds into it. No owner (the FCC pool) and it does not pause the chat. Every P1 is created (or, raised to P1, set once) with `workflow_status` escalated, so it stands out until assignment is decided. A "not safe", or any reply to the suicide template that does not plainly say she is safe (`clearly_safe_after_suicide_template`; the rest get the 995 line, once), sets priority high and `workflow_status` escalated with status still `open`: `in_progress` would read as an agent picking it up and quieten the bot. |
 | A P1 does not wait on the database or a typing client | `nodes/complaint_triage._ticket_for` (`P1_TICKET_SECONDS`) + `reply_must_send` in `webhook._process_locked` | 3 s, then the template goes without its reference while the ticket retries, and "Your reference is ..." follows. Never held while she is typing, never dropped as a repeat. A chat a human holds gets the same words (`emergency_reply`). |
 
+| What was said on a phone call is never asked again, and never changed | `app/services/call_context.py` (`CALL_CONTEXT_ENABLED`, default off) via `graph.run_turn`, `info_collector._known_from_calls`, `system.build_system_prompt` | Read from `call_details`. Which side is the client is decided by `customer_side`; several conversations or none is `unmatched` with the reason, never a guess. Only allowlisted numbers go to the model. Every item needs a quote found in the transcript, and a fact's quote must be on a line our agent did not say. Facts go in UNDER the client's own words at turn time, so the job never touches a checkpoint; a value the call replaced cannot be extracted back from the old chat line. A newer explicit call beats an older chat value, the older is kept in `call_fact_history`, and the agent gets the note, not the client. Asked about something our team agreed: fixed wording, never ahead of a safety report. A complaint on a call raises its ticket (`source: call`) with nothing pending, and nothing is sent. |
+
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
 own last line contained a question mark.
@@ -818,6 +823,17 @@ safe_to_chat, safe_status, best time, consent, employer contact, next follow-up,
 `triage` (where the flow has got to), both shown by the portal's drawer. That ticket row is the record
 and what the next turn reads. `scripts/sql/cb_complaint_cases_001.sql` (NOT APPLIED) adds a copy with real
 columns plus the transcript; `COMPLAINT_CASE_TABLE` writes it, and nothing reads it.
+
+**Phone calls: `call_details` is the source, and the bot only reads it.** RingQ / Cal4Care -> n8n
+("Cal4Care Recording URL") -> one row per call, written whole with its transcript (0 of 370 rows updated
+after insert, a median 2.5 minutes after the call ended; measured 2026-11-04). `call_id` is a unique uuid,
+`tenant_id` is text, RLS on with no policies. `ai_summary` is empty on every row. Labels in `transcript` are
+only "Speaker N". `call_from`/`call_to` are NOT clean numbers: an extension, `<caller> (<the dialled line's
+last 4>)` (one bracket value on all 128 rows), a staff name, `Anonymous`, `false`. `agent_details` is a number,
+an extension or a uuid; a number there is staff. `call_tickets` / `call_ticket_calls` are the portal's (migration
+0124): only the few calls n8n turned into tickets (8 rows), joined to `call_details` on `call_id`, read to confirm
+a match and never written. `wp_chat_call_logs` is click-to-call from the inbox, with no transcript.
+`cb_call_context` (ours, NOT APPLIED) is one row per call decided, with the analysis and no transcript.
 
 **The bot never closes a ticket.** No code path writes `cb_tickets.status` after insert.
 The portal owns resolution.
@@ -1140,6 +1156,13 @@ Easy to get wrong:
   `WORKING_DAYS` (Mon,Tue,Wed,Thu,Fri) and `PUBLIC_HOLIDAYS` (comma-separated ISO dates, empty) decide
   `next_followup_date`. `COMPLAINT_CASE_TABLE` (default **false**) - copy each case to
   `cb_complaint_cases`; only after that migration is applied.
+- `CALL_CONTEXT_ENABLED` (default **false**) — carry phone calls into WhatsApp
+  (`app/services/call_context.py`). Before switching on: apply `scripts/sql/cb_call_context_001.sql`, and
+  put any of our own lines that are not agents' numbers in `CALL_CONTEXT_AGENCY_NUMBERS`. With the table
+  missing no call is claimed, so nothing goes to the model, and each run logs an error.
+  `CALL_CONTEXT_POLL_MINUTES` (5), `CALL_CONTEXT_MAX_WAIT_HOURS` (24, given up on with no transcript),
+  `CALL_CONTEXT_LOOKBACK_HOURS` (48: how far back a run looks, so switching on does not read every old call).
+  Only numbers `BOT_ALLOWED_NUMBERS` lets the bot talk to are analysed.
 - `STARTUP_RECOVERY_SCAN` (default **false**) — answer, once at startup, messages a crash
   left unanswered (`app/services/recovery.py`). Before switching on: apply
   `scripts/sql/recovery_001_claims.sql`, confirm `WHAPI_SENDER_PHONE` is right (the scan
@@ -2024,6 +2047,23 @@ Ordered by what will hurt first.
     rate is far above production's 2.3%, on conversations picked because they failed. **The timeout**
     (conversation 1555, 25.3s, the app's 25s limit) did not reproduce: 6 to 14s in 3 runs.
 
+55. **Phone calls into WhatsApp: decisions before `CALL_CONTEXT_ENABLED` goes on (2026-11-04).** (a) A complaint
+    raised off a call sits open with no triage question asked, because nobody may message her because of a call.
+    Her next message then gets the flow's standing line for an open P1/P2 (`FOLLOW_OTHER`). The agent spoke to her,
+    so that seemed right; Thomas may want otherwise. The P1 has no owner, as for any P1 (see below). (b) A call
+    with no WhatsApp conversation cannot raise a `cb_tickets` complaint: it needs `conversation_id`. Those calls are
+    `unmatched` and the job never reads them for a complaint, so a helper who only phones is the portal's
+    `call_tickets` to catch, and `complaint_level` there is the portal's to fill. (c) One 8-digit number
+    is the caller on 46 calls and is on no conversation, so nothing is merged, but it looks like one of our own
+    lines; name it in `CALL_CONTEXT_AGENCY_NUMBERS` if so. (d) LID rows hold no phone number, so a client whose
+    conversation row is keyed on one is `no_conversation` (section 9.16). (e) Whether the portal should show
+    `follow_ups[].source`; today a call note reads as an ordinary follow-up that starts "Phone call on".
+
+56. **`CB-2026-0160` on production is a test row, still open, needing a go-word to remove.** Open, high priority,
+    `dispute_assault`, assigned to an admin, on conversation 77 (a real client's thread, last message 8 Sep), with one
+    `cb_handovers` row (`dispute_escalation`). Its text is a selfcheck fixture. Written 2026-11-04 13:18 UTC by a draft of
+    a selfcheck case; see the change log. Not removed, because production is read-only without a go-word.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
@@ -2203,6 +2243,9 @@ python scripts/selfcheck_flows.py      # behavioural assertions; also runs IN th
                                        #   docker compose exec chatbot python /app/scripts/selfcheck_flows.py
                                        # Note the `/.` — see "the second copy" below.
                                        # Verifies BEHAVIOUR, not grep counts — see the note below.
+                                       # The offline suites import scripts/no_network.py first: no
+                                       #   credentials, no sockets but loopback, no psycopg, and they
+                                       #   fail if anything tried. selfcheck_golive asserts each has it.
 python scripts/selfcheck_golive.py     # the 2026-10-23 replays: staff message + client
                                        #   "Okay" -> silent, quoted staff message -> silent,
                                        #   internal number, picked-up ticket, stale intake +
@@ -2456,6 +2499,27 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **An offline suite can no longer reach production (`scripts/no_network.py`).** Found while
+  fault-testing the call work: one case had run outside its fake database and made a real, failed read, so the suites
+  were measured. `smoke_nodes.py` was reading production (15 reads when allowed: `cb_tickets`, `wp_chat_messages`,
+  `cb_handovers`), and `selfcheck_golive.py` tried the model 8 times; neither attempted a write in the current code. But
+  **`CB-2026-0160` is a test row on production**: at 18:48 IST, three minutes before `7b20d23`, a draft of the
+  emergency-override case raised a high-priority assault ticket and a handover on conversation 77, because that fixture
+  id exists there. **This corrects the complaint-flow entry below**, which says nothing was written; that check came
+  before this row. See section 9.56. The suites now hold no credentials, refuse sockets and psycopg, and fail if anything
+  tried. Live tools (`selfcheck_kb_prep` without `--offline`, `e2e_services.py`, `seed_*`, `eval_suggest.py`) still reach
+  what `.env` names, by design.
+
+- **2026-11-04** - **What was said on a phone call carries into WhatsApp, behind `CALL_CONTEXT_ENABLED`, off;
+  migration written, NOT APPLIED.** See section 5 and section 6 for the rules and the data. A job every 5 minutes, and a
+  10-second catch-up before a turn, read `call_details`; `cb_call_context` holds the result. Off, the prompt, the
+  state and the webhook's reads are unchanged, and that is asserted. `selfcheck_golive.py` gains the 14 cases plus
+  guardrails. Real-model replays on fake transcripts, read-only, and the reads run against production. **Not run for
+  real:** writes to `cb_call_context` through PostgREST (no table anywhere); the migration and rollback ran on PGlite.
+  What needs a decision is in section 9.55. Reset clears a conversation's call context in both `reset_conversation.py`
+  and reset-ui, so the next push redeploys reset-ui. Found on the way: `webhook.py` had a line of dots in place of a
+  blank line in the working tree, not committed, removed.
 
 - **2026-11-04** - **After the suicide template, only a plain "I'm safe" gets FOLLOW_SAFE.** Corrects the
   entry below: the template ends on "Is there someone safe near you?", so a bare "no" could mean she is

@@ -19,6 +19,8 @@ from decimal import Decimal
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import no_network  # noqa: E402,F401 - first: this suite cannot reach production
 os.environ.setdefault("APP_ENV_FILE", ".env.test")
 os.chdir(REPO)
 from app.services import rag  # noqa: E402
@@ -91,7 +93,7 @@ def main():
     for i in diffs[:5]:
         print(f"  MISMATCH case {i}: python {py[i]} ts {ts[i]}\n    {json.dumps(cases[i])[:600]}")
     print("PARITY:", "EXACT" if not diffs else f"{len(diffs)} MISMATCHES")
-    sys.exit(1 if diffs else 0)
+    sys.exit(no_network.exit_code(1 if diffs else 0))
 
 
 if __name__ == "__main__":

@@ -44,6 +44,9 @@ from unittest.mock import AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+if "--offline" in sys.argv:
+    import no_network  # noqa: E402,F401 - first: --offline cannot reach production
 
 from app import readonly  # noqa: E402
 from app.services import kb_rules  # noqa: E402

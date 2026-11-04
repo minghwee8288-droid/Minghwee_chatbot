@@ -49,6 +49,8 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import no_network  # noqa: E402,F401 - first: this suite cannot reach production
 
 # --- no network ------------------------------------------------------------
 # Loopback stays open: asyncio on Windows builds its self-pipe with a local
@@ -587,4 +589,4 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    sys.exit(no_network.exit_code(asyncio.run(main())))

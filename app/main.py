@@ -75,9 +75,18 @@ async def lifespan(_app: FastAPI):
 
         recovery_task = asyncio.create_task(recovery.run(datetime.now(timezone.utc)))
 
+    # What was said on phone calls (app/services/call_context.py). Off by default.
+    call_task = None
+    if settings.call_context_enabled:
+        from app.services import call_context
+
+        call_task = asyncio.create_task(call_context.run_forever())
+
     yield
 
     logger.info("Shutting down")
+    if call_task is not None:
+        call_task.cancel()
     if recovery_task is not None and not recovery_task.done():
         recovery_task.cancel()
     await debouncer.shutdown()

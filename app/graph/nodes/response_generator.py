@@ -41,6 +41,7 @@ from app.graph.helper_rights import (
     rights_already_sent,
 )
 from app.graph.llm import complete
+from app.services import call_context
 from app.services import kb_rules
 from app.graph.prompts.system import IDENTITY, build_system_prompt, known_helpers_line
 from app.graph.prompts.templates import (
@@ -97,6 +98,31 @@ PROMPT_FOR_QUESTION = "Sure, go ahead. What would you like to know?"
 # counts, no "your last enquiry" (`RETURNING_NOTE`'s rule) - because a greeting
 # is not the place to prove we remember them.
 GREETING_BACK = "Hi{name}, good to hear from you. How can I help you today?"
+
+
+async def call_follow_up_greeting(state: ConversationState) -> str:
+    """A greeting on a thread with a topic parked, when our team has phoned them
+    since: the model carries on from the call, and on any doubt the plain greeting."""
+    fallback = greeting_back(state.get("record_name"))
+    try:
+        raw = await complete(
+            build_system_prompt(state),
+            f"Client's message:\n{state.get('incoming_text') or ''}",
+            temperature=0.3,
+            max_tokens=120,
+        )
+    except Exception:  # noqa: BLE001 - never leave the client without an answer
+        logger.exception("Call follow-up failed on conversation %s", state.get("conversation_id"))
+        return fallback
+    reply = strip_handover_talk(raw or "")
+    if (
+        not reply
+        or is_degenerate(reply)
+        or leaks_internal_reasoning(reply)
+        or ungrounded_figures(reply, IDENTITY, call_context.client_figures_text(state))
+    ):
+        return fallback
+    return clamp_reply(reply, 2)
 
 
 def greeting_back(record_name: str | None) -> str:
@@ -341,6 +367,7 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
         intent == "case_enquiry"
         and greeting_only(incoming_text)
         and claire_has_spoken(state.get("history_text") or "")
+        and not call_context.follow_up_due(state)
     ):
         return {"reply": greeting_back(state.get("record_name")), "needs_handover": False}
 
@@ -579,7 +606,10 @@ async def response_generator(state: ConversationState) -> dict[str, Any]:
     # 6072 in "MOM Licence 12C6072" as an invented figure and replaced a correct
     # answer to "what services do you provide" with a handover.
     context = state.get("rag_context", "")
-    invented = ungrounded_figures(reply, context, IDENTITY, state.get("incoming_text", ""))
+    invented = ungrounded_figures(
+        reply, context, IDENTITY, state.get("incoming_text", ""),
+        call_context.client_figures_text(state),
+    )
     if invented:
         logger.warning(
             "Conversation %s: reply quoted ungrounded figure(s) %s — replaced with a handover",

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.graph.guards import claire_has_spoken, greeting_only
+from app.services import call_context
 from app.graph.prompts.style import STYLE_BLOCK
 from app.services.ticket import service_types_label
 
@@ -531,6 +532,15 @@ def build_system_prompt(
             "they have just asked. Do not continue or repeat anything our team "
             "said unless the client asks about it."
         )
+    elif greeting_only(state.get("incoming_text") or "") and call_context.follow_up_due(state):
+        # Our team has just spoken to them, so this greeting has a next step to
+        # carry on from (app/services/call_context.py).
+        stage = (
+            "The client has greeted you, and our team has spoken to them by phone since "
+            "you last wrote. Greet them back, using their name if our records give you "
+            "one, then carry on from the call as the section below says, in one sentence. "
+            "Two sentences at most."
+        )
     elif greeting_only(state.get("incoming_text") or ""):
         # THE CLIENT HAS GREETED US AND ASKED NOTHING, and this is a thread with
         # a past. Reported 2026-09-22: a client whose last exchange with us was
@@ -580,6 +590,10 @@ def build_system_prompt(
         "--- Where you are in the conversation ---\n" + stage,
         "--- Who you are talking to ---\n" + _contact_block(state),
     ]
+
+    call_block = call_context.prompt_block(state)
+    if call_block:
+        sections.append(call_block)
 
     case_block = _case_block(state.get("case_summary"))
     if case_block:

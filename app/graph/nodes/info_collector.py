@@ -50,6 +50,7 @@ from app.graph.guards import (
 from app import timing
 from app.graph.llm import complete, complete_json
 from app.config import settings
+from app.services import call_context
 from app.services import kb_rules
 from app.graph.nodes.intent_classifier import _WANTS_SERVICE, _named_service, asks_what_we_meant
 from app.graph.prompts.system import build_system_prompt
@@ -4658,6 +4659,30 @@ def candidate_name_note(name: str) -> str:
     )
 
 
+def _known_from_calls(state: ConversationState, service_type: str | None) -> dict[str, str]:
+    """Facts from a phone call this service may use.
+
+    A client-level fact goes anywhere; a fact about one request only into that
+    request, so one helper's details never become another's (the same reason
+    nationality_carries exists). A helper's own name is not an employer's.
+    """
+    known: dict[str, str] = {}
+    for key, fact in call_context.facts_by_key(state.get("call_context")).items():
+        service, value = fact.get("service"), str(fact.get("value") or "").strip()
+        same_request = service in (None, service_type) or {service, service_type} <= _HIRING_SIBLINGS
+        if key == "full_name" and fact.get("customer_role") == "helper" and not same_request:
+            continue
+        keys = {key} | call_context.aliases_of(key)
+        if keys & {"nationality", "preferred_nationality", "helper_nationality"}:
+            if not same_request and not nationality_carries(service, service_type):
+                continue
+        elif key not in _PORTABLE_ACROSS_SERVICES and not same_request:
+            continue
+        for name in keys:
+            known.setdefault(name, value)
+    return known
+
+
 def nationality_carries(old_service: str | None, new_service: str | None) -> bool:
     """Whether the `nationality` collected under old_service still holds under
     new_service. One rule, read by the collector's switch reset AND by
@@ -4896,6 +4921,11 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         for key, value in _known_fields(state, service_type).items()
         if key in allowed_keys and not str(previous.get(key) or "").strip()
     }
+    # What they told our team on a phone call is not asked for again.
+    if settings.call_context_enabled:
+        for key, value in _known_from_calls(state, service_type).items():
+            if key in allowed_keys and not str(previous.get(key) or "").strip():
+                known.setdefault(key, value)
     # The client has just confirmed a helper we offered: her name, and what we
     # hold about her, go in - the name OVER the extractor's value (which may be
     # "yes"), the rest UNDER the client's own words like any other known fact.
@@ -4957,6 +4987,13 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         )
 
     extracted = {**known, **extracted}
+    # A value a call replaced is still in the chat history, and the extractor would
+    # read it straight back. Only this message can change it now.
+    if settings.call_context_enabled:
+        for key, value in call_context.held_from_calls(state).items():
+            said = str(extracted.get(key) or "").lower()
+            if said and said != str(value).lower() and said not in (state.get("incoming_text") or "").lower():
+                extracted = {**extracted, key: value}
     collected = {**previous, **extracted}
 
     # ...and an employer who said which kind of transfer they meant is not

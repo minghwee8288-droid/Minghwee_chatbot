@@ -180,6 +180,18 @@ async def main() -> None:
     # old thread's checkpoint is abandoned either way — always clear it.
     _wipe_checkpoints(old_thread_id)
 
+    # What a phone call told the bot goes too. The row stays, marked and emptied,
+    # or the job would read the same call straight back. The table may not be
+    # applied yet.
+    try:
+        await db.update(
+            "cb_call_context",
+            {"match_status": "cleared", "analysis": None, "speakers": None, "mentioned_at": None},
+            conversation_id=cid,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"  cb_call_context not cleared ({type(exc).__name__}) - fine if it is not applied")
+
     if wipe_lead:
         await _wipe_candidate_lead(phone)
 

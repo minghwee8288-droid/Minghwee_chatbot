@@ -44,6 +44,8 @@ TS_RESET = ROOT / "reset-ui" / "lib" / "reset.ts"
 TS_PHONE = ROOT / "reset-ui" / "lib" / "phone.ts"
 
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import no_network  # noqa: E402,F401 - first: this suite cannot reach production
 
 from app.utils import digits_only, normalize_phone, phone_variants  # noqa: E402
 
@@ -93,6 +95,12 @@ def main() -> int:
             f"the {name} copes with the table not being applied",
             "to_regclass('public.cb_replaced_threads')" in source,
         )
+
+    print("\nWhat a phone call told the bot goes with the chat")
+    check("the script empties cb_call_context, marked, by conversation",
+          '"cb_call_context"' in py and '"match_status": "cleared"' in py)
+    check("the UI empties cb_call_context, marked, by conversation",
+          "from('cb_call_context')" in ts and "match_status: 'cleared'" in ts)
 
     print("\nConversation columns blanked")
     py_update = re.search(r"await conversation_service\.update\((.*?)\n    \)", py, re.S)
@@ -204,4 +212,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(no_network.exit_code(main()))

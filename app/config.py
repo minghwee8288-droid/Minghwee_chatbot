@@ -310,6 +310,19 @@ class Settings(BaseSettings):
     # applied first. Records only: nothing deletes a checkpoint.
     record_replaced_threads: bool = False
 
+    # What was said on a phone call, carried into WhatsApp
+    # (app/services/call_context.py). Needs scripts/sql/cb_call_context_001.sql
+    # applied first. False = the bot behaves as if no call ever happened.
+    call_context_enabled: bool = False
+    call_context_poll_minutes: int = 5
+    # A call with no transcript is tried again until this old, then given up on.
+    call_context_max_wait_hours: float = 24
+    # How far back a run looks, so switching on does not read every old call.
+    call_context_lookback_hours: float = 48
+    # Our own lines that appear as call numbers, comma-separated, any format. Added
+    # to WHAPI_SENDER_PHONE, INTERNAL_NUMBERS and every agent's number seen on a call.
+    call_context_agency_numbers: str = ""
+
     # Helper complaint severity and triage (Thomas's guidelines, 2 Nov 2026;
     # app/graph/complaint_triage.py). False = the single crisis reply as before.
     complaint_triage_enabled: bool = True

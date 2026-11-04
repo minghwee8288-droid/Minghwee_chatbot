@@ -277,6 +277,12 @@ export async function reset(request: ResetRequest): Promise<ResetResult> {
     // A fresh thread id is minted below regardless of keepHistory, so the old
     // thread's checkpoint is abandoned either way -- always clear it.
     steps.push(await wipeCheckpoints(oldThreadId));
+
+    // What a phone call told the bot goes too. The row stays, marked and emptied,
+    // or the job would read the same call straight back. The table may not be
+    // applied yet, so a failure here does not fail the reset.
+    const forgotten = { match_status: 'cleared', analysis: null, speakers: null, mentioned_at: null };
+    await supabase().from('cb_call_context').update(forgotten).eq('conversation_id', cid);
   }
 
   // --- Every lead on this number -------------------------------------------

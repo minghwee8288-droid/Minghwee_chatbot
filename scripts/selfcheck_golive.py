@@ -26,6 +26,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import no_network  # noqa: E402,F401 - first: this suite cannot reach production
 
 from app.api import webhook as _wh  # noqa: E402
 from app.graph import graph as _graph  # noqa: E402
@@ -34,6 +36,7 @@ from app.graph.helper_rights import HELPER_RIGHTS_MESSAGE  # noqa: E402
 from app.graph.nodes import intent_classifier as _ic_mod  # noqa: E402
 from app.graph.state import RESET_KEY  # noqa: E402
 from app.services import conversation as _conv  # noqa: E402
+from app.services import call_context as _call_context  # noqa: E402
 from app.services import internal_contacts  # noqa: E402
 from app.services import message as _msg  # noqa: E402
 from app.services import ticket as ticket_service  # noqa: E402
@@ -1772,6 +1775,751 @@ async def scenario_complaint_webhook():
           r["reply"] == _ct_t.p1_emergency("`CB-2026-0900`"))
 
 
+def _fake_number(n: int) -> str:
+    """A number nobody holds, made here so none is ever written in this file."""
+    return "659000" + str(5000 + n)
+
+
+class CallWorld:
+    """call_details, cb_call_context and the model, in memory. Everything else in
+    app/services/call_context.py is the real code."""
+
+    def __init__(self, conversations: dict[str, list[dict]] | None = None):
+        self.calls: dict[str, dict] = {}
+        self.transcripts: dict[str, str] = {}
+        self.rows: dict[str, dict] = {}
+        self.conversations = conversations or {}
+        self.links: dict[str, str] = {}
+        self.topics: dict[str, dict] = {}
+        self.answer: dict = {}
+        self.model_calls = 0
+        self.seen_by_model: list[str] = []
+        self.notes: list[tuple[str, str, str | None]] = []
+        self.created: list[dict] = []
+        self.claim_fails = False
+
+    def add(self, call_id, frm, to, transcript, *, minutes_ago=5, status="completed"):
+        when = (NOW - timedelta(minutes=minutes_ago)).isoformat()
+        self.calls[call_id] = {"call_id": call_id, "call_from": frm, "call_to": to, "status": status,
+                               "start_time": when, "end_time": when, "created_at": when}
+        self.transcripts[call_id] = transcript
+
+    async def _read_calls(self, number=None):
+        rows = list(self.calls.values())
+        if number:
+            rows = [c for c in rows if number[-8:] in (c["call_from"] + c["call_to"])]
+        return [dict(c) for c in rows]
+
+    async def _read_transcript(self, call_id):
+        return self.transcripts.get(call_id, "")
+
+    async def _read_existing(self, ids):
+        return {i: dict(self.rows[i]) for i in ids if i in self.rows}
+
+    async def _read_conversations(self, number):
+        return self.conversations.get(number, [])
+
+    async def _ticket_number_for(self, call_id):
+        return self.links.get(call_id)
+
+    async def _record(self, call, status, **columns):
+        self.rows.setdefault(str(call["call_id"]), {
+            "call_id": str(call["call_id"]), "match_status": status, "attempts": 1,
+            "called_at": call["start_time"], "processed_at": NOW.isoformat(), **columns})
+
+    async def _claim(self, call, existing, conversation_id, matched_by):
+        if self.claim_fails:
+            raise RuntimeError("relation does not exist")
+        call_id = str(call["call_id"])
+        if existing is None:
+            if call_id in self.rows:
+                return False
+            self.rows[call_id] = {"call_id": call_id, "match_status": "processing", "attempts": 1,
+                                  "conversation_id": conversation_id, "matched_by": matched_by,
+                                  "called_at": call["start_time"], "claimed_at": NOW.isoformat()}
+            return True
+        self.rows[call_id].update(attempts=int(existing["attempts"]) + 1, error=None)
+        return True
+
+    async def _finish(self, call_id, **columns):
+        self.rows[call_id].update(columns)
+
+    async def complete_json(self, system, user, **kw):
+        self.model_calls += 1
+        self.seen_by_model.append(user)
+        return dict(self.answer)
+
+    async def add_follow_up(self, ticket_id, message, *, source=None):
+        self.notes.append((ticket_id, message, source))
+
+    async def open_topics(self, conversation_id):
+        return self.topics
+
+    async def create_ticket(self, **kw):
+        self.created.append(kw)
+        return {"id": "c1", "ticket_number": "CB-2026-0777"}
+
+    def patches(self):
+        cc = _call_context
+        names = ("_read_calls", "_read_transcript", "_read_existing", "_read_conversations",
+                 "_ticket_number_for", "_record", "_claim", "_finish", "complete_json")
+        return [
+            *[patch.object(cc, name, new=getattr(self, name)) for name in names],
+            patch.object(cc, "_staff_numbers", new=AsyncMock(return_value=set())),
+            patch.object(internal_contacts, "_table_numbers", new=AsyncMock(return_value=set())),
+            patch.object(settings, "internal_numbers", ""),
+            patch.object(settings, "bot_allowed_numbers", ""),
+            patch.object(settings, "call_context_enabled", True),
+            patch.object(ticket_service, "add_follow_up", new=self.add_follow_up),
+            patch.object(ticket_service, "open_topics_for_conversation", new=self.open_topics),
+            patch.object(ticket_service, "create", new=self.create_ticket),
+            patch.object(_ct_cc, "RETRY_PAUSE_SECONDS", 0),
+        ]
+
+    async def run(self, number=None):
+        from contextlib import ExitStack
+
+        with ExitStack() as stack:
+            for p in self.patches():
+                stack.enter_context(p)
+            return await _call_context.process_pending(number)
+
+    def turn_calls(self, conversation_id):
+        rows = [r for r in self.rows.values()
+                if r.get("conversation_id") == conversation_id and r.get("match_status") == "matched"]
+        return sorted([dict(r) for r in rows], key=lambda r: r["called_at"])
+
+
+def _item(text, quote, **more):
+    return {"text": text, "quote": quote, **more}
+
+
+_EMPLOYER_CALL = (
+    "Speaker 1: Hello, this is Ming Hwee, how can our team help?\n"
+    "Speaker 2: I want to hire a Filipino helper, how much is it?\n"
+    "Speaker 1: I will send you the fee breakdown on WhatsApp after this call.\n"
+    "Speaker 2: Okay thank you, my budget is around 700 a month.\n"
+)
+_EMPLOYER_ANSWER = {
+    "speakers": {"Speaker 1": "agent", "Speaker 2": "customer"},
+    "customer_role": "employer", "service": "new_hiring",
+    "summary": "The client wants to hire a Filipino helper and asked about the cost. Our team will send the fee breakdown.",
+    "issues": [_item("Wants a Filipino helper", "hire a Filipino helper")],
+    "facts": [{"key": "preferred_nationality", "value": "Filipino", "quote": "a Filipino helper", "explicit": True},
+              {"key": "budget", "value": "$700", "quote": "my budget is around 700", "explicit": True}],
+    "commitments": [_item("Send the fee breakdown on WhatsApp", "send you the fee breakdown")],
+    "decisions": [],
+    "follow_ups": [_item("Send the fee breakdown", "send you the fee breakdown", owner="agent")],
+    "unresolved": [], "language": "English", "confidence": 0.9,
+}
+
+
+def _collector_run(state, extraction=None, reply="May I know your name?"):
+    ico = importlib.import_module("app.graph.nodes.info_collector")
+    retriever = importlib.import_module("app.graph.nodes.rag_retriever")
+    prompts: list[str] = []
+
+    async def model(system_prompt, *a, **kw):
+        prompts.append(system_prompt)
+        return reply
+
+    async def run():
+        with patch.object(ico, "complete", new=model), \
+                patch.object(ico, "complete_json", new=AsyncMock(return_value=dict(extraction or {}))), \
+                patch.object(retriever, "briefing_records", new=AsyncMock(return_value={})), \
+                patch.object(ico, "_open_lead_early", new=AsyncMock(return_value={})), \
+                patch.object(settings, "call_context_enabled", True):
+            return await ico.info_collector(state), prompts
+    return run()
+
+
+async def scenario_call_context() -> None:
+    """CALL_CONTEXT_ENABLED: what was said on a phone call carries into WhatsApp.
+    Fake transcripts and numbers made at runtime; the model and the tables stubbed."""
+    cc = _call_context
+    customer, other = _fake_number(1), _fake_number(2)
+    local = customer[2:]
+    conv = {"id": 501, "customer_number": customer, "contact_type": "employer", "customer_name": ""}
+
+    # 1. Employer: our agent agreed to send the fee breakdown; the employer says "hi".
+    w = CallWorld({customer: [conv]})
+    w.answer = _EMPLOYER_ANSWER
+    w.add("call-1", f"{local} (6534)", "1012", _EMPLOYER_CALL)
+    counts = await w.run()
+    calls = w.turn_calls(501)
+    check("call 1: the call is matched to its conversation and analysed, matched by phone",
+          counts.get("matched") == 1 and w.rows["call-1"]["matched_by"] == "phone"
+          and w.rows["call-1"]["conversation_id"] == 501 and calls[0]["analysis"]["source"] == "call")
+    state = {"conversation_id": 501, "phone": "+" + customer, "contact_type": "employer",
+             "matched_employer_id": "e1", "intent": "greeting", "incoming_text": "hi",
+             "history_text": "Client: hello\nYou: Hi, I'm Claire, Ming Hwee's AI assistant.",
+             "call_context": calls}
+    prompts: list[str] = []
+
+    async def model(system_prompt, *a, **kw):
+        prompts.append(system_prompt)
+        return "Hi, following up on your call with our team, the fee breakdown is on its way."
+
+    with patch.object(settings, "call_context_enabled", True), patch.object(_rg, "complete", new=model):
+        out = await _rg.response_generator(state)
+    check("call 1: 'hi' goes to the model with the call, told to follow up on it, and a follow-up goes out",
+          prompts and "--- Recent call with our team ---" in prompts[0]
+          and "Send the fee breakdown" in prompts[0] and "Following up on your call" in prompts[0]
+          and "carry on from the call" in prompts[0] and "following up on your call" in out["reply"])
+    # A case_enquiry greeting on a thread with a parked topic used to be canned.
+    with patch.object(settings, "call_context_enabled", True), patch.object(_rg, "complete", new=model):
+        out = await _rg.response_generator({**state, "intent": "case_enquiry"})
+    check("call 1: the canned greeting does not take the turn while a follow-up is due",
+          "following up" in out["reply"])
+    btr = importlib.import_module("app.graph.nodes.blocked_topic_responder")
+    with patch.object(settings, "call_context_enabled", True), patch.object(_rg, "complete", new=model), \
+            patch.object(btr, "add_follow_up", new=AsyncMock(), create=True):
+        parked = await btr.blocked_topic_responder({
+            **state, "service_type": "new_hiring",
+            "blocked_topics": {"new_hiring": {"id": "t9", "ticket_number": "CB-2026-0900",
+                                              "service_type": ["new_hiring"], "captured_info": {}}}})
+    check("call 1: ...and on a parked topic a greeting follows up too", "following up" in parked.get("reply", ""))
+    result, seen = await _collector_run({
+        "conversation_id": 501, "phone": "+" + customer, "contact_type": "employer",
+        "matched_employer_id": "e1", "service_type": "new_hiring", "intent": "new_hiring",
+        "collected_service": "new_hiring", "incoming_text": "ok i want to go ahead with hiring",
+        "history_text": state["history_text"], "call_context": calls, "record_name": "Tan"})
+    collected = result.get("collected_info") or {}
+    check("call 1: the nationality and budget from the call are filled, so neither is asked",
+          collected.get("preferred_nationality") == "Filipino" and collected.get("budget") == "$700"
+          and "preferred_nationality" not in (result.get("missing_field_keys") or [])
+          and "budget" not in (result.get("missing_field_keys") or []))
+    done: list[dict] = []
+
+    async def finish(call_id, **columns):
+        done.append(columns)
+        w.rows[call_id].update(columns)
+
+    with patch.object(cc, "_finish", new=finish), patch.object(settings, "call_context_enabled", True):
+        await cc.mark_mentioned(calls, "Hi, following up on your call with our team.")
+        later = w.turn_calls(501)
+        check("call 1: said once per call - after it is mentioned, it is not due again",
+              cc.follow_up_due({"call_context": calls}) and done and not cc.follow_up_due({"call_context": later})
+              and "Do not say you are following up" in cc.prompt_block({"call_context": later}))
+
+    # 2. Helper's home leave, dates given on the call.
+    w2 = CallWorld({customer: [dict(conv, contact_type="candidate")]})
+    w2.answer = {
+        "speakers": {"Speaker 1": "customer", "Speaker 2": "agent"},
+        "customer_role": "helper", "service": "home_leave",
+        "summary": "The helper wants home leave in December.",
+        "facts": [{"key": "leave_dates", "value": "12 to 30 December", "quote": "from 12 to 30 December", "explicit": True}],
+        "commitments": [], "follow_ups": [], "language": "English", "confidence": 0.85,
+    }
+    w2.add("call-2", "1012", local, "Speaker 1: I want to go home from 12 to 30 December.\nSpeaker 2: Noted, our team will prepare it.\n")
+    await w2.run()
+    result, _ = await _collector_run({
+        "conversation_id": 501, "phone": "+" + customer, "contact_type": "candidate",
+        "service_type": "home_leave", "intent": "home_leave", "collected_service": "home_leave",
+        "incoming_text": "i want home leave", "history_text": "Client: hi\nYou: Hello",
+        "call_context": w2.turn_calls(501)})
+    check("call 2: helper's home-leave dates from the call are not asked again",
+          (result.get("collected_info") or {}).get("leave_dates") == "12 to 30 December"
+          and "leave_dates" not in (result.get("missing_field_keys") or []))
+    result_other, _ = await _collector_run({
+        "conversation_id": 501, "phone": "+" + customer, "contact_type": "employer",
+        "service_type": "passport_renewal", "intent": "passport_renewal",
+        "collected_service": "passport_renewal", "incoming_text": "renew my helper's passport",
+        "history_text": "Client: hi\nYou: Hello", "call_context": w2.turn_calls(501)})
+    check("call 2: ...and a fact about one request does not leak into another",
+          "leave_dates" not in (result_other.get("collected_info") or {}))
+
+    # 3. Speaker labels swapped: Speaker 1 is the agent, whatever the numbers say.
+    swapped = cc.validate_analysis({
+        **_EMPLOYER_ANSWER,
+        "facts": [{"key": "preferred_nationality", "value": "Filipino", "quote": "a Filipino helper", "explicit": True},
+                  {"key": "home_type", "value": "condo", "quote": "this is Ming Hwee", "explicit": True}],
+    }, _EMPLOYER_CALL)
+    check("call 3: roles come from the model reading the words; a fact quoted from the agent's own "
+          "line is dropped, the customer's kept",
+          [f["key"] for f in swapped["facts"]] == ["preferred_nationality"]
+          and swapped["speakers"]["Speaker 1"] == "agent")
+    check("call 3: an item with no quote in the transcript is dropped; the prompt says labels are not reliable",
+          not cc.validate_analysis({**_EMPLOYER_ANSWER, "commitments": [_item("Refund you", "we will refund you")]},
+                                   _EMPLOYER_CALL)["commitments"]
+          and "labels are not reliable" in cc.ANALYSIS_SYSTEM)
+
+    # 4. Mixed English/Tagalog.
+    mixed = ("Speaker 1: Good morning, Ming Hwee po.\n"
+             "Speaker 2: Gusto ko po ng home leave sa Disyembre, kailangan ko umuwi.\n"
+             "Speaker 1: Okay po, our team will prepare it.\n")
+    w4 = CallWorld({customer: [conv]})
+    w4.answer = {"speakers": {"Speaker 1": "agent", "Speaker 2": "customer"}, "customer_role": "helper",
+                 "service": "home_leave", "summary": "The helper asked for home leave in December.",
+                 "facts": [{"key": "leave_dates", "value": "December", "quote": "home leave sa Disyembre", "explicit": True}],
+                 "language": "Tagalog", "confidence": 0.8}
+    w4.add("call-4", "1012", local, mixed)
+    await w4.run()
+    a4 = w4.rows["call-4"]["analysis"]
+    with patch.object(settings, "call_context_enabled", True):
+        block = cc.prompt_block({"call_context": w4.turn_calls(501)})
+    check("call 4: mixed English/Tagalog: the fact is extracted from her words in English, and the prompt "
+          "holds no instruction to answer in English",
+          a4["facts"][0]["value"] == "December" and a4["language"] == "Tagalog"
+          and "December" in block and "in English" not in block
+          and "where it mixes languages, use Tagalog" in block)
+    with patch.object(settings, "call_context_enabled", True):
+        english_block = cc.prompt_block({"call_context": [
+            {**row, "analysis": {**row["analysis"], "language": "English"}} for row in w4.turn_calls(501)]})
+    check("call 4: a call in English adds no language line", "On the call the client spoke" not in english_block
+          and "December" in english_block)
+
+    # 5. One number on two conversations.
+    w5 = CallWorld({customer: [conv, dict(conv, id=502)]})
+    w5.answer = _EMPLOYER_ANSWER
+    w5.add("call-5", local, "1012", _EMPLOYER_CALL)
+    await w5.run()
+    check("call 5: a number on two conversations is unmatched with the reason; no model, nothing merged",
+          w5.rows["call-5"]["match_status"] == "unmatched"
+          and w5.rows["call-5"]["match_reason"] == "several_conversations"
+          and w5.model_calls == 0 and not w5.turn_calls(501) and not w5.turn_calls(502))
+    w5b = CallWorld({})
+    w5b.add("call-5b", local, "1012", _EMPLOYER_CALL)
+    w5b.add("call-5c", "Anonymous", "1012", _EMPLOYER_CALL)
+    w5b.add("call-5d", local, other, _EMPLOYER_CALL)
+    await w5b.run()
+    check("call 5: no conversation, Anonymous and two outside numbers are each unmatched, with their reason",
+          [w5b.rows[i]["match_reason"] for i in ("call-5b", "call-5c", "call-5d")]
+          == ["no_conversation", "no_customer_number", "both_sides_external"] and w5b.model_calls == 0)
+    w5e = CallWorld({customer: [conv]})
+    w5e.answer = _EMPLOYER_ANSWER
+    w5e.links["call-5e"] = other
+    w5e.add("call-5e", local, "1012", _EMPLOYER_CALL)
+    w5e.links["call-5f"] = customer
+    w5e.add("call-5f", local, "1012", _EMPLOYER_CALL)
+    await w5e.run()
+    check("call 5: the portal's ticket link confirms the match, and one naming another number stops it",
+          w5e.rows["call-5e"]["match_reason"] == "call_ticket_other_number"
+          and w5e.rows["call-5f"]["matched_by"] == "phone+call_ticket")
+
+    # 6. Internal to internal.
+    w6 = CallWorld({customer: [conv]})
+    w6.add("call-6", "1012", "1013", _EMPLOYER_CALL)
+    await w6.run()
+    with patch.object(cc, "_staff_numbers", new=AsyncMock(return_value={customer})):
+        side = cc.customer_side(local, "1012", {customer})
+    check("call 6: an internal call is ignored with no model call; a staff number seen as an agent is not a client",
+          w6.rows["call-6"]["match_status"] == "internal" and w6.model_calls == 0 and side == (None, "internal"))
+
+    # 7. The same call twice, and calls in order.
+    w7 = CallWorld({customer: [conv]})
+    w7.answer = _EMPLOYER_ANSWER
+    w7.add("call-7b", local, "1012", _EMPLOYER_CALL, minutes_ago=5)
+    w7.add("call-7a", local, "1012", _EMPLOYER_CALL, minutes_ago=50)
+    order: list[str] = []
+    real = cc.process_call
+
+    async def spy(call, existing=None):
+        order.append(call["call_id"])
+        return await real(call, existing)
+
+    with patch.object(cc, "process_call", new=spy):
+        await w7.run()
+    await w7.run()
+    check("call 7: each call_id is processed once, and in call order",
+          w7.model_calls == 2 and order == ["call-7a", "call-7b"])
+    from contextlib import ExitStack as _Stack7
+    before7 = w7.model_calls
+    with _Stack7() as stack:
+        for p in w7.patches():
+            stack.enter_context(p)
+        stack.enter_context(patch.object(cc, "_in_flight", {"call-7b"}))
+        w7.rows.pop("call-7b", None)
+        busy = await real(w7.calls["call-7b"], None)
+    check("call 7: the job and the catch-up cannot take one call together",
+          busy == "busy" and w7.model_calls == before7)
+
+    # 8. The transcript arrives two hours after the row.
+    w8 = CallWorld({customer: [conv]})
+    w8.answer = _EMPLOYER_ANSWER
+    w8.add("call-8", local, "1012", "", minutes_ago=120)
+    first = await w8.run()
+    w8.transcripts["call-8"] = _EMPLOYER_CALL
+    second = await w8.run()
+    w8.add("call-8b", local, "1012", "", minutes_ago=25 * 60)
+    await w8.run()
+    check("call 8: no transcript yet is skipped with no row; it is picked up on a later run",
+          first.get("waiting") == 1 and second.get("matched") == 1 and w8.model_calls == 1)
+    check("call 8: given up after CALL_CONTEXT_MAX_WAIT_HOURS, and in-progress waits",
+          w8.rows["call-8b"]["match_status"] == "no_transcript"
+          and await _status_of_in_progress(w8) == "waiting")
+
+    # 9. A call fact against an older chat fact.
+    called = (NOW - timedelta(minutes=5)).isoformat()
+    newer_call = [{"call_id": "c9", "called_at": called, "analysis": {
+        "facts": [{"key": "budget", "value": "$700", "quote": "700", "explicit": True}]}}]
+    merged = cc.merge_facts({"budget": "$500"}, newer_call, [], NOW - timedelta(hours=3))
+    older = cc.merge_facts({"budget": "$500"}, newer_call, [], NOW)
+    check("call 9: a newer, explicit call wins, the older value is kept in history tagged source=call; "
+          "chat newer than the call keeps the chat",
+          merged["patch"] == {"budget": "$700"} and merged["history"][0]["older"] == "$500"
+          and merged["history"][0]["source"] == "call" and merged["history"][0]["applied"]
+          and older["patch"] == {} and not older["history"][0]["applied"])
+    check("call 9: not explicit does not overwrite, the same value is no duplicate, and a call is weighed once",
+          not cc.merge_facts({"budget": "$500"}, [{**newer_call[0], "analysis": {"facts": [
+              {"key": "budget", "value": "$700", "quote": "700", "explicit": False}]}}], [], None)["patch"]
+          and not cc.merge_facts({"budget": "$700"}, newer_call, [], None)["history"]
+          and not cc.merge_facts({"budget": "$500"}, newer_call, ["c9"], None)["ids"])
+    invoked: list[dict] = []
+
+    async def ainvoke(state, config=None):
+        invoked.append(state)
+        return {"reply": "ok"}
+
+    fake_graph = SimpleNamespace(
+        ainvoke=ainvoke,
+        aget_state=AsyncMock(return_value=SimpleNamespace(
+            values={"collected_info": {"budget": "$500"}, "service_type": "new_hiring"},
+            created_at=(NOW - timedelta(hours=3)).isoformat())))
+    notes: list[tuple] = []
+
+    async def note(ticket_id, message, *, source=None):
+        notes.append((ticket_id, message, source))
+
+    with patch.object(_graph, "_graph", fake_graph), patch.object(_graph, "STALE_INTAKE_RESET", False), \
+            patch.object(settings, "call_context_enabled", True), \
+            patch.object(ticket_service, "add_follow_up", new=note):
+        await _graph.run_turn("t", {
+            "incoming_text": "ok", "history_text": "", "call_context": newer_call,
+            "blocked_topics": {"new_hiring": {"id": "t9", "created_at": "2026-11-01"}}})
+    check("call 9: the turn takes the newer value and the agent gets the note on the ticket, not the client",
+          invoked[0]["collected_info"] == {"budget": "$700"} and invoked[0]["call_merged"] == ["c9"]
+          and notes and notes[0][0] == "t9" and notes[0][2] == "call" and "$500" in notes[0][1])
+    held, _ = await _collector_run({
+        "conversation_id": 501, "phone": "+" + customer, "contact_type": "employer",
+        "service_type": "new_hiring", "intent": "new_hiring", "collected_service": "new_hiring",
+        "collected_info": {"budget": "$700"}, "incoming_text": "a condo",
+        "history_text": "Client: my budget is $500\nYou: Noted",
+        "call_fact_history": merged["history"]}, extraction={"budget": "$500", "home_type": "condo"})
+    check("call 9: the old chat line cannot be extracted back over the call's value",
+          (held.get("collected_info") or {}).get("budget") == "$700")
+
+    # 10. "she hit me yesterday" on a call.
+    w10 = CallWorld({customer: [dict(conv, contact_type="candidate")]})
+    w10.answer = {"speakers": {"Speaker 1": "agent", "Speaker 2": "customer"}, "customer_role": "helper",
+                  "summary": "The helper says her employer hit her yesterday.",
+                  "issues": [_item("Hit by employer", "she hit me yesterday")],
+                  "facts": [], "language": "English", "confidence": 0.9}
+    w10.add("call-10", "1012", local, "Speaker 1: Ming Hwee, how can we help?\nSpeaker 2: My ma'am, she hit me yesterday.\n")
+    send = AsyncMock(side_effect=AssertionError("a message was sent"))
+    with patch.object(_ct, "_ask_model", new=AsyncMock(return_value=_h("P2", "physical"))), \
+            patch.object(_wh.message_service, "send_bot_reply", new=send):
+        await w10.run()
+    made = w10.created[0] if w10.created else {}
+    info = made.get("captured_info") or {}
+    check("call 10: a P2 complaint ticket, source=call, on the Complaints tab, and no message sent",
+          made.get("complaint_level") == "P2" and info.get("source") == "call"
+          and _complaints_tab({"service_type": [made.get("service_type")]})
+          and send.await_count == 0 and w10.rows["call-10"]["analysis"]["complaint_level"] == "P2")
+    triage = info.get("triage") or {}
+    check("call 10: nobody asked her anything, so no question is waiting for her next message to answer",
+          triage.get("pending") is None and triage.get("awaiting") is None and not triage.get("asked")
+          and triage.get("stage") == "open")
+    w10b = CallWorld({customer: [conv]})
+    w10b.answer = {**w10.answer, "customer_role": "employer"}
+    w10b.add("call-10b", "1012", local, "Speaker 1: Ming Hwee.\nSpeaker 2: My helper, she hit me yesterday with a pan.\n")
+    w10c = CallWorld({customer: [dict(conv, contact_type="candidate")]})
+    w10c.answer = w10.answer
+    w10c.topics = {ticket_service.HELPER_COMPLAINT: {
+        "id": "cx", "ticket_number": "CB-2026-0770",
+        "captured_info": {"complaint": {"level": "P3", "complaint_type": "verbal", "level_history": []},
+                          "triage": {"stage": "open", "pending": None}}}}
+    w10c.add("call-10c", "1012", local, "Speaker 1: Ming Hwee.\nSpeaker 2: My ma'am, she hit me yesterday.\n")
+    through = AsyncMock()
+    with patch.object(_ct, "_ask_model", new=AsyncMock(return_value=_h("P2", "physical"))), \
+            patch.object(_ct_cc, "write_through", new=through):
+        await w10b.run()
+        await w10c.run()
+    check("call 10: an employer's call raises no helper complaint; an open case is raised a level, not duplicated",
+          not w10b.created and not w10c.created and through.await_count == 1
+          and through.await_args.args[0]["level"] == "P2")
+    w10d = CallWorld({customer: [dict(conv, contact_type="candidate")]})
+    w10d.answer = w10.answer
+    w10d.add("call-10d", "1012", local, "Speaker 1: Ming Hwee.\nSpeaker 2: My ma'am, she hit me yesterday.\n")
+
+    async def no_ticket(**kw):
+        return None
+
+    with patch.object(_ct, "_ask_model", new=AsyncMock(return_value=_h("P2", "physical"))):
+        with patch.object(CallWorld, "create_ticket", new=lambda self, **kw: no_ticket(**kw)):
+            await w10d.run()
+    check("call 10: a complaint ticket that could not be raised is an error to retry, never a silent loss",
+          w10d.rows["call-10d"].get("error") and not w10d.rows["call-10d"].get("processed_at"))
+
+    # 11. Paused for a human: nothing changes.
+    world = World(status=_conv.HUMAN_ACTIVE, last_agent=NOW - timedelta(minutes=5))
+    with patch.object(settings, "call_context_enabled", True):
+        await inbound(world, message("hi", mid="cc-11"))
+    check("call 11: the chat is paused for a human, so the bot stays silent", world.queued == [])
+
+    # 12. Asked about the agent's promise.
+    graph_ran = AsyncMock(side_effect=AssertionError("the graph ran"))
+    ask = SimpleNamespace(ainvoke=graph_ran)
+    calls12 = w.turn_calls(501)
+    note12: list[tuple] = []
+
+    async def note2(ticket_id, message, *, source=None):
+        note12.append((ticket_id, message, source))
+
+    with patch.object(_graph, "_graph", ask), patch.object(_graph, "STALE_INTAKE_RESET", False), \
+            patch.object(settings, "call_context_enabled", True), \
+            patch.object(ticket_service, "add_follow_up", new=note2):
+        r12 = await _graph.run_turn("t", {
+            "incoming_text": "where is the fee breakdown you promised?", "history_text": "",
+            "call_context": calls12,
+            "blocked_topics": {"new_hiring": {"id": "t9", "created_at": "2026-11-01"}}})
+    check("call 12: asked about the promise: 'our team will follow up as agreed', fixed wording, no model, "
+          "no invented detail, and the agent is told",
+          r12["reply"] == cc.COMMITMENT_REPLY and "as agreed" in r12["reply"]
+          and not re.search(r"\d", r12["reply"]) and note12 and note12[0][2] == "call")
+    with patch.object(_graph, "_graph", ask), patch.object(_graph, "STALE_INTAKE_RESET", False), \
+            patch.object(settings, "call_context_enabled", True), \
+            patch.object(ticket_service, "add_follow_up", new=note2), \
+            patch.object(cc, "complete", new=AsyncMock(return_value="Mag-follow up po ang aming team.")):
+        said = (await _graph.run_turn("t", {
+            "incoming_text": "Nasaan na po yung fee breakdown na pinangako ninyo?", "history_text": "",
+            "call_context": calls12}))["reply"]
+    with patch.object(cc, "complete", new=AsyncMock(return_value="Darating sa 3 araw po.")):
+        figure = await cc.commitment_reply_for("Nasaan na po yung fee breakdown na pinangako ninyo?")
+    with patch.object(cc, "complete", new=AsyncMock(side_effect=RuntimeError("down"))):
+        failed = await cc.commitment_reply_for("Nasaan na po yung fee breakdown na pinangako ninyo?")
+    untranslated = AsyncMock(return_value="x")
+    with patch.object(cc, "complete", new=untranslated):
+        english = await cc.commitment_reply_for("where is the fee breakdown you promised?")
+    check("call 12: an English message costs no translation call",
+          english == cc.COMMITMENT_REPLY and untranslated.await_count == 0)
+    check("call 12: in Tagalog the same line is translated; a translation carrying a figure, or a failure, "
+          "falls back to the English",
+          said == "Mag-follow up po ang aming team." and figure == cc.COMMITMENT_REPLY
+          and failed == cc.COMMITMENT_REPLY)
+    graph_ok = SimpleNamespace(ainvoke=AsyncMock(return_value={"reply": "graph"}))
+    asked = []
+    with patch.object(_graph, "_graph", graph_ok), patch.object(_graph, "STALE_INTAKE_RESET", False), \
+            patch.object(settings, "call_context_enabled", True), \
+            patch.object(ticket_service, "add_follow_up", new=note2):
+        for text in ("what is the fee for a transfer?", "where is the fee breakdown, she hit me just now",
+                     "you said you will send it, i want to die"):
+            asked.append((await _graph.run_turn("t", {"incoming_text": text, "history_text": "",
+                                                       "call_context": calls12}))["reply"])
+    check("call 12: an unrelated question, and any safety report in the same message, still go to the graph",
+          graph_ok.ainvoke.await_count == 3 and cc.COMMITMENT_REPLY not in asked)
+    with patch.object(settings, "call_context_enabled", True):
+        rules = cc.prompt_block({"call_context": calls12})
+    check("call 12: the prompt forbids changing a commitment and says who to name",
+          "Never change, add to or contradict what our team agreed" in rules
+          and "our team will follow up as agreed" in rules and "Name nobody on our team" in rules)
+
+    # 13. Switched off: exactly as at 8d496a9.
+    check("call 13: CALL_CONTEXT_ENABLED defaults to false",
+          type(settings).model_fields["call_context_enabled"].default is False)
+    from app.graph.prompts.system import build_system_prompt
+
+    due13 = [{**calls12[0], "called_at": NOW.isoformat(), "mentioned_at": None}]
+    with patch.object(settings, "call_context_enabled", True):
+        would_be_due = cc.follow_up_due({"call_context": due13})
+    check("call 13: the call used below would be due with the switch on, so 'off' is what stops it", would_be_due)
+    with patch.object(settings, "call_context_enabled", False):
+        base = {"conversation_id": 1, "incoming_text": "hi", "history_text": "Client: a\nYou: b"}
+        off_prompts = (build_system_prompt(base), build_system_prompt({**base, "call_context": due13}))
+        due = cc.follow_up_due({"call_context": due13})
+        grounding = cc.client_figures_text({"call_context": due13})
+        carried = SimpleNamespace(ainvoke=AsyncMock(return_value={"reply": "graph"}),
+                                  aget_state=AsyncMock(side_effect=AssertionError("read")))
+        with patch.object(_graph, "_graph", carried), patch.object(_graph, "STALE_INTAKE_RESET", False):
+            out13b = await _graph.run_turn("t", {"incoming_text": "where is the fee breakdown you promised?",
+                                                  "history_text": "", "call_context": due13})
+    check("call 13: off: even a payload carrying a call gets no fixed reply and no merged facts",
+          out13b["reply"] != cc.COMMITMENT_REPLY and carried.ainvoke.await_count == 1
+          and carried.aget_state.await_count == 0)
+    with patch.object(settings, "call_context_enabled", False):
+        direct = AsyncMock(return_value={"reply": "graph"})
+        turned = SimpleNamespace(ainvoke=direct, aget_state=AsyncMock(side_effect=AssertionError("read")))
+        with patch.object(_graph, "_graph", turned), patch.object(_graph, "STALE_INTAKE_RESET", False):
+            out13 = await _graph.run_turn("t", {"incoming_text": "where is the fee breakdown you promised?",
+                                                 "history_text": ""})
+        sent13 = direct.await_args.args[0]
+    check("call 13: off: the prompt is the same with or without calls, nothing is due, no fixed reply, no state keys",
+          off_prompts[0] == off_prompts[1] and "Recent call" not in off_prompts[0] and not due and grounding == ""
+          and out13["reply"] != cc.COMMITMENT_REPLY and direct.await_count == 1
+          and not [k for k in sent13 if k.startswith("call_")])
+    from contextlib import ExitStack
+    catch = AsyncMock(side_effect=AssertionError("read"))
+    recent = AsyncMock(return_value=[])
+    ran = AsyncMock(return_value={"reply": ""})
+    none, empty = AsyncMock(return_value=None), AsyncMock(return_value=[])
+    row13 = {"id": 77, "customer_number": CLIENT.lstrip("+"), "bot_status": _conv.BOT_ACTIVE,
+             "status": "open", "langgraph_thread_id": "t-77", "contact_type": "unknown"}
+    with ExitStack() as stack:
+        for p in (
+            patch.object(settings, "call_context_enabled", False),
+            patch.object(cc, "catch_up", new=catch), patch.object(cc, "recent_for_conversation", new=recent),
+            patch.object(_wh.conversation_service, "get_by_phone", new=AsyncMock(return_value=row13)),
+            patch.object(_wh.message_service, "get_history", new=empty),
+            patch.object(_wh.ticket_service, "recent_for_conversation", new=empty),
+            patch.object(_wh.lead_service, "find_by_phone", new=none),
+            patch.object(_wh.contact_service, "count_prior_hires", new=AsyncMock(return_value=0)),
+            patch.object(_wh.contact_service, "get_placed_helper", new=none),
+            patch.object(_wh.contact_service, "get_placement_helpers", new=empty),
+            patch.object(_wh.ticket_service, "helpers_on_conversation", new=empty),
+            patch.object(_wh.contact_service, "get_record_name", new=none),
+            patch.object(_wh.contact_service, "get_cases", new=empty),
+            patch.object(_wh.contact_service, "get_candidate_record", new=none),
+            patch.object(_wh.ticket_service, "open_topics_for_conversation", new=empty),
+            patch.object(_wh.ticket_service, "completed_topics_for_conversation", new=empty),
+            patch.object(_wh, "last_human_activity_at", new=none),
+            patch.object(_wh, "run_turn", new=ran),
+        ):
+            stack.enter_context(p)
+        await _wh._process_locked(CLIENT, [message("hi", mid="cc-13")])
+    check("call 13: off: the webhook reads no call and the payload has no call_context",
+          catch.await_count == 0 and recent.await_count == 0 and "call_context" not in ran.await_args.args[1])
+
+    # 14. The model fails, or its JSON is bad.
+    w14 = CallWorld({customer: [conv]})
+    w14.answer = {}
+    w14.add("call-14", local, "1012", _EMPLOYER_CALL)
+    await w14.run()
+    row = dict(w14.rows["call-14"])
+    fails_cleanly = row.get("error") and not row.get("processed_at") and not w14.turn_calls(501)
+    w14.answer = {"speakers": {"Speaker 9": "agent"}, "summary": "not this transcript"}
+    await w14.run()
+    w14.answer = _EMPLOYER_ANSWER
+    await w14.run()
+    check("call 14: a failed or unusable analysis is marked error, nothing reaches a turn, a later run retries and succeeds",
+          fails_cleanly and w14.rows["call-14"]["match_status"] == "matched" and len(w14.turn_calls(501)) == 1
+          and w14.model_calls == 3)
+    w14b = CallWorld({customer: [conv]})
+    w14b.answer = {}
+    w14b.add("call-14b", local, "1012", _EMPLOYER_CALL)
+    for _ in range(5):
+        await w14b.run()
+    check("call 14: three failures end it as match_status=error, and the model is not called forever",
+          w14b.rows["call-14b"]["match_status"] == "error" and w14b.model_calls == cc.MAX_ATTEMPTS
+          and w14b.rows["call-14b"]["processed_at"])
+
+    # Privacy and the rest of the design.
+    leaky = cc.validate_analysis({
+        **_EMPLOYER_ANSWER,
+        "summary": f"Call back on +{customer} about the helper.",
+        "facts": [{"key": "helper_contact", "value": f"{local}", "quote": "my budget is around 700", "explicit": True},
+                  {"key": "leave_dates", "value": "2026-12-01", "quote": "my budget", "explicit": True}],
+    }, _EMPLOYER_CALL)
+    check("privacy: a phone number is masked in the analysis and never kept as a fact's value; a date survives",
+          customer not in str(leaky) and local not in str(leaky) and "[number]" in leaky["summary"]
+          and leaky["facts"][0]["value"] == cc.NUMBER_ON_THE_CALL and leaky["facts"][1]["value"] == "2026-12-01")
+    w_log = CallWorld({customer: [conv]})
+    w_log.answer = _EMPLOYER_ANSWER
+    secret_line = "Speaker 2: my NRIC is S1234567D and I want a Filipino helper\n"
+    w_log.add("call-log", local, "1012", _EMPLOYER_CALL + secret_line)
+    records: list[str] = []
+
+    class Grab(__import__("logging").Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    handler = Grab()
+    cc.logger.addHandler(handler)
+    cc.logger.setLevel("INFO")
+    try:
+        await w_log.run()
+    finally:
+        cc.logger.removeHandler(handler)
+    logged = " ".join(records)
+    check("privacy: no transcript or number in the log, and an NRIC never reaches the model",
+          records and customer not in logged and local not in logged and "Filipino" not in logged
+          and "S1234567D" not in w_log.seen_by_model[0])
+    w_gate = CallWorld({customer: [conv]})
+    w_gate.add("call-gate", local, "1012", _EMPLOYER_CALL)
+    from contextlib import ExitStack as _Stack
+    with _Stack() as stack:
+        for p in w_gate.patches():
+            stack.enter_context(p)
+        stack.enter_context(patch.object(settings, "bot_allowed_numbers", "+" + other))
+        status = await cc.process_pending()
+    check("gate: a number the bot may not talk to is not analysed, and is left to be picked up later",
+          status.get("gated") == 1 and w_gate.model_calls == 0 and not w_gate.rows)
+    w_missing = CallWorld({customer: [conv]})
+    w_missing.claim_fails = True
+    w_missing.add("call-missing", local, "1012", _EMPLOYER_CALL)
+    status = await w_missing.run()
+    check("table not applied: no claim, so no transcript goes to the model", status.get("unclaimed") == 1
+          and w_missing.model_calls == 0)
+    w_short = CallWorld({customer: [conv]})
+    w_short.add("call-short", local, "1012", "Speaker 1: [music]")
+    await w_short.run()
+    check("a call with nothing said is recorded as no_content, with no model call",
+          w_short.rows["call-short"]["match_status"] == "no_content" and w_short.model_calls == 0)
+    w_note = CallWorld({customer: [conv]})
+    w_note.answer = _EMPLOYER_ANSWER
+    w_note.topics = {"new_hiring": {"id": "t-new", "created_at": "2026-11-01"},
+                     ticket_service.HELPER_COMPLAINT: {"id": "t-comp", "created_at": "2026-11-03"}}
+    w_note.add("call-note", local, "1012", _EMPLOYER_CALL)
+    await w_note.run()
+    check("ticket note: summary, what was agreed and what is pending go on the open cb_ticket, tagged, "
+          "and not on a helper's complaint",
+          w_note.notes and w_note.notes[0][0] == "t-new" and w_note.notes[0][2] == "call"
+          and "Agreed: Send the fee breakdown" in w_note.notes[0][1] and "Pending:" in w_note.notes[0][1])
+    only_complaint = {ticket_service.HELPER_COMPLAINT: {"id": "t-comp", "created_at": "2026-11-03"}}
+    both = {"new_hiring": {"id": "t-new", "created_at": "2026-11-01"}, **only_complaint}
+    check("ticket note: a helper's complaint is never picked, whichever service the call was about",
+          cc._open_ticket_id(only_complaint, "new_hiring") is None
+          and cc._open_ticket_id(only_complaint, ticket_service.HELPER_COMPLAINT) is None
+          and cc._open_ticket_id(both, None) == "t-new")
+    ico13 = importlib.import_module("app.graph.nodes.info_collector")
+    leave_call = [{"call_id": "c-leave", "called_at": NOW.isoformat(), "mentioned_at": None, "analysis": {
+        "service": "home_leave", "customer_role": "employer", "commitments": [], "follow_ups": [],
+        "facts": [{"key": "leave_dates", "value": "12 to 30 December", "quote": "12 to 30 December", "explicit": True},
+                  {"key": "budget", "value": "$700", "quote": "700", "explicit": True}]}}]
+    with patch.object(settings, "call_context_enabled", True):
+        same = ico13._known_from_calls({"call_context": leave_call}, "home_leave")
+        other_service = ico13._known_from_calls({"call_context": leave_call}, "renewal")
+    check("call 2: a fact about one request stays on that request; a client-level fact goes anywhere",
+          same.get("leave_dates") == "12 to 30 December" and "leave_dates" not in other_service
+          and other_service.get("budget") == "$700")
+    # Every offline suite holds no credentials and refuses the network, before the app loads.
+    here = Path(__file__).resolve().parent
+    unguarded = []
+    for name in ("selfcheck_golive", "smoke_nodes", "smoke_resilience", "selfcheck_flows",
+                 "selfcheck_suggest", "selfcheck_recognition", "selfcheck_kb_prep",
+                 "selfcheck_reset_ui", "check_rerank_parity"):
+        text = (here / f"{name}.py").read_text(encoding="utf-8")
+        first_app = min(i for i in (text.find("\nfrom app"), text.find("\nimport app"), text.find("\n    from app")) if i >= 0)
+        guard = text.find("import no_network")
+        if guard < 0 or guard > first_app or "no_network.exit_code" not in text and name != "selfcheck_kb_prep":
+            unguarded.append(name)
+    check("no suite can reach production: each imports no_network before the app, and fails if anything tried",
+          not unguarded and not settings.supabase_url and not settings.supabase_db_url)
+    slow_done = asyncio.Event()
+
+    async def slow(number=None):
+        await asyncio.sleep(0.05)
+        slow_done.set()
+
+    with patch.object(cc, "process_pending", new=slow), patch.object(cc, "CATCH_UP_SECONDS", 0.001):
+        await cc.catch_up("+" + customer)
+        capped = not slow_done.is_set()
+        await asyncio.wait_for(slow_done.wait(), 1)
+    check("catch-up: past the cap the reply is not held, and the work still finishes", capped and slow_done.is_set())
+    with patch.object(cc, "process_pending", new=AsyncMock(side_effect=RuntimeError("down"))):
+        await cc.catch_up("+" + customer)
+    check("catch-up: a failure never costs the reply", True)
+
+
+async def _status_of_in_progress(world: "CallWorld") -> str:
+    world.add("call-8c", _fake_number(1)[2:], "1012", _EMPLOYER_CALL, status="in-progress")
+    from contextlib import ExitStack
+
+    with ExitStack() as stack:
+        for p in world.patches():
+            stack.enter_context(p)
+        return await _call_context.process_call(world.calls["call-8c"])
+
+
 async def main() -> int:
     for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
                      scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights,
@@ -1783,7 +2531,8 @@ async def main() -> int:
                      scenario_crisis_keywords,
                      scenario_home_leave_2nov,
                      scenario_complaint_triage,
-                     scenario_complaint_webhook):
+                     scenario_complaint_webhook,
+                     scenario_call_context):
         try:
             await scenario()
         except Exception as exc:  # noqa: BLE001 - a crash is a failure, by name
@@ -1798,4 +2547,4 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    sys.exit(no_network.exit_code(asyncio.run(main())))

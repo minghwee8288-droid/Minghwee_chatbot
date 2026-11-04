@@ -53,7 +53,8 @@ from app.graph.nodes.intent_classifier import (
     states_a_detail,
 )
 # The same greeting the answering path sends, so the two cannot drift apart.
-from app.graph.nodes.response_generator import greeting_back
+from app.graph.nodes.response_generator import call_follow_up_greeting, greeting_back
+from app.services import call_context
 from app.graph.llm import complete
 from app.services import kb_rules
 from app.graph.prompts.system import build_system_prompt
@@ -612,6 +613,8 @@ async def _respond(state: ConversationState) -> dict[str, Any]:
             "Conversation %s: greeting on a thread with topic %r parked - greeting back",
             state.get("conversation_id"), topic_key,
         )
+        if call_context.follow_up_due(state):
+            return {"reply": await call_follow_up_greeting(state), "needs_handover": False}
         return {"reply": greeting_back(state.get("record_name")), "needs_handover": False}
 
     if ticket.get("id") and message:

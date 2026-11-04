@@ -35,6 +35,7 @@ from app.graph.nodes.intent_classifier import (
     non_english_harm_check_due,
 )
 from app.services import assignment as assignment_service
+from app.services import call_context
 from app.services import contact as contact_service
 from app.services import conversation as conversation_service
 from app.services import handover as handover_service
@@ -1123,6 +1124,12 @@ async def _process_locked(
         return
     combined = redact_nric(combined, context=f"conversation:{conversation['id']}")
 
+    # A call just made to this client is read first, for at most 10 seconds.
+    call_calls: list[dict[str, Any]] = []
+    if settings.call_context_enabled:
+        await call_context.catch_up(phone)
+        call_calls = await call_context.recent_for_conversation(conversation["id"])
+
     # A transcribed voice note is text now, not an attachment — only files
     # nobody can read need a human to open them.
     media_items = [
@@ -1277,6 +1284,8 @@ async def _process_locked(
         "history_text": message_service.format_history(history),
         "media_items": media_items,
     }
+    if call_calls:
+        payload["call_context"] = call_calls
 
     timing.phase("graph")
     try:
@@ -1377,6 +1386,8 @@ async def _process_locked(
     # The reply clears the indicator on the client's phone; stop refreshing it.
     await typing_indicator.stop(phone, clear=False)
     timing.note("sent", True)
+    if call_calls:
+        await call_context.mark_mentioned(call_calls, reply)
     if received:
         # The whole wait, from the client's first message to our reply leaving.
         timing.note("client_to_reply_ms", (time.time() - min(received)) * 1000)

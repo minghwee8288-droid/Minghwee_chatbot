@@ -377,6 +377,15 @@ class ConversationState(TypedDict, total=False):
     candidate_record: dict[str, Any] | None
     info_complete: bool
 
+    # --- Phone calls (app/services/call_context.py), only with the switch on ---
+    # The recent calls on this conversation, read by the webhook each turn.
+    call_context: list[dict[str, Any]]
+    # Calls whose facts have been weighed against the chat, once each, and what
+    # a call replaced or lost to ({key, value, older, applied, source, call_date}).
+    # Both accumulate, and are absent from _TURN_RESET.
+    call_merged: Annotated[list[str], _merge_unique]
+    call_fact_history: Annotated[list[dict[str, Any]], _merge_unique]
+
     # --- Helper complaints (app/graph/complaint_triage.py) ---
     # What the flow decided this turn: per turn, in _TURN_RESET.
     complaint_step: dict[str, Any] | None

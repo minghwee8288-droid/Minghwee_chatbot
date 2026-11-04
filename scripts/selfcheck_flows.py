@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import no_network  # noqa: E402,F401 - first: this suite cannot reach production
 
 import importlib
 import re
@@ -6336,4 +6338,4 @@ for label, got, want in rows:
     print(f"  {'PASS' if ok else 'FAIL'}  {label:40} {got!r}")
 print("\nALL PASS" if not bad else f"\n{bad} FAILED")
 
-raise SystemExit(1 if bad else 0)
+raise SystemExit(no_network.exit_code(1 if bad else 0))

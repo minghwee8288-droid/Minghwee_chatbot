@@ -3193,7 +3193,7 @@ def service_types_label(row: dict[str, Any] | None) -> str:
 _MAX_FOLLOW_UPS = 10
 
 
-async def add_follow_up(ticket_id: str | None, message: str) -> None:
+async def add_follow_up(ticket_id: str | None, message: str, *, source: str | None = None) -> None:
     """Record a message that arrived on a topic after its ticket was raised.
 
     Without this, anything the client says while a topic is parked — a chase,
@@ -3209,9 +3209,10 @@ async def add_follow_up(ticket_id: str | None, message: str) -> None:
             return
         info = dict(row.get("captured_info") or {})
         follow_ups = list(info.get("follow_ups") or [])
-        follow_ups.append(
-            {"at": datetime.now(tz=timezone.utc).isoformat(), "message": message.strip()[:500]}
-        )
+        entry = {"at": datetime.now(tz=timezone.utc).isoformat(), "message": message.strip()[:500]}
+        if source:
+            entry["source"] = source
+        follow_ups.append(entry)
         info["follow_ups"] = follow_ups[-_MAX_FOLLOW_UPS:]
         await db.update(TABLE, {"captured_info": info}, id=ticket_id)
     except Exception:  # noqa: BLE001 - a logging failure must not cost the client their reply

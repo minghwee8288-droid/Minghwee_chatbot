@@ -69,6 +69,7 @@ async def raise_ticket(
     whatsapp_number: str | None,
     whatsapp_name: str | None,
     transcript: str = "",
+    source: str | None = None,
 ) -> dict[str, Any] | None:
     """The complaint's ticket, retried: a helper's report must not be lost."""
     complaint, triage = split(case)
@@ -82,6 +83,9 @@ async def raise_ticket(
         "complaint": complaint,
         "triage": triage,
     }
+    # A complaint raised from a phone call (app/services/call_context.py).
+    if source:
+        captured["source"] = source
     for attempt in range(RETRY_ATTEMPTS):
         ticket = await ticket_service.create(
             conversation=conversation,

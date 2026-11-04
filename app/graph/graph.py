@@ -43,6 +43,7 @@ from app.graph.state import (
     ConversationState,
     effective_contact_type,
 )
+from app.services import call_context
 from app.services import kb_rules
 from app.services import rag
 from app.services import ticket as ticket_service
@@ -714,6 +715,11 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
                 settings.intake_stale_hours,
             )
             state_input = {**state_input, **reset}
+    if settings.call_context_enabled and payload.get("call_context"):
+        answered = await _commitment_reply(payload)
+        if answered:
+            return answered
+        state_input = await _with_call_facts(graph, config, state_input, payload)
     result = dict(await graph.ainvoke(state_input, config=config))
     # A complaint message is approved wording and goes out as written; only the
     # reference is shown as code, so WhatsApp does not link it as a phone number.
@@ -799,6 +805,55 @@ async def run_turn(thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     if _reference.REFERENCE_AS_CODE and result.get("reply"):
         result["reply"] = guards.references_as_code(result["reply"])
     return result
+
+
+async def _commitment_reply(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Asked about something our team said on a call: the fixed line, and a note
+    for the agent. Never written by the model, so no date or amount is invented;
+    never ahead of a safety report or an open complaint."""
+    from app.graph.complaint_triage import keyword_floor
+    from app.graph.nodes.intent_classifier import crisis_keyword
+
+    message = payload.get("incoming_text") or ""
+    topics = payload.get("blocked_topics") or {}
+    if (
+        not call_context.asks_about_commitment(message, payload.get("call_context"))
+        or keyword_floor(message)[0]
+        or crisis_keyword(message)
+        or ticket_service.HELPER_COMPLAINT in topics
+    ):
+        return None
+    await call_context.notes_to_agent(topics, [f"Client asked about what was agreed on the call: {message[:200]}"])
+    return {"reply": await call_context.commitment_reply_for(message), "reply_is_fixed": True}
+
+
+async def _with_call_facts(
+    graph: Any, config: dict[str, Any], state_input: dict[str, Any], payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Weigh each new call's facts against the chat, before the turn reads them."""
+    if not hasattr(graph, "aget_state"):
+        return state_input
+    try:
+        snapshot = await graph.aget_state(config)
+        values = dict(snapshot.values or {})
+        merged = call_context.merge_facts(
+            values.get("collected_info"), payload.get("call_context"),
+            values.get("call_merged"), snapshot.created_at,
+        )
+        if not merged["ids"]:
+            return state_input
+        await call_context.notes_to_agent(
+            payload.get("blocked_topics"), merged["notes"], values.get("service_type")
+        )
+    except Exception:  # noqa: BLE001 - a failed read must not cost the turn
+        logger.exception("Could not weigh the call facts")
+        return state_input
+    return {
+        **state_input,
+        "collected_info": {**(state_input.get("collected_info") or {}), **merged["patch"]},
+        "call_merged": merged["ids"],
+        "call_fact_history": merged["history"],
+    }
 
 
 def helper_names(result: dict[str, Any], payload: dict[str, Any]) -> list[str]:
