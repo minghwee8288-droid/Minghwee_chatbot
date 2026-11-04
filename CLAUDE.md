@@ -53,12 +53,15 @@ prompt produced clean output on one run and rule-breaking output on the next.
 ```
 prompt.md            client-facing guide to EVERY prompt the bot uses, quoted from
                      the code. Changing a prompt in app/ means updating it too.
+                     The one to trust. allprompts.md (last changed 2026-09-04) and
+                     PROMPTS.md (2026-08-07; names a FINALISED_LLM_PROMPTS.md spec
+                     that is not in this repo) are old snapshots: do not rely on them.
 app/
   main.py            FastAPI app, lifespan, startup validation, CORS
   config.py          ALL settings (pydantic-settings, lru_cached — restart to reload)
   utils.py           phone normalisation, NRIC redaction
   api/
-    webhook.py       (922) Whapi webhook, allowlist gate, debounce, agent detection
+    webhook.py       Whapi webhook, allowlist gate, debounce, agent detection
     health.py        /health (static) and /health/ready (always 200 — parse the body)
   whapi/
     client.py        Whapi HTTP client, retries; recipients must be bare digits
@@ -66,9 +69,10 @@ app/
     debouncer.py     per-phone buffer, timer restarts on each message
     typing.py        "typing..." from acceptance until the reply (presence API)
   graph/
-    graph.py         (325) node wiring, routing, checkpointer, _TURN_RESET, run_turn
+    graph.py         node wiring, routing, checkpointer, _TURN_RESET, run_turn (which
+                     also runs the post-guards every node's reply passes through)
     state.py         ConversationState TypedDict + reducers + effective_contact_type
-    guards.py        (468) mechanical output safety — see §5
+    guards.py        mechanical output safety — see §5
     language.py      "is this mainly not English?" - script + function words,
                      no model call; gates the non-English harm check
     closure.py       "say nothing" path (acknowledgements, closings)
@@ -76,36 +80,47 @@ app/
                      to call, the ticket reference) - written here, not by the model
     reference.py     the ticket's CB-YYYY-NNNN, put into the handover sentence the
                      reply already has (handover_executor; parked-topic chases)
-    clarify.py       a vague action request ("send the video", "call me", "any
-                     update") is asked about first, then ticketed with the answer
-                     (2026-10-28); read by intent_classifier + action_clarifier
+    clarify.py       a vague action request ("send the video", "any update") is asked
+                     about first, then ticketed with the answer (2026-10-28); a call
+                     request gets one fixed reply and is never asked about
+                     (CALL_REQUEST_DIRECT, 2026-10-29); read by intent_classifier +
+                     action_clarifier
     llm.py           OpenRouter via langchain_openai; complete() / complete_json()
     checkpointer.py  rewrites LangGraph SQL to cb_-prefixed tables
     nodes/           intent_classifier, rag_retriever, response_generator,
                      info_collector, ticket_creator, handover_executor,
-                     blocked_topic_responder, action_clarifier
+                     blocked_topic_responder, action_clarifier. info_collector is the
+                     largest file in app/, then services/ticket.py and guards.py.
     prompts/
       system.py      IDENTITY + RULES + clock + assembly (build_system_prompt)
       style.py       voice guide harvested from real agent transcripts
-      templates.py   (504) per-node task instructions, extraction, assault verify
-  readonly.py        read-only mode for one request (POST /admin/preview): every DB
-                     write and every RPC but the KB search refused, Whapi refused
+      templates.py   per-node task instructions, extraction, assault verify
+  readonly.py        read-only mode for one request (POST /admin/preview, POST
+                     /internal/suggest): every DB write and every RPC but the KB
+                     search refused, Whapi refused
   timing.py          one TURN_TIMING JSON log line per turn: phases, LLM calls by
                      node/purpose, DB calls by table, RAG, send. Ids and ms only
                      (scripts/latency_report.py prints p50/p90; TURN_TIMING_LOG=false)
   api/admin.py       POST /admin/preview — the real graph on a test question, writes
                      nothing; 404 unless ADMIN_PREVIEW_SECRET is set
+  suggest/           POST /internal/suggest (2026-10-28) — reply drafts for a human
+                     consultant in the Smart Inbox, up to 4 (validate.MAX_DRAFTS),
+                     from Claire's prompt, the rag_retriever node and the guards.
+                     Sends nothing and writes nothing; 404 unless SUGGEST_SECRET is
+                     set (§7). See docs/SUGGESTED_REPLIES.md and
+                     docs/DEPLOY_SUGGESTED_REPLIES.md.
   services/
     kb_rules.py      pricing/contact rules: code DEFAULTS, or cb_kb_rules when
                      RULES_FROM_DB=true (validated whole, last-good fallback)
-    ticket.py        (1581) THE BIG ONE — field schema DSL, merge policy, ticket CRUD
-    lead.py          (567) lead creation/update, numbering, phone matching
-    rag.py           (495) embeddings + pgvector search + filtering
+    ticket.py        field schema DSL, merge policy, ticket CRUD
+    lead.py          lead creation/update, numbering, phone matching
+    rag.py           embeddings + pgvector search + filtering
     message.py       store/send, auto-reply detection, history
     conversation.py  wp_chat_conversations access, bot_status
     handover.py      cb_handovers; escalation vs stand-down
     contact.py       identify a number against master records
     assignment.py    which agent gets it
+    internal_contacts.py  owner/staff numbers the bot never answers
     transcription.py voice notes -> text
   db/supabase.py     service-role client (bypasses RLS), read retries, insert_numbered
 scripts/             preflight, retrieval check, reset, simulate, SQL migrations
@@ -127,7 +142,9 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
                      2026-10-16; 012 expects 31), kb_admin_019_watcher_tags
                      (watcher drafts carry editable service/audience/nationality;
                      NOT APPLIED; 012 expects 32 with it), kb_watch_tags_001_audit
-                     (13 watcher entries re-tagged; NOT APPLIED)
+                     (13 watcher entries re-tagged; NOT APPLIED),
+                     internal_contacts_001_create (cb_internal_contacts; not applied
+                     when written, 2026-10-23)
                      — applied ONLY via apply_sql.py --expect-ref <project ref>
   gen_fee_locked.py  the watcher's fee lock: the 23 questions + 7 corrections the
                      fees document set, read from the loader, written into
@@ -199,8 +216,12 @@ Whapi POST -> _accept (verify, 200 immediately, work in BackgroundTasks)
   -> from_me?  yes -> handle_outbound  (agent detection -> silence the bot)
                no  -> handle_inbound
        replay guard (in-memory, 900s TTL)
-       transcription (voice -> text) BEFORE any gate, so safety sees the words
+       contentless protocol event (delete, reaction)? ignored, not a client message
        may_engage()  -> allowlist -> bot_status -> agent grace window
+       transcription (voice -> text) BEFORE the gate's answer is acted on, so the
+                     safety override sees the words; skipped for a blocked number
+       _human_conversation (quoted staff message, picked-up ticket) -> quiet
+       maybe_return_to_bot -> still paused for a human? quiet, safety override only
        store, read receipt, identify contact
        typing indicator started (background; skipped if silent or parked)
        debouncer.add()  (timer restarts per message; the newest message picks
@@ -223,7 +244,9 @@ breaks duplicate suppression, the debouncer and agent detection.
 START -> intent_classifier
   suppress_reply ................................. END
   clarify_action / action_answer ................. action_clarifier
-                                                   (question -> END; answer -> ticket_creator)
+                                                   (question -> END; answer or call request ->
+                                                   ticket_creator, or END when it lands on an
+                                                   open ticket as a follow-up)
   blocked topic + KB-answerable intent ........... rag_retriever
   blocked topic (anything else) .................. blocked_topic_responder
   dispute_assault ................................ handover_executor
@@ -232,7 +255,11 @@ START -> intent_classifier
 rag_retriever
   still parked ................................... blocked_topic_responder
   answer_only (a question about hiring a helper) . response_generator
+  completed_request (status of finished work) .... response_generator
+  finished_collection, not a new request for it .. response_generator
   enquiry_overview_due (asked about a service) ... info_collector
+  money question on top of another service,
+    and not an answer to our own question ........ response_generator
   service/enquiry/dispute/candidate intent ....... info_collector
   fields_for(service_type) non-empty .............. info_collector
   default ........................................ response_generator
@@ -254,7 +281,7 @@ blocked_topic_responder -> END
 State lives in a LangGraph Postgres checkpointer on `cb_checkpoint*` tables, keyed by
 `wp_chat_conversations.langgraph_thread_id`.
 
-`_TURN_RESET` (graph.py) blanks 12 per-turn fields each invocation. `ticket_id` is in
+`_TURN_RESET` (graph.py) blanks 17 per-turn fields each invocation. `ticket_id` is in
 that list; `created_lead_id` deliberately is **not** — it must survive across turns
 because the lead is opened early and the ticket is created much later.
 
@@ -1050,6 +1077,14 @@ Easy to get wrong:
   `pipeline.RENDER_PER_SOURCE`, `pipeline.RETRY_FAILED_DRAFTS`,
   `fetcher.UNVERIFIED_SOURCES`, `language.NON_ENGLISH_PAGES`. render-service:
   `RENDER_ALLOWED_HOSTS` (default `kemlu.go.id`; `*` = any public host).
+- **`POST /internal/suggest` settings are read from the process environment, not
+  `app/config.py`** (`app/suggest/settings.py`). In Docker, `env_file` puts `.env` there;
+  locally they must be exported in the shell. `SUGGEST_SECRET`: empty means the route is
+  never registered (404, absent from the schema). `SUGGEST_MODEL` (default
+  `openai/gpt-6-luna`, deliberately not the bot's `OPENROUTER_MODEL`),
+  `SUGGEST_MAX_CONCURRENCY` (2; over that is 429 at once), `SUGGEST_TIMEOUT_SECONDS` (25;
+  past that is 504). Steps in `docs/DEPLOY_SUGGESTED_REPLIES.md`. Whether the server has
+  the secret set is not recorded in this repo; check by counting, never by printing it.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -1913,6 +1948,8 @@ python scripts/selfcheck_golive.py     # the 2026-10-23 replays: staff message +
                                        #   "Okay" -> silent, quoted staff message -> silent,
                                        #   internal number, picked-up ticket, stale intake +
                                        #   "ok", helper rights -> the list, no ticket. No network.
+python scripts/selfcheck_suggest.py    # POST /internal/suggest end to end with the DB,
+                                       #   the model and WhatsApp faked. No network.
 python scripts/selfcheck_recognition.py   # 4 contacts (case employer, past placement,
                                        #   candidate, new) through identify, the webhook
                                        #   payload and the real nodes on a fake DB; no
@@ -2153,6 +2190,18 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **Docs only: this file caught up with the code.** No behaviour changed.
+  `app/suggest/` (`POST /internal/suggest`, reply drafts for the Smart Inbox, merged
+  2026-10-28 in `3e4903c`) had no entry anywhere here, so it is now in §2, §7 and §10. It
+  is additive: one guarded block in `app/main.py`, off until `SUGGEST_SECRET` is set. §4
+  gains the `route_after_rag` branches for finished work, a finished collection and a money
+  question on top of another service, plus `action_clarifier`'s follow-up exit;
+  `_TURN_RESET` is 17 fields, not 12. §3 now has the gate order `handle_inbound` really
+  uses. §2's line counts are removed rather than updated, because they had gone stale by up
+  to five times and would again; `wc -l` answers that. §2 also stops saying "call me" is
+  asked about (`CALL_REQUEST_DIRECT`), adds `internal_contacts`, and marks `allprompts.md`
+  and `PROMPTS.md` as old snapshots.
 
 - **2026-11-02** - **The helper's own home-leave summary had no cost, and the
   reference sat in step 1** (phone test 8:08 PM, Filipino, all answers in one
