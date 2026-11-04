@@ -383,11 +383,311 @@ async def _no_op(*args, **kwargs):
     return None
 
 
+class _Query:
+    """The few postgrest calls recovery.py makes, run over an in-memory table."""
+
+    def __init__(self, store, table):
+        self.store, self.table, self.filters, self.limit_n, self.upserted = store, table, [], None, None
+
+    def select(self, *_):
+        return self
+
+    def eq(self, column, value):
+        self.filters.append(lambda r: r.get(column) == value)
+        return self
+
+    def gte(self, column, value):
+        self.filters.append(lambda r: r.get(column) >= value)
+        return self
+
+    def lt(self, column, value):
+        self.filters.append(lambda r: r.get(column) < value)
+        return self
+
+    def order(self, column, desc=False):
+        self.order_by = (column, desc)
+        return self
+
+    def limit(self, n):
+        self.limit_n = n
+        return self
+
+    def upsert(self, rows, on_conflict="", ignore_duplicates=False):
+        self.upserted = rows
+        return self
+
+    def run(self):
+        from types import SimpleNamespace
+
+        if self.upserted is not None:
+            if self.store.get("claims_fail"):
+                raise RuntimeError('relation "cb_recovery_claims" does not exist')
+            won = []
+            for row in self.upserted:
+                if row["whapi_message_id"] not in self.store["claims"]:
+                    self.store["claims"][row["whapi_message_id"]] = row
+                    won.append(row)
+            return SimpleNamespace(data=won)
+        rows = [r for r in self.store["messages"] if all(f(r) for f in self.filters)]
+        column, desc = self.order_by
+        rows = sorted(rows, key=lambda r: r[column], reverse=desc)
+        return SimpleNamespace(data=rows[: self.limit_n])
+
+
+class _FakeDb:
+    def __init__(self, store):
+        self.store = store
+
+    def table(self, name):
+        return _Query(self.store, name)
+
+    async def execute(self, query):
+        return query.run()
+
+
+async def _recovery_checks() -> list[tuple[str, bool]]:
+    from datetime import datetime, timedelta, timezone
+
+    from app.api import webhook
+    from app.config import Settings, settings
+    from app.services import conversation as conversation_service
+    from app.services import handover as handover_service
+    from app.services import internal_contacts
+    from app.services import message as message_service
+    from app.services import recovery
+    from app.services import ticket as ticket_service
+
+    results: list[tuple[str, bool]] = []
+    now = datetime(2026, 11, 4, 12, 0, tzinfo=timezone.utc)
+    ours = "6565342277"
+    phone = "6591234567"
+
+    def at(minutes_ago):
+        return (now - timedelta(minutes=minutes_ago)).isoformat()
+
+    def inbound(mid, minutes_ago, conversation_id=1, **extra):
+        return {"conversation_id": conversation_id, "direction": "inbound", "body": f"text {mid}",
+                "is_bot": False, "sent_by": None, "to_number": ours, "whapi_message_id": mid,
+                "created_at": at(minutes_ago), **extra}
+
+    def outbound(minutes_ago, conversation_id=1, sent_by="bot", body="a reply", is_bot=True):
+        return {"conversation_id": conversation_id, "direction": "outbound", "body": body,
+                "is_bot": is_bot, "sent_by": sent_by, "to_number": phone, "whapi_message_id": f"out{minutes_ago}",
+                "created_at": at(minutes_ago)}
+
+    def conversation(conversation_id=1, **extra):
+        return {"id": conversation_id, "customer_number": phone, "customer_name": "Tan",
+                "bot_status": "bot_active", "status": "open", **extra}
+
+    async def scan(messages, conversations=None, *, enabled=True, claims=None, claims_fail=False,
+                   allowed=phone, internal=False, quoted_origin=None, paused=False, sender=ours):
+        conversations = {c["id"]: c for c in (conversations or [conversation()])}
+        store = {"messages": messages, "claims": dict(claims or {}), "claims_fail": claims_fail}
+        batches: list[list[str]] = []
+        overrides: list[str] = []
+        order: list[str] = []
+        webhook._PROCESSED.clear()
+
+        async def process(p, batch):
+            order.append("reply")
+            batches.append([m.whapi_message_id for m in batch])
+
+        async def get_by_id(cid):
+            return conversations.get(cid)
+
+        async def get_or_create(p, name, engage=False):
+            return next(iter(conversations.values())), False
+
+        async def override(conv, text):
+            overrides.append(text)
+            return True
+
+        async def origin(_):
+            return quoted_origin
+
+        async def is_internal(_):
+            return internal
+
+        async def not_auto(body, conversation_id=None):
+            return body == "Dear Valued Customer"
+
+        async def returned(conv):
+            return {**conv, "bot_status": "human_active"} if paused else conv
+
+        async def nobody(*_):
+            return None
+
+        async def not_picked_up(*_):
+            return False
+
+        real_claim = recovery._claim
+
+        async def claim(*args):
+            order.append("claim")
+            return await real_claim(*args)
+
+        with patch.object(recovery, "db", _FakeDb(store)), \
+                patch.object(settings, "startup_recovery_scan", enabled), \
+                patch.object(settings, "whapi_sender_phone", sender), \
+                patch.object(settings, "bot_allowed_numbers", allowed), \
+                patch.object(recovery, "_claim", claim), \
+                patch.object(conversation_service, "get_by_id", get_by_id), \
+                patch.object(conversation_service, "get_or_create", get_or_create), \
+                patch.object(webhook, "process_batch", process), \
+                patch.object(webhook, "emergency_override", override), \
+                patch.object(webhook, "acknowledge_direct_address", _no_op), \
+                patch.object(webhook, "maybe_return_to_bot", returned), \
+                patch.object(webhook, "_should_identify", lambda *a: False), \
+                patch.object(internal_contacts, "is_internal", is_internal), \
+                patch.object(message_service, "is_auto_reply", not_auto), \
+                patch.object(message_service, "quoted_message_origin", origin), \
+                patch.object(message_service, "last_agent_message_at", nobody), \
+                patch.object(handover_service, "agent_took_over", _no_op), \
+                patch.object(ticket_service, "picked_up_recently", not_picked_up):
+            counts = await recovery.run(now)
+        return {"batches": batches, "overrides": overrides, "counts": counts, "order": order, "store": store}
+
+    # Off.
+    results.append(("the switch defaults to off",
+                    Settings.model_fields["startup_recovery_scan"].default is False))
+    r = await scan([inbound("m1", 2)], enabled=False)
+    results.append(("switched off: nothing read, claimed or sent",
+                    not r["batches"] and not r["store"]["claims"] and r["counts"] == {}))
+
+    # The lifespan only starts it when switched on.
+    from app import main as app_main
+
+    started: list[str] = []
+
+    async def recording_run(until=None):
+        started.append("ran")
+        return {}
+
+    async def in_lifespan(enabled):
+        started.clear()
+        with patch.object(settings, "startup_recovery_scan", enabled), \
+                patch.object(recovery, "run", recording_run), \
+                patch.object(app_main, "init_graph", _no_op), \
+                patch.object(app_main, "close_graph", _no_op), \
+                patch.object(app_main.debouncer, "shutdown", _no_op), \
+                patch.object(app_main.whapi, "close", _no_op):
+            async with app_main.lifespan(app_main.app):
+                await asyncio.sleep(0)
+        return list(started)
+
+    results.append(("lifespan does not start it when off", await in_lifespan(False) == []))
+    results.append(("lifespan starts it when on", await in_lifespan(True) == ["ran"]))
+
+    # One batch, claimed first.
+    r = await scan([outbound(30), inbound("m1", 5), inbound("m2", 4), inbound("m3", 3)])
+    results.append(("everything since our last outbound is ONE batch",
+                    r["batches"] == [["m1", "m2", "m3"]]))
+    results.append(("each message is claimed by its Whapi id", set(r["store"]["claims"]) == {"m1", "m2", "m3"}))
+    results.append(("the claim comes before the reply", r["order"] == ["claim", "reply"]))
+    r = await scan([inbound("old", 200), outbound(100), inbound("m1", 3)])
+    results.append(("what came before our last outbound stays out", r["batches"] == [["m1"]]))
+
+    # Already answered, by anyone.
+    r = await scan([inbound("m1", 5), outbound(3)])
+    results.append(("a bot reply after it: nothing to do", not r["batches"] and not r["store"]["claims"]))
+    r = await scan([inbound("m1", 5), outbound(3, sent_by="Shirley", is_bot=False)])
+    results.append(("an agent's reply after it: nothing to do", not r["batches"]))
+    r = await scan([inbound("m1", 5)], [conversation(last_bot_reply_at=at(4))])
+    results.append(("our reply went out but its row was not stored: nothing to do", not r["batches"]))
+
+    # An auto-reply answers nobody.
+    r = await scan([inbound("m1", 5), outbound(4, sent_by="whatsapp_auto")])
+    results.append(("a WhatsApp auto-reply is not an answer", r["batches"] == [["m1"]]))
+    r = await scan([inbound("m1", 5), outbound(4, sent_by="Ming Hwee Agency", body="Dear Valued Customer", is_bot=False)])
+    results.append(("...nor one the portal stored as an ordinary row", r["batches"] == [["m1"]]))
+
+    # The window.
+    r = await scan([inbound("m1", 11)])
+    results.append(("past the window: left alone", not r["batches"] and not r["store"]["claims"]))
+    r = await scan([inbound("m1", 300), inbound("m2", 3)])
+    results.append(("the window reads the newest message; the batch stays whole", r["batches"] == [["m1", "m2"]]))
+    # whapi_message_id is nullable: a row in the window with no id leaves only old ones.
+    r = await scan([inbound("old", 300), {**inbound("x", 3), "whapi_message_id": None}])
+    results.append(("only old messages left to answer: left alone", not r["batches"]))
+    r = await scan([inbound("m1", 3), inbound("live", -1)])
+    results.append(("a message from after startup is the live webhook's", r["batches"] == [["m1"]]))
+
+    # Claims.
+    r = await scan([inbound("m1", 3)], claims={"m1": {}})
+    results.append(("a message already claimed is not answered again", not r["batches"]))
+    r = await scan([inbound("m1", 4), inbound("m2", 3)], claims={"m1": {}})
+    results.append(("...and the rest of the batch still is", r["batches"] == [["m2"]]))
+    r = await scan([inbound("m1", 3)], claims_fail=True)
+    results.append(("no claims table: nothing is sent", not r["batches"]))
+    webhook._PROCESSED.clear()
+    r = await scan([inbound("m1", 3)])
+    results.append(("recovered ids are marked seen, so a redelivery is dropped",
+                    webhook._already_processed("m1") is True))
+
+    # Who may be messaged.
+    r = await scan([inbound("m1", 3, to_number="639000000000")])
+    results.append(("another channel's message is not answered from ours", not r["batches"]))
+    r = await scan([inbound("m1", 3)], sender="")
+    results.append(("our own number unknown: no scan at all", not r["batches"] and r["counts"] == {"refused": 1}))
+    r = await scan([inbound("m1", 3)], [conversation(is_group=True)])
+    results.append(("a group is not answered", not r["batches"]))
+    r = await scan([inbound("m1", 3)], [conversation(customer_name=f"+{phone}")])
+    results.append(("a row with no real number behind it is not answered", not r["batches"]))
+    r = await scan([inbound("m1", 3)], allowed="6500000000")
+    results.append(("the allowlist applies", not r["batches"] and not r["store"]["claims"]))
+    r = await scan([inbound("m1", 3)], internal=True)
+    results.append(("an internal number is not answered", not r["batches"]))
+    r = await scan([inbound("m1", 3, reply_to_whapi_id="staff1")], quoted_origin="agent")
+    results.append(("a client quoting a staff message is left to them", not r["batches"]))
+    r = await scan([inbound("m1", 3, reply_to_whapi_id="ours1")], quoted_origin="bot")
+    results.append(("...quoting the bot is an ordinary message", r["batches"] == [["m1"]]))
+    r = await scan([inbound("m1", 3)], [conversation(bot_status="human_active")], paused=True)
+    results.append(("a human's thread gets no reply", not r["batches"]))
+    results.append(("...only the safety check on what they said", r["overrides"] == ["text m1"]))
+
+    # The cap.
+    many = [inbound(f"m{i}", 3, conversation_id=i) for i in range(1, recovery.RECOVERY_MAX_BATCHES + 2)]
+    r = await scan(many, [conversation(i) for i in range(1, recovery.RECOVERY_MAX_BATCHES + 2)])
+    results.append(("over the cap: not one message goes out",
+                    not r["batches"] and not r["store"]["claims"]
+                    and r["counts"] == {"refused": recovery.RECOVERY_MAX_BATCHES + 1}))
+    many = many[:recovery.RECOVERY_MAX_BATCHES]
+    r = await scan(many, [conversation(i) for i in range(1, recovery.RECOVERY_MAX_BATCHES + 1)])
+    results.append(("at the cap: each gets its own batch", len(r["batches"]) == recovery.RECOVERY_MAX_BATCHES))
+
+    # A stored row comes back as the message the webhook parsed.
+    message = recovery._as_message(
+        {"whapi_message_id": "v1", "media_type": "voice", "media_path": "https://x/a.ogg", "body": None,
+         "reply_to_whapi_id": "q1", "created_at": at(1)}, "+6591234567", "Tan")
+    results.append(("a stored row rebuilds: media, and the quoted id",
+                    message.has_media and message.quoted_id == "q1" and message.media_url == "https://x/a.ogg"))
+
+    # The real client builds the claim the way it has to be: atomic, returning only what it won.
+    from postgrest import SyncPostgrestClient
+
+    query = SyncPostgrestClient("http://localhost:9").table(recovery.CLAIMS_TABLE).upsert(
+        [{"whapi_message_id": "x", "conversation_id": 1}], on_conflict="whapi_message_id", ignore_duplicates=True
+    )
+    prefer = str(query.headers.get("prefer") or query.headers.get("Prefer"))
+    results.append(("the claim skips duplicates and returns only the rows it inserted",
+                    "ignore-duplicates" in prefer and "return=representation" in prefer
+                    and "whapi_message_id" in str(query.params)))
+
+    sql = (ROOT / "scripts" / "sql" / "recovery_001_claims.sql").read_text(encoding="utf-8")
+    results.append(("the migration exists, and only creates its own table",
+                    "cb_recovery_claims" in sql and "whapi_message_id  text primary key" in sql
+                    and not re.search(r"alter table public\.(wp_|leads|employers)|references\s", sql, re.I)))
+    results.append(("the rollback exists",
+                    (ROOT / "scripts" / "sql" / "rollback" / "rollback_recovery_001_claims.sql").is_file()))
+    return results
+
+
 async def checks() -> list[tuple[str, bool]]:
     return [
         *await _checkpointer_checks(),
         *await _health_checks(),
         *await _shutdown_checks(),
+        *await _recovery_checks(),
     ]
 
 

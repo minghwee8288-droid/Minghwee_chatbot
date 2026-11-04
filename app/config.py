@@ -290,6 +290,11 @@ class Settings(BaseSettings):
     # adds to this list once its SQL file is applied.
     internal_numbers: str = ""
 
+    # Answer, once at startup, messages a crash left unanswered
+    # (app/services/recovery.py). Needs scripts/sql/recovery_001_claims.sql
+    # applied first. Off until that is done and it has been tried on a test number.
+    startup_recovery_scan: bool = False
+
     # The WhatsApp Business app can send greeting and away messages by itself.
     # They arrive as outbound messages the bot did not send, which the agent
     # detector would otherwise read as "a human has taken over" — silencing the

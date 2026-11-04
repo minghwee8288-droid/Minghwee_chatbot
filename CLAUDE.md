@@ -121,6 +121,8 @@ app/
     contact.py       identify a number against master records
     assignment.py    which agent gets it
     internal_contacts.py  owner/staff numbers the bot never answers
+    recovery.py      startup scan for messages a crash left unanswered. OFF
+                     (STARTUP_RECOVERY_SCAN); needs recovery_001_claims applied
     transcription.py voice notes -> text
   db/supabase.py     service-role client (bypasses RLS), read retries, insert_numbered
 scripts/             preflight, retrieval check, reset, simulate, SQL migrations
@@ -144,7 +146,8 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
                      NOT APPLIED; 012 expects 32 with it), kb_watch_tags_001_audit
                      (13 watcher entries re-tagged; NOT APPLIED),
                      internal_contacts_001_create (cb_internal_contacts; not applied
-                     when written, 2026-10-23)
+                     when written, 2026-10-23), recovery_001_claims
+                     (cb_recovery_claims, the startup scan's claims; NOT APPLIED)
                      — applied ONLY via apply_sql.py --expect-ref <project ref>
   gen_fee_locked.py  the watcher's fee lock: the 23 questions + 7 corrections the
                      fees document set, read from the loader, written into
@@ -651,6 +654,7 @@ because the lead is opened early and the ticket is created much later.
 | A database failure at startup never leaves the bot on memory | `graph._durable_checkpointer` (`REQUIRE_DURABLE_CHECKPOINTER`) | With `SUPABASE_DB_URL` set it retries for `CHECKPOINTER_RETRY_SECONDS` (60), then refuses to start, and `restart: unless-stopped` keeps trying. Keyed on the URL rather than `ENVIRONMENT`, which defaults to development. With no URL, memory is allowed unless `ENVIRONMENT` is production. The retry must fit inside the healthcheck's `start_period` (90s), and `smoke_resilience.py` compares them. Logs the exception's type only: psycopg errors can quote the URL. |
 | The container reads as healthy only if `/health/ready` says ok | `app/healthcheck.py` (`python -m app.healthcheck`, in compose and the `Dockerfile`) + `health.CHECKPOINTER_IN_READY` | `/health/ready` always answers 200, so the command parses the body, and `/health` says ok whatever the state. Memory, or no checkpointer yet, is degraded. Standard library only, nothing from the app. Docker only labels the container: an unhealthy one is not restarted, so a short Supabase failure costs a label and no replies. |
 | A restart answers what it is holding | `debouncer._drain_all` (`DRAIN_ON_SHUTDOWN`) + `stop_grace_period: 60s` in compose | Waiting batches run at once on shutdown, running turns are waited for, before Whapi and the graph close. Limit `DRAIN_TIMEOUT_SECONDS` (45), which must stay under the grace period, and `smoke_resilience.py` compares them. Past it, turns are cancelled and message ids logged. Covers a normal stop or deploy; a crash or kill still loses the buffer, which is the startup scan's job. |
+| The startup scan claims before it sends, and never answers another channel's message | `app/services/recovery.py` (`STARTUP_RECOVERY_SCAN`, default off) + `cb_recovery_claims` | Written and OFF. Every inbound message since our last outbound is one batch; each is claimed by Whapi id before any reply, and a failed claim sends nothing. An auto-reply is not an answer. Only messages under 10 min old by the newest, from before startup, to our own `to_number` (not `business_number`, which 3,454 of 3,829 live rows disagree with). The same gates as `handle_inbound`. More than 25 to answer sends none of them. |
 | One helper's details never become another helper's | `info_collector.nationality_carries` / `nationality_for_turn` + `_history_since` (`collected_since`) | `nationality` is portable for a hiring client (the nationality they want) and NOT across a switch into or out of `passport_renewal`/`home_leave`, where it is one helper's. Read by the collector's reset AND by `rag_retriever`, which runs before the reset. The extractor reads history only from the message that started the current request, on every turn after a switch, not just the switch turn. |
 | One salesperson per client conversation, and the portal inbox never loses a hand-assigned owner | `assignment.resolve_agent` (`_portal_owner`) + `claim_portal_owner` | A ticket goes to whoever owns the chat in the portal before the round robin is asked; the bot only ever FILLS an empty `wp_chat_conversations.assigned_user_id` (the IS NULL is in the UPDATE itself). `to_human` used to set it unconditionally, and the ordinary ticket path (`log_escalation`) never set it at all. Profile ↔ portal login is `cb_agent_portal_users`, ours, not `wp_chat_users.profile_id`, theirs. |
 | Nothing the KB watcher drafts reaches the chatbot without an APPROVER | `kb_admin_watch_approve` (015, `kb_admin__require_actor(..., 'approver')`) + `app/watch/actions.ts` (`canApprove` first) | A watched page's change becomes a PROPOSAL (`cb_kb_drafts`), never a live row. Approve writes the text through the existing `kb_admin_save_draft` / `kb_admin_create_entry` and it goes live only through the existing `kb_admin_publish` (canary-checked embedding). Proved on PGlite (real migrations 001-009 + 015): the live entry is unchanged until publish. |
@@ -1084,6 +1088,11 @@ Easy to get wrong:
   `pipeline.RENDER_PER_SOURCE`, `pipeline.RETRY_FAILED_DRAFTS`,
   `fetcher.UNVERIFIED_SOURCES`, `language.NON_ENGLISH_PAGES`. render-service:
   `RENDER_ALLOWED_HOSTS` (default `kemlu.go.id`; `*` = any public host).
+- `STARTUP_RECOVERY_SCAN` (default **false**) — answer, once at startup, messages a crash
+  left unanswered (`app/services/recovery.py`). Before switching on: apply
+  `scripts/sql/recovery_001_claims.sql`, confirm `WHAPI_SENDER_PHONE` is right (the scan
+  refuses without it, and uses it to ignore other channels), and try it on a test number
+  with the allowlist in force. With the table missing it sends nothing and logs an error.
 - **`POST /internal/suggest` settings are read from the process environment, not
   `app/config.py`** (`app/suggest/settings.py`). In Docker, `env_file` puts `.env` there;
   locally they must be exported in the shell. `SUGGEST_SECRET`: empty means the route is
@@ -2199,6 +2208,25 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **The startup scan is written and switched off.** For what graceful
+  shutdown cannot cover: a crash or kill loses the debouncer's buffer, and a message sent
+  while the bot is down may reach only the portal's webhook. No behaviour changes until
+  `STARTUP_RECOVERY_SCAN` is on and `scripts/sql/recovery_001_claims.sql` (written, NOT
+  applied) is in. `wp_chat_messages` was read from the live database first, read-only, and
+  that changed the design twice. `is_bot` is true on 790 WhatsApp auto-replies, so an
+  auto-reply must be skipped by `sent_by` or it reads as our answer. And `business_number`
+  disagrees with our number on 3,454 of 3,829 rows while `to_number` matched on all 6,181
+  inbound rows of 30 days, so `to_number` is what keeps a message to the portal's other
+  account from being answered from ours. `reply_to_whapi_id` is populated (872 of 6,181),
+  so a quoted staff message still reads as one. 37 more checks in `smoke_resilience.py`,
+  run over an in-memory table with the real gates; 19 faults, 19 red, after the window
+  fault was first green because it only matters for a message with no Whapi id. The
+  migration on PGlite: 11 of 11, including two claims at once with exactly one winner, and
+  the rollback. **Not proved: the claim through real PostgREST**, because the table is on
+  no database; the request's headers are checked, and its SQL equivalent ran on PGlite.
+  Rows named after their own number are skipped (178 live), which catches the rows minted
+  from a LID (section 9.16) and, the safe way, real clients with no push name.
 
 - **2026-11-04** - **A restart answers the messages it is holding.** `shutdown()` cleared
   the debouncer's buffers, so a message that arrived in the seconds before a deploy was

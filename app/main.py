@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -63,9 +65,20 @@ async def lifespan(_app: FastAPI):
 
     await init_graph()
 
+    # Off by default (app/services/recovery.py). Started here so "until" is
+    # taken before the first live request, and not awaited, so a slow turn does
+    # not hold up the port opening.
+    recovery_task = None
+    if settings.startup_recovery_scan:
+        from app.services import recovery
+
+        recovery_task = asyncio.create_task(recovery.run(datetime.now(timezone.utc)))
+
     yield
 
     logger.info("Shutting down")
+    if recovery_task is not None and not recovery_task.done():
+        recovery_task.cancel()
     await debouncer.shutdown()
     await whapi.close()
     await close_graph()
