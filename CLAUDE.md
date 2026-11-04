@@ -103,7 +103,8 @@ app/
                      node/purpose, DB calls by table, RAG, send. Ids and ms only
                      (scripts/latency_report.py prints p50/p90; TURN_TIMING_LOG=false)
   api/admin.py       POST /admin/preview — the real graph on a test question, writes
-                     nothing; 404 unless ADMIN_PREVIEW_SECRET is set
+                     nothing; 404 unless ADMIN_PREVIEW_SECRET is set. NOT registered in
+                     production (POST answers 404, measured 2026-11-04)
   suggest/           POST /internal/suggest (2026-10-28) — reply drafts for a human
                      consultant in the Smart Inbox, up to 4 (validate.MAX_DRAFTS),
                      from Claire's prompt, the rag_retriever node and the guards.
@@ -166,8 +167,8 @@ render-service/      headless-Chromium page renderer for kb-admin's KB watcher
                      marked "Render with browser" (017; KB_RENDER_URL/KB_RENDER_SECRET
                      on Vercel). System Chrome (RENDER_CHROME_CHANNEL=chrome), site
                      allowlist RENDER_ALLOWED_HOSTS (default kemlu.go.id).
-                     Live on the bot's domain (`GET /kb-render/health` answers, measured
-                     2026-11-04). See render-service/README.md.
+                     Live at `https://bot.minghwee.com/kb-render/` (`GET /kb-render/health`
+                     answers, measured 2026-11-04). See render-service/README.md.
 reset-ui/            Next.js "clear a conversation" page (separate deliverable, own
                      Vercel project). Standalone: imports nothing from app/, calls no
                      chatbot endpoint, talks to Supabase directly with the service-role
@@ -197,7 +198,8 @@ kb-admin/            Next.js knowledge-base tool (Documents, Rows, Rules, Test a
                      (Ming Hwee) approver, Ratna editor, Vaidik viewer; rows are
                      added only by a reviewed SQL file (kb_admin_users_*.sql).
                      No service-role key; an LLM key only with the watcher on. Test a question calls the bot's
-                     POST /admin/preview. See kb-admin/README.md; `npm run selfcheck`
+                     POST /admin/preview, which is not registered in production, so it
+                     does not work there today. See kb-admin/README.md; `npm run selfcheck`
                      before any change; `npm run dev:test` runs it against TEST.
                      RULES: the loader skips (and reports) every row tagged
                      metadata.managed_by='ui', which a published edit sets - never
@@ -892,7 +894,8 @@ Easy to get wrong:
   good set, else the defaults — never "quote everything" or "withhold everything".
 - `ADMIN_PREVIEW_SECRET` — header `X-Admin-Preview-Key` for `POST /admin/preview`.
   Empty means the route is **never registered**: 404 whatever the body, and absent
-  from the schema.
+  from the schema. That is production's state (measured 2026-11-04). Setting it there also
+  needs a POST-only block in `docs/nginx_allowlist.conf` once that is applied.
 - `ADMIN_PREVIEW_PER_MINUTE` (10) — previews run the real model in the live bot's
   one process; over the limit is 429, and a second concurrent preview is 429 too.
 - `ENABLE_API_DOCS` (default **false**) — `/docs`, `/redoc`, `/openapi.json`.
@@ -1618,6 +1621,7 @@ Ordered by what will hurt first.
     was public when this was written (private since 2026-10-12). Confirm the
     intended number with whoever asked for it and correct it in the server
     `.env`, then `docker compose up -d` and check the "Safety gate" log line.
+    **Still in the allowlist after the 2026-11-04 deploy.**
 32. **`POST /admin/preview` answers 422, not 404, when switched off and sent no
     body.** Seen on the production deploy of 2026-09-24. FastAPI validates the
     `PreviewRequest` body BEFORE the handler runs, so `_check_key` - the line
@@ -1634,10 +1638,10 @@ Ordered by what will hurt first.
     **FIXED IN CODE 2026-09-25, not yet deployed** - see the change log. One
     correction to (b): a dependency alone was not enough. FastAPI decodes a
     declared body before it runs dependencies, so malformed JSON still got 422
-    ahead of the key check; the body is now read by hand after it. Mark this
-    RESOLVED once the server answers 404 on `/admin/preview` with no secret.
-33. **FIXED IN CODE 2026-09-25, not yet deployed** (`ENABLE_API_DOCS`, off by
-    default). **The API docs are public wherever the app is.** `FastAPI(...)` in
+    ahead of the key check; the body is now read by hand after it.
+    **RESOLVED 2026-11-04:** deployed, and a POST with no body answers 404 from outside.
+33. **RESOLVED: deployed, and `/docs` answers 404 from outside (2026-11-04)**
+    (`ENABLE_API_DOCS`, off by default). **The API docs are public wherever the app is.** `FastAPI(...)` in
     `main.py` leaves `/docs`, `/redoc` and `/openapi.json` on, so they list
     every route, `/admin/preview` and the webhook path pattern included.
     Pre-existing. Turn all three off outside development (`docs_url=None`,
@@ -1800,8 +1804,8 @@ Ordered by what will hurt first.
     so such a page will produce a proposal. (d) The first fetch of a page sends its whole
     main text (capped at 6,000 characters) to the drafting model and may propose several
     entries; review them like any other. (e) A page built by JavaScript (the Indonesian
-    embassy's `kemlu.go.id/...`) needs `render-service/` deployed on the bot's server and
-    `KB_RENDER_URL`/`KB_RENDER_SECRET` on Vercel; until then it is reported as "needs the
+    embassy's `kemlu.go.id/...`) needs `render-service/`, live at `/kb-render/`, and
+    `KB_RENDER_URL`/`KB_RENDER_SECRET` on Vercel; without those two it is reported as "needs the
     page renderer". MOM's `foreign-domestic-worker-levy` URL is an index page - the rates
     are on `.../foreign-domestic-worker-levy/paying-levy`, which is the page to watch for them.
     (f) **Migration `kb_admin_016_watcher_overlap.sql` is applied on PRODUCTION (2026-10-16,
@@ -1813,7 +1817,7 @@ Ordered by what will hurt first.
     contradicted sentences to replace, and kb-admin builds the entry, so live facts are not lost and
     the "drops existing information" block (page + action, not the database) is only a safety net -
     0 blocked in the paying-levy dry runs, against every change before. (h) **The five client sites
-    (2026-10-16)** need render-service deployed (017 is on production); the 20 pages to add, and
+    (2026-10-16)**: render-service is live and 017 is on production; the 20 pages to add, and
     the switch-on steps for the schedule, are in the 2026-10-16 change log. What is still possible: an
     addition that sits beside a live sentence the page contradicts by a rule the mechanical test
     cannot see; the reviewer sees both, and Edit fixes it.
@@ -1866,9 +1870,30 @@ Ordered by what will hurt first.
       `wp_chat_conversations.langgraph_thread_id` points at it and it has been idle 14 days.
       A thread a conversation points at always keeps its latest: a parked client can come
       back weeks later, and that row is the collection. Never a broad delete by date. A replaced
-      thread's rows do not name a conversation, so the open-ticket rule can only cover the
-      current thread unless the old id is recorded when it is replaced; the bot never reads a
-      replaced thread, so what is lost there is replay evidence, not a client's state.
+      thread is pruned whole only if it is recorded, as below, and its conversation has no open
+      ticket; the bot never reads a replaced thread, so what is lost there is replay evidence,
+      not a client's state.
+    - *Recording the old thread (plan, 2026-11-04).* A new `cb_replaced_threads`: thread_id
+      (primary key), tenant_id, conversation_id, replaced_at, reason. Not a column on
+      `wp_chat_conversations`, which is the portal's. Two places in `app/` replace a live
+      thread: `conversation.get_or_create` (a reopened or unclaimed conversation) and
+      `handover.back_to_bot`. Each inserts the row BEFORE it writes the new id, skipping a null
+      old id. If the insert fails, the thread is still replaced and an error logged, because a
+      client's turn must not fail over evidence; an unrecorded thread is simply never pruned, so
+      a failure keeps data. `reset_conversation.py` and reset-ui also replace the id, but they
+      delete the old thread's rows, so they delete its record instead, and
+      `purge_test_contact.py` likewise, enforced by `selfcheck_reset_ui.py`. Nothing in the
+      portal's source writes this column. The pruner's test, in its transaction: recorded, idle
+      14 days, and no `open`/`in_progress` ticket on that conversation; it deletes the record
+      with the last of the thread's rows.
+      *The 6 replaced threads already there* (all last used 2026-10-08 or earlier): each id reads
+      `conv-<conversation id>-...` and each still holds a `conversation_id` blob, so the migration
+      can backfill them, keeping only rows where the name matches a real conversation. The id's
+      format is not a contract, so future threads are recorded rather than parsed. (This entry
+      said before that replaced rows name no conversation. That was wrong.)
+      *Proof before switching on:* a fault for each of: record written after the replace, a failed
+      insert blocking the turn, a pruned thread with an open ticket, an unrecorded thread pruned.
+      Migration and rollback on PGlite. Not built.
     - *How.* `app/services/checkpoint_pruning.py` on the checkpointer's own pool, once at
       startup and then every 6 hours from `lifespan` (one worker, so one runner), a capped
       number of threads per pass, ids and counts in the log. Switch `CHECKPOINT_PRUNING`,
@@ -1942,6 +1967,20 @@ Ordered by what will hurt first.
       needed" lines that read as instructions. If the bot ever reads it: `short_summary` only,
       one-to-one client chats only, 5 or fewer messages behind, digits removed, never grounding,
       own switch. `client_notes` does not depend on it. Nothing in `app/` reads it today.
+54. **`POST /internal/suggest` fails when the model repeats its JSON (found 2026-11-04, not
+    fixed).** The portal recorded 5 failures in 171 calls, 28 Oct to 4 Nov: 4
+    `chatbot_http_500` and 1 `chatbot_timeout`, on 5 different conversations. Replaying those
+    conversations read-only on the real model gave "model output was not JSON" in 8 of 29 runs. The
+    3 whose output shape was captured each had a complete, valid first JSON object with more after
+    it, at about half the length. `json.loads` refuses the extra data, `_JSON_BLOCK` spans both
+    objects and fails too, and the route answers 500 (`llm_error`). A fix would take the first
+    object, or retry once. `try_parse_json` is shared with `complete_json`, so it should have its
+    own replay. **Not proved for the original 5:** the server's log was not read, and `up -d
+    --build` recreates the container, which deletes the old one's log, so those lines are probably
+    gone. The evidence is the replay and timing: the 500s took 8.5 to 13.8s, so they failed after a
+    model call, and all 4 conversations got drafts on the next try within a minute. The replay's
+    rate is far above production's 2.3%, on conversations picked because they failed. **The timeout**
+    (conversation 1555, 25.3s, the app's 25s limit) did not reproduce: 6 to 14s in 3 runs.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -2368,6 +2407,15 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **Docs only: the deploy recorded, suggest failures diagnosed, pruning plan
+  extended.** `a43aeff` was deployed to production today (stages 1 to 4 of
+  `docs/DEPLOY_2026-11-04.md`, by the user): `/health/ready` reads `"status":"ok"` with checkpointer
+  `postgres`, and a test WhatsApp message was answered. Measured from outside after it:
+  `/kb-render/health` 200, POST `/admin/preview` 404, `/docs` 404, a forged `X-Forwarded-For` shows
+  no `warnings`. Sections 9.32 and 9.33 are resolved; 2, 7 and 9.45 updated. Whether the shutdown
+  test on a real stop passed was not recorded, so the drain is still unproved. nginx and the
+  monitor are not done. Section 9.54 is new. Section 9.50 now plans `cb_replaced_threads`.
 
 - **2026-11-04** - **Forwarded headers are believed only from nginx's route in.** `run.py` had
   `forwarded_allow_ips="*"`, so anyone could set the address the app saw; uvicorn then takes the
