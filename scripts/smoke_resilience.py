@@ -680,8 +680,9 @@ async def _recovery_checks() -> list[tuple[str, bool]]:
         r = await scan([inbound("old", 300), inbound("m1", 3)])
     results.append(("switch off: the whole unanswered run, as before", r["batches"] == [["old", "m1"]]))
     with patch.object(recovery, "BATCH_ONLY_INSIDE_WINDOW", False):
-        r = await scan([inbound("old", 300), inbound("older", 200)])
-    results.append(("...and still nothing when the newest is past the window", not r["batches"]))
+        # The row with no id puts the conversation in the scan and then leaves only old ones.
+        r = await scan([inbound("old", 300), {**inbound("x", 3), "whapi_message_id": None}])
+    results.append(("...and still nothing when the newest left is past the window", not r["batches"]))
     results.append(("the window switch is on", recovery.BATCH_ONLY_INSIDE_WINDOW is True))
     # whapi_message_id is nullable: a row in the window with no id leaves only old ones.
     r = await scan([inbound("old", 300), {**inbound("x", 3), "whapi_message_id": None}])
