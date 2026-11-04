@@ -298,14 +298,19 @@ _NOT_SAFE_WORD = re.compile(
 _SAFE_WORD = re.compile(
     r"^\W*(?:i\s*(?:am|'?m)\s+)?(?:safe|aman|ligtas|ligtas\s+ako)(?:\s+now)?\W*$", re.IGNORECASE
 )
-_THINKING_OF_IT = re.compile(r"\bthinking\b|\bend(?:ing)?\s+it\b", re.IGNORECASE)
-_NOT_OK = re.compile(r"\bnot\s+(?:ok|okay|fine|good|alright|well)\b", re.IGNORECASE)
-_NOT_NOW = re.compile(
-    r"^\W*(?:no|nope|nah|not\s+really|tidak|nggak|enggak|hindi|wala"
-    r"|(?:i\s*(?:am|'?m)\s+)?(?:ok|okay|fine|alright))\b",
+# She clearly says she is safe or not thinking of ending her life, and nothing else.
+# The whole message has to match, so "I'm ok but no one is here" does not.
+_CLEARLY_SAFE = re.compile(
+    r"^\W*(?:(?:no|nope|nah|tidak|hindi)\W+)?(?:"
+    r"i\s*(?:am|['’]?m)\s+(?:ok|okay|fine|alright|all\s+right|good|safe)"
+    r"|(?:i\s*(?:am|['’]?m)\s+)?not\s+thinking\s+(?:about|of)\s+"
+    r"(?:it|that|this|ending\s+(?:it|my\s+life))"
+    r"|saya\s+(?:ok|okay|aman|baik(?:-baik)?(?:\s+saja)?)"
+    r"|(?:ok|okay|ayos)\s+lang(?:\s+ako)?"
+    r")(?:\W+(?:now|already|thanks?|thank\s+you))*\W*$",
     re.IGNORECASE,
 )
-_HURT = re.compile(r"\b(?:hurt|injur\w*|bleeding|unwell|sakit|masakit|luka)\b", re.IGNORECASE)
+_HURT =re.compile(r"\b(?:hurt|injur\w*|bleeding|unwell|sakit|masakit|luka)\b", re.IGNORECASE)
 _CAN_BE_SEEN = re.compile(
     r"\b(?:can|could|will|might|may)\s+see\b|\bsee(?:s|ing)?\s+(?:my|this|the)\s+phone\b"
     r"|\bchecks?\s+my\s+phone\b|\bwatching\b|\bnot\s+safe\s+to\s+(?:chat|talk)\b",
@@ -502,24 +507,15 @@ def _apply_answer(case: dict[str, Any], pending: str, message: str, a: Assessmen
     return None
 
 
-def suicide_answer(message: str, a: Assessment) -> str | None:
-    """Her answer to the suicide template's question: 'now', 'no', or None if unclear.
+def clearly_safe_after_suicide_template(message: str) -> bool:
+    """Whether her reply to the suicide template plainly says she is safe.
 
-    Any doubt goes the safe way: words of self-harm count even after a "no", and "not
-    ok" is not a no. The model is asked last, so it cannot override a plain "no".
+    That template ends on "Is there someone safe near you?", so a bare "no" or "yes"
+    may be answering either of its two questions, and "no" may mean she is alone. The
+    guidelines say to use the higher level when unsure, so anything short of this
+    gets the 995 line. Decided in code, so the model cannot talk it down.
     """
-    text = message or ""
-    if _SELF_HARM.search(text) or _THINKING_OF_IT.search(text):
-        return "now"
-    if _NOT_OK.search(text):
-        return None
-    if _NOT_NOW.search(text):
-        return "no"
-    if _YES.search(text):
-        return "now"
-    if a.level == "P1" and a.complaint_type == "self_harm" and len(text.split()) >= 3:
-        return "now"
-    return None
+    return bool(_CLEARLY_SAFE.search(message or ""))
 
 
 def advance(case: dict[str, Any], a: Assessment, message: str) -> tuple[dict[str, Any], str | None]:
@@ -544,17 +540,14 @@ def advance(case: dict[str, Any], a: Assessment, message: str) -> tuple[dict[str
             case["awaiting"] = None
             return case, "FOLLOW_SAFE"
         if case.get("awaiting") == "suicide_check":
-            answer = suicide_answer(message, a)
-            if answer:
-                case["awaiting"] = None
-                _absorb(case, a)
-            if answer == "now":
-                case["safe_status"] = "not_safe"
-                case["urgent"] = True
-                return case, "FOLLOW_SUICIDE_NOW"
-            if answer == "no":
+            case["awaiting"] = None
+            _absorb(case, a)
+            if clearly_safe_after_suicide_template(message):
                 case["safe_status"] = "safe"
                 return case, "FOLLOW_SAFE"
+            case["safe_status"] = "not_safe"
+            case["urgent"] = True
+            return case, "FOLLOW_SUICIDE_NOW"
 
     # The model may grade the old report again on a bare "ya" or "after 9pm". An
     # answer that short raises nothing unless its own words do; nor does the time

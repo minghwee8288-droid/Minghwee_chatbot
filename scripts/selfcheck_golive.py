@@ -1277,10 +1277,16 @@ async def scenario_complaint_triage():
     check("complaint 2: the keyword net catches it with the model down",
           down.startswith("I'm really glad you told me."))
 
-    # 2, the answer to its question (4 Nov 2026).
+    # 2, the answer to its questions (4 Nov 2026). The template asks two, so only a
+    # plain statement that she is safe gets FOLLOW_SAFE.
     for answer, label in (("yes", "yes"), ("oo", "oo"), ("yes I am thinking about it", "yes, thinking"),
                           ("I want to die", "self-harm words"),
-                          ("no I want to die", "a no, then self-harm words")):
+                          ("no I want to die", "a no, then self-harm words"),
+                          ("no", "no"), ("nobody", "nobody"), ("no one", "no one"), ("alone", "alone"),
+                          ("no one is here", "no one is here"), ("yes someone is here", "yes someone is here"),
+                          ("no thanks", "no thanks"), ("ok", "a bare ok"), ("no I'm not ok", "no I'm not ok"),
+                          ("I'm not ok", "I'm not ok"), ("I'm ok but no one is here", "ok, but alone"),
+                          ("yes I'm ok", "yes I'm ok")):
         w = ComplaintWorld()
         await w.turn("I don't want to live anymore", _h("P1", "self_harm"))
         w.ticket()["workflow_status"] = None  # so only this answer can set it
@@ -1290,18 +1296,36 @@ async def scenario_complaint_triage():
                       f"service, so please contact them first. Your reference is `{w.ticket()['ticket_number']}`.")
               and w.ticket()["workflow_status"] == "escalated" and w.ticket()["priority"] == "high"
               and w.ticket()["status"] == "open" and r2b.get("reply_must_send"))
-    for answer in ("no", "I'm ok", "no thanks"):
+    for answer in ("I'm ok", "I’m ok", "im fine", "I'm safe", "no I'm fine", "no, I am ok thank you",
+                   "not thinking about it", "no I'm not thinking about it", "okay lang ako", "saya baik-baik saja"):
         w = ComplaintWorld()
         await w.turn("I don't want to live anymore", _h("P1", "self_harm"))
         _r, a2n = await w.turn(answer, {"speaker": "helper", "level": "none"})
-        check(f"complaint 2: suicide + '{answer}' -> FOLLOW_SAFE",
+        check(f"complaint 2: suicide + '{answer}' -> FOLLOW_SAFE, the ticket still escalated",
               a2n.startswith("Thank you for letting us know.")
-              and w.ticket()["captured_info"]["complaint"]["safe_status"] == "safe")
+              and w.ticket()["captured_info"]["complaint"]["safe_status"] == "safe"
+              and w.ticket()["workflow_status"] == "escalated")
+
+    async def translate_995(system, text, **kwargs):
+        ref = next(iter(guards.TICKET_REFERENCE.findall(text)), "")
+        if "Please call 995" in text:
+            return f"Tumawag sa 995 ngayon o pumunta sa A&E. Ang iyong reference ay {ref}."
+        return "Ikinalulungkot ko. Tumawag sa 995 o pumunta sa A&E."
+
+    w = ComplaintWorld()
+    with patch.object(_ct_node, "complete", new=translate_995):
+        await w.turn("gusto ko nang mamatay", _h("P1", "self_harm", language="Tagalog"))
+        r2t, a2t = await w.turn("wala", {"speaker": "helper", "level": "none"})
+    check("complaint 2: Tagalog 'wala' -> the 995 line in Tagalog with the reference, ticket urgent",
+          a2t == f"Tumawag sa 995 ngayon o pumunta sa A&E. Ang iyong reference ay `{w.ticket()['ticket_number']}`."
+          and w.ticket()["workflow_status"] == "escalated" and w.ticket()["priority"] == "high"
+          and r2t.get("reply_must_send"))
     w = ComplaintWorld()
     await w.turn("I don't want to live anymore", _h("P1", "self_harm"))
-    _r, a2u = await w.turn("no I'm not ok", {"speaker": "helper", "level": "none"})
-    check("complaint 2: 'no I'm not ok' is not a no: never FOLLOW_SAFE, and the 995 line stays in the reply",
-          "Thank you for letting us know" not in a2u and "995" in a2u)
+    await w.turn("no", {"speaker": "helper", "level": "none"})
+    _r, a2z = await w.turn("no I'm fine", {"speaker": "helper", "level": "none"})
+    check("complaint 2: the 995 line goes once: the next message is added to the case, never the line again",
+          "We are not a medical service" not in a2z and "995" in a2z)
     w = ComplaintWorld()
     await w.turn("my ma'am beat me just now, I'm bleeding", _h("P1", "physical"))
     _r, a2p = await w.turn("yes", {"speaker": "helper", "level": "none"})
