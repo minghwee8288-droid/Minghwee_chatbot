@@ -21,6 +21,8 @@ if sys.platform == "win32":
 
 import uvicorn  # noqa: E402 - must come after the policy is set
 
+from app.forwarded import allowed_ips  # noqa: E402 - standard library only
+
 if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
@@ -28,5 +30,5 @@ if __name__ == "__main__":
         port=int(os.getenv("PORT", "8000")),
         reload=os.getenv("RELOAD", "").lower() in {"1", "true", "yes"},
         proxy_headers=True,
-        forwarded_allow_ips="*",
+        forwarded_allow_ips=allowed_ips(),
     )

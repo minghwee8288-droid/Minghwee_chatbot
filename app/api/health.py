@@ -51,9 +51,10 @@ _channel_unknown_in_a_row = 0
 # 2026-11-04: "warnings" names which settings are missing, so the public body does
 # not carry it. It shows for a request from inside the container, or with the
 # X-Health-Key header (HEALTH_DETAILS_KEY). A forwarding header means it came
-# through a proxy, whatever the peer: run.py trusts X-Forwarded-For from anyone, so
-# a caller can make the peer read 127.0.0.1, and curl from the server's own shell
-# arrives from Docker's gateway, the same as nginx. False = warnings for everyone.
+# through a proxy, whatever the peer: if nginx passes a caller's own X-Forwarded-For
+# through, the peer can still read 127.0.0.1 (app/forwarded.py stops a caller doing
+# this directly), and curl from the server's own shell arrives from Docker's
+# gateway, the same as nginx. False = warnings for everyone.
 WARNINGS_PRIVATE = True
 _PROXY_HEADERS = ("x-forwarded-for", "x-real-ip", "forwarded")
 

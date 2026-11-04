@@ -976,10 +976,128 @@ async def _recovery_checks() -> list[tuple[str, bool]]:
     return results
 
 
+async def _forwarded_checks() -> list[tuple[str, bool]]:
+    import os
+    import runpy
+    import tempfile
+
+    import httpx
+    from unittest.mock import AsyncMock
+
+    from fastapi import FastAPI
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    from app import forwarded
+    from app.api import health
+    from app.config import settings
+
+    results: list[tuple[str, bool]] = []
+    header = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+    subnet = "eth0\t000012AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n"
+    default = "eth0\t00000000\t010012AC\t0003\t0\t0\t0\t00000000\t0\t0\t0\n"
+
+    with tempfile.TemporaryDirectory() as folder:
+        def gateway_from(text: str) -> str | None:
+            path = os.path.join(folder, "route")
+            with open(path, "w", encoding="ascii") as out:
+                out.write(text)
+            return forwarded.default_gateway(path)
+
+        results.append(("the gateway is read from the default route", gateway_from(header + subnet + default) == "172.18.0.1"))
+        results.append(("a table with no default route has no gateway", gateway_from(header + subnet) is None))
+        results.append(("a default route with no gateway has none", gateway_from(header + "eth0\t00000000\t00000000\t0001\n") is None))
+        results.append(("a malformed table has no gateway, and no crash",
+                        gateway_from(header + "eth0\t00000000\tnothex\n") is None and gateway_from("x\ny") is None))
+        results.append(("no route file has no gateway", forwarded.default_gateway(os.path.join(folder, "absent")) is None))
+
+    def allowed(env: str | None, gateway: str | None) -> str:
+        values = {} if env is None else {"FORWARDED_ALLOW_IPS": env}
+        with patch.dict(os.environ, values), patch.object(forwarded, "default_gateway", return_value=gateway):
+            if env is None:
+                os.environ.pop("FORWARDED_ALLOW_IPS", None)
+            return forwarded.allowed_ips()
+
+    results.append(("only the gateway is believed", allowed(None, "172.18.0.1") == "172.18.0.1"))
+    results.append(("not in a container: only loopback", allowed(None, None) == "127.0.0.1"))
+    results.append(("the setting overrides the gateway", allowed("10.0.0.5", "172.18.0.1") == "10.0.0.5"))
+    results.append(("a blank setting is no setting", allowed("  ", "172.18.0.1") == "172.18.0.1"))
+    results.append(("the setting cannot open it to everyone",
+                    allowed("*", "172.18.0.1") == "172.18.0.1" and allowed("10.0.0.5,*", "172.18.0.1") == "172.18.0.1"))
+    with patch.object(forwarded, "NGINX_ONLY_FORWARDED", False):
+        results.append(("switch off: everyone, as before", allowed(None, "172.18.0.1") == "*"))
+    results.append(("that switch is on", forwarded.NGINX_ONLY_FORWARDED is True))
+
+    # run.py really hands that value to uvicorn.
+    policy = asyncio.get_event_loop_policy()
+    try:
+        with patch("uvicorn.run") as started, patch.object(forwarded, "allowed_ips", return_value="172.18.0.1"):
+            runpy.run_path(str(ROOT / "run.py"), run_name="__main__")
+    finally:
+        asyncio.set_event_loop_policy(policy)
+    kwargs = started.call_args.kwargs if started.call_args else {}
+    results.append(("run.py passes allowed_ips() to uvicorn",
+                    kwargs.get("forwarded_allow_ips") == "172.18.0.1" and kwargs.get("proxy_headers") is True))
+    results.append(("startup logs who is believed", "forwarded.allowed_ips()" in (ROOT / "app" / "main.py").read_text(encoding="utf-8")))
+
+    # What the app sees, through uvicorn's real middleware and the value above.
+    gateway = "172.18.0.1"
+
+    async def seen_as(peer: str, trusted: str, headers: dict) -> dict:
+        scopes: list[dict] = []
+
+        async def seen_app(scope, receive, send) -> None:
+            scopes.append(scope)
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        transport = httpx.ASGITransport(app=ProxyHeadersMiddleware(seen_app, trusted_hosts=trusted), client=(peer, 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://bot") as client:
+            await client.get("/seen", headers=headers)
+        return {"host": scopes[0]["client"][0], "scheme": scopes[0]["scheme"]}
+
+    trusted = allowed(None, gateway)
+    cases = (
+        ("through nginx: the caller's address", gateway, {"X-Forwarded-For": "9.9.9.9"}, "9.9.9.9", "http"),
+        ("through nginx: the scheme it reports", gateway, {"X-Forwarded-Proto": "https"}, gateway, "https"),
+        ("a forged value nginx appended to: nginx's entry wins", gateway, {"X-Forwarded-For": "127.0.0.1, 9.9.9.9"}, "9.9.9.9", "http"),
+        ("from anyone else: the address is ignored", "8.8.8.8", {"X-Forwarded-For": "127.0.0.1"}, "8.8.8.8", "http"),
+        ("from anyone else: the scheme is ignored", "8.8.8.8", {"X-Forwarded-Proto": "https"}, "8.8.8.8", "http"),
+        ("from inside the container: ignored too", "127.0.0.1", {"X-Forwarded-For": "9.9.9.9"}, "127.0.0.1", "http"),
+    )
+    for name, peer, headers, host, scheme in cases:
+        results.append((f"forwarded: {name}", await seen_as(peer, trusted, headers) == {"host": host, "scheme": scheme}))
+    results.append(("forwarded: with * a forged value was believed, which is why this exists",
+                    (await seen_as("8.8.8.8", "*", {"X-Forwarded-For": "127.0.0.1"}))["host"] == "127.0.0.1"))
+
+    # The one reader of the client's address, end to end.
+    route_app = FastAPI()
+    route_app.include_router(health.router)
+
+    async def ready_as(peer: str, headers: dict) -> str:
+        transport = httpx.ASGITransport(app=ProxyHeadersMiddleware(route_app, trusted_hosts=trusted), client=(peer, 1234))
+        with patch.object(settings, "transcription_api_key", ""), patch.object(settings, "transcription_enabled", True), \
+                patch.object(settings, "openai_api_key", ""), patch.object(settings, "health_details_key", ""), \
+                patch.object(health, "WARNINGS_PRIVATE", True), \
+                patch.object(health.db, "healthcheck", AsyncMock(return_value=True)), \
+                patch.object(health.whapi, "channel_connected", AsyncMock(return_value=True)):
+            async with httpx.AsyncClient(transport=transport, base_url="http://bot") as client:
+                return (await client.get("/health/ready", headers=headers)).text
+
+    for name, peer, headers in (
+        ("a stranger forging loopback", "8.8.8.8", {"X-Forwarded-For": "127.0.0.1"}),
+        ("nginx passing a forged loopback through", gateway, {"X-Forwarded-For": "127.0.0.1"}),
+        ("nginx appending to a forged loopback", gateway, {"X-Forwarded-For": "127.0.0.1, 9.9.9.9"}),
+    ):
+        results.append((f"forwarded: {name} sees no warnings", '"warnings"' not in await ready_as(peer, headers)))
+    results.append(("forwarded: the container itself still sees them", '"warnings"' in await ready_as("127.0.0.1", {})))
+    return results
+
+
 async def checks() -> list[tuple[str, bool]]:
     return [
         *await _checkpointer_checks(),
         *await _health_checks(),
+        *await _forwarded_checks(),
         *await _shutdown_checks(),
         *await _recovery_checks(),
     ]

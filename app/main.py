@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import __version__
+from app import __version__, forwarded
 from app.api.admin import router as admin_router
 from app.api.health import router as health_router
 from app.api.webhook import debouncer
@@ -62,6 +62,7 @@ async def lifespan(_app: FastAPI):
             "Safety gate OFF (BOT_ALLOWED_NUMBERS is empty) — the bot will reply to "
             "EVERY client on this WhatsApp number."
         )
+    logger.info("Forwarded headers are believed only from %s", forwarded.allowed_ips())
 
     await init_graph()
 

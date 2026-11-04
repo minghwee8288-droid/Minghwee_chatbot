@@ -59,6 +59,7 @@ prompt.md            client-facing guide to EVERY prompt the bot uses, quoted fr
 app/
   main.py            FastAPI app, lifespan, startup validation, CORS
   config.py          ALL settings (pydantic-settings, lru_cached — restart to reload)
+  forwarded.py       who may set X-Forwarded-For: the container's gateway, so nginx
   utils.py           phone normalisation, NRIC redaction
   api/
     webhook.py       Whapi webhook, allowlist gate, debounce, agent detection
@@ -656,7 +657,8 @@ because the lead is opened early and the ticket is created much later.
 | The container reads as healthy only if `/health/ready` says ok | `app/healthcheck.py` (`python -m app.healthcheck`, in compose and the `Dockerfile`) + `health.CHECKPOINTER_IN_READY` | `/health/ready` always answers 200, so the command parses the body, and `/health` says ok whatever the state. Memory, or no checkpointer yet, is degraded. Standard library only, nothing from the app. Docker only labels the container: an unhealthy one is not restarted, so a short Supabase failure costs a label and no replies. Only the checkpointer, the database, the Whapi token and the live channel decide it (`health.CRITICAL_CHECKS_ONLY`); anything else failing is named under `warnings`. |
 | A disconnected WhatsApp channel reads as unhealthy, without a public request reaching Whapi each time | `health._whapi_channel_ok` + `whapi.channel_connected` (`WHAPI_CHANNEL_IN_READY`) | One `GET /health?wakeup=false` per 60s, single flight, 2.5s limit (under the healthcheck command's 4s). Not `AUTH`, or a 4xx: false at once. A stall or a 5xx keeps the last good answer for one refresh, then false. Nothing from Whapi's body reaches ours. |
 | The public health body gives nothing away | `health.readiness` + `smoke_resilience.py` | It has no auth, so: booleans and fixed names only. No exception text, count, version or value from the environment; asserted with secrets planted in the settings and every check failing. `/` and `/health` do show the version, and `/health` the environment. |
-| Which settings are missing is not public | `health._may_see_warnings` (`WARNINGS_PRIVATE`) + `HEALTH_DETAILS_KEY` | `warnings` appears only for a request from inside the container with no forwarding header, or with the right `X-Health-Key`. `run.py` trusts `X-Forwarded-For` from anyone, so a loopback peer alone proves nothing; the header's presence is what is tested. curl from the server's own shell arrives from Docker's gateway, so it sees no warnings. The status does not change. |
+| Which settings are missing is not public | `health._may_see_warnings` (`WARNINGS_PRIVATE`) + `HEALTH_DETAILS_KEY` | `warnings` appears only for a request from inside the container with no forwarding header, or with the right `X-Health-Key`. nginx may pass a caller's own `X-Forwarded-For` through, so a loopback peer alone proves nothing; the header's presence is what is tested. curl from the server's own shell arrives from Docker's gateway, so it sees no warnings. The status does not change. |
+| A caller cannot choose the address the app sees | `app/forwarded.py` (`NGINX_ONLY_FORWARDED`) -> `run.py`'s `forwarded_allow_ips` | `X-Forwarded-For` and `X-Forwarded-Proto` are believed only from the container's default gateway, which is how nginx on the host arrives. Read at startup from `/proc/net/route` and logged. `FORWARDED_ALLOW_IPS` overrides it and cannot be `*`. Wrong address = every request reads as the gateway, which costs nothing: `health._may_see_warnings` is the only reader of the client's address. |
 | A restart answers what it is holding | `debouncer._drain_all` (`DRAIN_ON_SHUTDOWN`) + `stop_grace_period: 60s` in compose | Waiting batches run at once on shutdown, running turns are waited for, before Whapi and the graph close. Limit `DRAIN_TIMEOUT_SECONDS` (45), which must stay under the grace period, and `smoke_resilience.py` compares them. Past it, turns are cancelled and message ids logged. Covers a normal stop or deploy; a crash or kill still loses the buffer, which is the startup scan's job. |
 | The startup scan claims before it sends, and never answers another channel's message | `app/services/recovery.py` (`STARTUP_RECOVERY_SCAN`, default off) + `cb_recovery_claims` | Written and OFF. The unanswered messages under 10 min old are one batch (`BATCH_ONLY_INSIDE_WINDOW`); an older one is neither replied to nor claimed, though the model still reads it in the transcript. Each is claimed by Whapi id before any reply, and a failed claim sends nothing. An auto-reply is not an answer. Only messages from before startup, to our own `to_number` (not `business_number`, which 3,454 of 3,829 live rows disagree with). The same gates as `handle_inbound`, and a row whose number is LID-shaped is skipped (`LID_SHAPE_NOT_NAME`: 15+ digits, 14 unless it starts 62, 13 unless it starts 62/880/86). More than 25 to answer sends none of them. |
 | One helper's details never become another helper's | `info_collector.nationality_carries` / `nationality_for_turn` + `_history_since` (`collected_since`) | `nationality` is portable for a hiring client (the nationality they want) and NOT across a switch into or out of `passport_renewal`/`home_leave`, where it is one helper's. Read by the collector's reset AND by `rag_retriever`, which runs before the reset. The extractor reads history only from the message that started the current request, on every turn after a switch, not just the switch turn. |
@@ -1082,8 +1084,11 @@ Easy to get wrong:
   `recovery.BATCH_ONLY_INSIDE_WINDOW` (the scan batches everything since our last outbound),
   `recovery.LID_SHAPE_NOT_NAME` (the scan skips rows named after their own number),
   `health.WHAPI_CHANNEL_IN_READY` (`/health/ready` does not ask Whapi about the channel),
-  `health.WARNINGS_PRIVATE` (`warnings` in the public body).
-  Setting: `HEALTH_DETAILS_KEY` (empty; the `X-Health-Key` value that shows `warnings`).
+  `health.WARNINGS_PRIVATE` (`warnings` in the public body),
+  `forwarded.NGINX_ONLY_FORWARDED` (forwarded headers believed from anyone).
+  Settings: `HEALTH_DETAILS_KEY` (empty; the `X-Health-Key` value that shows `warnings`),
+  `FORWARDED_ALLOW_IPS` (empty; only if nginx does not arrive from the default gateway;
+  read from the process environment, and `*` is ignored).
 - **kb-admin's KB watcher (Vercel env, not the bot's .env), all off by default:**
   `KB_SOURCES_ENABLED` (exactly `true`: the Watched pages / review pages and Fetch now;
   needs the editor settings and migration 015), `KB_ADMIN_LLM_API_KEY` (OpenRouter;
@@ -2363,6 +2368,17 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **Forwarded headers are believed only from nginx's route in.** `run.py` had
+  `forwarded_allow_ips="*"`, so anyone could set the address the app saw; uvicorn then takes the
+  left-most value, which the caller writes. It is now the container's default gateway, read at
+  startup, with the value in the startup log. Whatever else reaches that address is on the server
+  itself, because the port is bound to 127.0.0.1. Checked every other use of the client's address:
+  in `app/` only `health._may_see_warnings` reads it, and nothing reads the scheme. reset-ui and
+  kb-admin key their login limits on `x-forwarded-for`, which Vercel sets, so they are not affected.
+  That nginx arrives from the gateway is inferred, not measured on the server: the runbook checks
+  it. 26 more checks in `smoke_resilience.py`, through uvicorn's real middleware and the real
+  health route; 14 faults, 14 red.
 
 - **2026-11-04** - **Docs only: nginx allowlist, deploy runbook, decided plans, summaries
   sampled.** `docs/nginx_allowlist.conf` and `docs/DEPLOY_2026-11-04.md`, neither run yet.
