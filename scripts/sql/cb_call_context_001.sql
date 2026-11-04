@@ -12,7 +12,7 @@
 -- The bot reads and writes it with the service role (RLS on, no policies, so the
 -- portal's keys see nothing).
 --
--- NOT APPLIED. Apply only on the go-word:
+-- APPLIED on production 2026-11-04, on the go-word, with:
 --   python scripts/apply_sql.py --expect-ref <project ref> scripts/sql/cb_call_context_001.sql
 -- Rollback: scripts/sql/rollback/rollback_cb_call_context_001.sql
 

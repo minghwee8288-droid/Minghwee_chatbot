@@ -126,7 +126,7 @@ app/
     handover.py      cb_handovers; escalation vs stand-down
     complaint_case.py  a helper complaint's ticket, kept up to date
     call_context.py  what was said on a phone call, carried into WhatsApp. OFF
-                     (CALL_CONTEXT_ENABLED); needs cb_call_context_001 applied
+                     (CALL_CONTEXT_ENABLED); cb_call_context_001 APPLIED (2026-11-04)
     contact.py       identify a number against master records
     assignment.py    which agent gets it
     internal_contacts.py  owner/staff numbers the bot never answers
@@ -158,7 +158,7 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
                      when written, 2026-10-23), recovery_001_claims
                      (cb_recovery_claims, the startup scan's claims; NOT APPLIED),
                      replaced_threads_001_create (cb_replaced_threads; NOT APPLIED),
-                     cb_call_context_001 (cb_call_context; NOT APPLIED)
+                     cb_call_context_001 (cb_call_context; APPLIED on production 2026-11-04)
                      — applied ONLY via apply_sql.py --expect-ref <project ref>
   gen_fee_locked.py  the watcher's fee lock: the 23 questions + 7 corrections the
                      fees document set, read from the loader, written into
@@ -833,7 +833,8 @@ last 4>)` (one bracket value on all 128 rows), a staff name, `Anonymous`, `false
 an extension or a uuid; a number there is staff. `call_tickets` / `call_ticket_calls` are the portal's (migration
 0124): only the few calls n8n turned into tickets (8 rows), joined to `call_details` on `call_id`, read to confirm
 a match and never written. `wp_chat_call_logs` is click-to-call from the inbox, with no transcript.
-`cb_call_context` (ours, NOT APPLIED) is one row per call decided, with the analysis and no transcript.
+`cb_call_context` (ours, APPLIED on production 2026-11-04; RLS on, no policies, 0 rows while the switch is off) is one row
+per call decided, with the analysis and no transcript.
 
 **The bot never closes a ticket.** No code path writes `cb_tickets.status` after insert.
 The portal owns resolution.
@@ -1157,8 +1158,8 @@ Easy to get wrong:
   `next_followup_date`. `COMPLAINT_CASE_TABLE` (default **false**) - copy each case to
   `cb_complaint_cases`; only after that migration is applied.
 - `CALL_CONTEXT_ENABLED` (default **false**) — carry phone calls into WhatsApp
-  (`app/services/call_context.py`). Before switching on: apply `scripts/sql/cb_call_context_001.sql`, and
-  put any of our own lines that are not agents' numbers in `CALL_CONTEXT_AGENCY_NUMBERS`. With the table
+  (`app/services/call_context.py`). `scripts/sql/cb_call_context_001.sql` is applied on production (2026-11-04). Before
+  switching on: put any of our own lines that are not agents' numbers in `CALL_CONTEXT_AGENCY_NUMBERS`. With the table
   missing no call is claimed, so nothing goes to the model, and each run logs an error.
   `CALL_CONTEXT_POLL_MINUTES` (5), `CALL_CONTEXT_MAX_WAIT_HOURS` (24, given up on with no transcript),
   `CALL_CONTEXT_LOOKBACK_HOURS` (48: how far back a run looks, so switching on does not read every old call).
@@ -2500,6 +2501,10 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **Docs only: `cb_call_context_001` is applied on production.** On the user's go-word, through
+  `apply_sql.py --expect-ref`: the table exists, RLS on with no policies, 0 rows, nothing for `anon` or `authenticated`.
+  `CALL_CONTEXT_ENABLED` is still off, so behaviour is unchanged, and the bot's writes through PostgREST have still not run.
 
 - **2026-11-04** - **Docs only: the test rows on production are gone (section 9.56).** On the user's go-word and approval of
   the exact SQL, `CB-2026-0160` and its one `cb_handovers` row were deleted in one guarded transaction, after a full-column
