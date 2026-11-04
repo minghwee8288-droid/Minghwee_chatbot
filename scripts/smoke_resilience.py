@@ -1093,8 +1093,111 @@ async def _forwarded_checks() -> list[tuple[str, bool]]:
     return results
 
 
+async def _json_checks() -> list[tuple[str, bool]]:
+    """The shared parser, the bot's complete_json and the suggest route's draft."""
+    import logging
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.graph import llm
+    from app.suggest import llm as suggest_llm
+
+    results: list[tuple[str, bool]] = []
+    parse = llm.try_parse_json
+    whole = '{"suggestions": [{"text": "a"}], "language": "en"}'
+    first = {"suggestions": [{"text": "a"}], "language": "en"}
+
+    # The shape replayed from section 9.54, and its relations.
+    results.append(("json: two complete objects give the first", parse(whole + whole) == first))
+    results.append(("json: a space between them changes nothing", parse(whole + "\n" + whole) == first))
+    results.append(("json: a cut-off second object still gives the first", parse(whole + '{"suggestions": [') == first))
+    results.append(("json: words before and two objects after", parse("Here you go: " + whole + whole) == first))
+    results.append(("json: two objects in a code fence", parse("```json\n" + whole + "\n" + whole + "\n```") == first))
+    results.append(("json: words after a closing brace, then a stray brace", parse(whole + " see {x}") == first))
+
+    # What it must not start accepting.
+    results.append(("json: a cut-off reply is not read from its inner object", parse('{"a": {"b": 1}, "c":') is None))
+    results.append(("json: a stray {} in front is not an answer", parse('{} {"a": 1}') is None))
+    results.append(("json: a list of numbers is not an object", parse("[1, 2]") is None))
+    results.append(("json: words only", parse("sorry, no") is None))
+    results.append(("json: nothing at all", parse("") is None))
+
+    # What it did already.
+    results.append(("json: one object as before", parse(whole) == first))
+    results.append(("json: {} alone still means it said nothing", parse("{}") == {}))
+    results.append(("json: prose around one object as before", parse("ok " + whole + " done") == first))
+
+    with patch.object(llm, "FIRST_JSON_OBJECT", False):
+        results.append(("json: switch off, two objects are a failure again", parse(whole + whole) is None))
+    results.append(("json: the switch is on", llm.FIRST_JSON_OBJECT is True))
+
+    # complete_json: read at once, so no second model call.
+    model = AsyncMock(return_value=whole + whole)
+    with patch.object(llm, "complete", model):
+        got = await llm.complete_json("s", "u", default={"x": 1})
+    results.append(("json: complete_json takes the first object", got == first))
+    results.append(("json: ...with no second model call", model.await_count == 1))
+    model = AsyncMock(side_effect=["not json", whole])
+    with patch.object(llm, "complete", model):
+        got = await llm.complete_json("s", "u", default={"x": 1})
+    results.append(("json: complete_json still asks again when it cannot read it", got == first and model.await_count == 2))
+    model = AsyncMock(side_effect=["not json", "not json either"])
+    with patch.object(llm, "complete", model):
+        got = await llm.complete_json("s", "u", default={"x": 1})
+    results.append(("json: complete_json still falls back to its default", got == {"x": 1} and model.await_count == 2))
+
+    # The suggest route's draft, with only the model faked.
+    def reply(text: str, tokens: int = 10) -> SimpleNamespace:
+        return SimpleNamespace(
+            usage=SimpleNamespace(prompt_tokens=tokens, completion_tokens=tokens),
+            choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+        )
+
+    def client(*answers: object) -> tuple[SimpleNamespace, AsyncMock]:
+        create = AsyncMock(side_effect=list(answers))
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))), create
+
+    async def draft(*answers: object) -> tuple[object, AsyncMock]:
+        fake, create = client(*answers)
+        with patch.object(suggest_llm, "_client", lambda: fake):
+            try:
+                return await suggest_llm.draft("s", "u", model="m", timeout=1), create
+            except suggest_llm.SuggestLLMError as exc:
+                return exc, create
+
+    got, create = await draft(reply(whole + whole))
+    results.append(("suggest: two objects are read with one call", got == (first, {"prompt_tokens": 10, "completion_tokens": 10}) and create.await_count == 1))
+    got, create = await draft(reply("not json"), reply(whole, 20))
+    answered = isinstance(got, tuple)
+    results.append(("suggest: an unreadable reply is asked for once more", create.await_count == 2 and answered and got[0] == first))
+    results.append(("suggest: both calls are in the usage", answered and got[1] == {"prompt_tokens": 30, "completion_tokens": 30}))
+    got, create = await draft(reply("not json"), reply("still not"), reply(whole))
+    results.append(("suggest: never a third call", create.await_count == 2 and isinstance(got, suggest_llm.SuggestLLMError)))
+    got, create = await draft(TimeoutError("slow"), reply(whole))
+    results.append(("suggest: a failed call is not retried", create.await_count == 1 and isinstance(got, suggest_llm.SuggestLLMError)))
+    got, create = await draft(reply("not json"), TimeoutError("slow"))
+    results.append(("suggest: a failed retry is an error, not a hang", create.await_count == 2 and isinstance(got, suggest_llm.SuggestLLMError)))
+    with patch.object(suggest_llm, "RETRY_UNPARSABLE", False):
+        got, create = await draft(reply("not json"), reply(whole))
+    results.append(("suggest: switch off, no second call", create.await_count == 1 and isinstance(got, suggest_llm.SuggestLLMError)))
+    results.append(("suggest: the switch is on", suggest_llm.RETRY_UNPARSABLE is True))
+
+    # It is client conversation content, so the log gets lengths only.
+    lines: list[str] = []
+    handler = logging.Handler()
+    handler.emit = lambda record: lines.append(record.getMessage())  # type: ignore[method-assign]
+    suggest_llm.logger.addHandler(handler)
+    try:
+        await draft(reply("SECRET-CLIENT-WORDS"), reply("SECRET-CLIENT-WORDS"))
+    finally:
+        suggest_llm.logger.removeHandler(handler)
+    results.append(("suggest: the log holds no model output", bool(lines) and not any("SECRET" in line for line in lines)))
+    return results
+
+
 async def checks() -> list[tuple[str, bool]]:
     return [
+        *await _json_checks(),
         *await _checkpointer_checks(),
         *await _health_checks(),
         *await _forwarded_checks(),

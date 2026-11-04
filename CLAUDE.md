@@ -661,6 +661,7 @@ because the lead is opened early and the ticket is created much later.
 | The public health body gives nothing away | `health.readiness` + `smoke_resilience.py` | It has no auth, so: booleans and fixed names only. No exception text, count, version or value from the environment; asserted with secrets planted in the settings and every check failing. `/` and `/health` do show the version, and `/health` the environment. |
 | Which settings are missing is not public | `health._may_see_warnings` (`WARNINGS_PRIVATE`) + `HEALTH_DETAILS_KEY` | `warnings` appears only for a request from inside the container with no forwarding header, or with the right `X-Health-Key`. nginx may pass a caller's own `X-Forwarded-For` through, so a loopback peer alone proves nothing; the header's presence is what is tested. curl from the server's own shell arrives from Docker's gateway, so it sees no warnings. The status does not change. |
 | A caller cannot choose the address the app sees | `app/forwarded.py` (`NGINX_ONLY_FORWARDED`) -> `run.py`'s `forwarded_allow_ips` | `X-Forwarded-For` and `X-Forwarded-Proto` are believed only from the container's default gateway, which is how nginx on the host arrives. Read at startup from `/proc/net/route` and logged. `FORWARDED_ALLOW_IPS` overrides it and cannot be `*`. Wrong address = every request reads as the gateway, which costs nothing: `health._may_see_warnings` is the only reader of the client's address. |
+| A model reply that carries on after a complete answer is still that answer | `llm.try_parse_json` (`_first_object`, `FIRST_JSON_OBJECT`) + `suggest.llm.draft` (`RETRY_UNPARSABLE`) | Section 9.54. Read from the first brace only, so a cut-off reply is never read from an inner object, and a stray `{}` in front is not an answer. Shared by the bot and the suggest route; only a reply that used to read as a failure changes. One more call on the suggest route if it still cannot be read (the bot's `complete_json` already did that), never for a call that failed. |
 | A restart answers what it is holding | `debouncer._drain_all` (`DRAIN_ON_SHUTDOWN`) + `stop_grace_period: 60s` in compose | Waiting batches run at once on shutdown, running turns are waited for, before Whapi and the graph close. Limit `DRAIN_TIMEOUT_SECONDS` (45), which must stay under the grace period, and `smoke_resilience.py` compares them. Past it, turns are cancelled and message ids logged. Covers a normal stop or deploy; a crash or kill still loses the buffer, which is the startup scan's job. |
 | The startup scan claims before it sends, and never answers another channel's message | `app/services/recovery.py` (`STARTUP_RECOVERY_SCAN`, default off) + `cb_recovery_claims` | Written and OFF. The unanswered messages under 10 min old are one batch (`BATCH_ONLY_INSIDE_WINDOW`); an older one is neither replied to nor claimed, though the model still reads it in the transcript. Each is claimed by Whapi id before any reply, and a failed claim sends nothing. An auto-reply is not an answer. Only messages from before startup, to our own `to_number` (not `business_number`, which 3,454 of 3,829 live rows disagree with). The same gates as `handle_inbound`, and a row whose number is LID-shaped is skipped (`LID_SHAPE_NOT_NAME`: 15+ digits, 14 unless it starts 62, 13 unless it starts 62/880/86). More than 25 to answer sends none of them. |
 | One helper's details never become another helper's | `info_collector.nationality_carries` / `nationality_for_turn` + `_history_since` (`collected_since`) | `nationality` is portable for a hiring client (the nationality they want) and NOT across a switch into or out of `passport_renewal`/`home_leave`, where it is one helper's. Read by the collector's reset AND by `rag_retriever`, which runs before the reset. The extractor reads history only from the message that started the current request, on every turn after a switch, not just the switch turn. |
@@ -1088,7 +1089,9 @@ Easy to get wrong:
   `recovery.LID_SHAPE_NOT_NAME` (the scan skips rows named after their own number),
   `health.WHAPI_CHANNEL_IN_READY` (`/health/ready` does not ask Whapi about the channel),
   `health.WARNINGS_PRIVATE` (`warnings` in the public body),
-  `forwarded.NGINX_ONLY_FORWARDED` (forwarded headers believed from anyone).
+  `forwarded.NGINX_ONLY_FORWARDED` (forwarded headers believed from anyone),
+  `llm.FIRST_JSON_OBJECT` (a reply with more after its first object is a failure),
+  `suggest.llm.RETRY_UNPARSABLE` (an unreadable suggest reply is an `llm_error` at once).
   Settings: `HEALTH_DETAILS_KEY` (empty; the `X-Health-Key` value that shows `warnings`),
   `FORWARDED_ALLOW_IPS` (empty; only if nginx does not arrive from the default gateway;
   read from the process environment, and `*` is ignored).
@@ -1967,15 +1970,13 @@ Ordered by what will hurt first.
       needed" lines that read as instructions. If the bot ever reads it: `short_summary` only,
       one-to-one client chats only, 5 or fewer messages behind, digits removed, never grounding,
       own switch. `client_notes` does not depend on it. Nothing in `app/` reads it today.
-54. **`POST /internal/suggest` fails when the model repeats its JSON (found 2026-11-04, not
-    fixed).** The portal recorded 5 failures in 171 calls, 28 Oct to 4 Nov: 4
+54. **`POST /internal/suggest` failed when the model repeated its JSON. FIXED IN CODE 2026-11-04,
+    not deployed; see the change log. The timeout below is still open.** The portal recorded 5 failures in 171 calls, 28 Oct to 4 Nov: 4
     `chatbot_http_500` and 1 `chatbot_timeout`, on 5 different conversations. Replaying those
     conversations read-only on the real model gave "model output was not JSON" in 8 of 29 runs. The
     3 whose output shape was captured each had a complete, valid first JSON object with more after
     it, at about half the length. `json.loads` refuses the extra data, `_JSON_BLOCK` spans both
-    objects and fails too, and the route answers 500 (`llm_error`). A fix would take the first
-    object, or retry once. `try_parse_json` is shared with `complete_json`, so it should have its
-    own replay. **Not proved for the original 5:** the server's log was not read, and `up -d
+    objects and fails too, and the route answers 500 (`llm_error`). **Not proved for the original 5:** the server's log was not read, and `up -d
     --build` recreates the container, which deletes the old one's log, so those lines are probably
     gone. The evidence is the replay and timing: the 500s took 8.5 to 13.8s, so they failed after a
     model call, and all 4 conversations got drafts on the next try within a minute. The replay's
@@ -2407,6 +2408,26 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-04** - **A reply that carries on after a complete answer is read as that answer
+  (section 9.54).** `try_parse_json` now takes the first complete object when more follows, from
+  the first brace only, and refuses an empty one. The suggest route asks once more if it still
+  cannot read the reply; the bot's `complete_json` already did. Each model reply in the replays was
+  read by both parsers, so before and after are on the same replies. Suggest, read-only on
+  `gpt-6-luna`, 4 failed conversations 5 runs each and 10 others 2 runs each: 3 of 40 failed before,
+  0 after, all three on conversation 4622; 30 more runs on the 3 worst: 1 failed before, 0 after.
+  A pass whose log was partly lost showed the other shapes, so its statuses are not counted: exact
+  repeats, one reworded (word overlap 0.71), one cut-off second object, and one opening with an empty
+  `{}`, the only time the retry fired, and it worked. So the objects are not always copies: where
+  they differ, the first is taken, and it passes the same validation as any other reply. The rate
+  swings from run to run and these conversations were picked for failing, so none of this is the
+  production rate. **The bot
+  was not hitting this**: 134 `complete_json` calls over all seven services on `gpt-5.6-luna` (67
+  extraction, 67 classification) and 20 more extractions on the real histories of the 4 failed
+  conversations, 0 failures with either parser. No server log was read, so that is replay evidence,
+  not a count from production: `docker compose logs chatbot | grep -c 'JSON-mode response was
+  unparseable'`. 29 checks in `smoke_resilience.py`; 15 faults, 14 red. The other changes nothing:
+  adding `and parsed` to the plain path, because `_JSON_BLOCK` reads a lone `{}` anyway. E2E 7 of 7.
 
 - **2026-11-04** - **Docs only: the deploy recorded, suggest failures diagnosed, pruning plan
   extended.** `a43aeff` was deployed to production today (stages 1 to 4 of

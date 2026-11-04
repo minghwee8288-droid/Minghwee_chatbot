@@ -21,7 +21,7 @@ The Sprint 0 safety check that preceded this is `docs/SPRINT0_CHATBOT_REPORT.md`
 | `meaning.py` | Drops a draft that says the same as another in other words (embedding) |
 | `retrieval.py` | Runs the bot's `rag_retriever` node; renders records with `[ref <id>]` |
 | `prompt.py` | Claire's system prompt plus the consultant wrapper (`SUGGEST_PROMPT_VERSION`) |
-| `llm.py` | Its own OpenRouter client: JSON mode, temperature 0.3, no retries, returns token usage |
+| `llm.py` | Its own OpenRouter client: JSON mode, temperature 0.3, one more call only if the reply cannot be read, returns token usage |
 | `validate.py` | Every check a draft must pass, then flags |
 | `settings.py` | The four environment variables |
 

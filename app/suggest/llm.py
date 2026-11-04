@@ -1,10 +1,10 @@
 """The suggestion endpoint's own LLM client.
 
-Not the bot's app/graph/llm.py, which is neither modified nor patched: that one
-always uses the bot's model and returns no token usage. This one uses the same
-OpenRouter base URL and key (read from the bot's settings, read-only), the
-model in SUGGEST_MODEL, JSON mode, temperature 0.3, no hidden retries, and
-returns the usage.
+Not the bot's app/graph/llm.py: that one always uses the bot's model and returns
+no token usage. This one uses the same OpenRouter base URL and key (read from the
+bot's settings, read-only), the model in SUGGEST_MODEL, JSON mode, temperature 0.3,
+and returns the usage. Only the parser is shared. The client retries nothing
+itself; a reply that cannot be read is asked for once more (RETRY_UNPARSABLE).
 
 Never logs the model's output: it is client conversation content.
 """
@@ -28,6 +28,11 @@ TEMPERATURE = 0.3
 # measured ~100 tokens a draft (eval 2026-10-28, at most 509 for five).
 MAX_TOKENS = 800
 
+# A reply the parser still cannot read gets one more call, inside the route's own
+# time limit. A call that FAILED is not retried: that is usually the limit itself.
+# False: an unreadable reply is an llm_error at once.
+RETRY_UNPARSABLE = True
+
 
 class SuggestLLMError(RuntimeError):
     """The model call failed or returned something that is not JSON."""
@@ -48,8 +53,10 @@ def _client() -> AsyncOpenAI:
     )
 
 
-async def draft(system_prompt: str, user_prompt: str, *, model: str, timeout: float) -> tuple[dict[str, Any], dict[str, int]]:
-    """(parsed JSON, {"prompt_tokens", "completion_tokens"}). Raises SuggestLLMError."""
+async def _call(
+    system_prompt: str, user_prompt: str, *, model: str, timeout: float
+) -> tuple[str, dict[str, int]]:
+    """One model call: (the reply's text, its token usage)."""
     try:
         response = await _client().chat.completions.create(
             model=model,
@@ -76,7 +83,18 @@ async def draft(system_prompt: str, user_prompt: str, *, model: str, timeout: fl
     content = ""
     if response.choices:
         content = response.choices[0].message.content or ""
+    return content, tokens
+
+
+async def draft(system_prompt: str, user_prompt: str, *, model: str, timeout: float) -> tuple[dict[str, Any], dict[str, int]]:
+    """(parsed JSON, {"prompt_tokens", "completion_tokens"}). Raises SuggestLLMError."""
+    content, tokens = await _call(system_prompt, user_prompt, model=model, timeout=timeout)
     parsed = try_parse_json(content)
+    if parsed is None and RETRY_UNPARSABLE:
+        logger.warning("suggest: model output was not JSON (%d chars), asking once more", len(content))
+        content, again = await _call(system_prompt, user_prompt, model=model, timeout=timeout)
+        tokens = {key: tokens[key] + again[key] for key in tokens}
+        parsed = try_parse_json(content)
     if parsed is None:
         logger.warning("suggest: model output was not JSON (%d chars)", len(content))
         raise SuggestLLMError("model output was not JSON")

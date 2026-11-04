@@ -18,6 +18,13 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
+_DECODER = json.JSONDecoder()
+
+# The model sometimes writes a whole answer and then carries on after it. Measured
+# on POST /internal/suggest, 2026-11-04: a complete first object, then more, in 8 of
+# 29 replays. json.loads refuses the extra data and _JSON_BLOCK spans both objects,
+# so a good answer read as no answer (section 9.54). False: such a reply is a failure.
+FIRST_JSON_OBJECT = True
 
 
 @lru_cache(maxsize=16)
@@ -236,4 +243,22 @@ def try_parse_json(raw: str) -> dict | None:
         except json.JSONDecodeError:
             pass
 
-    return None
+    return _first_object(text) if FIRST_JSON_OBJECT else None
+
+
+def _first_object(text: str) -> dict | None:
+    """The complete object the text opens with, whatever follows it.
+
+    Read from the FIRST brace only. Trying later ones would turn a cut-off reply
+    into an answer: in `{"a": {"b": 1}, "c":` the first object that parses is the
+    inner one. An empty object is refused too, because here it is a stray `{}` in
+    front of whatever the model wrote next, not "it said nothing".
+    """
+    start = text.find("{")
+    if start < 0:
+        return None
+    try:
+        parsed, _ = _DECODER.raw_decode(text, start)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) and parsed else None
