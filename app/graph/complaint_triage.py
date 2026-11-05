@@ -588,7 +588,7 @@ def _apply_answer(case: dict[str, Any], pending: str, message: str, a: Assessmen
 def clearly_safe_after_suicide_template(message: str) -> bool:
     """Whether her reply to the suicide template plainly says she is safe.
 
-    That template ends on "Is there someone safe near you?", so a bare "no" or "yes"
+    That template also asks whether someone she trusts is nearby, so a bare "no" or "yes"
     may be answering either of its two questions, and "no" may mean she is alone. The
     guidelines say to use the higher level when unsure, so anything short of this
     gets the 995 line. Decided in code, so the model cannot talk it down.

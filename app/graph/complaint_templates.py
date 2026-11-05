@@ -18,19 +18,40 @@ import re
 
 from app.config import settings
 
+# 5 Nov 2026: the P1 templates and the 995 follow-up no longer tell a frightened helper
+# what we cannot do. False = the wording Thomas approved on 2 Nov.
+WARM_P1_WORDING = True  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+
 P1_EMERGENCY = (
     "I'm very sorry this is happening. Your safety comes first.\n\n"
     "Please call the police on 999 now if you are in danger. Call 995 or go to your "
     "nearest hospital A&E if you are hurt or very unwell.\n\n"
     "If you cannot call, go to a safe place or ask someone nearby for help if you can. "
-    "We are a helper placement company, so we cannot provide police or medical help. "
-    "After you have contacted them, message us here{recruiter_clause}. We have issued a "
+    + (
+        "The police and medical teams can help you fastest right now. "  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+        "Once you are safe, please message us here{recruiter_clause} — we are here for you."  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+        if WARM_P1_WORDING else
+        "We are a helper placement company, so we cannot provide police or medical help. "
+        "After you have contacted them, message us here{recruiter_clause}."
+    )
+    + " We have issued a "
     "ticket, and the next available Family Care Consultant will reach out to you during "
     "the next working day.\n\n"
     'Can you reply "safe" or "not safe"?{ref_sentence}'
 )
 
 P1_SUICIDE = (
+    "I'm really glad you felt comfortable sharing this with me. "  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    "Are you thinking about ending your life right now?\n\n"  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    "If you feel you might hurt yourself or are in immediate danger, please call 995 or "  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    "visit your nearest hospital A&E. Your safety is the most important thing right now, "  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    "and we encourage you to seek immediate support from a healthcare professional who "  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    "can help you through this.\n\n"  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    "We've also raised a support ticket, and our next available Family Care Consultant "  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    "will reach out to you on the next working day to provide further assistance.\n\n"  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    "In the meantime, is there someone you trust nearby who can stay with you? "  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    "You don't have to go through this alone."  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+) if WARM_P1_WORDING else (
     "I'm really glad you told me. Are you thinking about ending your life right now?\n\n"
     "If you might hurt yourself or are in danger, please call 995 now or go to your "
     "nearest hospital A&E.\n\n"
@@ -83,8 +104,8 @@ NOT_SAFE_TO_CHAT = (
 )
 
 # 4 Nov 2026, the PM's test: the questions and follow-ups read as cold. The lines this
-# switch selects are PENDING THOMAS APPROVAL. The P1, P2, P3, P4 and NOT-SAFE template
-# bodies above are his and do not change. False = the wording he approved on 2 Nov.
+# switch selects are PENDING THOMAS APPROVAL. The P2, P3, P4 and NOT-SAFE template bodies
+# above are his and do not change. False = the wording he approved on 2 Nov.
 WARM_WORDING = True
 
 # The triage questions, one per message, and what each is without its lead-in. The
@@ -155,9 +176,12 @@ SHORT_REPLY = (
 # First message of a conversation: the AI disclosure, then the P4 template.
 INTRO = "Hi, I'm Claire, Ming Hwee's AI assistant."
 
-# Her reply to the P1 suicide template does not clearly say she is safe. Built only
-# from that template's own sentences (instructions of 4 Nov 2026).
+# Her reply to the P1 suicide template does not clearly say she is safe.
 FOLLOW_SUICIDE_NOW = (
+    "Please call 995 now or visit your nearest hospital A&E. "  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    "Your safety matters most, and they can help you right away. "  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    "You don't have to go through this alone. Your reference is {ref}."  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+) if WARM_P1_WORDING else (
     "Please call 995 now or go to your nearest hospital A&E. We are not a medical "
     "service, so please contact them first. Your reference is {ref}."
 )
@@ -185,7 +209,14 @@ FORBIDDEN = re.compile(
     r"|\bwe\s+will\s+contact\s+your\s+employer"
     r"|\bwe\s+(?:will\s+)?(?:promise|guarantee)\b|\bwill\s+be\s+(?:resolved|solved|punished)\b"
     r"|\b(?:you\s+should|you\s+can)\s+(?:sue|file\s+a\s+(?:case|lawsuit))\b|\blegal\s+action\b"
-    r"|\btake\s+(?:some\s+)?(?:medicine|medication|panadol|paracetamol|painkillers?)\b"
+    # Telling her to reach a doctor or 995 is not advice; what to take or do to an injury is.  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    r"|\b(?:take|swallow|drink|apply|use)\s+(?:\w+\s+){0,3}(?:medicines?|medication|panadol|paracetamol"  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    r"|ibuprofen|aspirin|painkillers?|tablets?|pills?|capsules?|antibiotics?|ointment|antiseptic)\b"  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    r"|\b\d+\s*(?:mg|ml|tablets?|pills?|capsules?)\b|\b(?:dosage|dose)\b"  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    r"|\b(?:clean|bandage|dress|treat|stitch)\s+(?:the|your|this)\s+(?:wound|cut|injury|bruise|burn)\b"  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    r"|\bapply\s+(?:pressure|ice)\b"  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    # Removed from every reply on 5 Nov; a model-written answer may not bring them back.  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
+    r"|\bnot\s+a\s+medical\s+service\b|\bcannot\s+provide\s+(?:police|medical)\b"  # Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL
     r"|\byour\s+employer\s+(?:is|was)\s+(?:wrong|guilty|abusing|breaking)\b"
     r"|\b(?:tell|describe)\b[^.?!]{0,40}\b(?:exactly|in\s+detail|every\s+detail)\b",
     re.IGNORECASE,

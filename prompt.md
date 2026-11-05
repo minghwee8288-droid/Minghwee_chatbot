@@ -3448,8 +3448,9 @@ graded P1-P4 beside the classifier, and the replies are fixed text, not model-wr
 is Thomas's guidelines of 2 Nov 2026, kept in `app/graph/complaint_templates.py`. Those are the
 source; this section does not copy them. The lines there marked PENDING THOMAS APPROVAL are the
 three follow-ups on an open P1/P2 case, two lines the guidelines give no wording for, and the warmer
-triage questions and follow-ups of 4 November (`WARM_WORDING`). The P1, P2, P3, P4 and NOT-SAFE bodies
-are his word for word. A question she asks about her own rights ("how many rest days do I get") is P4
+triage questions and follow-ups of 4 November (`WARM_WORDING`), and the P1 suicide template, one sentence
+of the P1 emergency template and the 995 follow-up of 5 November (`WARM_P1_WORDING`). The P2, P3, P4 and
+NOT-SAFE bodies are his word for word. A question she asks about her own rights ("how many rest days do I get") is P4
 whatever the model calls it, on a helper's or an unknown chat. The first message of a conversation
 opens with Claire's introduction, then the P4 template.
 

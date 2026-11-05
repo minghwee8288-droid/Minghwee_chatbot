@@ -1133,6 +1133,8 @@ Easy to get wrong:
   `complaint_triage.BEST_TIME_LINE`, `complaint_triage.SHORT_FOLLOW_UPS`,
   `complaint_triage.REFLECT_REST_DAYS`, `intent_classifier.JOBSEEKER_ANY_POINT`,
   `info_collector.NO_QUESTION_TWICE`, `info_collector.JOB_SEEKER_KEEPS_NAME_ONLY`.
+  2026-11-05, `False` for the wording Thomas approved on 2 Nov:
+  `complaint_templates.WARM_P1_WORDING`.
   2026-11-04, `False` for the earlier behaviour:
   `graph.REQUIRE_DURABLE_CHECKPOINTER` (any checkpointer failure falls back to memory),
   `health.CHECKPOINTER_IN_READY` (`/health/ready` does not report the checkpointer),
@@ -2116,7 +2118,8 @@ at a time.
 - **The helper complaint guidelines: what is still theirs (2026-11-04).** Approve the three follow-ups
   on an open P1/P2 case and two lines the guidelines give no wording for (a fact added to a P3 case, a
   P4 ticket's message), plus the warmer questions, follow-ups, best-time line, short reply and rest-day
-  reflection of 2026-11-04, all marked PENDING THOMAS APPROVAL in `complaint_templates.py`. Whether Saturday
+  reflection of 2026-11-04, and the P1 suicide template, one sentence of the P1 emergency template and the
+  995 follow-up of 2026-11-05 (`WARM_P1_WORDING`), all marked PENDING THOMAS APPROVAL in `complaint_templates.py`. Whether Saturday
   counts as a working day, and the public holiday list. **Who is told when a P1 arrives**: the ticket has
   no owner by instruction (the FCC pool) and nothing notifies anyone, where the old crisis ticket went to
   an admin. Until that is decided every P1 is marked Escalated on the tab.
@@ -2513,6 +2516,13 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-05** - **The P1 suicide template, the 995 follow-up and one P1 emergency sentence reworded;
+  "not a medical service" and "cannot provide police" are gone from every complaint reply.** Behind
+  `WARM_P1_WORDING`, PENDING THOMAS APPROVAL, each changed line marked. His 2 Nov text stays in the file only
+  behind that switch. `FORBIDDEN` now also blocks a dosage, what to take and what to do to an injury, and the two
+  removed phrases; "healthcare professional" and "they can help you" pass. A plain "I'm safe" still gets
+  FOLLOW_SAFE. Replayed read-only on the real model. E2E not run.
 
 - **2026-11-04** - **The PM's test: a helper's own question, the best time, a job seeker, warmer lines.**
   See section 5 for the rules. Fixed: "how many rest days do I get" went to the P4 template only if the

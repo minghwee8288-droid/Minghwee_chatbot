@@ -1271,14 +1271,13 @@ async def scenario_complaint_triage():
     r, reply = await w.turn("I don't want to live anymore", _h("P1", "self_harm"))
     extra = r.get("extra_replies") or []
     check("complaint 2: 'don't want to live' -> the P1 suicide template, then a separate reference message",
-          reply.startswith("I'm really glad you told me. Are you thinking about ending your life right now?")
-          and "call 995 now" in reply and "reference" not in reply
+          reply == Q.P1_SUICIDE and reply == P1_SUICIDE_TEXT and "reference" not in reply
           and extra == [f"Your reference is `{w.ticket()['ticket_number']}`."]
           and w.ticket()["complaint_level"] == "P1")
     w0 = ComplaintWorld()
     _r, down = await w0.turn("I don't want to live anymore", RuntimeError("model down"))
     check("complaint 2: the keyword net catches it with the model down",
-          down.startswith("I'm really glad you told me."))
+          down == P1_SUICIDE_TEXT)
 
     # 2, the answer to its questions (4 Nov 2026). The template asks two, so only a
     # plain statement that she is safe gets FOLLOW_SAFE.
@@ -1295,8 +1294,9 @@ async def scenario_complaint_triage():
         w.ticket()["workflow_status"] = None  # so only this answer can set it
         r2b, a2b = await w.turn(answer, {"speaker": "helper", "level": "none"})
         check(f"complaint 2: suicide + '{label}' -> the 995 line with the reference, ticket urgent",
-              a2b == ("Please call 995 now or go to your nearest hospital A&E. We are not a medical "
-                      f"service, so please contact them first. Your reference is `{w.ticket()['ticket_number']}`.")
+              a2b == ("Please call 995 now or visit your nearest hospital A&E. Your safety matters most, and "
+                      "they can help you right away. You don't have to go through this alone. "
+                      f"Your reference is `{w.ticket()['ticket_number']}`.")
               and w.ticket()["workflow_status"] == "escalated" and w.ticket()["priority"] == "high"
               and w.ticket()["status"] == "open" and r2b.get("reply_must_send"))
     for answer in ("I'm ok", "I’m ok", "im fine", "I'm safe", "no I'm fine", "no, I am ok thank you",
@@ -1328,12 +1328,46 @@ async def scenario_complaint_triage():
     await w.turn("no", {"speaker": "helper", "level": "none"})
     _r, a2z = await w.turn("no I'm fine", {"speaker": "helper", "level": "none"})
     check("complaint 2: the 995 line goes once: the next message is added to the case, never the line again",
-          "We are not a medical service" not in a2z and "995" in a2z)
+          "Please call 995 now" not in a2z and "995" in a2z)
     w = ComplaintWorld()
     await w.turn("my ma'am beat me just now, I'm bleeding", _h("P1", "physical"))
     _r, a2p = await w.turn("yes", {"speaker": "helper", "level": "none"})
     check("complaint 2: the 995 line belongs to the suicide template: 'yes' after the emergency one does not get it",
-          "We are not a medical service" not in a2p)
+          "Please call 995 now" not in a2p)
+
+    # 5 Nov 2026: the new P1 wording, in English and translated.
+    w = ComplaintWorld()
+    with patch.object(settings, "fcc_contact_number", ""):
+        _r, a2e = await w.turn("my ma'am beat me just now", _h("P1", "physical"))
+    check("complaint P1 wording: 'my ma'am beat me just now' -> the template with the new sentence, the rest word for word",
+          a2e == ("I'm very sorry this is happening. Your safety comes first.\n\n"
+                  "Please call the police on 999 now if you are in danger. Call 995 or go to your nearest hospital "
+                  "A&E if you are hurt or very unwell.\n\n"
+                  "If you cannot call, go to a safe place or ask someone nearby for help if you can. "
+                  "The police and medical teams can help you fastest right now. Once you are safe, please message "
+                  "us here \u2014 we are here for you. We have issued a ticket, and the next available Family Care "
+                  "Consultant will reach out to you during the next working day.\n\n"
+                  f'Can you reply "safe" or "not safe"? Your reference is `{w.ticket()["ticket_number"]}`.'))
+    sent_to_translate = []
+
+    async def translate_new(system, text, **kwargs):
+        sent_to_translate.append(text)
+        return "Natutuwa ako. Tumawag sa 995 o pumunta sa A&E."
+
+    w = ComplaintWorld()
+    with patch.object(_ct_node, "complete", new=translate_new):
+        _r, tl = await w.turn("gusto ko nang mamatay", _h("P1", "self_harm", language="Tagalog"))
+    check("complaint P1 wording: a Tagalog report -> the new template is what gets translated, 995 and A&E intact",
+          sent_to_translate[0] == P1_SUICIDE_TEXT and "995" in tl and "A&E" in tl)
+
+    async def translate_loses_ae(system, text, **kwargs):
+        return "Natutuwa ako. Tumawag sa 995."
+
+    w = ComplaintWorld()
+    with patch.object(_ct_node, "complete", new=translate_loses_ae):
+        _r, tl2 = await w.turn("gusto ko nang mamatay", _h("P1", "self_harm", language="Tagalog"))
+    check("complaint P1 wording: a translation that loses A&E -> the new English template goes instead",
+          tl2 == P1_SUICIDE_TEXT)
 
     # Every P1 ticket is escalated, however it got there; a P2 or P3 is not.
     p1_tickets = {}
@@ -1532,11 +1566,11 @@ async def scenario_complaint_triage():
         texts = [Q.p1_emergency("X"), Q.p2_sleep("X", "2 days"), Q.p2_general("X")]
     check("complaint 11: FCC_CONTACT_NUMBER unset -> no recruiter clause, no placeholder, no gap",
           not any("recruiter" in x or "[" in x or "{" in x or "  " in x for x in texts)
-          and "message us here. We have issued" in texts[0])
+          and "message us here \u2014 we are here for you. We have issued" in texts[0])
     with patch.object(settings, "fcc_contact_number", "NUMBER"):
         with_number = Q.p1_emergency("X"), Q.p2_general("X")
     check("complaint 11: set -> read from the setting, the clause and the sentence appear",
-          "message us here or call your recruiter on NUMBER. We" in with_number[0]
+          "message us here or call your recruiter on NUMBER \u2014 we are here for you. We" in with_number[0]
           and "You can also call your recruiter on NUMBER." in with_number[1])
     source = Path(_ct_tpl_path).read_text(encoding="utf-8")
     check("complaint 11: no phone number written in the templates module",
@@ -1650,7 +1684,8 @@ async def scenario_complaint_triage():
 
     # Guardrails, over every template.
     every = [Q.p1_emergency("R"), Q.P1_SUICIDE, Q.p2_sleep("R", "2 days"), Q.p2_general("R"), Q.p3("R", "salary"),
-             Q.p4("x"), Q.NOT_SAFE_TO_CHAT, Q.FOLLOW_SAFE, Q.FOLLOW_NOT_SAFE, Q.FOLLOW_OTHER, Q.P3_ADDED,
+             Q.p4("x"), Q.NOT_SAFE_TO_CHAT, Q.FOLLOW_SAFE, Q.FOLLOW_NOT_SAFE, Q.FOLLOW_OTHER, Q.FOLLOW_SUICIDE_NOW,
+             Q.FOLLOW_BEST_TIME, Q.P3_ADDED,
              Q.P4_TICKET, *Q.QUESTIONS.values(), Q.Q6_SEXUAL]
     check("complaint guardrails: no template says confront your employer, promises an outcome, gives "
           "legal or medical advice, accuses, says we will contact the employer, or asks for details",
@@ -1662,7 +1697,28 @@ async def scenario_complaint_triage():
           all(Q.FORBIDDEN.search(x) for x in (
               "Please confront your employer.", "We will contact your employer today.",
               "We guarantee this.", "It will be resolved.", "You can sue her.", "Take some medicine.",
-              "Your employer is guilty.", "Tell us exactly what he did.")))
+              "Your employer is guilty.", "Tell us exactly what he did.",
+              "Take 2 tablets of Panadol.", "Take your medicine now.", "The dosage is one a day.", "Use 500mg.",
+              "Clean the wound and keep it dry.", "Apply pressure to it.", "We are not a medical service.",
+              "We cannot provide police or medical help.")))
+    check("complaint guardrails: pointing her to help is not medical advice: these three pass",
+          not any(Q.FORBIDDEN.search(x) for x in (
+              "seek immediate support from a healthcare professional", "they can help you right away",
+              "a healthcare professional who can help you through this")))
+    fixed_text = [v for k, v in vars(Q).items() if k.isupper() and isinstance(v, str)]
+    check("complaint guardrails: no complaint template or follow-up says 'not a medical service' or 'cannot provide police'",
+          len(fixed_text) > 20 and not any(
+              "not a medical service" in x.lower() or "cannot provide police" in x.lower()
+              or "helper placement company" in x.lower() for x in fixed_text + every))
+    tpl_lines = Path(_ct_tpl_path).read_text(encoding="utf-8").splitlines()
+    new_bits = ("The police and medical teams", "Once you are safe", "felt comfortable sharing", '"Are you thinking about ending',
+                "If you feel you might", "visit your nearest", "seek immediate support", "can help you through",
+                "raised a support ticket", "will reach out to you on the next", "someone you trust",
+                "go through this alone", "Your safety matters most", "WARM_P1_WORDING = True")
+    marked = [ln for ln in tpl_lines if any(b in ln for b in new_bits)]
+    check("complaint P1 wording: every changed line is marked PENDING THOMAS APPROVAL",
+          len(marked) >= len(new_bits)
+          and all(ln.endswith("# Updated by Growwstacks 2026-11-05, PENDING THOMAS APPROVAL") for ln in marked))
     # Outside working hours: nothing reads the clock. Asserted over the two modules.
     for mod in (_ct, _ct_node):
         src = Path(mod.__file__).read_text(encoding="utf-8")
@@ -1936,17 +1992,16 @@ async def scenario_complaint_warm():
     _r, a = await w.turn("yes", none)
     check("listen: the salary ask is unchanged", "Please tell us which salary months are affected." in a)
 
-    # The bodies Thomas approved, byte for byte, as committed before this change.
+    # The bodies Thomas approved, byte for byte. The two P1 bodies left this list on 5 Nov
+    # (scenario above): new wording, PENDING THOMAS APPROVAL.
     bodies = {
-        "P1_EMERGENCY": "1010ef21d7af4b395ebcc814bcb7e34cefe314b1f89205d4814a7ad32bc5483c",
-        "P1_SUICIDE": "7b821baa64e6649a66538bdd1206e52188a28e06a46ab4902c1ce7bc5433c038",
         "P2_SLEEP": "a9366853ae1eb04d971479ef35365c7d63006374da234eb4866849a1039b1362",
         "P2_GENERAL": "c1226f178d6183579e741f7359177d79f3af88cb5942de832345b94b90812b1b",
         "P3": "be5f6068095ffd65f83352233344b0fb138d073580bca4ded6a3c2daceac5b45",
         "P4": "2955646241beea21760dbca9f4cff732dd3640e65a2b28e59d385556ab6ec6a9",
         "NOT_SAFE_TO_CHAT": "1a5c946fe4f0f8367b59fa8822a202b8507ff6a155f14bfbf27030ebbc3f53bb",
     }
-    check("warm: the P1, P2, P3, P4 and NOT-SAFE template bodies are unchanged byte for byte",
+    check("warm: the P2, P3, P4 and NOT-SAFE template bodies are unchanged byte for byte",
           all(hashlib.sha256(getattr(Q, k).encode()).hexdigest() == v for k, v in bodies.items()))
     lines = [*Q.QUESTIONS.values(), Q.Q6_SEXUAL, Q.FOLLOW_SAFE, Q.FOLLOW_BEST_TIME, Q.P3_ADDED, Q.SHORT_REPLY,
              Q.SHORT_OPENING, Q.P3_REST_DAY_REFLECTED, Q.question("Q3", first=True)]
@@ -1959,6 +2014,17 @@ async def scenario_complaint_warm():
         idx = source.find(name)
         check(f"warm: marked PENDING THOMAS APPROVAL: {name}",
               idx >= 0 and "PENDING THOMAS APPROVAL" in source[max(0, idx - 260):idx + 60])
+
+
+P1_SUICIDE_TEXT = (
+    "I'm really glad you felt comfortable sharing this with me. Are you thinking about ending your life right now?\n\n"
+    "If you feel you might hurt yourself or are in immediate danger, please call 995 or visit your nearest hospital "
+    "A&E. Your safety is the most important thing right now, and we encourage you to seek immediate support from a "
+    "healthcare professional who can help you through this.\n\n"
+    "We've also raised a support ticket, and our next available Family Care Consultant will reach out to you on the "
+    "next working day to provide further assistance.\n\n"
+    "In the meantime, is there someone you trust nearby who can stay with you? You don't have to go through this alone."
+)
 
 
 async def scenario_complaint_webhook():
