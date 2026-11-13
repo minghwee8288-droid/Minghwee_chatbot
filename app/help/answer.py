@@ -33,20 +33,17 @@ TEMPERATURE = 0.2
 MAX_TOKENS = 700
 
 REFUSED_ANSWER = (
-    "I found related records but couldn't produce an answer I can fully verify. "
-    "Please read the sources below or check with a senior colleague."
+    "I found related information but couldn't give an answer I can fully verify. "
+    "Please check the sources or ask a senior colleague."
 )
-NOT_FOUND_ANSWER = (
-    "I couldn't find this in the knowledge base. Please check with a senior colleague, "
-    "and consider asking an editor to add it."
-)
+NOT_FOUND_ANSWER = "I couldn't find this information. Please check with a senior colleague."
 # Extra 1: guard_nationality_fee writes a sentence for a client ("Our agent will
 # confirm..."). Staff get these instead. guards.py is unchanged.
 STAFF_FEE_LINE = (
-    "The knowledge base has no confirmed fee for this — please check with a senior colleague."
+    "There is no confirmed fee for this — please check with a senior colleague."
 )
 STAFF_TIMELINE_LINE = (
-    "The knowledge base has no confirmed timeline for this — please check with a senior colleague."
+    "There is no confirmed timeline for this — please check with a senior colleague."
 )
 
 NOT_COVERED_MARKER = "[[NOT_COVERED]]"

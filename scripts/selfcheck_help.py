@@ -362,6 +362,18 @@ async def checks() -> None:
           "an answer without the marker stays ok")
     check("[[NOT_COVERED]]" in h_prompt.STAFF_PROMPT and h_answer.NOT_COVERED_MARKER == "[[NOT_COVERED]]",
           "the staff prompt asks for the exact marker")
+    fixed = (h_answer.NOT_FOUND_ANSWER, h_answer.REFUSED_ANSWER,
+             h_answer.STAFF_FEE_LINE, h_answer.STAFF_TIMELINE_LINE)
+    check(h_answer.NOT_FOUND_ANSWER == "I couldn't find this information. Please check with a senior colleague."
+          and h_answer.REFUSED_ANSWER == ("I found related information but couldn't give an answer I can fully "
+                                          "verify. Please check the sources or ask a senior colleague.")
+          and h_answer.STAFF_FEE_LINE.startswith("There is no confirmed fee for this")
+          and h_answer.STAFF_TIMELINE_LINE.startswith("There is no confirmed timeline for this")
+          and not any(w in t.lower() for t in fixed for w in ("knowledge base", "records")),
+          "the fixed staff replies use the approved wording and never say 'knowledge base' or 'records'")
+    check('Never use the words "knowledge base" or "records"' in h_prompt.STAFF_PROMPT
+          and '"our information"' in h_prompt.STAFF_PROMPT,
+          "the staff prompt forbids 'knowledge base' and 'records' and offers 'our information'")
     data = await guarded("The client asked about fees, so the fee is $1,688 [1].")
     check(data["status"] == "refused" and "internal_reasoning" in data["guard_flags"],
           "internal-reasoning leak is refused")

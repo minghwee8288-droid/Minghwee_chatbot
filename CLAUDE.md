@@ -2562,6 +2562,8 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-11-13** - **Help: staff-facing wording.** `app/help` only, Claire untouched: the not_found, refused, no-confirmed-fee and no-confirmed-timeline replies no longer say "knowledge base" or "records", and the answer prompt tells the model to say "our information" instead. `selfcheck_help.py` 60/60.
+
 - **2026-11-13** - **Help: a read-only staff answer service for the OS Portal, as its own app.
   No existing code file changed.** New: `app/help/` (its own FastAPI entry point,
   `uvicorn app.help.main:app`), `scripts/selfcheck_help.py`, `scripts/help_golden.json`,
