@@ -23,3 +23,29 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+
+  # Help (app/help/): the read-only staff answer service for the OS Portal.
+  # Its own app and process; it starts none of the bot's background work.
+  # Deploy it alone with `docker compose up -d --build chatbot-help` (docs/DEPLOY_HELP.md).
+  chatbot-help:
+    build: .
+    container_name: minghwee-chatbot-help
+    command: ["uvicorn", "app.help.main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:8001:8001"
+    restart: unless-stopped
+    # Longer than HELP_TIMEOUT_SECONDS (20s), so a stop lets answers in flight finish.
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/internal/help/health', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

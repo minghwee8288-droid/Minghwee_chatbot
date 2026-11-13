@@ -115,6 +115,22 @@ app/
                      Sends nothing and writes nothing; 404 unless SUGGEST_SECRET is
                      set (§7). See docs/SUGGESTED_REPLIES.md and
                      docs/DEPLOY_SUGGESTED_REPLIES.md.
+  help/              Help (2026-11-13): the staff "Help" answer service for the OS Portal,
+                     its OWN FastAPI app (`uvicorn app.help.main:app`, container
+                     chatbot-help, 127.0.0.1:8001). POST /internal/help/answer, called
+                     server to server by the portal: searches the KB with the existing
+                     rag code and returns a grounded answer with numbered sources.
+                     Stateless and read-only: every request runs inside
+                     readonly.read_only() and may call only the RPC
+                     cb_match_knowledge_base_updated. Imports neither app.main nor
+                     app.suggest and starts none of Claire's background work. Own
+                     settings (settings.py, from os.environ), own model client (llm.py),
+                     own concurrency cap and timeouts. planner.py (standalone query,
+                     service, nationality), retrieve.py (embed first; a price question
+                     with a service never widens), context.py (numbered records),
+                     prompt.py, answer.py (guards from app.graph.guards, a phone guard,
+                     staff fee/timeline lines, the [[NOT_COVERED]] marker), router.py.
+                     404 unless HELP_SECRET is set. See docs/DEPLOY_HELP.md.
   services/
     kb_rules.py      pricing/contact rules: code DEFAULTS, or cb_kb_rules when
                      RULES_FROM_DB=true (validated whole, last-good fallback)
@@ -160,6 +176,14 @@ scripts/             preflight, retrieval check, reset, simulate, SQL migrations
                      replaced_threads_001_create (cb_replaced_threads; NOT APPLIED),
                      cb_call_context_001 (cb_call_context; APPLIED on production 2026-11-04)
                      — applied ONLY via apply_sql.py --expect-ref <project ref>
+  selfcheck_help.py  Help end to end over httpx ASGITransport with the DB, the model and
+                     the search faked; no network (imports no_network first). Asserts
+                     Help starts no thread, task or network call and never loads
+                     app.main, app.api.webhook or app.suggest.
+  help_golden.json   45 golden questions for Help (fees, documents, timelines, policy,
+                     5 follow-up pairs, 6 not_found).
+  help_replay.py     replays help_golden.json against a running Help service and grades
+                     it; prints only, reads source rows back read-only to check figures.
   gen_fee_locked.py  the watcher's fee lock: the 23 questions + 7 corrections the
                      fees document set, read from the loader, written into
                      kb-admin/lib/watcher/fee-locked.ts AND the 015 SQL arrays
@@ -1195,6 +1219,15 @@ Easy to get wrong:
   `SUGGEST_MAX_CONCURRENCY` (2; over that is 429 at once), `SUGGEST_TIMEOUT_SECONDS` (25;
   past that is 504). Steps in `docs/DEPLOY_SUGGESTED_REPLIES.md`. Whether the server has
   the secret set is not recorded in this repo; check by counting, never by printing it.
+- **Help (`app/help/`) settings are read from the process environment too**
+  (`app/help/settings.py`), never from `app/config.py`, and never change Claire's.
+  `HELP_SECRET`: empty means every Help route answers 404 (the health route still answers).
+  `HELP_MODEL` (empty = `OPENROUTER_MODEL`), `HELP_MAX_CONCURRENCY` (4; over that is 429 at
+  once), `HELP_TIMEOUT_SECONDS` (20; past that is 504), `HELP_PLANNER_TIMEOUT_SECONDS` (6;
+  past that the last message is searched as it is), `HELP_HISTORY_TURNS` (10),
+  `HELP_MATCH_COUNT` (8). The body cap (32 KB) and message limits are constants. An empty
+  value takes the default. The nginx block (`docs/nginx_help_location.conf`, already added
+  to `docs/nginx_allowlist.conf`) caps the body at 32k too.
 - `HISTORY_LIMIT` (40) — past messages loaded into each prompt. The `.env` value
   **overrides** the code default, so bumping the default alone changes nothing on a box
   whose `.env` pins it. Collected fields persist in the checkpoint independently; this is
@@ -2271,6 +2304,18 @@ python scripts/smoke_resilience.py     # startup, health and shutdown, in second
                                        #   network. smoke_nodes.py runs it too.
 python scripts/selfcheck_suggest.py    # POST /internal/suggest end to end with the DB,
                                        #   the model and WhatsApp faked. No network.
+python scripts/selfcheck_help.py       # Help end to end, faked DB/model/search, no network.
+HELP_SECRET=<value> python scripts/help_replay.py [--show id,..] [--only id,..]
+                                       # replays the 45 golden questions against a running
+                                       #   Help (default http://127.0.0.1:8001). Real model,
+                                       #   KB read read-only; writes nothing.
+# Help deploy (docs/DEPLOY_HELP.md): append HELP_SECRET to .env (openssl rand -hex 32,
+#   never printed), then
+docker compose up -d --build chatbot-help    # Help only; the chatbot container is untouched
+curl -s http://127.0.0.1:8001/internal/help/health   # {"ok":true}
+#   then paste docs/nginx_help_location.conf's block, sudo nginx -t, reload.
+# Help rollback: docker compose stop chatbot-help, and remove the nginx block.
+#   A plain `docker compose up -d --build` builds and restarts BOTH services.
 python scripts/selfcheck_recognition.py   # 4 contacts (case employer, past placement,
                                        #   candidate, new) through identify, the webhook
                                        #   payload and the real nodes on a fake DB; no
@@ -2516,6 +2561,38 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-13** - **Help: a read-only staff answer service for the OS Portal, as its own app.
+  No existing code file changed.** New: `app/help/` (its own FastAPI entry point,
+  `uvicorn app.help.main:app`), `scripts/selfcheck_help.py`, `scripts/help_golden.json`,
+  `scripts/help_replay.py`, `docs/DEPLOY_HELP.md`, `docs/nginx_help_location.conf`. Additive
+  only: a `chatbot-help` service appended to `docker-compose.yml` (the `chatbot` block is
+  byte-for-byte unchanged: the old file is an exact prefix of the new one), seven empty
+  `HELP_*` keys in `.env.example`, and one zone line and one location block in
+  `docs/nginx_allowlist.conf` above the final 404. `git diff --stat -- app scripts kb-admin
+  portal-ui reset-ui render-service` shows no changed existing file. The portal sends the
+  conversation (up to 10 turns); Help plans a standalone query, searches with the existing
+  `rag` code (both audiences, embed first so a failure is 500 `search_unavailable`), and
+  answers from the numbered records only. Below the 0.40 floor it answers `not_found` with
+  fixed text and no model call. Guards reused from `app.graph.guards` (ungrounded figures on
+  the records only, degenerate with citations removed, internal reasoning, the nationality
+  fee guard with staff wording instead of the client line), plus Help's own phone-number
+  guard and citation check. If the records it found do not answer, the model ends with
+  `[[NOT_COVERED]]`; the marker is removed and the status is `not_found` (flag
+  `not_covered`) with the text and sources kept. `selfcheck_help.py` 58/58 and no_network
+  clean; 35 faults injected, 35 fail by name. The existing suites passed in Phase 2 and no
+  existing code has changed since. **Replay** (local Help, real model, production KB read
+  read-only, 45 golden items, 50 requests): **45/45 correct**, 0 invented figures, 0 refused
+  writes, p50 4,430 ms and p90 5,312 ms. Flags: `not_covered` on the 3 genuine gaps (staff
+  annual leave, a Sri Lanka new hire, the Myanmar passport fee, the last also
+  `nationality_fee_guard`); no refusals. `fee-passport-mm` is graded `not_found` by
+  decision: the KB holds no Myanmar passport fee and the answer says so. **Follow-up pair
+  verified**: "and for Indonesia?" after the Filipino transfer fee cites the Indonesian
+  third-party row (transfer/ID/employer, "...an additional $60 for an ex-abroad or
+  Christian helper"), not the Filipino one, so no fix was needed. Memory (Windows, not the
+  container): peak 108 MB. Not deployed: `HELP_SECRET` unset on the server, nginx block not
+  applied. Seen and left: answers may use `**bold**`; a candidate-facing row still says a
+  transfer takes 2-4 weeks (section 9.15).
 
 - **2026-11-05** - **The P1 suicide template, the 995 follow-up and one P1 emergency sentence reworded;
   "not a medical service" and "cannot provide police" are gone from every complaint reply.** Behind
