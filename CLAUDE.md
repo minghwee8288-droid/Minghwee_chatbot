@@ -2562,6 +2562,8 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 
 Append here, newest first. One entry per behavioural change.
 
+- **2026-11-13** - **Help: answer format.** `app/help/prompt.py` only, Claire untouched: one direct opening sentence with the key fact in bold, `### ` headings for a multi-part answer, `- ` bullets with every amount, timeline and document name in bold, numbered steps only for a process, usually under 180 words, no tables, no closing filler. All earlier rules kept. `selfcheck_help.py` 60/60; 6 golden items replayed read-only on a local server, 6/6 correct, no refusals.
+
 - **2026-11-13** - **Help: staff-facing wording.** `app/help` only, Claire untouched: the not_found, refused, no-confirmed-fee and no-confirmed-timeline replies no longer say "knowledge base" or "records", and the answer prompt tells the model to say "our information" instead. `selfcheck_help.py` 60/60.
 
 - **2026-11-13** - **Help: a read-only staff answer service for the OS Portal, as its own app.
