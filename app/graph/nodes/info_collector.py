@@ -1697,6 +1697,39 @@ _HOUSEHOLD_MEMBER = re.compile(
 )
 
 
+# 19 Nov 2026: Thomas's own answer "yes, with childcare and cooking, i don't
+# have wife" was asked "Besides your wife and children, who else lives with
+# you...". A spouse the client says they do not have ("don't have wife", "no
+# husband", "I'm single", "living alone with my kids") is no spouse: it is left
+# out of the household line, and a collector reply that names a spouse anyway
+# is replaced by the field's own question. Only when such a negation is in the
+# client's own lines, so "my wife and I both work" is unchanged.
+# False = the line and the reply as before.
+HOUSEHOLD_NEGATION_FIX_ENABLED = settings.household_negation_fix_enabled
+_SPOUSE_WORDS = ("wife", "husband")
+_SPOUSE_IN_REPLY = re.compile(r"\b(?:wife|husband|spouse|partner)\b", re.IGNORECASE)
+_DENIES_A_SPOUSE = re.compile(
+    r"\b(?:don'?t|do\s+not|doesn'?t|didn'?t|haven'?t|have\s+not|has\s+no|have\s+no|no|not|never|without)"
+    r"\s+(?:have\s+|had\s+|got\s+)?(?:a\s+|any\s+|my\s+)?(?:wife|husband|spouse|partner)\b"
+    r"|\b(?:i'?m|i\s+am)\s+(?:a\s+)?(?:single|divorced|widowed|separated|unmarried|not\s+married)\b"
+    r"|\bsingle\s+(?:mum|mom|mother|dad|father|parent)\b"
+    r"|\b(?:liv(?:e|es|ing)|stay(?:s|ing)?)\s+alone\b",
+    re.IGNORECASE,
+)
+
+
+def denies_a_spouse(text: str) -> bool:
+    """The client's own words say there is no spouse at home."""
+    return bool(_DENIES_A_SPOUSE.search(text or ""))
+
+
+def _client_words(state: dict) -> str:
+    since = _history_since(state.get("history_text") or "", state.get("collected_since"))
+    lines = [l[len("Client:"):] for l in since.splitlines() if l.startswith("Client:")]
+    lines.append(str(state.get("incoming_text") or ""))
+    return "\n".join(lines)
+
+
 def household_follow_up(state: dict, missing: list) -> str | None:
     """'Besides your parents, who else lives with you...' when the client named
     some of the household but the household field is still empty."""
@@ -1712,6 +1745,8 @@ def household_follow_up(state: dict, missing: list) -> str | None:
             named.append(word)
     if "parents" in named:
         named = [w for w in named if w not in ("mother", "father", "mum", "mom", "dad")]
+    if HOUSEHOLD_NEGATION_FIX_ENABLED and denies_a_spouse("\n".join(lines)):
+        named = [w for w in named if w not in _SPOUSE_WORDS]
     if not named:
         return None
     who = named[0] if len(named) == 1 else ", ".join(named[:-1]) + " and " + named[-1]
@@ -2420,7 +2455,7 @@ QUESTION_STYLE_OFFER_TEXT = (
 # conditions the offer had, so no other step moves. A name from our records
 # (not typed on this turn) opens "Hi <name>, I'm Claire..." instead of "Thanks".
 # False = the old offer, exactly.
-INTRO_V2_ENABLED = True
+INTRO_V2_ENABLED = settings.intro_v2_enabled
 INTRO_V2_LINE = (
     "{opener} I'll ask a few quick questions so we can {purpose}. I'll go one at a time, "
     "but just tell me if you'd prefer to answer them all in one go."
@@ -2456,7 +2491,7 @@ def intro_v2_line(service_type: str, first_name: str, from_records: bool) -> str
 # did not say (a divorce, a death, an illness, a spouse, being alone) or a
 # generic "I understand" sends the fixed fallback instead.
 # False = the reply as before.
-EMPATHY_ACK_ENABLED = True
+EMPATHY_ACK_ENABLED = settings.empathy_ack_enabled
 _EMPATHY_SERVICES = frozenset({"new_hiring", ticket_service.TRANSFER_EMPLOYER})
 EMPATHY_ACK_NOTE = (
     "\n\nTHIS REPLY OPENS WITH A WARM ACKNOWLEDGEMENT of what they just told you they "
@@ -2527,7 +2562,7 @@ def empathy_fallback(first_name: str, question: str) -> str:
 # APPROVAL. Fixed text (vetted below); translated through the complaint flow's
 # translation path when she is not writing English, the English kept if that
 # fails. False = the closing message alone, as before.
-JOBSEEKER_DOCS_REQUEST_ENABLED = True
+JOBSEEKER_DOCS_REQUEST_ENABLED = settings.jobseeker_docs_request_enabled
 JOBSEEKER_DOCS_REQUEST = (
     "Before I tell you what happens next, it would help a lot if you could send us a few "
     "things here on WhatsApp, now or whenever you are ready:\n"
@@ -2561,6 +2596,46 @@ async def jobseeker_docs_request(state: dict) -> str:
         return text
     from app.graph.nodes import complaint_triage as _ct  # lazy: no import cycle
     return await _ct._in_her_language(text, name)
+
+
+# 19 Nov 2026: after the documents request a job seeker sends her files one
+# after another (a video, two photos, a PDF, an image), and each one was a turn
+# of its own: the handover line twice, "Noted, I've added that for our agent"
+# twice, the handover line again, and a ticket note per file after the first.
+# Now the first file is answered as before; every further file with no text of
+# its own, within 30 minutes of that one, on a conversation whose registration
+# ticket is open, gets no reply and no ticket note. After 30 minutes the next
+# file is answered again. Under JOBSEEKER_DOCS_REQUEST_ENABLED; media from
+# anyone else, or with a caption, is handled exactly as before.
+JOBSEEKER_FILE_BURST_MINUTES = 30
+_ONLY_ATTACHMENTS = re.compile(r"^(?:\s*\[client sent an? \w+(?::[^\]\n]*)?\]\s*)+$")
+
+
+def jobseeker_file_burst(state: dict, result: dict) -> dict:
+    """The classifier's result, made silent for a job seeker's second and later
+    files in a row; the first records when it was answered."""
+    if not JOBSEEKER_DOCS_REQUEST_ENABLED or result.get("intent") != "media_received":
+        return result
+    items = state.get("media_items") or []
+    if not items or any((i or {}).get("caption") for i in items):
+        return result
+    if not _ONLY_ATTACHMENTS.match(state.get("incoming_text") or ""):
+        return result
+    topics = state.get("blocked_topics") or {}
+    if not any(ticket_service.family_for(k) == "candidate" for k in topics):
+        return result
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    try:
+        last = datetime.fromisoformat(str(state.get("jobseeker_media_at") or ""))
+    except ValueError:
+        last = None
+    if last and last.tzinfo and now - last < timedelta(minutes=JOBSEEKER_FILE_BURST_MINUTES):
+        logger.info("Conversation %s: another file from a job seeker within %d minutes - "
+                    "no reply, no ticket note", state.get("conversation_id"),
+                    JOBSEEKER_FILE_BURST_MINUTES)
+        return {**result, "suppress_reply": True, "reply": ""}
+    return {**result, "jobseeker_media_at": now.isoformat()}
 
 
 # Change 3's closing line: a special requirement the client gave is named in
@@ -6667,6 +6742,12 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
                 reply = empathy_fallback(first_name, fixed_q)
             elif not re.match(r"\s*thanks?\b", reply, re.I):
                 reply = f"Thanks {first_name}. {reply.lstrip()}"
+        if (HOUSEHOLD_NEGATION_FIX_ENABLED and _SPOUSE_IN_REPLY.search(reply or "")
+                and denies_a_spouse(_client_words(state))):
+            logger.info("Conversation %s: the reply named a spouse the client said they do "
+                        "not have - sent the field's question", state.get("conversation_id"))
+            reply = (f"{next_field.question} {partner.question}" if partner
+                     else next_field.question)
         if overview and (reply or "").strip() == (next_field.question or "").strip():
             logger.error(
                 "Conversation %s: the %s overview was discarded by a guard - the "

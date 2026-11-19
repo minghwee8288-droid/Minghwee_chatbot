@@ -412,6 +412,9 @@ class ConversationState(TypedDict, total=False):
     # Messages sent just BEFORE the reply (15 Nov change 5: a job seeker's
     # document request ahead of her closing message). Fixed, vetted text.
     lead_replies: list[str]
+    # When a job seeker's first file after her registration was answered (ISO,
+    # UTC). Further files within 30 minutes get no reply. Kept across turns.
+    jobseeker_media_at: str
 
     # --- Handover ---
     needs_handover: bool

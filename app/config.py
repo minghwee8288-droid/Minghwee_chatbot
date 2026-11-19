@@ -337,6 +337,16 @@ class Settings(BaseSettings):
     # scripts/sql/cb_complaint_cases_001.sql applied first; nothing reads the copy.
     complaint_case_table: bool = False
 
+    # Thomas's review of 15 Nov 2026 (info_collector / ticket), read once at
+    # import. Unset = these defaults, which are the new behaviour; the other
+    # value restores the behaviour before each change exactly.
+    intro_v2_enabled: bool = True
+    empathy_ack_enabled: bool = True
+    special_requirements_q_enabled: bool = True
+    ask_contact_preference: bool = False
+    jobseeker_docs_request_enabled: bool = True
+    household_negation_fix_enabled: bool = True
+
     # The WhatsApp Business app can send greeting and away messages by itself.
     # They arrive as outbound messages the bot did not send, which the agent
     # detector would otherwise read as "a human has taken over" — silencing the

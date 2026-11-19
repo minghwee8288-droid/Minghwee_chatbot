@@ -2818,8 +2818,8 @@ for _service in SERVICE_FIELDS:
 #   that answer, so it is never asked either - but its gate is now always
 #   undecided, which still puts it in front of the extractor, so an email the
 #   client volunteers is saved exactly as before. No default value is written.
-SPECIAL_REQUIREMENTS_Q_ENABLED = True
-ASK_CONTACT_PREFERENCE = False
+SPECIAL_REQUIREMENTS_Q_ENABLED = settings.special_requirements_q_enabled
+ASK_CONTACT_PREFERENCE = settings.ask_contact_preference
 _SPECIAL_REQUIREMENTS = Field(
     "special_requirements",
     "any special needs or routines she should know about",

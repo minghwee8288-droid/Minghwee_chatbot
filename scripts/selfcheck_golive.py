@@ -915,6 +915,114 @@ async def scenario_15nov() -> None:
            t.ASK_CONTACT_PREFERENCE, ico.JOBSEEKER_DOCS_REQUEST_ENABLED) == (True, True, True, False, True))
 
 
+async def scenario_19nov() -> None:
+    """19 Nov fast fix: no spouse the client denied, the switches from env, and a
+    job seeker's run of files answered once."""
+    import os
+    import subprocess
+    ico = importlib.import_module("app.graph.nodes.info_collector")
+    from app.services import ticket as t
+    household = next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "household")
+
+    def follow(*client_lines):
+        hist = "\n".join(f"Client: {l}\nYou: ok?" for l in client_lines[:-1])
+        return ico.household_follow_up({"history_text": hist, "incoming_text": client_lines[-1]},
+                                       [household]) or ""
+
+    thomas = follow("yes, with childcare and cooking, i don't have wife", "two kids, 3 and 6")
+    check("19 Nov 1: Thomas's 'i don't have wife' - the household line names no spouse",
+          "wife" not in thomas.lower() and "kids" in thomas)
+    check("19 Nov 1: 'my wife and I both work' still names her",
+          "wife" in follow("my wife and I both work", "two kids"))
+    check("19 Nov 1: no husband / I'm single / living alone with my kids - no spouse named",
+          all("husband" not in follow(x, "my husband? no, just my kids").lower()
+              and "wife" not in follow(x, "wife").lower()
+              for x in ("no husband", "I'm single", "living alone with my kids")))
+    with patch.object(ico, "HOUSEHOLD_NEGATION_FIX_ENABLED", False):
+        off = follow("yes, with childcare and cooking, i don't have wife", "two kids, 3 and 6")
+    check("19 Nov 1: a plain answer unchanged, and the switch off gives the old line",
+          follow("two kids") == "Besides your kids, who else lives with you, and how many people are there in total?"
+          and "wife" in off)
+
+    async def collect(state, reply):
+        async def model(*a, **kw):
+            return reply
+        with patch.object(ico, "complete", new=model, create=True), \
+             patch.object(ico, "complete_json", new=AsyncMock(return_value={}), create=True), \
+             patch.object(_rag_node, "briefing_records", new=AsyncMock(return_value={})), \
+             patch.object(ico, "_open_lead_early", new=AsyncMock(return_value={})):
+            return (await ico.info_collector(state)).get("reply") or ""
+
+    st = {"conversation_id": 9, "phone": CLIENT, "contact_type": "employer", "intent": "new_hiring",
+          "service_type": "new_hiring", "rag_matches": [], "rag_context": "", "prior_hires": 0,
+          "question_style": "one",
+          "collected_info": {"full_name": "Bella Tan", "first_time_hire": "first time with us",
+                             "requirement": "childcare and cooking"},
+          "asked_field_counts": {"full_name": 1, "requirement": 1},
+          "history_text": "Client: yes, with childcare and cooking, i don't have wife\nYou: Got it. Any kids?",
+          "incoming_text": "two kids"}
+    kids_q = next(f.question for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "children_detail")
+    bad = f"Got it, that will help your wife too. {kids_q}"
+    denied = await collect(st, bad)
+    said = await collect({**st, "history_text": "Client: childcare, my wife and I both work\nYou: Got it. Any kids?"}, bad)
+    check("19 Nov 1: a reply naming a spouse the client denied is replaced; one they have is kept",
+          "wife" not in denied.lower() and denied.strip() != "" and "wife" in said.lower())
+
+    # 2. The six switches read from env; unset = today's defaults.
+    probe = ("import sys; sys.path.insert(0, 'scripts'); import no_network; import importlib;"
+             " i = importlib.import_module('app.graph.nodes.info_collector');"
+             " from app.services import ticket as t;"
+             "print(i.INTRO_V2_ENABLED, i.EMPATHY_ACK_ENABLED, t.SPECIAL_REQUIREMENTS_Q_ENABLED,"
+             " t.ASK_CONTACT_PREFERENCE, i.JOBSEEKER_DOCS_REQUEST_ENABLED, i.HOUSEHOLD_NEGATION_FIX_ENABLED,"
+             " any(f.key == 'special_duties' for f in t.SERVICE_FIELDS['new_hiring']),"
+             " any(f.key == 'update_channel' for f in t.SERVICE_FIELDS['new_hiring']))")
+    names = ("INTRO_V2_ENABLED", "EMPATHY_ACK_ENABLED", "SPECIAL_REQUIREMENTS_Q_ENABLED",
+             "ASK_CONTACT_PREFERENCE", "JOBSEEKER_DOCS_REQUEST_ENABLED", "HOUSEHOLD_NEGATION_FIX_ENABLED")
+    env = {k: v for k, v in os.environ.items() if k not in names}
+    root = str(Path(__file__).resolve().parents[1])
+
+    def run(extra):
+        return subprocess.run([sys.executable, "-c", probe], env={**env, **extra}, cwd=root,
+                              capture_output=True, text=True).stdout.strip().splitlines()[-1:]
+    check("19 Nov 2: no env value = the defaults (True True True False True True; new fields)",
+          run({}) == ["True True True False True True False False"])
+    check("19 Nov 2: each switch flipped from env gives the earlier behaviour",
+          run({"INTRO_V2_ENABLED": "false", "EMPATHY_ACK_ENABLED": "false",
+               "SPECIAL_REQUIREMENTS_Q_ENABLED": "false", "ASK_CONTACT_PREFERENCE": "true",
+               "JOBSEEKER_DOCS_REQUEST_ENABLED": "false", "HOUSEHOLD_NEGATION_FIX_ENABLED": "false"})
+          == ["False False False True False False True True"])
+
+    # 3. A job seeker's files: the first answered, the rest within 30 minutes silent.
+    reg = {"id": "r1", "status": "open", "service_type": ["new_hiring"],
+           "captured_info": {"topic_key": t.CANDIDATE_HIRING, "also_topics": ["media_received"]}}
+    media = {"intent": "media_received", "service_type": "media_received"}
+    fstate = {"conversation_id": 9, "incoming_text": "[client sent a image: photo1.jpg]",
+              "media_items": [{"type": "image", "filename": "photo1.jpg"}],
+              "blocked_topics": {t.CANDIDATE_HIRING: reg, "media_received": reg}}
+    first = ico.jobseeker_file_burst(fstate, dict(media))
+    at = first.get("jobseeker_media_at")
+    second = ico.jobseeker_file_burst({**fstate, "jobseeker_media_at": at}, dict(media))
+    late = (datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat()
+    later = ico.jobseeker_file_burst({**fstate, "jobseeker_media_at": late}, dict(media))
+    check("19 Nov 3: first file answered and timed; the next within 30 min silent; after 30 min answered",
+          not first.get("suppress_reply") and at and second.get("suppress_reply") is True
+          and not later.get("suppress_reply") and later.get("jobseeker_media_at"))
+    employer = {**fstate, "jobseeker_media_at": at, "blocked_topics": {"new_hiring": {"id": "x"}}}
+    caption = {**fstate, "jobseeker_media_at": at,
+               "media_items": [{"type": "image", "caption": "this is my passport"}]}
+    with patch.object(ico, "JOBSEEKER_DOCS_REQUEST_ENABLED", False):
+        off = ico.jobseeker_file_burst({**fstate, "jobseeker_media_at": at}, dict(media))
+    check("19 Nov 3: an employer's file, a file with a caption, and the switch off are unchanged",
+          ico.jobseeker_file_burst(employer, dict(media)) == media
+          and ico.jobseeker_file_burst(caption, dict(media)) == media and off == media)
+    with patch.object(_graph, "intent_classifier", new=AsyncMock(return_value=dict(media))), \
+         patch.object(_graph.rag, "prefetch_query"):
+        via_graph = await _graph._classify({**fstate, "jobseeker_media_at": at, "intent": None})
+    check("19 Nov 3: the graph's classifier step applies it (no reply, routed to END)",
+          via_graph.get("suppress_reply") is True and _graph.route_after_intent(
+              {**fstate, **via_graph}) == _graph.END)
+
+
 async def scenario_vd_transfer() -> None:
     """2026-10-30 (3766, VD, transfer all at once): bare follow-up, wrong
     clarification, lost answers on a switch, "yes" to either/or, experience."""
@@ -3065,7 +3173,7 @@ async def main() -> int:
     for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
                      scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights,
                      scenario_vague_action, scenario_hire_documents, scenario_call_and_wording,
-                     scenario_xing_chain, scenario_15nov, scenario_vd_transfer, scenario_direct_hire_summary,
+                     scenario_xing_chain, scenario_15nov, scenario_19nov, scenario_vd_transfer, scenario_direct_hire_summary,
                      scenario_direct_hire_intake,
                      scenario_replacement_summary,
                      scenario_crisis_reply,

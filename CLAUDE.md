@@ -766,6 +766,8 @@ because the lead is opened early and the ticket is created much later.
 | An employer's help-type answer gets one acknowledgement sentence, never an assumption | `info_collector.EMPATHY_ACK_NOTE` + `empathy_ack_assumes` / `empathy_fallback` (`EMPATHY_ACK_ENABLED`) | New hire and employer transfer only, on the turn `requirement` is answered. Same model call. A spouse, divorce, death, illness or being alone the client did not say, "I understand", or a model failure sends the fixed fallback. |
 | Special needs or routines are asked in place of extra duties | `ticket._SPECIAL_REQUIREMENTS` replacing `special_duties` (`SPECIAL_REQUIREMENTS_Q_ENABLED`) + `info_collector.with_special_requirements_line` | Same place in both employer flows. "Special requirements" on the ticket and in the closing summary; "no" moves on, a bare "yes" is asked once more. The helper's `duties_willing` is unchanged. |
 | Nobody is asked how they want updates, nor for an email | `update_channel` dropped from `SERVICE_FIELDS` (`ASK_CONTACT_PREFERENCE` False) | `email` keeps its gate, now always undecided: never asked, still extracted when volunteered. No default value is written. |
+| A spouse the client says they do not have is never named | `info_collector.denies_a_spouse` in `household_follow_up` and after the collector's reply (`HOUSEHOLD_NEGATION_FIX_ENABLED`) | "don't have wife", "no husband", "I'm single", "living alone with my kids": no spouse in the household line, and a reply naming one is replaced by the field's question. "my wife and I both work" is unchanged. |
+| A job seeker's run of files gets one reply | `info_collector.jobseeker_file_burst` from `graph._classify` + `state.jobseeker_media_at` (`JOBSEEKER_DOCS_REQUEST_ENABLED`) | With her registration ticket open, a file with no text is answered as before; further caption-less files within 30 minutes get no reply and no ticket note. Anyone else's media is unchanged. |
 | A job seeker is asked for her documents just before her closing message | `info_collector.JOBSEEKER_DOCS_REQUEST` -> `lead_replies` -> `webhook._process_locked` (`JOBSEEKER_DOCS_REQUEST_ENABLED`) | Fixed text vetted at import, sent as its own message before the reply; translated via `complaint_triage._in_her_language` when she is not writing English. PENDING THOMAS APPROVAL. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
@@ -1171,7 +1173,13 @@ Easy to get wrong:
   special-requirements question in place of the employer's extra-duties question),
   `ticket.ASK_CONTACT_PREFERENCE` (False: the update-channel and email questions are asked in
   no flow; True asks them again), `info_collector.JOBSEEKER_DOCS_REQUEST_ENABLED` (True: a job
-  seeker's document request before her closing message).
+  seeker's document request before her closing message; also makes a job seeker's further
+  files within 30 minutes silent), `info_collector.HOUSEHOLD_NEGATION_FIX_ENABLED` (True: a
+  spouse the client denied is never named). **Since 2026-11-19 all six are settings** read once
+  at import from env: `INTRO_V2_ENABLED`, `EMPATHY_ACK_ENABLED`,
+  `SPECIAL_REQUIREMENTS_Q_ENABLED`, `ASK_CONTACT_PREFERENCE`,
+  `JOBSEEKER_DOCS_REQUEST_ENABLED`, `HOUSEHOLD_NEGATION_FIX_ENABLED` (`app/config.py`; unset
+  = the defaults above, so no `.env` change is needed; a change needs `docker compose up -d`).
   2026-11-05, `False` for the wording Thomas approved on 2 Nov:
   `complaint_templates.WARM_P1_WORDING`.
   2026-11-04, `False` for the earlier behaviour:
@@ -2131,7 +2139,8 @@ Ordered by what will hurt first.
     APPROVAL: every intro purpose clause but new hire's, the special-requirements question, the
     job seeker's document request. (b) The acknowledgement when a job seeker sends a file is not
     built: media is stored, but whether an agent can open it is the OS Portal's, not checked here.
-    (c) `household_follow_up` takes "i don't have wife" as a wife in the household. (d) A
+    (c) FIXED 2026-11-19 (`HOUSEHOLD_NEGATION_FIX_ENABLED`): "i don't have wife" was read as a
+    wife in the household. (d) A
     returning hiring client's intro line lands on the turn of their help-type answer, so the
     acknowledgement is skipped for them. (e) The model may reword the special-requirements
     question like any other; the written text is the fallback.
@@ -2585,6 +2594,21 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-19** - **Fast fix on the 15 Nov work: no denied spouse, switches from env, one
+  reply to a run of files.** (1) Thomas's own answer "yes, with childcare and cooking, i don't
+  have wife" was asked "Besides your wife and children...": a denied spouse is dropped from the
+  household line, and a collector reply naming one is replaced by the field's question
+  (`HOUSEHOLD_NEGATION_FIX_ENABLED`). (2) The six switches are settings (section 7). (3)
+  Replayed offline (real graph, fake ticket table, stubbed model): five files after the
+  documents request gave a reply per file (the handover line, then "Noted, I've added that for
+  our agent", in the graph's output; the webhook's 90 s repeat guard drops near-identical ones,
+  so how many arrive depends on the wording) and 4 ticket notes. Now the first file is answered
+  and the rest within 30 minutes get nothing and add no note. Verified: baseline replay with the
+  new switch off identical to 40182da; all six off identical to the pre-15-Nov baseline;
+  defaults differ only by the dropped "wife" (4 flows). `selfcheck_golive` 387 (10 new),
+  `smoke_nodes` 801, `selfcheck_flows` 962, `selfcheck_reset_ui` 17, `smoke_resilience` 243;
+  3 faults injected, 3 red. No production read or write.
 
 - **2026-11-19** - **Thomas's review of 15 Nov: five changes, each behind its own switch** (section 7).
   (1) The reply that thanks the client for their name no longer asks how they want the questions:

@@ -313,7 +313,8 @@ async def _classify(state: ConversationState) -> dict[str, Any]:
     # Step 6b: an answer to our own question is extracted beside the classifier.
     from app.graph.nodes.info_collector import start_speculative_extraction
     start_speculative_extraction(state)
-    return await intent_classifier(state)
+    from app.graph.nodes.info_collector import jobseeker_file_burst
+    return jobseeker_file_burst(state, await intent_classifier(state))
 
 
 # --- Construction ----------------------------------------------------------
