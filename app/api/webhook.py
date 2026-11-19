@@ -1377,6 +1377,9 @@ async def _process_locked(
         return
 
     try:
+        # 15 Nov change 5: empty unless a job seeker's closing turn set it.
+        for line in result.get("lead_replies") or []:
+            await message_service.send_bot_reply(conversation, line)
         await message_service.send_bot_reply(conversation, reply)
         for line in result.get("extra_replies") or []:
             await message_service.send_bot_reply(conversation, line)

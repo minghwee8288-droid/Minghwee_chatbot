@@ -2806,6 +2806,45 @@ for _service in SERVICE_FIELDS:
         f for f in SERVICE_FIELDS[_service] if f.key not in _REMOVED_QUESTION_KEYS
     ]
 
+# Thomas's review, 15 Nov 2026. Each switch on its own; False restores the
+# earlier question exactly.
+# SPECIAL_REQUIREMENTS_Q_ENABLED - the employer's "Which of these would she need
+#   to do: window cleaning, car washing..." is replaced, in the same place, by a
+#   question about special needs or routines (PENDING THOMAS APPROVAL). Filed as
+#   special_requirements; a "no" moves on. The helper's own duties question
+#   (duties_willing) is unchanged.
+# ASK_CONTACT_PREFERENCE - False: "Would you prefer updates by email, WhatsApp
+#   or both?" is asked in no flow. The email field stays where it was, gated on
+#   that answer, so it is never asked either - but its gate is now always
+#   undecided, which still puts it in front of the extractor, so an email the
+#   client volunteers is saved exactly as before. No default value is written.
+SPECIAL_REQUIREMENTS_Q_ENABLED = True
+ASK_CONTACT_PREFERENCE = False
+_SPECIAL_REQUIREMENTS = Field(
+    "special_requirements",
+    "any special needs or routines she should know about",
+    "Are there any special needs or routines she should know about? For example, taking a "
+    "family member to the hospital once a month for dialysis, or taking a child to school at "
+    "6 am and bringing them home at 11 am on weekdays. If there's nothing like that, just say no.",
+    max_asks=1,
+    optional=True,
+)
+# The lists before these two changes, for the self-checks that still guard the
+# old questions' wording in case a switch is turned back. Nothing in app/ reads it.
+FIELDS_BEFORE_15NOV: dict[str, list[Field]] = {k: list(v) for k, v in SERVICE_FIELDS.items()}
+if SPECIAL_REQUIREMENTS_Q_ENABLED:
+    for _service in ("new_hiring", TRANSFER_EMPLOYER):
+        SERVICE_FIELDS[_service] = [
+            replace(_SPECIAL_REQUIREMENTS, gate=f.gate, group=f.group)
+            if f.key == "special_duties" else f
+            for f in SERVICE_FIELDS[_service]
+        ]
+if not ASK_CONTACT_PREFERENCE:
+    for _service in SERVICE_FIELDS:
+        SERVICE_FIELDS[_service] = [
+            f for f in SERVICE_FIELDS[_service] if f.key != "update_channel"
+        ]
+
 # 2026-10-30 (3766, all at once): "yes" to the pets question was followed by a
 # bare "What kind, and how many?" in the missing-details list, with nothing to
 # say what it was about. A follow-up question names its subject. False = the
@@ -3295,6 +3334,7 @@ _DETAIL_LABELS = {
     "helper_room": "Her room",
     "helper_profile": "Age / experience wanted",
     "special_duties": "Extra duties",
+    "special_requirements": "Special requirements",
     "pet_detail": "Pet details",
     "languages": "Languages at home",
     "hire_source": "Experience wanted",

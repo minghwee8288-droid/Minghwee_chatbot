@@ -130,6 +130,22 @@ _MM_PASSPORT_BRIEFING_REPLY = (
 
 # Thomas's removals, 2026-10-15 (ticket.ASK_*): the smoke states follow the switch.
 from app.services.ticket import ASK_RELIGION as _ASK_RELIGION  # noqa: E402
+from app.services.ticket import SPECIAL_REQUIREMENTS_Q_ENABLED as _SPECIAL_REQ  # noqa: E402
+
+def _contact_pref_last(state: dict) -> dict:
+    """15 Nov change 4: with ASK_CONTACT_PREFERENCE off, direct hire's last
+    question is the helper's number, not update_channel - so a state about
+    "the last answer" is moved onto that question. Unchanged with it on."""
+    from app.services import ticket as _t
+    if _t.ASK_CONTACT_PREFERENCE:
+        return state
+    q = "What is the best number to reach her on?"
+    collected = {k: v for k, v in state["collected_info"].items() if k != "helper_contact"}
+    counts = {k: v for k, v in state["asked_field_counts"].items() if k != "update_channel"}
+    return {**state, "collected_info": collected, "asked_field_counts": counts,
+            "history_text": f"You: {q}", "last_question": {"key": "helper_contact", "text": q},
+            "_expect_not_collected": ["helper_contact"]}
+
 
 _THOMAS_REMOVALS_BASE = {
     "full_name": "Thomas", "requirement": "childcare", "children_detail": "two, aged 3 and 7",
@@ -151,7 +167,9 @@ CASES = [
                              "helper_room": 1, "pets": 1, "preferred_nationality": 1,
                              "helper_profile": 1, "hire_source": 1},
       "history_text": "You: Are you open to a first-timer?",
-      "_expect_prompt": "Which of these would she need to do",
+      # 15 Nov change 3: the special-requirements question stands in its place.
+      "_expect_prompt": ("Are there any special needs or routines she should know about"
+                         if _SPECIAL_REQ else "Which of these would she need to do"),
       "_forbid_prompt": "cooking requirements"}),
     ("info_collector", "Thomas 2026-10-15: no house-rules question before how they heard of us",
      {"service_type": "new_hiring", "intent": "new_hiring", "incoming_text": "within a month",
@@ -366,7 +384,7 @@ CASES = [
     # close the collection - it is answered and the field asked again; a
     # second non-answer after that is let go as before.
     ("info_collector", "E4: a cost question instead of the last answer keeps the field open",
-     {"service_type": "direct_hiring", "intent": "fee_enquiry", "contact_type": "employer",
+     _contact_pref_last({"service_type": "direct_hiring", "intent": "fee_enquiry", "contact_type": "employer",
       "incoming_text": "how much does a direct hire cost",
       "history_text": "You: Would you prefer updates by email, here on WhatsApp, or both?",
       "last_question": {"key": "update_channel",
@@ -379,7 +397,7 @@ CASES = [
                              "helper_contact": 1, "update_channel": 1},
       "_stub_extraction": {},
       "_expect_not_collected": ["update_channel"],
-      "_expect_state": {"info_complete": False}}),
+      "_expect_state": {"info_complete": False}})),
     ("info_collector", "E4: ...but asked again and met with another question, it is let go",
      {"service_type": "direct_hiring", "intent": "fee_enquiry", "contact_type": "employer",
       "incoming_text": "how much does a direct hire cost",
@@ -4138,10 +4156,19 @@ async def _step6c_checks() -> list[tuple[str, bool]]:
     out = []
     _EXTRACTION = {"full_name": "VD"}
     got = await _run_info_collector(named("new_hiring"))
-    out.append(("6c: the offer is in the reply that thanks them for their name",
-                got.get("reply") == f"Thanks, VD. {ico.QUESTION_STYLE_OFFER_TEXT}"
-                and got.get("question_style") == "offered"
-                and not any(k for k in (got.get("asked_field_counts") or {}) if k != "full_name")))
+    if ico.INTRO_V2_ENABLED:
+        # 15 Nov change 1: the same turn carries Claire's line and the next
+        # question; one at a time is chosen, nothing is offered.
+        out.append(("6c: the offer is in the reply that thanks them for their name",
+                    (got.get("reply") or "").startswith(ico.intro_v2_line("new_hiring", "VD", False))
+                    and ico.QUESTION_STYLE_OFFER_TEXT not in (got.get("reply") or "")
+                    and got.get("question_style") == "one"
+                    and (got.get("last_question") or {}).get("key") == "requirement"))
+    else:
+        out.append(("6c: the offer is in the reply that thanks them for their name",
+                    got.get("reply") == f"Thanks, VD. {ico.QUESTION_STYLE_OFFER_TEXT}"
+                    and got.get("question_style") == "offered"
+                    and not any(k for k in (got.get("asked_field_counts") or {}) if k != "full_name")))
     first = await _run_info_collector({**named("new_hiring"), "history_text": ""})
     out.append(("6c: never on the first message, before Claire's introduction",
                 first.get("question_style") != "offered"))
@@ -4152,9 +4179,10 @@ async def _step6c_checks() -> list[tuple[str, bool]]:
     short_on = await _run_info_collector(named("renewal"))
     with patch.object(ico, "QUESTION_STYLE_OFFER_SHORT", False):
         short_off = await _run_info_collector(named("renewal"))
+    _made = "one" if ico.INTRO_V2_ENABLED else "offered"  # 15 Nov change 1
     out.append(("6c: offered on work permit renewal, and its sub-switch turns that off",
-                short_on.get("question_style") == "offered"
-                and short_off.get("question_style") != "offered"))
+                short_on.get("question_style") == _made
+                and short_off.get("question_style") != _made))
     out.append(("6c: never for a complaint or a missing-helper report",
                 ticket_module.COMPLAINT not in ico.style_offer_services()
                 and ticket_module.MISSING_HELPER not in ico.style_offer_services()))
@@ -5735,6 +5763,16 @@ async def _run_case(node, label, overrides):
     global _LAST_SYSTEM_PROMPT
     _LAST_SYSTEM_PROMPT = ""
     state = {**BASE, **overrides}
+    # 15 Nov change 3: special_requirements stands where special_duties was. A
+    # state that answered the duties question has answered that step.
+    from app.services import ticket as _t
+    _ci = state.get("collected_info") or {}
+    if (_t.SPECIAL_REQUIREMENTS_Q_ENABLED and "special_duties" in _ci
+            and "special_requirements" not in _ci):
+        state["collected_info"] = {**_ci, "special_requirements": _ci["special_duties"]}
+        _ac = state.get("asked_field_counts") or {}
+        if "special_duties" in _ac:
+            state["asked_field_counts"] = {**_ac, "special_requirements": _ac["special_duties"]}
     # A state may name the reply the model would have written, so a guard
     # that only fires on particular WORDS can be executed rather than only
     # unit-tested. Added 2026-09-10 for the hiring-cost guard, which had

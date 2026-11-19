@@ -234,6 +234,8 @@ _MATCHED_PAIRS = {
 # wording still run, against the lists as they were before the removal, so a
 # switch turned back on brings back a field that is still right.
 _ALL_FIELDS = t.FIELDS_BEFORE_REMOVAL
+# The employer's duties question key: special_requirements once 15 Nov change 3 is on.
+_DUTIES_KEY = "special_requirements" if t.SPECIAL_REQUIREMENTS_Q_ENABLED else "special_duties"
 import app.graph.guards as _guards_mod  # noqa: E402
 
 
@@ -879,7 +881,10 @@ rows = [
  # 22 since 2026-10-15: Thomas removed languages, religion, cooking and house
  # rules (one switch each in ticket.py); 26 with all four switched back on.
  ("new_hiring field count", len(t.SERVICE_FIELDS["new_hiring"]),
-  26 - len(t._REMOVED_QUESTION_KEYS & {f.key for f in _ALL_FIELDS["new_hiring"]})),
+  26 - len(t._REMOVED_QUESTION_KEYS & {f.key for f in _ALL_FIELDS["new_hiring"]})
+  # 15 Nov: update_channel is asked in no flow (special_requirements replaces
+  # special_duties one for one, so it does not change the count).
+  - (0 if t.ASK_CONTACT_PREFERENCE else 1)),
  # --- Thomas, 2026-10-15: four questions removed from every flow ---------
  # "A generic yes tells us nothing useful for matching." Stop asking only;
  # columns and collected values are untouched. Each switch restores one.
@@ -890,11 +895,13 @@ rows = [
  ("...each behind its own switch, all off",
   (t.ASK_LANGUAGES, t.ASK_RELIGION, t.ASK_COOKING, t.ASK_HOUSE_RULES),
   (False, False, False, False)),
+ # Read off the lists before 15 Nov: SPECIAL_REQUIREMENTS_Q_ENABLED replaces
+ # special_duties in the live ones (checked further down).
  ("special_duties stays, asked on its own",
   [s for s in ("new_hiring", "transfer_employer")
-   if "special_duties" not in {f.key for f in t.SERVICE_FIELDS[s]}], []),
+   if "special_duties" not in {f.key for f in t.FIELDS_BEFORE_15NOV[s]}], []),
  ("...unpaired, and its question no longer presumes cooking",
-  (next(f for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "special_duties").ask_with,
+  (next(f for f in t.FIELDS_BEFORE_15NOV["new_hiring"] if f.key == "special_duties").ask_with,
    "cooking" in _question_of("new_hiring", "special_duties").lower()), ("", False)),
  ("the replacement question no longer asks for languages",
   "language" in _question_of("replacement", "replacement_preferences").lower(), False),
@@ -933,8 +940,10 @@ rows = [
   [f.key for f in ico._unfinished("candidate_new_hiring", {"duties_willing": "no"},
                                   {"duties_willing": 1})[0]], []),
  ("...but a bare 'yes' to it is asked again",
-  [f.key for f in ico._unfinished("new_hiring", {"special_duties": "yes"},
-                                  {"special_duties": 1})[0]], ["special_duties"]),
+  # 15 Nov: the employer's duties question is now special_requirements, and a
+  # bare yes to it says just as little.
+  [f.key for f in ico._unfinished("new_hiring", {_DUTIES_KEY: "yes"},
+                                  {_DUTIES_KEY: 1})[0]], [_DUTIES_KEY]),
  ("...and the model is told not to turn them back into yes/no",
   [k for s, k in (("new_hiring", "special_duties"), ("candidate_new_hiring", "duties_willing"),
                   ("new_hiring", "budget"), ("candidate_new_hiring", "expected_salary"),
@@ -4146,7 +4155,8 @@ rows = [
  ("the flows that ask how to reach them are unchanged",
   sorted(svc for svc, fl in t.SERVICE_FIELDS.items()
          if any(f.key == "update_channel" for f in fl)),
-  ["direct_hiring", "new_hiring", "transfer_employer"]),
+  # 15 Nov: ASK_CONTACT_PREFERENCE off asks it in none.
+  ["direct_hiring", "new_hiring", "transfer_employer"] if t.ASK_CONTACT_PREFERENCE else []),
  # A job seeker has less patience than an employer (the note on `transfer`
  # says so), so the matching half is optional throughout: asked once each,
  # and a collection completes without them.
@@ -4627,7 +4637,8 @@ rows = [
   [len(t.applicable_fields(t.TRANSFER_EMPLOYER, {"transfer_direction": v}))
    for v in (ico._TAKING_ON_VALUE, ico._RELEASING_VALUE)],
   # 19 before Thomas's 2026-10-15 removals; each removed take-on question is one fewer.
-  [19 - len(t._REMOVED_QUESTION_KEYS & {f.key for f in _ALL_FIELDS[t.TRANSFER_EMPLOYER]}), 4]),
+  [19 - len(t._REMOVED_QUESTION_KEYS & {f.key for f in _ALL_FIELDS[t.TRANSFER_EMPLOYER]})
+   - (0 if t.ASK_CONTACT_PREFERENCE else 1), 4]),
 
  # The household question does not ask again about the children it has
  # already been told about. Live 2026-09-18: "i have 4 childrens and all are

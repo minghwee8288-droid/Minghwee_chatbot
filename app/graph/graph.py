@@ -613,6 +613,7 @@ _TURN_RESET: dict[str, Any] = {
     "reply_is_fixed": False,
     "reply_must_send": False,
     "extra_replies": [],
+    "lead_replies": [],
 }
 
 

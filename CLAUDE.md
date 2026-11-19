@@ -325,7 +325,8 @@ State lives in a LangGraph Postgres checkpointer on `cb_checkpoint*` tables, key
 The complaint assessment runs beside the classifier inside the `intent_classifier` node
 (`_classify_with_prefetch`); when it takes the turn, the classifier's call is cancelled.
 
-`_TURN_RESET` (graph.py) blanks 21 per-turn fields each invocation. `ticket_id` is in
+`_TURN_RESET` (graph.py) blanks 22 per-turn fields each invocation (`lead_replies`, the
+messages sent BEFORE the reply, added 2026-11-19). `ticket_id` is in
 that list; `created_lead_id` deliberately is **not** — it must survive across turns
 because the lead is opened early and the ticket is created much later.
 
@@ -761,6 +762,11 @@ because the lead is opened early and the ticket is created much later.
 | A P1 does not wait on the database or a typing client | `nodes/complaint_triage._ticket_for` (`P1_TICKET_SECONDS`) + `reply_must_send` in `webhook._process_locked` | 3 s, then the template goes without its reference while the ticket retries, and "Your reference is ..." follows. Never held while she is typing, never dropped as a repeat. A chat a human holds gets the same words (`emergency_reply`). |
 
 | What was said on a phone call is never asked again, and never changed | `app/services/call_context.py` (`CALL_CONTEXT_ENABLED`, default off) via `graph.run_turn`, `info_collector._known_from_calls`, `system.build_system_prompt` | Read from `call_details`. Which side is the client is decided by `customer_side`; several conversations or none is `unmatched` with the reason, never a guess. Only allowlisted numbers go to the model. Every item needs a quote found in the transcript, and a fact's quote must be on a line our agent did not say. Facts go in UNDER the client's own words at turn time, so the job never touches a checkpoint; a value the call replaced cannot be extracted back from the old chat line. A newer explicit call beats an older chat value, the older is kept in `call_fact_history`, and the agent gets the note, not the client. Asked about something our team agreed: fixed wording, never ahead of a safety report. A complaint on a call raises its ticket (`source: call`) with nothing pending, and nothing is sent. |
+| The question-style offer is replaced by Claire's intro line, then the next question | `info_collector.intro_v2_line` at the old offer's turn (`INTRO_V2_ENABLED`) | Thomas, 15 Nov. No "which would you prefer"; `question_style` becomes "one" and `switches_to_all` still sends the list on request. The question is the field's own text (pairs joined, household follow-up kept). Purpose clauses other than new hire are PENDING THOMAS APPROVAL. |
+| An employer's help-type answer gets one acknowledgement sentence, never an assumption | `info_collector.EMPATHY_ACK_NOTE` + `empathy_ack_assumes` / `empathy_fallback` (`EMPATHY_ACK_ENABLED`) | New hire and employer transfer only, on the turn `requirement` is answered. Same model call. A spouse, divorce, death, illness or being alone the client did not say, "I understand", or a model failure sends the fixed fallback. |
+| Special needs or routines are asked in place of extra duties | `ticket._SPECIAL_REQUIREMENTS` replacing `special_duties` (`SPECIAL_REQUIREMENTS_Q_ENABLED`) + `info_collector.with_special_requirements_line` | Same place in both employer flows. "Special requirements" on the ticket and in the closing summary; "no" moves on, a bare "yes" is asked once more. The helper's `duties_willing` is unchanged. |
+| Nobody is asked how they want updates, nor for an email | `update_channel` dropped from `SERVICE_FIELDS` (`ASK_CONTACT_PREFERENCE` False) | `email` keeps its gate, now always undecided: never asked, still extracted when volunteered. No default value is written. |
+| A job seeker is asked for her documents just before her closing message | `info_collector.JOBSEEKER_DOCS_REQUEST` -> `lead_replies` -> `webhook._process_locked` (`JOBSEEKER_DOCS_REQUEST_ENABLED`) | Fixed text vetted at import, sent as its own message before the reply; translated via `complaint_triage._in_her_language` when she is not writing English. PENDING THOMAS APPROVAL. |
 
 `closure.py` is the other half: `needs_no_reply()` decides when to say nothing. It never
 silences the first message of a conversation, and never silences a bare yes/no when our
@@ -1157,6 +1163,15 @@ Easy to get wrong:
   `complaint_triage.BEST_TIME_LINE`, `complaint_triage.SHORT_FOLLOW_UPS`,
   `complaint_triage.REFLECT_REST_DAYS`, `intent_classifier.JOBSEEKER_ANY_POINT`,
   `info_collector.NO_QUESTION_TWICE`, `info_collector.JOB_SEEKER_KEEPS_NAME_ONLY`.
+  Thomas's review of 15 Nov (built 2026-11-19), each with the new behaviour as its default
+  and the other value restoring the earlier behaviour exactly:
+  `info_collector.INTRO_V2_ENABLED` (True: Claire's intro line in place of the question-style
+  offer), `info_collector.EMPATHY_ACK_ENABLED` (True: the warm acknowledgement after an
+  employer's help-type answer), `ticket.SPECIAL_REQUIREMENTS_Q_ENABLED` (True: the
+  special-requirements question in place of the employer's extra-duties question),
+  `ticket.ASK_CONTACT_PREFERENCE` (False: the update-channel and email questions are asked in
+  no flow; True asks them again), `info_collector.JOBSEEKER_DOCS_REQUEST_ENABLED` (True: a job
+  seeker's document request before her closing message).
   2026-11-05, `False` for the wording Thomas approved on 2 Nov:
   `complaint_templates.WARM_P1_WORDING`.
   2026-11-04, `False` for the earlier behaviour:
@@ -2112,6 +2127,15 @@ Ordered by what will hurt first.
     of a selfcheck case; see the change log. No message went to the client, the chat was not paused, and no assignment moved.
     The ticket number stays unused: the counter was not reset.
 
+57. **Thomas's review of 15 Nov: what is still open (2026-11-19).** (a) Wording PENDING THOMAS
+    APPROVAL: every intro purpose clause but new hire's, the special-requirements question, the
+    job seeker's document request. (b) The acknowledgement when a job seeker sends a file is not
+    built: media is stored, but whether an agent can open it is the OS Portal's, not checked here.
+    (c) `household_follow_up` takes "i don't have wife" as a wife in the household. (d) A
+    returning hiring client's intro line lands on the turn of their help-type answer, so the
+    acknowledgement is skipped for them. (e) The model may reword the special-requirements
+    question like any other; the written text is the fallback.
+
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
 arrives. Gathered here so they are asked in one conversation instead of rediscovered one
@@ -2561,6 +2585,47 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-19** - **Thomas's review of 15 Nov: five changes, each behind its own switch** (section 7).
+  (1) The reply that thanks the client for their name no longer asks how they want the questions:
+  "Thanks <name>. I'm Claire, Ming Hwee's AI assistant. I'll ask a few quick questions so we can
+  match you with the right helper. I'll go one at a time, but just tell me if you'd prefer to
+  answer them all in one go." then the next question (deterministic, the field's own question),
+  same turn and conditions as the old offer; `question_style` is set to "one", so asking for the
+  list later still switches. Purpose clause per service; every one but new hire PENDING THOMAS
+  APPROVAL. A name from our records opens "Hi <name>, I'm Claire...". Claire now introduces
+  herself twice (the first greeting is unchanged).
+  (2) After an employer answers the help-type question: "Thanks <name>." + one sentence
+  reflecting only what they said + the next question with a reason clause, in the same model
+  call (`EMPATHY_ACK_NOTE`). A reply naming a spouse, a divorce, a death, an illness or being
+  alone that the client did not say, or "I understand", or a model failure, gets the fixed
+  fallback (`empathy_fallback`).
+  (3) `special_requirements` replaces `special_duties` in new hire and employer transfer, in the
+  same place (PENDING THOMAS APPROVAL wording); "Special requirements" on the ticket and as one
+  line in the closing summary; a "no" moves on, a bare "yes" is asked once more (`_unfinished`,
+  under the switch). The helper's own duties question is unchanged.
+  (4) `update_channel` is dropped from every flow; `email` stays with its gate, which is now
+  always undecided, so it is never asked but a volunteered email still reaches the extractor and
+  the lead. Readers checked first: `lead.py` (email only), `_DETAIL_LABELS`, the dashboard in
+  `portal-ui/` (generic captured_info, no update_channel), `call_context._NOT_FACTS` - none
+  requires either field.
+  (5) A job seeker's closing turn sends a document request just before her "registration is
+  complete" message, via a new state key `lead_replies` (reset per turn; the webhook sends it
+  before the reply). Translated through `complaint_triage._in_her_language` when she is not
+  writing English. NOT built: the acknowledgement when she sends a file. Inbound media is stored
+  (`wp_chat_messages.media_path` / `media_type`) and the dashboard here shows only a
+  "[Media: video]" tag; whether an agent can open the file depends on the OS Portal's inbox,
+  which is not in this repo. Today such a message is classified `media_received`: a ticket is
+  raised (or the attachment is noted on the open one) and the client gets the handover line.
+  **Verified offline only:** a scratch replay (outside the repo) of 11 flows, all 265
+  `smoke_nodes` states and every node output of `selfcheck_golive`, run twice before the change
+  (byte-identical), once with all five switches off (byte-identical to the baseline) and once on;
+  every difference traces to the five changes. `selfcheck_golive` 377 (24 new), `smoke_nodes` 801,
+  `selfcheck_flows` 962, `selfcheck_reset_ui` 17, `smoke_resilience` 243; 3 faults injected, 3 red.
+  No real model run, no production read or write. Found and NOT changed: `household_follow_up`
+  reads "i don't have wife" as a wife in the household ("Besides your wife and children...").
+  Placed at the old offer's turn, a returning hiring client's intro line falls on the same turn
+  as their help-type answer, so they get the intro and not the acknowledgement.
 
 - **2026-11-13** - **Help: answer format.** `app/help/prompt.py` only, Claire untouched: one direct opening sentence with the key fact in bold, `### ` headings for a multi-part answer, `- ` bullets with every amount, timeline and document name in bold, numbered steps only for a process, usually under 180 words, no tables, no closing filler. All earlier rules kept. `selfcheck_help.py` 60/60; 6 golden items replayed read-only on a local server, 6/6 correct, no refusals.
 

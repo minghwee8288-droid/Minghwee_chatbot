@@ -409,6 +409,9 @@ class ConversationState(TypedDict, total=False):
     reply_must_send: bool
     # Further messages sent straight after the reply.
     extra_replies: list[str]
+    # Messages sent just BEFORE the reply (15 Nov change 5: a job seeker's
+    # document request ahead of her closing message). Fixed, vetted text.
+    lead_replies: list[str]
 
     # --- Handover ---
     needs_handover: bool

@@ -80,7 +80,7 @@ from app.graph.prompts.templates import (
     HANDOVER_CLOSER_INSTRUCTION,
 )
 from app.graph.state import RESET_KEY, ConversationState, effective_contact_type
-from app.graph.language import mainly_non_english
+from app.graph.language import mainly_non_english, reply_language
 from app.services import lead as lead_service
 from app.services import ticket as ticket_service
 # SERVICE_LABELS/service_label live in app.services.ticket now — the SAME_ISSUE
@@ -2411,6 +2411,177 @@ QUESTION_STYLE_OFFER_TEXT = (
     "I can ask you one question at a time, or send all the questions at once so you "
     "can answer in one reply. Which would you prefer?"
 )
+
+# Thomas's review, 15 Nov 2026 (change 1). The reply that thanks them for their
+# name no longer asks how they want the questions: Claire says who she is, that
+# she will go one at a time, and that they can ask for them all at once - then
+# the next question, in the same message. One at a time is the default; asking
+# for the list at any point still switches (switches_to_all). Same turn and same
+# conditions the offer had, so no other step moves. A name from our records
+# (not typed on this turn) opens "Hi <name>, I'm Claire..." instead of "Thanks".
+# False = the old offer, exactly.
+INTRO_V2_ENABLED = True
+INTRO_V2_LINE = (
+    "{opener} I'll ask a few quick questions so we can {purpose}. I'll go one at a time, "
+    "but just tell me if you'd prefer to answer them all in one go."
+)
+# new_hiring is Thomas's approved wording. EVERY OTHER PURPOSE IS PENDING THOMAS
+# APPROVAL: only the purpose clause differs from his line.
+INTRO_V2_PURPOSE = {
+    "new_hiring": "match you with the right helper",
+    ticket_service.CANDIDATE_HIRING: "match you with the right employer",  # PENDING THOMAS APPROVAL
+    "transfer": "match you with the right employer",  # PENDING THOMAS APPROVAL
+    "direct_hiring": "process your direct hire",  # PENDING THOMAS APPROVAL
+    "replacement": "find the right replacement helper",  # PENDING THOMAS APPROVAL
+    ticket_service.TRANSFER_EMPLOYER: "arrange the transfer",  # PENDING THOMAS APPROVAL
+    "home_leave": "arrange the home leave",  # PENDING THOMAS APPROVAL
+    "insurance": "arrange the insurance",  # PENDING THOMAS APPROVAL
+    "renewal": "renew the Work Permit",  # PENDING THOMAS APPROVAL
+    "passport_renewal": "renew the passport",  # PENDING THOMAS APPROVAL
+}
+
+
+def intro_v2_line(service_type: str, first_name: str, from_records: bool) -> str:
+    """Change 1's line: who Claire is, one at a time, all at once on request."""
+    opener = (f"Hi {first_name}, I'm Claire, Ming Hwee's AI assistant." if from_records
+              else f"Thanks {first_name}. I'm Claire, Ming Hwee's AI assistant.")
+    purpose = INTRO_V2_PURPOSE.get(service_type) or INTRO_V2_PURPOSE["new_hiring"]
+    return INTRO_V2_LINE.format(opener=opener, purpose=purpose)
+
+
+# Thomas's review, 15 Nov 2026 (change 2). The reply after an employer's answer
+# to "What would you mainly need help with" opens "Thanks <name>.", then ONE
+# sentence reflecting only what they said, then the next question with a short
+# reason clause. Written in the same model call; anything it assumes that they
+# did not say (a divorce, a death, an illness, a spouse, being alone) or a
+# generic "I understand" sends the fixed fallback instead.
+# False = the reply as before.
+EMPATHY_ACK_ENABLED = True
+_EMPATHY_SERVICES = frozenset({"new_hiring", ticket_service.TRANSFER_EMPLOYER})
+EMPATHY_ACK_NOTE = (
+    "\n\nTHIS REPLY OPENS WITH A WARM ACKNOWLEDGEMENT of what they just told you they "
+    "need. Write it in this order, in one message:\n"
+    "1. Exactly \"Thanks {first_name}.\"\n"
+    "2. ONE short sentence that reflects only what the client actually said in their "
+    "last message, and why good help matters for it. If they said something about their "
+    "own situation, reflect that in their terms. If their answer carries no personal "
+    "detail, write a plain neutral sentence instead (for example \"That helps us know "
+    "what to look for.\").\n"
+    "3. The question below, led by a short reason clause that ties it to what they need "
+    "(\"So I can match you with someone with the right ... experience, ...\").\n"
+    "Never assume anything they did not say: no divorce, separation, death, illness, "
+    "spouse or partner, and never that they are alone, unless those are their own words. "
+    "Never write \"I understand\". One acknowledgement sentence, no more."
+)
+EMPATHY_FALLBACK_REASON = "That helps me match you with the right helper."
+# What the acknowledgement must not say unless the client said it: the reply's
+# pattern, then the client's words that license it.
+_EMPATHY_ASSUMES = (
+    (re.compile(r"\bdivorc\w*", re.I), re.compile(r"\bdivorc", re.I)),
+    (re.compile(r"\bseparat(?:ed|ion)\b", re.I), re.compile(r"\bseparat", re.I)),
+    (re.compile(r"\bwidow\w*|\bpassed\s+away\b|\bdied\b|\bdeath\b|\bloss\b|\blate\s+(?:wife|husband)\b",
+                re.I),
+     re.compile(r"\bwidow|\bpassed\s+away|\bdied|\bdeath|\blate\s+(?:wife|husband)", re.I)),
+    (re.compile(r"\bsingle\s+(?:parent|father|mother|dad|mum|mom)\b", re.I),
+     re.compile(r"\bsingle\b", re.I)),
+    (re.compile(r"\bon\s+your\s+own\b|\bby\s+yourself\b|\balone\b|\bsingle[-\s]handed", re.I),
+     re.compile(r"\balone\b|\bon\s+my\s+own\b|\bby\s+myself\b|\bsingle\b"
+                r"|\b(?:no|don'?t\s+have|do\s+not\s+have|dont\s+have|without|not\s+have)\s+"
+                r"(?:a\s+|my\s+)?(?:wife|husband|spouse|partner)\b", re.I)),
+    (re.compile(r"\b(?:wife|husband|spouse|partner)\b", re.I), None),
+    (re.compile(r"\bill(?:ness)?\b|\bsick\w*|\bdiagnos\w*|\bdisease\b", re.I),
+     re.compile(r"\bill|\bsick|\bdiagnos|\bdisease|\bstroke|\bdementia|\bbedridden", re.I)),
+    (re.compile(r"\bI\s+(?:fully\s+)?understand\b", re.I), None),
+)
+
+
+def empathy_ack_assumes(reply: str, message: str) -> bool:
+    """The acknowledgement says something the client did not: True means use
+    the fallback. Only the text before the question is read, so a question
+    about "any medical conditions" is not mistaken for an assumption."""
+    body = reply or ""
+    cut = body.rfind("So I can")
+    if cut < 0:
+        marks = [m.start() for m in re.finditer(r"[.!]\s", body)]
+        cut = marks[-1] if marks else len(body)
+    head = body[:cut]
+    for said, licence in _EMPATHY_ASSUMES:
+        if not said.search(head):
+            continue
+        if licence is None:
+            # A spouse word is never the acknowledgement's to bring up; "I
+            # understand" is never wanted at all.
+            return True
+        if not licence.search(message or ""):
+            return True
+    return False
+
+
+def empathy_fallback(first_name: str, question: str) -> str:
+    return f"Thanks, {first_name}. {EMPATHY_FALLBACK_REASON} {(question or '').strip()}"
+
+
+# Thomas's review, 15 Nov 2026 (change 5). A job seeker finishing her
+# registration is asked, in one message just before "Your registration is
+# complete... what happens next", to send her documents here. PENDING THOMAS
+# APPROVAL. Fixed text (vetted below); translated through the complaint flow's
+# translation path when she is not writing English, the English kept if that
+# fails. False = the closing message alone, as before.
+JOBSEEKER_DOCS_REQUEST_ENABLED = True
+JOBSEEKER_DOCS_REQUEST = (
+    "Before I tell you what happens next, it would help a lot if you could send us a few "
+    "things here on WhatsApp, now or whenever you are ready:\n"
+    "1. Your biodata (your full profile, with a photo if you have one)\n"
+    "2. A 1-2 minute video in English: your name, age, nationality, family background, work "
+    "experience, and why you want to work in Singapore. Tips: wear a neat, plain top with "
+    "sleeves in a soft colour (no bright patterns or shiny jewellery), tie your hair back, and "
+    "record in a bright, quiet place facing the light, with the phone at eye level\n"
+    "3. 3-5 photos of dishes you have cooked, with the name of each dish, if you have any\n"
+    "4. Your passport photo page\n"
+    "5. Your highest education certificate (we need at least 8 years of formal education)\n"
+    "Helper roles are live-in only, and cleaner roles are open only to certain nationalities "
+    "under MOM rules, so our team will confirm your role with you."
+)
+_LANGUAGE_NAMES = {"id": "Indonesian", "ms": "Malay", "tl": "Tagalog", "zh": "Chinese",
+                   "my": "Burmese", "ta": "Tamil", "hi": "Hindi"}
+# Sent verbatim, so it is vetted here like the other fixed strings: no figure
+# the guard would read (all under 100), no handover promise, no fee.
+assert not re.search(r"\$|\bfee\b|\d{3,}", JOBSEEKER_DOCS_REQUEST), "docs request carries a figure"
+
+
+async def jobseeker_docs_request(state: dict) -> str:
+    """The documents message, in her language where she is not writing English."""
+    text = JOBSEEKER_DOCS_REQUEST
+    lines = [state.get("incoming_text") or ""] + [
+        l[len("Client:"):] for l in (state.get("history_text") or "").splitlines()
+        if l.startswith("Client:")][-3:]
+    code = reply_language(" ".join(lines))
+    name = _LANGUAGE_NAMES.get(code)
+    if not name:
+        return text
+    from app.graph.nodes import complaint_triage as _ct  # lazy: no import cycle
+    return await _ct._in_her_language(text, name)
+
+
+# Change 3's closing line: a special requirement the client gave is named in
+# the closing summary. A "no" (or nothing like it) adds nothing.
+_NO_SPECIAL = re.compile(
+    r"^\s*(?:no|nope|nah|none|nothing|not\s+really|n/?a|no\s+special\b.*|nothing\s+like\s+that\b.*)"
+    r"\s*[.!]*\s*$", re.I)
+
+
+def with_special_requirements_line(reply: str, value: str) -> str:
+    """'Special requirements: <value>' in the closing summary, before its last paragraph."""
+    value = re.sub(r"\s+", " ", str(value or "")).strip()
+    if (not ticket_service.SPECIAL_REQUIREMENTS_Q_ENABLED or not reply or not value
+            or value.lower() == UNANSWERED or _NO_SPECIAL.match(value)
+            or "special requirements" in reply.lower()):
+        return reply
+    line = f"Special requirements: {value}"
+    parts = reply.rstrip().split("\n\n")
+    if len(parts) > 1:
+        return "\n\n".join(parts[:-1] + [line, parts[-1]])
+    return f"{reply.rstrip()}\n\n{line}"
 _STYLE_LIST_FIRST, _STYLE_LIST_AGAIN = guards.QUESTION_LIST_HEADS
 _STYLE_LIST_END = (
     "Take your time, and feel free to skip anything that doesn't apply to you."
@@ -3086,7 +3257,11 @@ def _unfinished(
         elif (
             asked.get(field.key, 0) <= min(field.max_asks, MAX_ASKS_PER_FIELD)
             and _BARE_YES_NO.match(value)
-            and not _yes_no_question(field.question)
+            and (not _yes_no_question(field.question)
+                 # 15 Nov change 3: "Are there any special needs or routines...?"
+                 # reads as yes/no, but a bare yes still says nothing about them.
+                 or (ticket_service.SPECIAL_REQUIREMENTS_Q_ENABLED
+                     and field.key == "special_requirements" and not _BARE_NO.match(value)))
             and not (_BARE_NO.match(value) and (_ASKS_FOR_ANY.match(field.question)
                                                 or _OFFERS_NONE.search(field.question)))
         ):
@@ -6194,6 +6369,18 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         answer_first = (answer_first or "") + NOT_AN_ANSWER_NOTE
     plain_turn = not (answer_first or overview or workload_blocks or follow_up_notes)
     client_name = str(collected.get("full_name") or "").strip()
+    # Change 2 (15 Nov): an employer has just answered the help-type question.
+    empathy_due = bool(
+        EMPATHY_ACK_ENABLED
+        and service_type in _EMPATHY_SERVICES
+        and missing
+        and plain_turn
+        and asked.get("requirement")
+        and str(extracted.get("requirement") or "").strip()
+        and not str(previous.get("requirement") or "").strip()
+        and client_name
+        and client_name != UNANSWERED
+    )
     # The reply that thanks them for their name: the name became known on this
     # turn (record_name_note) - or, for a name from our records, which is known
     # before Claire has spoken, the turn after her first question.
@@ -6233,6 +6420,41 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         and not mainly_non_english(state.get("incoming_text") or "")
     ):
         first_name = client_name.split()[0]
+        if INTRO_V2_ENABLED:
+            # Change 1: Claire's line, then the next question in the same message.
+            # The question as the fallback would ask it (its own written text, a
+            # pair joined), so nothing about WHICH question comes next moves.
+            next_field = missing[0]
+            if next_field.key == "household":
+                follow = household_follow_up(state, missing)
+                if follow:
+                    next_field = dataclasses.replace(next_field, question=follow)
+            partner = ticket_service.paired_field(next_field, missing, collected)
+            if NO_NATIONALITY_WITH_NAME and next_field.key == "helper_name":
+                partner = None  # the name question asks the name only, as below
+            question = (f"{next_field.question} {partner.question}" if partner
+                        else next_field.question)
+            from_records = not record_name_note and bool(str(state.get("record_name") or "").strip())
+            reply = f"{intro_v2_line(service_type, first_name, from_records)}\n\n{question}"
+            counts[next_field.key] = 1
+            if partner:
+                counts[partner.key] = 1
+            logger.info("Conversation %s: intro line, then '%s' (one at a time) for %s",
+                        state.get("conversation_id"), next_field.key, service_type)
+            return {
+                **lead_fields,
+                "collected_info": carry,
+                "service_type": service_type,
+                "collected_service": service_type,
+                "asked_field_counts": counts,
+                "missing_field_keys": [field.key for field in missing],
+                "info_complete": False,
+                "reply": reply,
+                "last_question": {"key": next_field.key, "text": reply,
+                                  "partner": partner.key if partner else None},
+                "question_style": "one",
+                "needs_handover": bool(state.get("needs_handover")),
+            }
         logger.info("Conversation %s: offering the question style for %s",
                     state.get("conversation_id"), service_type)
         return {
@@ -6363,6 +6585,7 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
                 label=partner.label,
                 guidance=_field_guidance(service_type, collected, partner),
             ) if partner else "")
+            + (EMPATHY_ACK_NOTE.format(first_name=client_name.split()[0]) if empathy_due else "")
         )
         if next_field.optional:
             # §2 step 4 / §23.6: asked once, and a no is taken as an answer.
@@ -6395,7 +6618,7 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             else 3
             if (answer_first or first_contact or small_ticket_note or purpose_note
                 or nationality_note or location_note or record_name_note
-                or missing_note)
+                or missing_note or empathy_due)
             else 2,
             withhold_cost=service_type in kb_rules.cost_withheld_services(),
             # The SAME filtered tuple the question was built from. If these
@@ -6430,6 +6653,20 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
                 and _ASKS_NATIONALITY.search(reply or "")):
             reply = next_field.question
         reply = without_perfect_lead_in(reply)
+        if empathy_due:
+            # Change 2: "Thanks <name>." first; the fixed fallback when the
+            # model failed, assumed something, or said "I understand".
+            first_name = client_name.split()[0]
+            fixed_q = (f"{next_field.question} {partner.question}" if partner
+                       else next_field.question)
+            if (not (reply or "").strip() or (reply or "").strip() == fixed_q.strip()
+                    or FALLBACK_QUESTION in reply
+                    or empathy_ack_assumes(reply, state.get("incoming_text") or "")):
+                logger.info("Conversation %s: acknowledgement fell back to the fixed line",
+                            state.get("conversation_id"))
+                reply = empathy_fallback(first_name, fixed_q)
+            elif not re.match(r"\s*thanks?\b", reply, re.I):
+                reply = f"Thanks {first_name}. {reply.lstrip()}"
         if overview and (reply or "").strip() == (next_field.question or "").strip():
             logger.error(
                 "Conversation %s: the %s overview was discarded by a guard - the "
@@ -6614,6 +6851,15 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
             state.get("conversation_id"),
             service_type,
         )
+    # Change 3 (15 Nov): a special requirement they gave is in the closing summary.
+    if (briefing_due and not briefing_lost
+            and service_type in ("new_hiring", ticket_service.TRANSFER_EMPLOYER)):
+        reply = with_special_requirements_line(reply, collected.get("special_requirements"))
+    # Change 5 (15 Nov): her documents are asked for, just before this message.
+    lead_replies: list[str] = []
+    if (JOBSEEKER_DOCS_REQUEST_ENABLED and briefing_due and not briefing_lost
+            and service_type == ticket_service.CANDIDATE_HIRING):
+        lead_replies = [await jobseeker_docs_request(state)]
     logger.info(
         "Conversation %s finished collection for %s: %s",
         state.get("conversation_id"),
@@ -6633,6 +6879,7 @@ async def _collect(state: ConversationState) -> dict[str, Any]:
         # Said once - _merge_unique accumulates and _TURN_RESET leaves this
         # alone. Never recorded when the briefing did not survive the guards.
         "briefed_services": [service_type] if (briefing_due and not briefing_lost) else [],
+        **({"lead_replies": lead_replies} if lead_replies else {}),
     }
 
 

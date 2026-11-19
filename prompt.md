@@ -3212,6 +3212,9 @@ pairs and the choice of style (Step 6). Each part has its own switch.
   answer or an unclear answer keeps the normal flow. The choice lasts the
   whole conversation.
 
+Since 15 November this offer is replaced by Claire's intro line, which asks no
+question of its own (see "Thomas's review (15 November)", the last entry).
+
 ### Fixed text - the offer (after "Thanks, <first name>.")
 
 ```
@@ -3561,4 +3564,93 @@ Replaces the usual greeting line in `build_system_prompt`:
 
 ```
 The client has greeted you, and our team has spoken to them by phone since you last wrote. Greet them back, using their name if our records give you one, then carry on from the call as the section below says, in one sentence. Two sentences at most.
+```
+
+---
+
+## Thomas's review (15 November)
+
+Five changes from Thomas's review. Each has its own switch, and the new
+behaviour is the default; switching one off restores exactly what was there.
+
+### 1. Claire's intro line, in place of the question-style offer (`info_collector.INTRO_V2_ENABLED`)
+
+Same turn and same conditions as the old offer (entry 69): the reply that
+thanks the client for their name. The client is no longer asked how they want
+the questions. One at a time is the default, and asking for them all at once
+at any point still switches to the list. The next question follows in the
+same message.
+
+```
+Thanks <first name>. I'm Claire, Ming Hwee's AI assistant. I'll ask a few quick questions so we can <purpose>. I'll go one at a time, but just tell me if you'd prefer to answer them all in one go.
+```
+
+A returning client whose name is on our records gets the same line opening
+`Hi <first name>, I'm Claire, Ming Hwee's AI assistant.`
+
+| Service | `<purpose>` | Status |
+|---|---|---|
+| New hire | match you with the right helper | Thomas's approved wording |
+| Job seeker (registration), helper's own transfer | match you with the right employer | PENDING THOMAS APPROVAL |
+| Direct hire | process your direct hire | PENDING THOMAS APPROVAL |
+| Replacement | find the right replacement helper | PENDING THOMAS APPROVAL |
+| Employer transfer | arrange the transfer | PENDING THOMAS APPROVAL |
+| Home leave | arrange the home leave | PENDING THOMAS APPROVAL |
+| Insurance | arrange the insurance | PENDING THOMAS APPROVAL |
+| Work permit renewal | renew the Work Permit | PENDING THOMAS APPROVAL |
+| Passport renewal | renew the passport | PENDING THOMAS APPROVAL |
+
+### 2. A warm acknowledgement after the help-type answer (`info_collector.EMPATHY_ACK_ENABLED`)
+
+Employer flows only (new hire, employer transfer), on the reply after
+"What would you mainly need help with...?". Added to the same reply prompt,
+so there is no extra model call:
+
+```
+THIS REPLY OPENS WITH A WARM ACKNOWLEDGEMENT of what they just told you they need. Write it in this order, in one message:
+1. Exactly "Thanks <first name>."
+2. ONE short sentence that reflects only what the client actually said in their last message, and why good help matters for it. If they said something about their own situation, reflect that in their terms. If their answer carries no personal detail, write a plain neutral sentence instead (for example "That helps us know what to look for.").
+3. The question below, led by a short reason clause that ties it to what they need ("So I can match you with someone with the right ... experience, ...").
+Never assume anything they did not say: no divorce, separation, death, illness, spouse or partner, and never that they are alone, unless those are their own words. Never write "I understand". One acknowledgement sentence, no more.
+```
+
+If the model fails, or the acknowledgement mentions a spouse, a divorce, a
+death, an illness or being alone that the client did not say, or says
+"I understand", this fixed line goes instead:
+`Thanks, <first name>. That helps me match you with the right helper. <the next question>`
+
+### 3. Special requirements, in place of the extra-duties question (`ticket.SPECIAL_REQUIREMENTS_Q_ENABLED`)
+
+New hire and employer transfer, in the same place in the flow. PENDING THOMAS APPROVAL:
+
+```
+Are there any special needs or routines she should know about? For example, taking a family member to the hospital once a month for dialysis, or taking a child to school at 6 am and bringing them home at 11 am on weekdays. If there's nothing like that, just say no.
+```
+
+Filed as `special_requirements` and shown as "Special requirements" on the
+ticket and, when it is not a no, as one line in the closing summary. A "no"
+moves on; a bare "yes" is asked once more. The helper's own "Which of these are
+you willing to do..." question is unchanged.
+
+### 4. No contact-preference question (`ticket.ASK_CONTACT_PREFERENCE`, now False)
+
+"Would you prefer updates by email, here on WhatsApp, or both?" and the email
+question after it are asked in no flow. An email the client volunteers is
+still saved; nothing is written in its place.
+
+### 5. A job seeker's documents (`info_collector.JOBSEEKER_DOCS_REQUEST_ENABLED`)
+
+Sent as its own message just before her "Your registration is complete ... what
+happens next" message. Translated into her language through the complaint
+flow's translation path when she is not writing English (the English goes if
+that fails). PENDING THOMAS APPROVAL:
+
+```
+Before I tell you what happens next, it would help a lot if you could send us a few things here on WhatsApp, now or whenever you are ready:
+1. Your biodata (your full profile, with a photo if you have one)
+2. A 1-2 minute video in English: your name, age, nationality, family background, work experience, and why you want to work in Singapore. Tips: wear a neat, plain top with sleeves in a soft colour (no bright patterns or shiny jewellery), tie your hair back, and record in a bright, quiet place facing the light, with the phone at eye level
+3. 3-5 photos of dishes you have cooked, with the name of each dish, if you have any
+4. Your passport photo page
+5. Your highest education certificate (we need at least 8 years of formal education)
+Helper roles are live-in only, and cleaner roles are open only to certain nationalities under MOM rules, so our team will confirm your role with you.
 ```

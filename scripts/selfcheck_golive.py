@@ -685,7 +685,10 @@ async def scenario_xing_chain() -> None:
                  "helper_profile": "at least 4 years", "preferred_nationality": "Filipino",
                  "first_time_hire": "first time with us - no placement on record",
                  **{k: ticket_service.UNANSWERED for k in
-                    ("special_duties", "start_timeline", "update_channel", "referral_source")}}
+                    ("special_duties", "start_timeline", "update_channel", "referral_source",
+                     # 15 Nov change 3: the question standing where special_duties was.
+                     *(("special_requirements",)
+                       if ticket_service.SPECIAL_REQUIREMENTS_Q_ENABLED else ()))}}
     left = ticket_service.missing_fields("new_hiring", collected)
     prompts.clear()
     done = await run({**base, "collected_info": collected, "question_style": "all",
@@ -727,6 +730,189 @@ async def scenario_xing_chain() -> None:
     check("one by one: never suggest more than one helper, never question the choice",
           "NEVER suggest more than one helper" in prompt and "look at more than one helper" not in prompt
           and "or more than one" not in (ico.WORKLOAD_LINE + ico.GENTLE_WORKLOAD_INSTRUCTION).replace("NEVER suggest more than one helper", ""))
+
+
+async def scenario_15nov() -> None:
+    """Thomas's review, 15 Nov: the intro line, the warm acknowledgement, special
+    requirements, no contact-preference question, a job seeker's documents."""
+    ico = importlib.import_module("app.graph.nodes.info_collector")
+    from app.services import ticket as t
+    prompts: list[str] = []
+
+    async def collect(state: dict, extraction: dict | None = None, reply="Got it.", fail=False) -> dict:
+        async def model(system_prompt, *a, **kw):
+            prompts.append(system_prompt or "")
+            if fail:
+                raise RuntimeError("model down")
+            return reply
+        with patch.object(ico, "complete", new=model, create=True), \
+             patch.object(ico, "complete_json", new=AsyncMock(return_value=dict(extraction or {})),
+                          create=True), \
+             patch.object(_rag_node, "briefing_records", new=AsyncMock(return_value={})), \
+             patch.object(ico, "_open_lead_early", new=AsyncMock(return_value={})):
+            return await ico.info_collector(state)
+
+    base = {"conversation_id": 9, "phone": CLIENT, "contact_type": "employer", "intent": "new_hiring",
+            "service_type": "new_hiring", "rag_matches": [], "rag_context": "", "prior_hires": 0}
+    hello = "Client: Hi, I want to hire a helper\nYou: Hi, I'm Claire, Ming Hwee's AI assistant. May I know your name?"
+    req_q = next(f.question for f in t.SERVICE_FIELDS["new_hiring"] if f.key == "requirement")
+
+    # 1. Bella: the intro line, no mode question, one at a time; "all at once" still switches.
+    out = await collect({**base, "history_text": hello, "incoming_text": "Bella Tan",
+                         "collected_info": {}, "asked_field_counts": {"full_name": 1}},
+                        extraction={"full_name": "Bella Tan"})
+    reply = out.get("reply") or ""
+    check("15 Nov 1: Bella gets Thomas's line, word for word, then the help-type question",
+          reply == ("Thanks Bella. I'm Claire, Ming Hwee's AI assistant. I'll ask a few quick questions "
+                    "so we can match you with the right helper. I'll go one at a time, but just tell me "
+                    "if you'd prefer to answer them all in one go.\n\n" + req_q))
+    check("15 Nov 1: ...no 'which would you prefer' question, and one at a time is the default",
+          "Which would you prefer" not in reply and out.get("question_style") == "one"
+          and (out.get("last_question") or {}).get("key") == "requirement")
+    later = await collect({**base, "question_style": "one",
+                           "collected_info": {"full_name": "Bella Tan", "requirement": "childcare"},
+                           "asked_field_counts": {"full_name": 1, "requirement": 1, "children_detail": 1},
+                           "history_text": hello + "\nClient: Bella Tan\nYou: How many children?",
+                           "incoming_text": "i mean all question in one time"})
+    check("15 Nov 1: ...and asking for them all at once mid-flow still sends the list",
+          later.get("question_style") == "all"
+          and (later.get("reply") or "").startswith(guards.QUESTION_LIST_HEADS[0]))
+
+    # 2. The warm acknowledgement after the help-type answer.
+    asked_req = {**base, "collected_info": {"full_name": "Bella Tan"},
+                 "asked_field_counts": {"full_name": 1, "requirement": 1}, "question_style": "one",
+                 "history_text": hello + "\nClient: Bella Tan\nYou: " + req_q}
+    good = ("Thanks Bella. Managing the kids and meals on your own is a lot, so a good helper will make a "
+            "real difference. So I can match you with someone with the right childcare experience, how "
+            "many children do you have, and how old are they?")
+    prompts.clear()
+    out = await collect({**asked_req, "incoming_text": "yes, with childcare and cooking, i don't have wife"},
+                        extraction={"requirement": "childcare and cooking"}, reply=good)
+    reply = out.get("reply") or ""
+    check("15 Nov 2: 'i don't have wife' -> 'on your own', and no wife, divorce or death",
+          reply.startswith("Thanks Bella.") and "on your own" in reply
+          and not re.search(r"\b(?:wife|divorc|passed away|died|death|widow)", reply, re.I))
+    check("15 Nov 2: ...written in the same reply call, told never to assume",
+          len(prompts) == 1 and "Never assume anything they did not say" in prompts[0])
+    for words, bad in (("childcare for my two kids",
+                        "Thanks Bella. Raising kids alone after your divorce is hard. So I can match you, "
+                        "how many children do you have?"),
+                       ("childcare for my two kids",
+                        "Thanks Bella. I understand how busy it gets. So I can match you, how many "
+                        "children do you have?")):
+        out = await collect({**asked_req, "incoming_text": words},
+                            extraction={"requirement": "childcare"}, reply=bad)
+        check(f"15 Nov 2: an acknowledgement that assumes or says 'I understand' falls back ({bad[13:40]}...)",
+              (out.get("reply") or "").startswith("Thanks, Bella. " + ico.EMPATHY_FALLBACK_REASON))
+    elder_q = "Thanks Bella. Caring for your mother well matters, so the right helper will help a lot. " \
+              "So I can match you with someone with the right eldercare experience, could you tell me " \
+              "her age, how mobile she is, and any medical conditions?"
+    out = await collect({**asked_req, "incoming_text": "eldercare for my mother"},
+                        extraction={"requirement": "eldercare"}, reply=elder_q)
+    check("15 Nov 2: 'eldercare for my mother' -> the acknowledgement fits and is kept",
+          out.get("reply") == elder_q)
+    prompts.clear()
+    neutral = "Thanks Bella. That helps us know what to look for. So I can match you, how many people live with you?"
+    out = await collect({**asked_req, "incoming_text": "housework"},
+                        extraction={"requirement": "general housework and cooking"}, reply=neutral)
+    check("15 Nov 2: 'housework' -> the neutral line, as the note asks",
+          out.get("reply") == neutral and "plain neutral sentence" in (prompts[-1] if prompts else ""))
+    out = await collect({**asked_req, "incoming_text": "childcare for my two kids"},
+                        extraction={"requirement": "childcare"}, fail=True)
+    check("15 Nov 2: model failure -> 'Thanks, Bella.' + the reason + the question",
+          (out.get("reply") or "").startswith("Thanks, Bella. " + ico.EMPATHY_FALLBACK_REASON + " ")
+          and (out.get("reply") or "").rstrip().endswith("?"))
+    prompts.clear()
+    await collect({**asked_req, "service_type": t.CANDIDATE_HIRING, "intent": t.CANDIDATE_HIRING,
+                   "contact_type": "candidate", "incoming_text": "childcare"},
+                  extraction={"work_scope": "childcare"})
+    check("15 Nov 2: ...employer flows only - a job seeker gets no acknowledgement note",
+          not any("WARM ACKNOWLEDGEMENT" in p for p in prompts))
+
+    # 3. Special requirements in place of the extra-duties question.
+    keys = [f.key for f in t.SERVICE_FIELDS["new_hiring"]]
+    old_q = "Which of these would she need to do"
+    check("15 Nov 3: special_requirements stands where special_duties was, in both employer flows",
+          all("special_requirements" in [f.key for f in t.SERVICE_FIELDS[s]]
+              and "special_duties" not in [f.key for f in t.SERVICE_FIELDS[s]]
+              and [f.key for f in t.SERVICE_FIELDS[s]].index("special_requirements")
+              == [f.key for f in t.FIELDS_BEFORE_15NOV[s]].index("special_duties")
+              for s in ("new_hiring", t.TRANSFER_EMPLOYER)) and "budget" in keys)
+    check("15 Nov 3: ...the old duties question is asked in no flow; the helper's is unchanged",
+          not any(old_q in f.question for fl in t.SERVICE_FIELDS.values() for f in fl)
+          and any(f.key == "duties_willing" for f in t.SERVICE_FIELDS[t.CANDIDATE_HIRING]))
+    check("15 Nov 3: ...a 'no' moves on, a bare 'yes' is asked once more",
+          not ico._unfinished("new_hiring", {"special_requirements": "no"}, {"special_requirements": 1})[0]
+          and [f.key for f in ico._unfinished("new_hiring", {"special_requirements": "yes"},
+                                               {"special_requirements": 1})[0]] == ["special_requirements"])
+    need = "take my mother to the hospital for dialysis once a month"
+    desc = t.compose_description("new_hiring", "employer", {"full_name": "Bella Tan", "special_requirements": need})
+    check("15 Nov 3: ...shown as 'Special requirements' on the ticket", f"Special requirements: {need}" in desc)
+    closing = ("Here is everything for hiring your new helper:\n1. We match you.\n\n"
+               "I've passed everything to our team, and a live agent will connect with you shortly.")
+    check("15 Nov 3: ...and in the closing summary, before its handover line; a 'no' adds nothing",
+          ico.with_special_requirements_line(closing, need).endswith(
+              f"Special requirements: {need}\n\nI've passed everything to our team, and a live agent "
+              "will connect with you shortly.")
+          and ico.with_special_requirements_line(closing, "no") == closing
+          and ico.with_special_requirements_line(closing, "Nothing like that") == closing)
+
+    # 4. No contact-preference question in any flow; a volunteered email is still taken.
+    check("15 Nov 4: no flow asks how they want updates, nor for an email address",
+          not any(f.key == "update_channel" for fl in t.SERVICE_FIELDS.values() for f in fl)
+          and not any(f.key == "email" for s in t.SERVICE_FIELDS
+                      for f in t.applicable_fields(s, {"full_name": "Bella"})))
+    check("15 Nov 4: ...but an email the client volunteers still reaches the extractor",
+          all(any(f.key == "email" for f in t.applicable_fields(s, {}, include_undecided=True))
+              for s in ("new_hiring", "direct_hiring", t.TRANSFER_EMPLOYER)))
+
+    # 5. A job seeker's documents, just before her closing message; nothing re-asked.
+    cand = {k: "x" for k in (f.key for f in t.SERVICE_FIELDS[t.CANDIDATE_HIRING])}
+    cand.update({"full_name": "Siti", "nationality": "Indonesia"})
+    cstate = {**base, "service_type": t.CANDIDATE_HIRING, "intent": t.CANDIDATE_HIRING,
+              "contact_type": "candidate", "collected_info": cand,
+              "asked_field_counts": {k: 1 for k in cand}, "question_style": "one",
+              "rag_matches": [{"id": "r", "similarity": 0.6}], "rag_context": "x",
+              "history_text": "Client: hi i need a job\nYou: What salary are you hoping for?",
+              "incoming_text": "600"}
+    prompts.clear()
+    done = await collect(cstate, reply="Thanks, Siti - your registration is complete. Here is what happens next:\n"
+                                       "1. Our team reviews it.\n\nI have passed everything to our team, and a "
+                                       "live agent will connect with you shortly.")
+    check("15 Nov 5: the document request comes just before her closing message",
+          done.get("info_complete") and done.get("lead_replies") == [ico.JOBSEEKER_DOCS_REQUEST]
+          and "registration is complete" in (done.get("reply") or ""))
+    doc = ico.JOBSEEKER_DOCS_REQUEST
+    check("15 Nov 5: ...it asks for the five documents, the video tips and the role line, and no field",
+          all(w in doc for w in ("biodata", "1-2 minute video in English", "3-5 photos of dishes",
+                                 "passport photo page", "at least 8 years of formal education",
+                                 "live-in only", "under MOM rules"))
+          and not done.get("missing_field_keys"))
+    calls = []
+
+    async def translate(text, language):
+        calls.append(language)
+        return text
+    with patch("app.graph.nodes.complaint_triage._in_her_language", new=translate):
+        await ico.jobseeker_docs_request({"incoming_text": "saya mau kerja, gaji saya 600 dolar"})
+        await ico.jobseeker_docs_request({"incoming_text": "my salary is 600"})
+    check("15 Nov 5: ...in her language through the existing translation path, English left alone",
+          calls == ["Indonesian"])
+
+    # 6. Returning user with a known name: the same line, opening "Hi <name>", no name re-ask.
+    out = await collect({**base, "record_name": "Bella Tan", "collected_info": {"full_name": "Bella Tan"},
+                         "asked_field_counts": {"requirement": 1},
+                         "history_text": "Client: Hi, I want to hire a helper\nYou: Hi Bella, " + req_q,
+                         "incoming_text": "childcare"}, extraction={"requirement": "childcare"})
+    reply = out.get("reply") or ""
+    check("15 Nov 6: a returning client gets 'Hi Bella, I'm Claire...' and is not asked her name",
+          reply.startswith("Hi Bella, I'm Claire, Ming Hwee's AI assistant. I'll ask a few quick questions")
+          and "your name" not in reply.lower())
+
+    # 8. The switches and their defaults.
+    check("15 Nov 8: the five switches, each with the new behaviour as its default",
+          (ico.INTRO_V2_ENABLED, ico.EMPATHY_ACK_ENABLED, t.SPECIAL_REQUIREMENTS_Q_ENABLED,
+           t.ASK_CONTACT_PREFERENCE, ico.JOBSEEKER_DOCS_REQUEST_ENABLED) == (True, True, True, False, True))
 
 
 async def scenario_vd_transfer() -> None:
@@ -2079,6 +2265,10 @@ async def scenario_complaint_webhook():
           "its own message", out == ["P1 TEMPLATE", "REF LINE"])
     out = await one_turn({"reply": "ordinary reply"})
     check("complaint webhook: an ordinary reply is still held while she is typing", out == [])
+    # 15 Nov change 5: a lead reply goes out BEFORE the reply, on the real send path.
+    out = await one_turn({"reply": "CLOSING", "reply_must_send": True, "lead_replies": ["DOCS"]})
+    check("15 Nov: a job seeker's document request is sent just before her closing message",
+          out == ["DOCS", "CLOSING"])
     earlier = [{"created_at": NOW.isoformat(), "direction": "outbound", "is_bot": True, "sent_by": "bot",
                 "body": "Please call the police on 999 now."}]
     fixed = "Please call the police on 999 now."
@@ -2875,7 +3065,7 @@ async def main() -> int:
     for scenario in (scenario_defaults, scenario_receipt_chat_kind, scenario_ticket_closed,scenario_staff_then_okay, scenario_internal_number, scenario_quoted_reply,
                      scenario_ticket_picked_up, scenario_stale_intake, scenario_helper_rights,
                      scenario_vague_action, scenario_hire_documents, scenario_call_and_wording,
-                     scenario_xing_chain, scenario_vd_transfer, scenario_direct_hire_summary,
+                     scenario_xing_chain, scenario_15nov, scenario_vd_transfer, scenario_direct_hire_summary,
                      scenario_direct_hire_intake,
                      scenario_replacement_summary,
                      scenario_crisis_reply,
