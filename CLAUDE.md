@@ -755,6 +755,7 @@ because the lead is opened early and the ticket is created much later.
 | A complaint ticket exists before the first triage question, and goes on the portal's Complaints tab | `complaint_case.raise_ticket` + `ticket.create(complaint_level=, priority=)` | The portal's rule: `service_type` holds `dispute_salary` or `dispute_assault` (its `tickets_repo._CB_IS_COMPLAINT`), so that is what is stored, by type; `complaint_level` holds P1-P4. Topic key `helper_complaint`, in `ALWAYS_SEPARATE` by its service, so nothing folds into it. No owner (the FCC pool) and it does not pause the chat. Every P1 is created (or, raised to P1, set once) with `workflow_status` escalated, so it stands out until assignment is decided. A "not safe", or any reply to the suicide template that does not plainly say she is safe (`clearly_safe_after_suicide_template`; the rest get the 995 line, once), sets priority high and `workflow_status` escalated with status still `open`: `in_progress` would read as an agent picking it up and quieten the bot. |
 | A helper's question about her own rights is answered to her, in the P4 template | `complaint_triage.asks_own_rights` + `nodes/complaint_triage._kb_answer` (`OWN_RIGHTS_QUESTION`) | First person on a helper's or unknown chat, whatever the model graded it; a type inherited from an earlier enquiry does not stop it, an employer record does. An answer about "your helper" is rewritten once, then becomes a P4 ticket. Two sentences, no bold (no reply guard runs on it). On a first message the introduction goes before the template. |
 | A time given after NOT-SAFE is saved and answered | `complaint_triage._next_step` (`_GIVES_TIME`, `BEST_TIME_LINE`) | `best_time_to_contact` on the ticket, `FOLLOW_BEST_TIME` sent. "ok" is not a time, whatever the model says. |
+| Her name is asked once, only after safety, as its own message | `complaint_triage.name_due` / `reply_name` / `note_name` + `complaint_templates.NAME_QUESTION` (`COMPLAINT_ASK_NAME_ENABLED`) | After the safe line (a clear "safe" / "I'm ok", after P1, NOT-SAFE, the suicide template or the safety question), the P2 template (the no-sleep one after its own question is answered no), the P3 template if she answered safe, or a P4 ticket on her reply after the KB answer. Never with a safety question open, after "not safe", or in a case where "is it safe to chat?" was no. Not asked when she gave it herself ("I'm Maria", "my name is ...") or our candidates file holds it; the WhatsApp profile name never counts. Saved as `captured_info.details.full_name`, with `triage.name_step`. Any reply that is not a name ends it, and the message goes on as before. The safety texts are unchanged. |
 | No follow-up goes twice in a row on a case | `complaint_triage.advance` (`SHORT_FOLLOW_UPS`) | A bare ack after FOLLOW_OTHER, or a line that would repeat, becomes `SHORT_REPLY`, the reference once per case. If that would repeat too, nothing is sent and the message stays on the ticket. "You're welcome" only when she thanked us. NOT-SAFE, 995 and P1 lines are never shortened. |
 | A rest-day span she gave is reflected, not asked for | `complaint_triage.rest_day_span` + `templates.p3` (`REFLECT_REST_DAYS`) | Replaces only the P3 ask sentence. The salary ask is unchanged: a span is not which months. |
 | "I want a job" ends an employer flow at any point | `intent_classifier.seeks_work_herself` (`JOBSEEKER_ANY_POINT`), last of the classifier's rules | First person only, even with an employer record; "she is looking for work", "for my helper", a relay and "work permit" are not it. The new flow keeps her name and nothing else from the enquiry (`info_collector.JOB_SEEKER_KEEPS_NAME_ONLY`). Conversation 4443, CB-2026-0170. |
@@ -1216,7 +1217,9 @@ Easy to get wrong:
   messages, read only from here; **unset, the clause is dropped, so set it on the server.**
   `WORKING_DAYS` (Mon,Tue,Wed,Thu,Fri) and `PUBLIC_HOLIDAYS` (comma-separated ISO dates, empty) decide
   `next_followup_date`. `COMPLAINT_CASE_TABLE` (default **false**) - copy each case to
-  `cb_complaint_cases`; only after that migration is applied.
+  `cb_complaint_cases`; only after that migration is applied. `COMPLAINT_ASK_NAME_ENABLED`
+  (default **true**, 2026-11-19) - ask her name once, after safety; false = no name question and
+  no name on the ticket, exactly as before.
 - `CALL_CONTEXT_ENABLED` (default **false**) — carry phone calls into WhatsApp
   (`app/services/call_context.py`). `scripts/sql/cb_call_context_001.sql` is applied on production (2026-11-04). Before
   switching on: put any of our own lines that are not agents' numbers in `CALL_CONTEXT_AGENCY_NUMBERS`. With the table
@@ -2143,7 +2146,9 @@ Ordered by what will hurt first.
     wife in the household. (d) A
     returning hiring client's intro line lands on the turn of their help-type answer, so the
     acknowledgement is skipped for them. (e) The model may reword the special-requirements
-    question like any other; the written text is the fallback.
+    question like any other; the written text is the fallback. (f) The complaint name question and
+    its thank-you line are PENDING THOMAS APPROVAL. A P4 answered and then closed with "no" or
+    "thanks" raises no ticket, so she is not asked her name there: there is nowhere to save it.
 
 **Waiting on Ming Hwee, not on code.** None of these is a defect; each is a decision or
 a figure only the agency can give, and the bot quotes or does the right thing the day it
@@ -2594,6 +2599,17 @@ fix, replay, assert, fault-inject). **Item 15 goes first.**
 ## 11. Change log
 
 Append here, newest first. One entry per behavioural change.
+
+- **2026-11-19** - **A helper's name in the complaint flow, only after safety**
+  (`COMPLAINT_ASK_NAME_ENABLED`, default true). The flow never asked her name, so the ticket had
+  none. Now one short message, after the safe line or the template (section 5); "So our team knows
+  who to look out for, may I know your name? It's fine to skip this if you prefer." and "Thank you,
+  <name>. I've added your name to your case." (PENDING THOMAS APPROVAL), translated as the others
+  are. Verified offline: 14 complaint replays (P1-P4, not-safe, suicide/995, safe follow-ups, chat =
+  no, best time) before and after. Switch off is byte-identical to the baseline; on, the only
+  differences are the name question, the thank-you line in place of the old reply to her name, and
+  `details.full_name` / `triage.name_step` on the ticket. `selfcheck_golive` 23 new checks; other
+  suites unchanged. No production read or write.
 
 - **2026-11-19** - **Fast fix on the 15 Nov work: no denied spouse, switches from env, one
   reply to a run of files.** (1) Thomas's own answer "yes, with childcare and cooking, i don't

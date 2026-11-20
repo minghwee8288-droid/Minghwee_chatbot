@@ -48,6 +48,10 @@ def enabled() -> bool:
     return bool(settings.complaint_triage_enabled)
 
 
+def ask_name_enabled() -> bool:
+    return bool(settings.complaint_ask_name_enabled)
+
+
 def rank(level: str | None) -> int:
     return LEVELS.index(level) if level in LEVELS else -1
 
@@ -739,6 +743,118 @@ def _next_step(case: dict[str, Any], a: Assessment, message: str) -> tuple[dict[
     return case, None
 
 
+# --- Her name (19 Nov 2026, COMPLAINT_ASK_NAME_ENABLED) ----------------------
+#
+# Never before or inside a safety message: name_due() is the only place that decides,
+# and the question goes as its own message after the safe line or the template.
+# Asked at most once per case; whatever she replies that is not a name ends it.
+
+_NOT_A_NAME = {
+    # what a reply that is not a name is made of
+    "skip", "pass", "later", "prefer", "rather", "private", "secret", "anonymous", "sorry",
+    "help", "safe", "unsafe", "scared", "afraid", "why", "what", "who", "how", "nevermind",
+    "none", "nothing", "nobody", "someone", "ok", "okay", "fine", "good", "alright", "yes",
+    "no", "not", "thanks", "thank", "please", "hello", "hi", "hey", "here", "alone", "tired",
+    "sick", "hurt", "still", "again", "today", "tomorrow", "morning", "night", "now", "after",
+    "before", "just", "very", "so", "really", "also", "and", "but", "or", "the", "a", "an",
+    "is", "am", "are", "was", "she", "he", "her", "him", "they", "my", "me", "i", "you", "we",
+    "it", "this", "that", "dont", "don't", "want", "need", "cannot", "can't", "employer",
+    "police", "hospital", "working", "work", "worried", "ya", "iya", "oo", "tidak", "hindi",
+    "wala", "indonesian", "indonesia", "filipino", "filipina", "philippines", "myanmar",
+    "burmese", "from", "maid", "helper", "agency", "ma'am", "maam", "madam", "sir", "boss",
+}
+_MY_NAME_IS = re.compile(
+    r"\bmy\s+name\s*(?:is|'s|:)\s+([^\W\d_][\w'-]*(?:\s+[^\W\d_][\w'-]*){0,2})", re.IGNORECASE
+)
+# "I'm Maria, ..." only with a capital letter: "I'm scared" and "i am ok" are not names.
+_I_AM_CAPITALISED = re.compile(
+    r"(?:^|[.!?,;]\s*|\b(?i:hi|hello|hey)[,!.]?\s+)(?i:i\s*am|i'?m|im|this\s+is)\s+"
+    r"([A-Z][a-z'-]+(?:\s+[A-Z][a-z'-]+)?)(?=\s*(?:[,.!?;]|$|\s+(?i:and|here|from|my)\b))"
+)
+
+
+def _clean_name(raw: str | None) -> str | None:
+    from app.graph.nodes.info_collector import _looks_like_a_person
+
+    words = []
+    for word in (raw or "").split():
+        if word.strip(".,'-!").lower() in _NOT_A_NAME:
+            break
+        words.append(word.strip(".,!"))
+    name = " ".join(words).strip()
+    if not name or len(words) > 3 or not _looks_like_a_person(name):
+        return None
+    return guards.tidy_name_case(name)
+
+
+def volunteered_name(message: str) -> str | None:
+    """A name she gives herself in a message: "I'm Maria, ..." / "my name is Siti"."""
+    text = message or ""
+    found = _MY_NAME_IS.search(text) or _I_AM_CAPITALISED.search(text)
+    return _clean_name(found.group(1)) if found else None
+
+
+def reply_name(message: str) -> str | None:
+    """Her answer to the name question, when it is a name and nothing else."""
+    from app.graph.nodes.info_collector import _NAME_LEAD_IN
+
+    text = (message or "").strip()
+    if (not text or "\n" in text or "?" in text or any(c.isdigit() for c in text)
+            or keyword_floor(text)[0] or is_bare_ack(text) or _yes_no(text)
+            or _SAFE_WORD.search(text) or _NOT_SAFE_WORD.search(text) or _CLEARLY_SAFE.search(text)):
+        return None
+    words = _NAME_LEAD_IN.sub("", text).strip(" .!,").split()
+    if not words or len(words) > 3 or any(w.strip(".,'-!").lower() in _NOT_A_NAME for w in words):
+        return None
+    return _clean_name(" ".join(words))
+
+
+def known_name(state: ConversationState) -> str | None:
+    """Her name from our own records: the candidates file, or an earlier chat where
+    she gave it as a helper. Never the WhatsApp profile name (NAME_FROM_RECORD_ONLY)."""
+    record = state.get("candidate_record") or {}
+    if record.get("full_name"):
+        return _clean_name(str(record["full_name"])) or str(record["full_name"]).strip()
+    if effective_contact_type(state) == "candidate":
+        given = str((state.get("collected_info") or {}).get("full_name") or "").strip()
+        return _clean_name(given) if given else None
+    return None
+
+
+def note_name(case: dict[str, Any] | None, message: str, state: ConversationState) -> None:
+    """A name we already hold, or one she has just given herself: saved, never asked."""
+    if not case or not ask_name_enabled() or case.get("full_name"):
+        return
+    name = known_name(state) or volunteered_name(message)
+    if name:
+        case["full_name"] = name
+        case["name_step"] = "given"
+
+
+def name_due(case: dict[str, Any], kind: str | None, previous_reply: str | None = None) -> bool:
+    """Whether the name question goes, as its own message, after this turn's reply."""
+    if not ask_name_enabled() or case.get("full_name") or case.get("name_step"):
+        return False
+    # Someone may see her phone, she is not safe, or a safety question is still open.
+    if (case.get("safe_to_chat") == "no" or case.get("safe_status") == "not_safe"
+            or case.get("awaiting")):
+        return False
+    level = case.get("level")
+    if kind == "FOLLOW_SAFE":  # she said she is safe: after P1, NOT-SAFE, the suicide template or Q1
+        return True
+    if level == "P1":
+        return False
+    if kind == "P2_GENERAL":
+        return level == "P2"
+    if kind == "FOLLOW_OTHER":  # the no-sleep template's own question, answered no
+        return level == "P2" and previous_reply == "P2_SLEEP"
+    if kind == "P3":
+        return case.get("safe_status") == "safe"
+    if kind == "P4_TICKET":  # her next reply after the KB answer
+        return previous_reply == "P4"
+    return False
+
+
 # --- Which turns belong to the flow -----------------------------------------
 
 _HELPER_ABOUT_EMPLOYER = re.compile(
@@ -760,12 +876,16 @@ def load_case(state: ConversationState) -> dict[str, Any] | None:
     row = (state.get("blocked_topics") or {}).get(HELPER_COMPLAINT)
     if row:
         info = row.get("captured_info") or {}
-        return {
+        case = {
             **(info.get("complaint") or {}),
             **(info.get("triage") or {}),
             "ticket_id": row.get("id"),
             "ticket_number": row.get("ticket_number"),
         }
+        name = (info.get("details") or {}).get("full_name")
+        if name:
+            case["full_name"] = name
+        return case
     held = state.get("complaint_case")
     if held and not held.get("ticket_id"):
         return dict(held)
@@ -798,6 +918,15 @@ async def decide_turn(state: ConversationState) -> dict[str, Any] | None:
             if on_record or not own_rights:
                 return None
 
+    # Her reply to the name question: a name is saved; anything else ends the asking
+    # and goes on exactly as it would have.
+    if case is not None and ask_name_enabled() and case.get("name_step") == "asked":
+        name = reply_name(message)
+        if name:
+            return {"complaint_step": {"kind": "NAME_SAVED", "message": message,
+                                       "case": {**case, "full_name": name, "name_step": "given"}}}
+        case = {**case, "name_step": "declined"}
+
     a = await assess(message, state.get("history_text") or "", _pending_text(case))
     # Never read from the model alone: it called "can I have my phone" no complaint.
     if own_rights and rank(a.level) < rank("P4"):
@@ -806,17 +935,22 @@ async def decide_turn(state: ConversationState) -> dict[str, Any] | None:
         a = replace(a, speaker="helper")
 
     if case is not None:
+        previous_reply = case.get("last_reply")
         new_case, kind = advance(case, a, message)
+        note_name(new_case, message, state)
         if kind == "SILENT":
             # On the ticket, with nothing sent (_classify_with_prefetch writes it).
             return {"suppress_reply": True, "reply": "",
                     "complaint_step": {"kind": None, "case": new_case, "message": message}}
-        return {"complaint_step": {"kind": kind, "case": new_case, "message": message,
-                                   "assessment": asdict(a)}}
+        step = {"kind": kind, "case": new_case, "message": message, "assessment": asdict(a)}
+        if ask_name_enabled():
+            step["previous_reply"] = previous_reply
+        return {"complaint_step": step}
 
     p4_open = state.get("complaint_p4")
     if a.level in {"P1", "P2", "P3"}:
         new_case, kind = open_case(a)
+        note_name(new_case, message, state)
         return {"complaint_step": {"kind": kind, "case": new_case, "message": message, "new": True,
                                    "assessment": asdict(a)},
                 "complaint_p4": None}
@@ -834,9 +968,12 @@ async def decide_turn(state: ConversationState) -> dict[str, Any] | None:
             p4_case = {**a.__dict__, "level": "P4", "complaint_type": a.complaint_type or "general",
                        "facts_in_her_words": f"{p4_open.get('question', '')}\n{message}".strip()}
             new_case, _ = open_case(Assessment(**p4_case))
-            return {"complaint_step": {"kind": "P4_TICKET", "case": new_case, "message": message,
-                                       "new": True, "assessment": asdict(a)},
-                    "complaint_p4": None}
+            note_name(new_case, message, state)
+            step = {"kind": "P4_TICKET", "case": new_case, "message": message,
+                    "new": True, "assessment": asdict(a)}
+            if ask_name_enabled():
+                step["previous_reply"] = "P4"
+            return {"complaint_step": step, "complaint_p4": None}
         return {"complaint_p4": None}
 
     if a.level == "P4" and a.speaker != "employer":

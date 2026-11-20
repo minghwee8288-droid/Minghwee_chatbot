@@ -2028,6 +2028,119 @@ async def scenario_complaint_triage():
           and not _ct._SAFE_WORD.search("not safe"))
 
 
+async def scenario_complaint_name():
+    """19 Nov 2026: her name is asked once, after safety, as its own message."""
+    from app.config import Settings
+
+    N = {"speaker": "unknown", "level": "none"}
+    ASK = _ct_t.NAME_QUESTION
+    asks = lambda r: ASK in (r.get("extra_replies") or [])  # noqa: E731
+
+    async def walk(turns, contact="unknown"):
+        w = ComplaintWorld(contact=contact)
+        out = []
+        for text, llm in turns:
+            out.append(await w.turn(text, llm))
+        return w, out
+
+    check("COMPLAINT_ASK_NAME_ENABLED defaults to true",
+          Settings.model_fields["complaint_ask_name_enabled"].default is True)
+    check("the name question is not in any safety template",
+          all(ASK not in t for t in (_ct_t.P1_SUICIDE, _ct_t.P1_EMERGENCY, _ct_t.P2_GENERAL,
+                                     _ct_t.P2_SLEEP, _ct_t.P3, _ct_t.FOLLOW_SAFE))
+          and not _ct_t.FORBIDDEN.search(ASK) and not _ct_t.FORBIDDEN.search(_ct_t.NAME_THANKS))
+
+    hit = ("my employer hit me last week", _h("P2", "physical"))
+    # 1 and 2
+    w, out = await walk([hit, ("no", N)])
+    check("name 1: hit last week -> safety question -> 'no' -> the urgent 999 reply, no name question",
+          "999" in out[1][1] and not any(asks(r) for r, _ in out))
+    w, out = await walk([hit, ("no", N), ("safe", N), ("Maria", N)])
+    check("name 2: ...then 'safe' -> the safe line unchanged, the name question as its own message",
+          out[2][1].startswith("I'm glad you're safe right now.") and ASK not in out[2][1]
+          and asks(out[2][0]))
+    check("name 2: 'Maria' -> saved on the ticket as captured_info.details.full_name",
+          (w.ticket()["captured_info"].get("details") or {}).get("full_name") == "Maria"
+          and "Maria" in out[3][1])
+    w, out = await walk([hit, ("no", N), ("safe", N), ("skip", N), ("I'm safe", N)])
+    check("name 2: skipped, then 'I'm safe' again -> the safe line again, never the name question twice",
+          asks(out[2][0]) and out[4][1].startswith("I'm glad you're safe") and not asks(out[4][0]))
+    # 3
+    w, out = await walk([("she is hitting me right now", _h("P1", "physical", p1_signs=["now"])),
+                         ("help me", N), ("I'm safe", N)])
+    check("name 3: P1 emergency -> no name question until 'I'm safe'",
+          not asks(out[0][0]) and not asks(out[1][0]) and asks(out[2][0])
+          and out[0][1].startswith("I'm very sorry this is happening."))
+    # 4
+    for answer in ("no", "alone", "yes", "hmm"):
+        w, out = await walk([("i want to die", _h("P1", "self_harm")), (answer, N)])
+        check(f"name 4: suicide template -> '{answer}' -> the 995 line, no name question",
+              out[1][1].startswith("Please call 995 now") and not any(asks(r) for r, _ in out))
+    w, out = await walk([("i want to die", _h("P1", "self_harm")), ("I'm ok", N)])
+    check("name 4: suicide template -> 'I'm ok' -> the safe line, then the name question",
+          out[1][1].startswith("I'm glad you're safe") and asks(out[1][0]) and not asks(out[0][0]))
+    # 5
+    w, out = await walk([hit, ("yes", N), ("no", N), ("yes", N), ("no", N)])
+    check("name 5: P2 -> every triage question as today, none with the name -> the P2 template "
+          "unchanged -> the name question as its own message",
+          not any(asks(r) for r, _ in out[:4]) and out[4][1].startswith("Thank you for telling us.")
+          and ASK not in out[4][1] and asks(out[4][0]))
+    w, out = await walk([("i have not slept for 2 days", _h("P2", "overwork")),
+                         ("yes i am safe", N), ("no", N)])
+    check("name 5: the no-sleep template asks its own question first; the name after her 'no'",
+          not asks(out[1][0]) and asks(out[2][0]))
+    # 6
+    salary = ("my employer did not pay my salary for 2 months", _h("P3", "salary"))
+    w, out = await walk([salary, ("yes", N), ("skip", N), ("she still did not pay", _h("P3", "salary")),
+                         ("ok", N)])
+    check("name 6: P3 safe -> the P3 template unchanged -> the name question",
+          out[1][1].startswith("I'm sorry you are dealing with this.") and asks(out[1][0]))
+    check("name 6: 'skip' -> never asked again, nothing blocked",
+          not any(asks(r) for r, _ in out[2:]) and "added it to your case" in out[3][1]
+          and not (w.ticket()["captured_info"].get("details") or {}).get("full_name"))
+    w, out = await walk([salary, ("hmm", N)])
+    check("name 6: P3 with no clear 'safe' -> no name question", not any(asks(r) for r, _ in out))
+    # 7
+    async def kb(state):
+        return "You are entitled to at least 1 rest day a week."
+    with patch.object(_ct_node, "_kb_answer", new=kb):
+        w, out = await walk([("how many rest days do i get?", _h("P4", "general")),
+                             ("yes i am still worried", N), ("Lina", N)])
+    check("name 7: P4 -> the KB answer, no name -> her reply -> the name question -> 'Lina' saved",
+          not asks(out[0][0]) and asks(out[1][0])
+          and (w.ticket()["captured_info"].get("details") or {}).get("full_name") == "Lina")
+    # 8
+    w, out = await walk([("I'm Maria, my employer took my phone", _h("P2", "confinement")),
+                         ("yes", N), ("no", N), ("yes", N), ("no", N), ("yes", N)])
+    check("name 8: 'I'm Maria, my employer took my phone' -> the name used, never asked",
+          not any(asks(r) for r, _ in out)
+          and (w.ticket()["captured_info"].get("details") or {}).get("full_name") == "Maria")
+    check("name 8: 'I'm scared' / 'I'm Indonesian' / 'i am ok' are not names",
+          not _ct.volunteered_name("I'm scared, my employer took my phone")
+          and not _ct.volunteered_name("I'm Indonesian and my salary is not paid")
+          and not _ct.volunteered_name("i am ok") and _ct.volunteered_name("my name is siti") == "Siti")
+    # 9
+    w, out = await walk([hit, ("yes", N), ("no", N), ("no someone can see", N), ("after 9pm", N),
+                         ("I'm safe", N)])
+    check("name 9: 'is it safe to chat?' = no -> no name question in that case",
+          out[3][1].startswith("I understand. Please reply when it is safe.")
+          and not any(asks(r) for r, _ in out))
+    # 10
+    with patch.object(settings, "complaint_ask_name_enabled", False):
+        w, out = await walk([hit, ("no", N), ("safe", N), ("Maria", N)])
+        w2, out2 = await walk([("I'm Maria, my employer took my phone", _h("P2", "confinement")),
+                               ("yes", N)])
+    check("name 10: switch off -> no name question, no name or name_step on the ticket",
+          not any(asks(r) for r, _ in out) and "Maria" not in out[3][1]
+          and "details" not in w.ticket()["captured_info"] and "details" not in w2.ticket()["captured_info"]
+          and "name_step" not in w.ticket()["captured_info"]["triage"])
+    # The reply to the question is only ever a name.
+    check("a reply that is not a name ends the asking",
+          all(_ct.reply_name(x) is None for x in ("skip", "no", "ok", "I'd rather not", "why?", "safe",
+                                                  "not safe", "she hit me again", "I'm ok", "later"))
+          and _ct.reply_name("Maria") == "Maria" and _ct.reply_name("my name is ana santos") == "Ana Santos")
+
+
 async def scenario_complaint_warm():
     """4 Nov 2026, the PM's test: a helper's own question, the best time, a job seeker
     in an employer's flow, and warmer lines on an open case."""
@@ -3180,7 +3293,7 @@ async def main() -> int:
                      scenario_crisis_keywords,
                      scenario_home_leave_2nov,
                      scenario_complaint_triage,
-                     scenario_complaint_warm,
+                     scenario_complaint_warm, scenario_complaint_name,
                      scenario_complaint_webhook,
                      scenario_call_context):
         try:

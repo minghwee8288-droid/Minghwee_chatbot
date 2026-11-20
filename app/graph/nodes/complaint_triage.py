@@ -94,6 +94,8 @@ def _text_for(kind: str, case: dict[str, Any], ref: str | None) -> str:
         return templates.follow_up(templates.P3_ADDED, ref)
     if kind == "P4_TICKET":
         return templates.follow_up(templates.P4_TICKET, ref)
+    if kind == "NAME_SAVED":
+        return templates.NAME_THANKS.format(name=case.get("full_name") or "")
     if kind == "QUESTION":
         return templates.question(
             case.get("pending"),
@@ -262,6 +264,11 @@ async def complaint_triage_node(state: ConversationState) -> dict[str, Any]:
         ))
         kind = "P4_TICKET"
 
+    # Decided before the ticket is written, so the ticket records that it was asked.
+    ask_name = triage.name_due(case, kind, step.get("previous_reply"))
+    if ask_name:
+        case["name_step"] = "asked"
+
     ticket_id, number = await _ticket_for(state, case, kind, message)
     case["ticket_id"] = ticket_id or case.get("ticket_id")
     case["ticket_number"] = number or case.get("ticket_number")
@@ -287,6 +294,9 @@ async def complaint_triage_node(state: ConversationState) -> dict[str, Any]:
         extra.append(await _in_her_language(
             templates.REFERENCE_ONLY.format(ref=number), case.get("language")
         ))
+    if ask_name:
+        # Its own message, after the safe line or the template, which stay as they are.
+        extra.append(await _in_her_language(templates.NAME_QUESTION, case.get("language")))
 
     return {
         **update,

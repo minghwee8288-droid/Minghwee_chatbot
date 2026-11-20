@@ -326,6 +326,9 @@ class Settings(BaseSettings):
     # Helper complaint severity and triage (Thomas's guidelines, 2 Nov 2026;
     # app/graph/complaint_triage.py). False = the single crisis reply as before.
     complaint_triage_enabled: bool = True
+    # Ask a helper's name once in the complaint flow, only after safety (19 Nov 2026).
+    # False = the flow as before: no name question, no name on the ticket.
+    complaint_ask_name_enabled: bool = True
     # The recruiter's number in the complaint messages. Unset = the clause naming
     # it is dropped. Only ever from here: no number is written in code.
     fcc_contact_number: str = ""

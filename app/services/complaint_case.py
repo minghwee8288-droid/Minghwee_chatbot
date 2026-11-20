@@ -57,7 +57,17 @@ def split(case: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """The agent's fields and the flow's fields, as captured_info holds them."""
     complaint = {k: case.get(k) for k in _COMPLAINT_KEYS}
     complaint["owner"] = complaint.get("owner") or "FCC pool"
-    return complaint, {k: case.get(k) for k in _TRIAGE_KEYS}
+    triage = {k: case.get(k) for k in _TRIAGE_KEYS}
+    # Only once the name question has come up (COMPLAINT_ASK_NAME_ENABLED).
+    if case.get("name_step"):
+        triage["name_step"] = case["name_step"]
+    return complaint, triage
+
+
+def _with_name(info: dict[str, Any], case: dict[str, Any]) -> None:
+    """Her name where the service flows keep a client's name: captured_info.details."""
+    if case.get("full_name"):
+        info["details"] = {**(info.get("details") or {}), "full_name": case["full_name"]}
 
 
 async def raise_ticket(
@@ -83,6 +93,7 @@ async def raise_ticket(
         "complaint": complaint,
         "triage": triage,
     }
+    _with_name(captured, case)
     # A complaint raised from a phone call (app/services/call_context.py).
     if source:
         captured["source"] = source
@@ -125,6 +136,7 @@ async def write_through(case: dict[str, Any], message: str, transcript: str = ""
         info = dict(row.get("captured_info") or {})
         was_p1 = (info.get("complaint") or {}).get("level") == "P1"
         info["complaint"], info["triage"] = split(case)
+        _with_name(info, case)
         if (message or "").strip():
             info["follow_ups"] = [
                 *(info.get("follow_ups") or []),

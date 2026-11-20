@@ -173,6 +173,14 @@ SHORT_REPLY = (
     "you are hurt or very unwell."
 )
 
+# PENDING THOMAS APPROVAL (19 Nov 2026): her name, asked once per case after safety,
+# as its own message (complaint_triage.name_due), and the line when she gives it.
+NAME_QUESTION = (
+    "So our team knows who to look out for, may I know your name? "
+    "It's fine to skip this if you prefer."
+)
+NAME_THANKS = "Thank you, {name}. I've added your name to your case."
+
 # First message of a conversation: the AI disclosure, then the P4 template.
 INTRO = "Hi, I'm Claire, Ming Hwee's AI assistant."
 
